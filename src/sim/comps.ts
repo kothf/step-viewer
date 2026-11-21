@@ -50,3 +50,52 @@ export function aloneIndex(index: Uint32Array, dom: ArrayLike<number>, d: number
   }
   return out;
 }
+
+/**
+ * Which part each vertex of the plot mesh belongs to. The first vertices are the joined display mesh's, `counts[k]`
+ * of them per part in order; the refined mesh adds midpoints after them, which take the part of their triangle
+ * (parts share no vertices). -1 = a vertex no triangle uses.
+ */
+export function vertexParts(index: ArrayLike<number>, counts: number[], n: number): Int32Array {
+  const of = new Int32Array(n).fill(-1);
+  let v = 0;
+  counts.forEach((c, k) => { for (let i = 0; i < c && v < n; i++) of[v++] = k; });
+  for (let again = true, round = 0; again && round < 64; round++) {
+    again = false;
+    for (let i = 0; i + 2 < index.length; i += 3) {
+      const a = index[i], b = index[i + 1], c = index[i + 2];
+      const k = of[a] >= 0 ? of[a] : of[b] >= 0 ? of[b] : of[c];
+      if (k < 0) { again = true; continue; }
+      if (of[a] < 0) of[a] = k;
+      if (of[b] < 0) of[b] = k;
+      if (of[c] < 0) of[c] = k;
+    }
+  }
+  return of;
+}
+
+/** The index with the triangles of the parts in `off` made degenerate (order kept, as `aloneIndex`). */
+export function withoutParts(index: ArrayLike<number>, partOf: ArrayLike<number>, off: ArrayLike<boolean | number>): Uint32Array {
+  const out = Uint32Array.from(index);
+  for (let i = 0; i + 2 < out.length; i += 3) {
+    const k = partOf[out[i]];
+    if (k >= 0 && off[k]) out[i + 1] = out[i + 2] = out[i];
+  }
+  return out;
+}
+
+/**
+ * Moves points (or, with `dirs`, directions) with their parts: `tfs[k]` is part k's 4×4 matrix, column-major,
+ * null = left where it is.
+ */
+export function moveWithParts(arr: Float32Array, partOf: ArrayLike<number>, tfs: (ArrayLike<number> | null)[], dirs = false): void {
+  const w = dirs ? 0 : 1;
+  for (let i = 0, q = 0; q + 2 < arr.length; i++, q += 3) {
+    const m = tfs[partOf[i]];
+    if (!m) continue;
+    const x = arr[q], y = arr[q + 1], z = arr[q + 2];
+    arr[q] = m[0] * x + m[4] * y + m[8] * z + w * m[12];
+    arr[q + 1] = m[1] * x + m[5] * y + m[9] * z + w * m[13];
+    arr[q + 2] = m[2] * x + m[6] * y + m[10] * z + w * m[14];
+  }
+}

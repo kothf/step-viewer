@@ -17028,6 +17028,26 @@ try {
       && k1.compSel === 0 && k1.drawn > 0 && k1.drawn < k0.drawn && Math.abs(k1.plot.range[1] / k0.compRows[0].vm - 1) < 1e-6 && kNote.includes("alone")
       && k2.compSel === -1 && k2.drawn === k0.drawn,
       `sim 1.634: results by component, and a row shows its component alone (${JSON.stringify({ rows: k0.compRows, kRows, drawn: [k0.drawn, k1.drawn, k2.drawn], range: [k0.plot.range, k1.plot.range], kNote })})`);
+    // results on an exploded view: the contours go with the components; a hidden or see-through component's are not drawn
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.explodes = [{ id: "x1", name: "Exploded1", steps: [{ comps: ["c2"], dir: [0, 0, 1], dist: 40 }] }]; }));
+    await mp.waitForTimeout(1500);
+    const x0 = await sim();
+    await mp.evaluate(() => window.__sv.asm.toggleExplode("x1"));
+    await mp.waitForTimeout(900);
+    const x1 = await sim();
+    await mp.evaluate(() => window.__sv.asm.isolate([window.__sv.asm.doc.components[0].id], "hide"));
+    await mp.waitForTimeout(300);
+    const x2 = await sim();
+    await mp.evaluate(() => window.__sv.asm.isolate([window.__sv.asm.doc.components[0].id], "trans"));
+    await mp.waitForTimeout(300);
+    const x3 = await sim();
+    await mp.evaluate(() => { window.__sv.asm.isolate(null); window.__sv.asm.toggleExplode("x1"); });
+    await mp.waitForTimeout(900);
+    const x4 = await sim();
+    check(!x0.stale && x0.plotBox && x0.pose.moved === 0 && x1.pose.moved === 1 && x1.plotBox[5] - x0.plotBox[5] > 30 && x1.drawn === x0.drawn
+      && x2.pose.off === 1 && x2.drawn > 0 && x2.drawn < x0.drawn && Math.abs(x2.plotBox[5] - x0.plotBox[5]) < 0.5 && x3.pose.off === 1 && x3.drawn === x2.drawn
+      && x4.pose.moved === 0 && x4.pose.off === 0 && x4.drawn === x0.drawn && Math.abs(x4.plotBox[5] - x0.plotBox[5]) < 1e-3,
+      `sim 1.635: the plot follows an exploded view, and leaves out hidden and see-through components (${JSON.stringify({ stale: x0.stale, pose: [x0.pose, x1.pose, x2.pose, x3.pose, x4.pose], box: [x0.plotBox, x1.plotBox, x2.plotBox, x4.plotBox], drawn: [x0.drawn, x1.drawn, x2.drawn, x3.drawn, x4.drawn] })})`);
     // left out: the load on it can no longer be solved, and the message says why; the last component cannot be left out
     await mp.uncheck('#sim-tree .sim-complist li[data-comp="c2"] [data-k="compon"]');
     await mp.waitForTimeout(400);

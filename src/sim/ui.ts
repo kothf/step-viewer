@@ -22,7 +22,7 @@ import type { AsmModel, SimModel } from "./model";
 import type { EdgeInfo } from "../topology";
 import { SIM_STOPPED, SimClient } from "./client";
 import type { Connection } from "./connect";
-import { aloneIndex, componentRows, type CompRow } from "./comps";
+import { aloneIndex, componentRows, moveWithParts, vertexParts, withoutParts, type CompRow } from "./comps";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
 import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
@@ -177,6 +177,12 @@ export class SimController {
   private comps: { key: string; name: string }[] = [];
   private saved: { meshes: { mesh: THREE.Mesh; mat: THREE.Material | THREE.Material[] }[] } | null = null;
   private overlay: THREE.Mesh | null = null;
+  // an assembly's plot follows its components (FR-CON-031): the part of each plot vertex, what is drawn, and how
+  // the view shows each part now (moved by an exploded view or a drag, hidden, see-through)
+  private partOf: Int32Array | null = null;
+  private posed: { model: AsmModel; base: Float32Array; u: ArrayLike<number> | null; k: number; index: Uint32Array; nrm: Float32Array; dressed: (THREE.Material | THREE.Material[])[] } | null = null;
+  private pose: { key: string; tfs: (Float32Array | null)[]; off: boolean[]; moved: number } = { key: "", tfs: [], off: [], moved: 0 };
+  private poseBound = false;
   // results on section planes: the caps as the section manager last made them, and what was painted
   private caps: { mesh: THREE.Mesh }[] = [];
   private capGeos = new Map<THREE.Mesh, THREE.BufferGeometry>();
@@ -223,7 +229,7 @@ export class SimController {
   private anim: { raf: number; base: Float32Array; u: Float32Array; scale: number; t0: number; frames: number } | null = null;
 
   constructor(private host: SimHost) {
-    host.section.capSource = () => (this.overlay && this.plot.deformed && !this.anim ? this.overlay.geometry : null);
+    host.section.capSource = () => (this.overlay && this.plot.deformed && !this.anim && !this.pose.moved ? this.overlay.geometry : null);
     host.section.onCaps = caps => this.capsChanged(caps);
     this.marks.name = "sim-marks";
     $("#sim-tools").addEventListener("click", e => {
@@ -367,7 +373,7 @@ export class SimController {
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
-      compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0,
+      compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
       asm: this.host.asm(), comps: this.res?.comps?.map(c => c.name) ?? null, contacts: (last?.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, force: c.force ?? null, moment: c.moment ?? null, at: c.at ?? null })), links: this.study()?.links ?? [],
       compList: this.host.asm() ? this.host.comps().map(c => { const o = this.study()?.comps?.[c.id]; return { id: c.id, name: c.name, off: !!o?.off, material: o?.material?.name ?? c.material, own: !!o?.material }; }) : null, excluded: this.res?.off ?? [],
       found: this.freshFound(this.study())?.list.map(c => ({ a: this.found!.comps[c.a]?.name ?? "", b: this.found!.comps[c.b]?.name ?? "", area: c.area, gap: c.gap, at: c.at })) ?? null, finding: this.finding, linkSel: this.linkSel,
@@ -1261,6 +1267,18 @@ export class SimController {
   }
 
   /** Triangles of the plot that are drawn (a component shown alone leaves the others out). */
+  /** The box of the plot as drawn (its own triangles only), in the model's coordinates. */
+  private plotBox(): number[] | null {
+    const g = this.overlay?.geometry, ix = g?.getIndex(), pa = g?.getAttribute("position");
+    if (!ix || !pa) return null;
+    const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < ix.count; i += 3) {
+      if (ix.getX(i) === ix.getX(i + 1)) continue;
+      for (let j = 0; j < 3; j++) { const v = ix.getX(i + j), q = [pa.getX(v), pa.getY(v), pa.getZ(v)]; for (let c = 0; c < 3; c++) { if (q[c] < b[c]) b[c] = q[c]; if (q[c] > b[3 + c]) b[3 + c] = q[c]; } }
+    }
+    return Number.isFinite(b[0]) ? b : null;
+  }
+
   private drawnTris(): number {
     const ix = this.overlay?.geometry.getIndex();
     if (!ix) return 0;
@@ -1367,7 +1385,7 @@ export class SimController {
       ov.localToWorld(s).project(v.camera);
       d.style.left = `${c.offsetLeft + ((s.x + 1) / 2) * c.clientWidth}px`;
       d.style.top = `${c.offsetTop + ((1 - s.y) / 2) * c.clientHeight}px`;
-      d.hidden = s.z > 1 || s.z < -1;
+      d.hidden = s.z > 1 || s.z < -1 || !!(this.partOf && this.pose.off[this.partOf[p.i[0]]]);
     });
   }
 
@@ -1377,6 +1395,9 @@ export class SimController {
     for (const m of this.mats) m.dispose();
     this.mats = [];
     this.mask = null;
+    this.posed = null;
+    this.partOf = null;
+    this.pose = { key: "", tfs: [], off: [], moved: 0 };
   }
 
   /** A result plot is on the model. */
@@ -1386,7 +1407,8 @@ export class SimController {
 
   /** The shown plot can be carried onto the section caps: a static result whose solution the worker still holds. */
   private capsPaintable() {
-    return !!this.saved && !!this.res && !this.res.passes.at(-1)?.modes && !!this.job();
+    // components moved apart (an exploded view) are cut where they are shown, not where they were analysed
+    return !!this.saved && !!this.res && !this.res.passes.at(-1)?.modes && !!this.job() && !this.pose.moved;
   }
 
   /** The plot came, went or changed: the section caps are made again (plain), then painted if they can be. */
@@ -1531,16 +1553,15 @@ export class SimController {
       this.mats.push(ghost);
     }
     part.meshes.forEach((mesh, k) => { mesh.material = ghost && out.has(compOf(am.names[am.faceOff[k]] ?? "")) ? ghost : under; });
+    const dressed = part.meshes.map(mesh => mesh.material);
     this.host.redraw();
     const scale = this.plot.scale > 0 ? this.plot.scale : r.maxU > 0 ? ((r0.modes ? 0.08 : 0.05) * this.host.viewer.modelSize) / r.maxU : 1;
     this.usedScale = this.plot.deformed ? scale : 0;
-    let at = pm.pos;
-    if (this.plot.deformed) {
-      at = new Float32Array(3 * n);
-      for (let i = 0; i < 3 * n; i++) at[i] = pm.pos[i] + scale * r.u[i];
-    }
+    const at = new Float32Array(3 * n);
+    for (let i = 0; i < 3 * n; i++) at[i] = this.plot.deformed ? pm.pos[i] + scale * r.u[i] : pm.pos[i];
+    const index = mask && dom ? aloneIndex(pm.index, dom, alone) : pm.index;
     const geo = new THREE.BufferGeometry();
-    geo.setIndex(new THREE.BufferAttribute(mask && dom ? aloneIndex(pm.index, dom, alone) : pm.index, 1));
+    geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.setAttribute("position", new THREE.BufferAttribute(at, 3));
     geo.setAttribute("normal", new THREE.BufferAttribute(pm.nrm, 3));
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -1549,11 +1570,84 @@ export class SimController {
     this.overlay.raycast = () => {};
     part.frame.add(this.overlay);
     this.overlay.updateMatrixWorld(true);
+    // an assembly's plot goes where its components are shown
+    this.pose = { key: "", tfs: [], off: [], moved: 0 };
+    this.posed = null;
+    this.partOf = null;
+    if (am.parts) {
+      this.partOf = this.partsOfMesh(am, pm);
+      this.posed = { model: am, base: pm.pos, u: this.plot.deformed ? r.u : null, k: this.plot.deformed ? scale : 0, index, nrm: pm.nrm, dressed };
+      if (!this.poseBound) { this.poseBound = true; this.host.viewer.onRender(() => this.applyPose()); }
+      this.applyPose();
+    }
     if (shape && this.plot.deformed && this.animate) this.startAnim(pm.pos, shape, scale);
     this.capsSoon();
     this.syncPath();
     this.syncProbes();
     this.drawProbes();
+    this.host.viewer.invalidate();
+  }
+
+  private partsMemo = new WeakMap<PlotMesh, Int32Array>();
+  /** The part (place in the model's list) of every vertex of the plot mesh. */
+  private partsOfMesh(am: AsmModel, pm: PlotMesh): Int32Array {
+    let of = this.partsMemo.get(pm);
+    if (!of) { of = vertexParts(pm.index, am.meshes.map(m => m.geometry.getAttribute("position").count), pm.pos.length / 3); this.partsMemo.set(pm, of); }
+    return of;
+  }
+
+  /** How the view shows each part of the model now: moved (an exploded view, a drag), hidden or see-through. */
+  private readPose(am: AsmModel) {
+    const v = this.host.viewer, tfs: (Float32Array | null)[] = [], off: boolean[] = [];
+    let key = "", moved = 0;
+    am.parts.forEach((idx, k) => {
+      const p = v.parts[idx];
+      if (!p) { tfs.push(null); off.push(false); return; }
+      p.group.updateMatrix();
+      const e = p.group.matrix.elements;
+      let same = true;
+      for (let i = 0; i < 16; i++) if (Math.abs(e[i] - (i % 5 === 0 ? 1 : 0)) > 1e-7) { same = false; break; }
+      const o = !p.visible || p.opacity < 1;
+      tfs.push(same ? null : Float32Array.from(e));
+      off.push(o);
+      if (!same) moved++;
+      if (!same || o) key += `${k}:${same ? "" : Array.from(e, x => x.toFixed(4)).join(",")}${o ? (p.visible ? "t" : "h") : ""}|`;
+    });
+    return { key, tfs, off, moved };
+  }
+
+  /** Writes `base + k u` into the plot's points, each moved with its part. */
+  private place(arr: Float32Array, base: ArrayLike<number>, k: number, u: ArrayLike<number> | null) {
+    if (u && k) for (let i = 0; i < arr.length; i++) arr[i] = base[i] + k * u[i];
+    else for (let i = 0; i < arr.length; i++) arr[i] = base[i];
+    if (this.pose.moved && this.partOf) moveWithParts(arr, this.partOf, this.pose.tfs);
+  }
+
+  /**
+   * Brings an assembly's plot to where the view shows its components (FR-CON-031): contours move with exploded
+   * components, a hidden component's are not drawn, and a see-through one is shown as itself, so what lies behind
+   * it can be read.
+   */
+  private applyPose() {
+    const ov = this.overlay, ps = this.posed, of = this.partOf;
+    if (!ov || !ps || !of || this.recording) return;
+    const now = this.readPose(ps.model);
+    if (now.key === this.pose.key) return;
+    const was = this.pose.moved;
+    this.pose = now;
+    const g = ov.geometry, pa = g.getAttribute("position") as THREE.BufferAttribute;
+    if (!this.anim) { this.place(pa.array as Float32Array, ps.base, ps.k, ps.u); pa.needsUpdate = true; }
+    let nrm = ps.nrm;
+    if (now.moved) { nrm = Float32Array.from(ps.nrm); moveWithParts(nrm, of, now.tfs, true); }
+    g.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
+    g.setIndex(new THREE.BufferAttribute(now.off.some(Boolean) ? withoutParts(ps.index, of, now.off) : ps.index, 1));
+    g.computeBoundingSphere();
+    g.computeBoundingBox();
+    // a see-through component wears its own look again
+    const saved = this.saved?.meshes;
+    ps.model.meshes.forEach((mesh, k) => { mesh.material = now.off[k] && saved?.[k] ? saved[k].mat : ps.dressed[k]; });
+    if (!!was !== !!now.moved) this.capsSoon();
+    this.placeProbes();
     this.host.viewer.invalidate();
   }
 
@@ -1565,7 +1659,7 @@ export class SimController {
       if (this.anim !== a || !ov) return;
       const k = scale * Math.cos((2 * Math.PI * (performance.now() - a.t0) * this.speed) / MODE_PERIOD);
       const pa = ov.geometry.getAttribute("position") as THREE.BufferAttribute, arr = pa.array as Float32Array;
-      for (let i = 0; i < arr.length; i++) arr[i] = base[i] + k * u[i];
+      this.place(arr, base, k, u);
       pa.needsUpdate = true;
       a.frames++;
       this.host.viewer.invalidate();
@@ -1595,7 +1689,7 @@ export class SimController {
     try {
       for (let f = 0; f < n; f++) {
         const a = scale * Math.cos((2 * Math.PI * f) / n);
-        for (let i = 0; i < arr.length; i++) arr[i] = pm.pos[i] + a * shape[i];
+        this.place(arr, pm.pos, a, shape);
         pa.needsUpdate = true;
         v.render();
         g.fillStyle = "#ffffff"; g.fillRect(0, 0, c.width, c.height);
@@ -1611,7 +1705,7 @@ export class SimController {
     this.lastGif = { bytes: blob.size, frames: n, w: c.width, h: c.height };
     download(blob, `${`${doc.name}-${st.name}`.replace(/[\\/:*?"<>|]+/g, "_")}-mode${mi + 1}.gif`);
     // back to the live swing (or the still shape)
-    if (this.overlay === ov) { if (this.animate) this.startAnim(pm.pos, shape, scale); else { for (let i = 0; i < arr.length; i++) arr[i] = pm.pos[i] + scale * shape[i]; pa.needsUpdate = true; v.invalidate(); } }
+    if (this.overlay === ov) { if (this.animate) this.startAnim(pm.pos, shape, scale); else { this.place(arr, pm.pos, scale, shape); pa.needsUpdate = true; v.invalidate(); } }
     return blob;
   }
 
