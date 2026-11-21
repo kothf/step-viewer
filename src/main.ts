@@ -2344,6 +2344,8 @@ const sim = new SimController({
     return { head: [d.features, d.rollback, d.vars ?? null, d.material ?? null], tail: own.length ? [own] : [] };
   },
   comps: () => (asm.active ? asmSim.comps() : []),
+  bodies: () => (asm.active ? [] : partSim.bodies()),
+  mates: () => (asm.active ? asmSim.mates() : []),
   faceNames: () => (asm.active ? simAsmModel()?.names ?? [] : partSim.faceNames()),
   simGeo: (lin, ang) => (asm.active ? asmSim.simGeo(lin, ang) : partSim.simGeo(lin, ang)),
   idle: () => (asm.active ? asmSim.idle() : partSim.idle()),

@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.644.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: a **material for one study only** (FR-SMAT-003). **In this study** under Material picks another material for the part, or for each body of a multibody part, in that study alone; the part keeps its own material, and No material goes back to it.
+- Structural analysis of assemblies: **mates guide the connections** (FR-CON-008). A pair of components joined by a hinge or concentric mate is pointed out under the Connections table, and **Make sliding** lets the two turn and slide on each other instead of being bonded.
+
 ## [1.643.0] - 2026-11-21
 
 ### Added
@@ -4190,7 +4197,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.643.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.644.0...HEAD
+[1.644.0]: https://github.com/kothf/step-viewer/compare/v1.643.0...v1.644.0
 [1.643.0]: https://github.com/kothf/step-viewer/compare/v1.642.0...v1.643.0
 [1.642.0]: https://github.com/kothf/step-viewer/compare/v1.641.0...v1.642.0
 [1.641.0]: https://github.com/kothf/step-viewer/compare/v1.640.0...v1.641.0
