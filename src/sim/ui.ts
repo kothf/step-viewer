@@ -40,7 +40,7 @@ export interface SimHost {
   faceAt(x: number, y: number): { faceId: number; point: [number, number, number] } | null;
   /** The snapped point under the pointer (part coordinates) and the edge it is on, if any. */
   snapAt(x: number, y: number): { kind: string; point: [number, number, number]; edge?: EdgeInfo } | null;
-  simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts?: number }>;
+  simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts?: number; regions?: { key: string; tris: Float64Array }[] }>;
   /** No part command is open. */
   idle(): boolean;
   /** Draws the part's planes, sketches and marks again. */
@@ -54,14 +54,14 @@ type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "
 /** One load case's results; `job` names its solution in the worker (0 = not held). */
 interface CaseResult { id: string; name: string; passes: PassResult[]; job: number }
 /** `passes` are the shown ones: the study's, or with load cases the picked case's or the envelope (one made-up pass). */
-interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[] }
+interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number }[] }
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 const pct = (v: number) => (Math.abs(v) < 0.01 ? (v === 0 ? "0" : "< 0.01") : sig(v));
 const RELIEF_NOTE = "The part is held by nothing: its supports are left out and the loads are balanced by its own inertia, as for a part in free flight or afloat.";
 /** The most load cases a study has. */
 export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; cases?: { id: string; name: string; passes: PassResult[] }[] }
+interface Kept { passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
@@ -231,6 +231,8 @@ export class SimController {
   private keyOf(doc: PartDoc, st: Study) {
     const parts: unknown[] = [doc.features, doc.rollback, doc.vars ?? null, doc.material ?? null, st.supports, st.loads, st.settings, st.suppressed ?? null];
     if (st.refine?.length) parts.push(st.refine);
+    const own = Object.entries(doc.bodies ?? {}).filter(([, b]) => b.material).map(([k, b]) => [k, b.material]);
+    if (own.length) parts.push(own);
     if (st.kind === "modal") parts.push("modal");
     else if (st.cases?.length) parts.push(st.cases.map(c => [c.id, c.off]));
     return JSON.stringify(parts);
@@ -298,7 +300,7 @@ export class SimController {
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
-      animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
+      animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       relief: !!this.study()?.settings.relief, accel: last?.accel ? { a: last.accel.a, alpha: last.accel.alpha } : null,
       cases: (this.study()?.cases ?? []).map(c => ({ name: c.name, off: c.off })), caseSel: this.caseSel, enveloped: this.enveloped,
@@ -338,7 +340,7 @@ export class SimController {
     const kept = await cacheGet<Kept>(await cacheKey("sim", key));
     const now = this.host.doc(), s2 = this.study();
     if (!kept?.passes?.length || !kept.mesh || this.res || this.running || now !== doc && now?.id !== doc.id || !s2 || s2.id !== st.id || !now || this.keyOf(now, s2) !== key) return;
-    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}),
+    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
       ...(kept.cases?.length ? { cases: kept.cases.map(c => ({ ...c, job: 0 })) } : {}) };
     this.caseSel = -1;
     this.applyCase();
@@ -567,11 +569,19 @@ export class SimController {
     let whole = true, made: Results | null = null;
     try {
       const size = this.host.viewer.modelSize;
-      // bodies with a material of their own would need a solver with several materials
-      const own = Object.values(doc.bodies ?? {}).map(b => b.material?.name).filter((n): n is string => !!n && n !== doc.material?.name);
-      if (own.length) throw new Error("E-SIM-BODYMATS");
-      const { geo, solids, parts } = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
+      const { geo, solids, parts, regions: bodies } = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
       if (solids !== 1) throw new Error("E-SIM-BODIES");
+      // bodies with a material of their own keep it: each body is then solved with its own stiffness and density
+      const simMat = (q: NonNullable<typeof doc.material>) => ({ name: q.name, E: (q.E ?? 0) * 1000, nu: q.nu ?? 0, rho: q.density * 1e-9, sy: q.sy ?? undefined, su: q.su ?? undefined });
+      let regions: { tris: Float64Array; mat: ReturnType<typeof simMat> }[] | undefined;
+      if (bodies && bodies.length > 1 && bodies.some(b => doc.bodies?.[b.key]?.material)) {
+        regions = bodies.map(b => {
+          const q = doc.bodies?.[b.key]?.material ?? m;
+          if (!q.E || q.nu == null) throw new Error(`E-SIM-BODYMAT: ${q.name}`);
+          return { tris: b.tris, mat: simMat(q) };
+        });
+        if (regions.every(r => r.mat.name === regions![0].mat.name && r.mat.E === regions![0].mat.E)) regions = undefined;
+      }
       // with load cases each one is solved on its own: the same supports, its own loads
       const cases = modal ? [] : st.cases ?? [];
       const runs = (cases.length ? cases : [null]).map(c => ({ c, problem: studyProblem(c ? caseStudy(st, c) : st, geo) }));
@@ -592,7 +602,7 @@ export class SimController {
       const pos = mesh.pos, nrm = mesh.nrm;
       const total = Math.max(1, Math.min(modal ? MODAL_PASSES : MAX_PASSES, Math.round(st.settings.passes)));
       if (modal) problem.loads = [];
-      const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh, ...(parts && parts > 1 ? { parts } : {}), ...(cases.length ? { cases: [] } : {}) };
+      const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh, ...(parts && parts > 1 ? { parts } : {}), ...(cases.length ? { cases: [] } : {}), ...(regions ? { bodyMats: regions.map(r => ({ name: r.mat.name, sy: r.mat.sy ?? 0 })) } : {}) };
       made = res; whole = false;
       for (let ci = 0; ci < runs.length; ci++) {
       const run = runs[ci], problem = run.problem, pre = run.c ? `${run.c.name}: ` : "";
@@ -605,7 +615,7 @@ export class SimController {
         ...(modal ? { modal: st.settings.range
           ? { count: DEFAULT_MODES, max: MAX_MODES, range: [st.settings.range.from, st.settings.range.to] as [number, number] }
           : { count: Math.max(1, Math.min(MAX_MODES, Math.round(st.settings.modes ?? DEFAULT_MODES))) } } : {}),
-        mat: { name: m.name, E: m.E * 1000, nu: m.nu, rho: m.density * 1e-9, sy: m.sy ?? undefined, su: m.su ?? undefined },
+        mat: simMat(m), ...(regions ? { regions } : {}),
       }, p => {
         mine.push(p);
         res.ms = performance.now() - t0;
@@ -629,7 +639,7 @@ export class SimController {
       }
       // a finished solve is kept for the next time this document is opened
       if (res.passes.length) {
-        const keep: Kept = { passes: res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts, ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
+        const keep: Kept = { passes: res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts, ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}), ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
         void cacheKey("sim", key).then(k => cachePut(k, keep));
       }
     } catch (e) {
@@ -656,7 +666,7 @@ export class SimController {
       case "E-SIM-NOLOAD": return t("Add a load first.");
       case "E-SIM-FREE": return rest.trim() === "6" && !this.study()?.supports.length ? t("Add a support first, or turn on Inertia relief for a part that nothing holds.") : t("The supports leave the part free to move ({n} free motions). Add or change the supports.", { n: rest.trim() });
       case "E-SIM-BODIES": return t("Some bodies of the part touch no other body. A study needs one connected piece: join the bodies or delete the loose ones.");
-      case "E-SIM-BODYMATS": return t("Bodies with a material of their own are not analysed yet: a study uses the part's one material.");
+      case "E-SIM-BODYMAT": return t("The material {name} of a body has no elastic modulus or Poisson's ratio.", { name: msg.split(": ")[1] ?? "" });
       case "E-SIM-DENSITY": return t("The material has no density: a modal study needs one.");
       case "E-SIM-NOBODY": return t("The part has no body yet.");
       case "E-SIM-REF": return t("{name}: a face is gone. Pick its faces again.", { name });
@@ -806,12 +816,34 @@ export class SimController {
     this.host.viewer.invalidate();
   }
 
+  /** Yield strength (MPa, 0 = none) of the material at a sample point: its body's when bodies have their own materials. */
+  private yieldAt(r: PassResult, i: number): number {
+    const B = this.res?.bodyMats;
+    return B && r.dom ? B[r.dom[i]]?.sy ?? 0 : this.host.doc()?.material?.sy ?? 0;
+  }
+  /** A yield strength is known for the results (any body's). */
+  private hasYield(): boolean {
+    const B = this.res?.bodyMats;
+    return B ? B.some(b => b.sy > 0) : !!this.host.doc()?.material?.sy;
+  }
+  /** Lowest safety factor against yield: the part's yield over `peak`, or body by body with their own materials. */
+  private lowSf(r: PassResult, peak: number): number | null {
+    const B = this.res?.bodyMats;
+    if (B && r.dom) {
+      let lo = Infinity;
+      for (let i = 0; i < r.vm.length; i++) { const y = B[r.dom[i]]?.sy ?? 0; if (y > 0 && r.vm[i] > 0) lo = Math.min(lo, y / r.vm[i]); }
+      return Number.isFinite(lo) ? lo : null;
+    }
+    const sy = this.host.doc()?.material?.sy;
+    return sy && peak > 0 ? sy / peak : null;
+  }
+
   private values(r: PassResult, kind: PlotKind): Float32Array {
     if (kind === "vm") return r.vm;
     if (kind === "err") return r.err;
     if (kind === "sf") {
-      const sy = this.host.doc()?.material?.sy ?? 0, out = new Float32Array(r.vm.length);
-      for (let i = 0; i < out.length; i++) out[i] = Math.min(SF_TOP, sy / Math.max(r.vm[i], 1e-9));
+      const out = new Float32Array(r.vm.length);
+      for (let i = 0; i < out.length; i++) { const sy = this.yieldAt(r, i); out[i] = sy > 0 ? Math.min(SF_TOP, sy / Math.max(r.vm[i], 1e-9)) : SF_TOP; }
       return out;
     }
     const n = r.vm.length, out = new Float32Array(n);
@@ -988,9 +1020,8 @@ export class SimController {
   private probeTable(): string | null {
     const r = this.res?.passes.at(-1), pm = this.res?.mesh;
     if (!r || !pm || this.stale() || !this.probes.length) return null;
-    const sy = this.host.doc()?.material?.sy ?? 0;
     return probeCsv(this.probes.map(p => {
-      const vm = valueAt(r.vm, p);
+      const vm = valueAt(r.vm, p), sy = this.yieldAt(r, p.i[0]);
       return { at: [0, 1, 2].map(c => valueAt(pm.pos, p, 3, c)), vm, u: [valueAt(r.u, p, 3, 0), valueAt(r.u, p, 3, 1), valueAt(r.u, p, 3, 2)], sf: sy > 0 ? sy / Math.max(vm, 1e-9) : null };
     }));
   }
@@ -1215,7 +1246,7 @@ export class SimController {
     const r: PassResult = shape ? { ...r0, u: shape } : r0;
     if (r0.modes && !MODE_PLOTS.includes(this.plot.kind)) this.plot.kind = "u";
     // the safety factor needs a yield strength: without one the plot falls back to stress
-    if (this.plot.kind === "sf" && !this.host.doc()?.material?.sy) this.plot.kind = "vm";
+    if (this.plot.kind === "sf" && !this.hasYield()) this.plot.kind = "vm";
     // the error estimate compares two passes
     if (this.plot.kind === "err" && r.pass < 2) this.plot.kind = "vm";
     const val = this.values(r, this.plot.kind), sf = this.plot.kind === "sf";
@@ -1368,6 +1399,20 @@ export class SimController {
     return { src: c.toDataURL("image/jpeg", 0.9), w: c.width, h: c.height, caption };
   }
 
+  /** The report's table of the materials bodies have of their own (nothing when no body has one). */
+  private bodyMatBlocks(doc: PartDoc, blocks: ReportBlock[]) {
+    const seen = new Set<string>(), rows: string[][] = [];
+    for (const b of Object.values(doc.bodies ?? {})) {
+      const q = b.material;
+      if (!q || q.name === doc.material?.name || seen.has(q.name)) continue;
+      seen.add(q.name);
+      rows.push([q.name, `${sig(q.E ?? NaN)} GPa`, sig(q.nu ?? NaN), `${sig(q.density)} g/cm³`, q.sy ? `${sig(q.sy)} MPa` : "–"]);
+    }
+    if (!rows.length) return;
+    blocks.push({ kind: "p", text: t("Bodies with their own material:") });
+    blocks.push({ kind: "table", widths: [4, 2, 2, 2, 2], rows: [[t("Name"), t("Elastic modulus"), t("Poisson's ratio"), t("Density"), t("Yield strength")], ...rows] });
+  }
+
   /** What the report says: the study, its set-up and the results of the last pass, in the UI language. */
   private reportOf(): SimReport | null {
     const doc = this.host.doc(), st = this.study(), res = this.res, last = res?.passes.at(-1);
@@ -1385,6 +1430,7 @@ export class SimController {
     blocks.push({ kind: "h", text: t("Material") });
     if (m) kv([[t("Name"), m.name], [t("Elastic modulus"), `${sig(m.E ?? NaN)} GPa`], [t("Poisson's ratio"), sig(m.nu ?? NaN)], [t("Density"), `${sig(m.density)} g/cm³`],
       ...(m.sy ? [[t("Yield strength"), `${sig(m.sy)} MPa`]] : [])]);
+    this.bodyMatBlocks(doc, blocks);
     blocks.push({ kind: "h", text: t("Supports") });
     if (st.settings.relief) blocks.push({ kind: "p", text: `${t("Inertia relief")}. ${t(RELIEF_NOTE)}` });
     else blocks.push({ kind: "table", widths: [3, 3, 2, 4], rows: [[t("Name"), t("Type"), t("Applied to"), t("Details")], ...st.supports.map(s => [name(s), t(SUPPORT_LABEL[s.type]), faces(s),
@@ -1422,7 +1468,8 @@ export class SimController {
       rows.push([t("Acceleration"), `${sig(Math.hypot(...last.accel.a) * 1e-3)} m/s² (${last.accel.a.map(x => sig(x * 1e-3)).join(", ")})`]);
       if (Math.hypot(...last.accel.alpha) > 1e-9) rows.push([t("Angular acceleration"), `${sig(Math.hypot(...last.accel.alpha))} rad/s² (${last.accel.alpha.map(x => sig(x)).join(", ")})`]);
     }
-    if (m?.sy && peak > 0) rows.push([t("Lowest safety factor (yield)"), sig(m.sy / peak)]);
+    const lowSf = this.lowSf(last, peak);
+    if (lowSf != null) rows.push([t("Lowest safety factor (yield)"), sig(lowSf)]);
     const errs = last.errors, eLast = errs.at(-1), eBefore = errs.length > 1 ? errs[errs.length - 2] : null;
     if (eLast != null) rows.push([t("Estimated error"), `≈ ${sig(eLast)} %`]);
     else if (eBefore != null) rows.push([t("Estimated error"), `< ${sig(eBefore)} %`]);
@@ -1430,7 +1477,7 @@ export class SimController {
     last.reactions.forEach((re, i) => rows.push([`${t("Reaction")} ${this.nameOf(res.ids[i] ?? "")}`, `${f(re.force)} N (${re.force.map(x => sig(x)).join(", ")})`]));
     kv(rows);
     const keep = { ...this.plot };
-    const kinds: PlotKind[] = ["vm", "u", ...(m?.sy ? ["sf" as PlotKind] : [])];
+    const kinds: PlotKind[] = ["vm", "u", ...(this.hasYield() ? ["sf" as PlotKind] : [])];
     for (const k of kinds) { const im = this.capture(k); if (im) blocks.push({ kind: "image", ...im }); }
     this.plot = keep;
     this.showPlot();
@@ -1465,6 +1512,7 @@ export class SimController {
       [t("Unknowns"), last.dofs.toLocaleString("en-US").replace(/,/g, " ")], [t("Time"), `${(res.ms / 1000).toFixed(1)} s`], [t("Mass"), `${sig((last.mass ?? 0) * 1000)} kg`]]);
     blocks.push({ kind: "h", text: t("Material") });
     if (m) kv([[t("Name"), m.name], [t("Elastic modulus"), `${sig(m.E ?? NaN)} GPa`], [t("Poisson's ratio"), sig(m.nu ?? NaN)], [t("Density"), `${sig(m.density)} g/cm³`]]);
+    this.bodyMatBlocks(doc, blocks);
     blocks.push({ kind: "h", text: t("Supports") });
     if (st.supports.length) blocks.push({ kind: "table", widths: [3, 3, 2, 4], rows: [[t("Name"), t("Type"), t("Applied to"), t("Details")], ...st.supports.map(s => [(s.name ?? s.id) + (off.has(s.id) ? ` (${t("left out")})` : ""), t(SUPPORT_LABEL[s.type]), this.pickText(s),
       s.type === "hinge" && s.axialFree ? t("Free to slide along the axis") : s.type === "dirs" ? ["X", "Y", "Z"].filter((_, i) => (s.dirs ?? [true, true, true])[i]).join(", ") : ""])] });
@@ -1570,6 +1618,7 @@ export class SimController {
     }
     const list = doc.studies ?? [];
     const m = doc.material, matOk = !!m && !!m.E && m.nu != null;
+    const ownMats = [...new Set(Object.values(doc.bodies ?? {}).map(b => b.material?.name).filter((n): n is string => !!n && n !== m?.name))];
     const off = new Set(st.suppressed ?? []);
     const row = (it: StudySupport | StudyLoad | StudyRefine, load: boolean) => {
       const bad = this.problems.get(it.id);
@@ -1588,7 +1637,8 @@ export class SimController {
         : `<b translate="no">${esc(st.name)}</b>`)
       + `<span class="muted" data-v="kind">${esc(st.kind === "modal" ? t("Modal") : t("Static"))}</span><button class="sim-ib" data-a="delstudy" title="${esc(t("Delete study"))}" aria-label="${esc(t("Delete study"))}">×</button></div>`;
     html += `<div class="sim-sec"><h4>${esc(t("Material"))}</h4><button class="pm-box${matOk ? "" : " sim-warn"}" data-a="mat">${m ? `<span translate="no">${esc(m.name)}</span>` : esc(t("No material"))}</button>`
-      + (m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`) + `</div>`;
+      + (m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`)
+      + (ownMats.length ? `<p class="sim-note muted sim-bodymats">${esc(t("Bodies with their own material:"))} <span translate="no">${esc(ownMats.join(", "))}</span></p>` : "") + `</div>`;
     const modal = st.kind === "modal";
     const relief = !modal && !!st.settings.relief;
     html += `<div class="sim-sec${relief ? " sim-relieved" : ""}"><h4>${esc(t("Supports"))}</h4><ul class="sim-list">${st.supports.map(s => row(s, false)).join("") || none(modal ? t("None: the part is free. Supports are optional here.") : relief ? t("None: the part is free.") : t("None yet: pick one in the Simulation tab."))}</ul>`
@@ -1652,8 +1702,8 @@ export class SimController {
       html += `<dt title="${esc(t("Inertia relief: the acceleration the loads give the free part"))}">${esc(t("Acceleration"))}</dt><dd data-v="accel" title="${last.accel.a.map(x => sig(x * 1e-3)).join(", ")} m/s²">${sig(Math.hypot(...last.accel.a) * 1e-3)} m/s²</dd>`;
       if (al > 1e-9) html += `<dt>${esc(t("Angular acceleration"))}</dt><dd data-v="alpha" title="${last.accel.alpha.map(x => sig(x)).join(", ")} rad/s²">${sig(al)} rad/s²</dd>`;
     }
-    const sy = this.host.doc()?.material?.sy;
-    if (sy && peak > 0) html += `<dt>${esc(t("Lowest safety factor (yield)"))}</dt><dd data-v="sf"${sy / peak < 1 ? ' class="sim-low"' : ""}>${sig(sy / peak)}</dd>`;
+    const lowSf = this.lowSf(last, peak);
+    if (lowSf != null) html += `<dt>${esc(t("Lowest safety factor (yield)"))}</dt><dd data-v="sf"${lowSf < 1 ? ' class="sim-low"' : ""}>${sig(lowSf)}</dd>`;
     const errs = last.errors, eLast = errs.at(-1), eBefore = errs.length > 1 ? errs[errs.length - 2] : null;
     if (eLast != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">${pct(eLast).startsWith("<") ? "" : "≈ "}${pct(eLast).replace("<", "&lt;")} %</dd>`;
     else if (eBefore != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">&lt; ${pct(eBefore).replace("< ", "")} %</dd>`;
@@ -1677,7 +1727,7 @@ export class SimController {
       if (!env) html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(this.study()?.settings.energyTol ?? 2), n: sig(last.change) })
         : t("One pass only: no convergence check."))}</p>`;
-      if (r.parts) html += `<p class="sim-note muted sim-bonded">${esc(t("The part's {n} bodies are analysed bonded: joined wherever they touch.", { n: r.parts }))}</p>`;
+      if (r.parts) html += `<p class="sim-note muted sim-bonded">${esc(t("The part's {n} bodies are analysed bonded: joined wherever they touch.", { n: r.parts }))}${r.bodyMats ? ` ${esc(t("Each body has its own material."))}` : ""}</p>`;
       html += `<p class="sim-note muted sim-assume">${esc(t(ASSUMPTIONS))}</p>`;
       if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button>`;
     }
@@ -1710,7 +1760,7 @@ export class SimController {
       const st = this.study();
       if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
       if (st) html += `<p class="sim-note muted">${esc(this.modalNote(st, last))}</p>`;
-      if (r.parts) html += `<p class="sim-note muted sim-bonded">${esc(t("The part's {n} bodies are analysed bonded: joined wherever they touch.", { n: r.parts }))}</p>`;
+      if (r.parts) html += `<p class="sim-note muted sim-bonded">${esc(t("The part's {n} bodies are analysed bonded: joined wherever they touch.", { n: r.parts }))}${r.bodyMats ? ` ${esc(t("Each body has its own material."))}` : ""}</p>`;
       html += `<p class="sim-note muted sim-assume">${esc(t(ASSUMPTIONS))}</p>`;
       if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button>`;
     }
@@ -1800,7 +1850,7 @@ export class SimController {
     const k = this.plot.kind, sf = k === "sf";
     const [unit, f] = this.plotUnit();
     const modes = r!.modes, mi = this.modeIndex(r);
-    const plots = PLOTS.filter(([id]) => modes ? MODE_PLOTS.includes(id) : (id !== "sf" || !!this.host.doc()?.material?.sy) && (id !== "err" || r!.pass > 1));
+    const plots = PLOTS.filter(([id]) => modes ? MODE_PLOTS.includes(id) : (id !== "sf" || this.hasYield()) && (id !== "err" || r!.pass > 1));
     const top = sf && this.range[1] >= SF_TOP ? `${SF_TOP}+` : sig(this.range[1] * f);
     const modeSel = modes ? `<label class="ana-row"><span>${esc(t("Mode shape"))}</span><select data-k="mode" aria-label="${esc(t("Mode shape"))}">${modes.map((m, i) => `<option value="${i}"${i === mi ? " selected" : ""}>${i + 1}: ${m.rigid ? esc(t("rigid body")) : `${sig(m.hz)} Hz`}</option>`).join("")}</select></label>` : "";
     el.innerHTML = modeSel + `<div class="ana-head"><select data-k="kind" aria-label="${esc(t("Result"))}">${plots.map(([id, l]) => `<option value="${id}"${id === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select>`

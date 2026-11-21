@@ -382,9 +382,9 @@ export class ModelKernel {
   }
 
   /** Structural analysis: the body the last rebuild made, as fine triangles with their face names, and its solid count. */
-  async simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts: number }> {
+  async simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts: number; regions?: { key: string; tris: Float64Array }[] }> {
     await this.start();
-    return this.call<{ geo: SimBody; solids: number; parts: number }>({ type: "simGeo", lin, ang });
+    return this.call<{ geo: SimBody; solids: number; parts: number; regions?: { key: string; tris: Float64Array }[] }>({ type: "simGeo", lin, ang });
   }
 
   async step(name: string, color: V3): Promise<Uint8Array> {

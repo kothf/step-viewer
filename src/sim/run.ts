@@ -357,6 +357,8 @@ export interface PassResult {
   mass?: number;
   /** A frequency range was asked for and the most modes allowed were found without passing its end: more may lie in it. */
   more?: boolean;
+  /** Bodies with different materials: the body (index into `RunInput.regions`) each sample point is in. */
+  dom?: Uint8Array;
 }
 
 export interface ModeInfo {
@@ -370,6 +372,12 @@ export interface ModeInfo {
 export interface RunInput {
   body: SimBody;
   mat: SimMaterial;
+  /**
+   * The part's bodies, each with its own closed surface (wound outwards) and material. Used when their
+   * materials differ: every body then keeps its own stiffness and density, joined to the others where they
+   * touch. `body` stays the whole part (its faces are what supports and loads name), `mat` is not used then.
+   */
+  regions?: { tris: Float64Array; mat: SimMaterial }[];
   problem: StudyProblem;
   passes: number;
   /** Energy change target, %. */
@@ -477,7 +485,16 @@ export function envelope(cases: PassResult[]): PassResult {
 }
 
 /** Reads a solution anywhere in the body: what the worker keeps of the last pass (FR-RES-030). */
-export type Sampler = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean) => { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array };
+export type Sampler = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean) => { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; dom?: Uint8Array };
+
+/** The solver's domains for bodies whose materials differ; undefined when one material serves the whole part. */
+export function domainsOf(inp: RunInput) {
+  const R = inp.regions;
+  if (!R || R.length < 2) return undefined;
+  const a = R[0].mat;
+  if (R.every(r => r.mat.E === a.E && r.mat.nu === a.nu && r.mat.rho === a.rho)) return undefined;
+  return R.map(r => ({ inside: insideOf(new MeshBody(r.tris)), mat: { E: r.mat.E, nu: r.mat.nu, rho: r.mat.rho }, tris: r.tris }));
+}
 /** `solid` (asked for): 1 where the point is inside the body itself, not only in one of its cells. */
 export interface SampleResult { u: Float32Array; vm: Float32Array; err: Float32Array; hit: Uint8Array; solid?: Uint8Array }
 
@@ -511,7 +528,8 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
   if (inp.problem.problems.length) throw new Error(`${inp.problem.problems[0].code}: ${inp.problem.problems[0].id}`);
   if (!inp.problem.loads.length && !inp.problem.gravity && !inp.problem.spin?.omega && !inp.problem.spin?.alpha && !inp.problem.fixed.some(s => s.value)) throw new Error("E-SIM-NOLOAD");
   if (!inp.problem.fixed.length && !inp.problem.relief) throw new Error("E-SIM-FREE: 6");
-  if (inp.problem.relief && !(inp.mat.rho > 0)) throw new Error("E-SIM-DENSITY");
+  const domains = domainsOf(inp);
+  if (inp.problem.relief && !(domains ? domains.every(d => d.mat.rho > 0) : inp.mat.rho > 0)) throw new Error("E-SIM-DENSITY");
   const body = new MeshBody(inp.body.tris);
   const inside = insideOf(body);
   const h = cellSize(inp.body, inp.cells);
@@ -523,7 +541,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
   // local accuracy asked for by the user: those elements run ahead of the others from the first pass on
   let boost: Int8Array | undefined;
   if (inp.problem.refine?.length) {
-    grid = makeGrid(inp.body.lo, inp.body.hi, h, inside, { q: 3, depth: 3, fit: 5 });
+    grid = makeGrid(inp.body.lo, inp.body.hi, h, inside, { q: 3, depth: 3, fit: 5, domains: domains?.map(d => d.inside) });
     boost = boostOf(grid, inp.problem.refine);
     if (!boost.some(v => v > 0)) boost = undefined;
   }
@@ -544,7 +562,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
       for (let e = 0; e < degrees.length; e++) p = Math.max(p, degrees[e]);
     }
     const r = solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin, relief: inp.problem.relief,
     });
@@ -555,7 +573,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     if (r.prevError != null) known.push(r.prevError);
     const errors: (number | null)[] = [...known, passError(known)];
     keep?.(r.sample, inside);
-    const { u, vm, err } = r.sample(inp.pos, inp.nrm);
+    const { u, vm, err, dom } = r.sample(inp.pos, inp.nrm);
     let maxU = 0, maxVm = 0;
     for (let i = 0; i < vm.length; i++) {
       maxVm = Math.max(maxVm, vm[i]);
@@ -564,7 +582,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     const change = k ? (Math.abs(r.energy - last) / Math.abs(r.energy || 1)) * 100 : null;
     last = r.energy;
     const converged = change != null && change <= inp.energyTol;
-    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
+    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
     if (converged) return;
   }
 }
@@ -575,7 +593,8 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
  */
 export function* runModal(inp: RunInput): Generator<PassResult> {
   if (inp.problem.problems.length) throw new Error(`${inp.problem.problems[0].code}: ${inp.problem.problems[0].id}`);
-  if (!(inp.mat.rho > 0)) throw new Error("E-SIM-DENSITY");
+  const domains = domainsOf(inp);
+  if (!(domains ? domains.every(d => d.mat.rho > 0) : inp.mat.rho > 0)) throw new Error("E-SIM-DENSITY");
   const body = new MeshBody(inp.body.tris);
   const inside = insideOf(body);
   const h = cellSize(inp.body, inp.cells);
@@ -587,7 +606,7 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now(), p = k + 2;
     const solve = () => solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: [], modal: { count, start },
     });
