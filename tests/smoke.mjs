@@ -17296,6 +17296,63 @@ try {
       && !k2s.error && k2s.conns[0].spring && Math.abs(k2s.conns[0].stretch / 0.2 - 1) < 0.03 && k2s.maxU > k1s.maxU + 0.15
       && kTree.rows === 1 && Math.abs(kTree.force / 500 - 1) < 0.02 && kTree.wide <= 0 && kRu.length === 0 && !k3s.connList?.length,
       `sim 1.640: a rigid connector carries the whole load between bars that are not joined, and as a spring it gives force over stiffness; translated (${JSON.stringify({ list: kc0.connList, error: [k1s.error, k2s.error], conns: [k1s.conns, k2s.conns], maxU: [k1s.maxU, k2s.maxU], kTree, kRu })})`);
+    // SA4: the joined bars solved again are compared with the result before; a modal study of the assembly, and a copy with a mass
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const v0 = await sim();
+    const vTab = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#sim-tree table.sim-cmptable tr[data-cmp]")].map(r => r.dataset.cmp), opts: [...document.querySelectorAll('#sim-tree select[data-k="cmp"] option')].map(o => o.value) }));
+    const vStatic = v0.study;
+    await mp.click('#sim-tools [data-s="newmodal"]');
+    await mp.waitForTimeout(400);
+    await mp.keyboard.press("Escape");
+    await mp.click('#sim-tools [data-s="fixed"]');
+    p = await at(0, 1, -1);
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(250);
+    await mp.click("#sim-pm .pm-ok");
+    await mp.waitForTimeout(400);
+    await mp.selectOption('#sim-tree [data-k="passes"]', "2");
+    await mp.waitForTimeout(200);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const v1 = await sim();
+    const vNone = await mp.evaluate(() => !!document.querySelector('#sim-tree [data-v="cmpnone"]'));
+    await mp.click('#sim-tree [data-a="dupstudy"]');
+    await mp.waitForTimeout(400);
+    const v2 = await sim();
+    await mp.click('#sim-tools [data-s="mass"]');
+    await mp.waitForSelector('#sim-pm [data-q="mass"]');
+    p = await at(1, 2, 1);
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(250);
+    await mp.fill('#sim-pm [data-q="mass"]', "1");
+    await mp.keyboard.press("Tab");
+    await mp.click("#sim-pm .pm-ok");
+    await mp.waitForTimeout(400);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    await mp.selectOption('#sim-tree select[data-k="cmp"]', v1.study);
+    await mp.waitForTimeout(300);
+    const v3 = await sim();
+    await mp.click("#lang-btn");
+    const vRu = await mp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-cmptable *, #tab-sim select[data-k=cmp], #tab-sim .sim-head button")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => (e.textContent.trim() || e.title || "")).filter(x => /[A-Za-z]{4}/.test(x)));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    const vWide = await mp.evaluate(() => document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth);
+    const vf = s => s.modes.find(m => !m.rigid)?.hz ?? 0;
+    // back to the static study, the copies deleted
+    for (const id of [v3.study, v1.study]) {
+      await mp.selectOption('#sim-tree select[data-k="study"]', id);
+      await mp.waitForTimeout(300);
+      await mp.click('#sim-tree [data-a="delstudy"]');
+      await mp.waitForTimeout(400);
+    }
+    const v4 = await sim();
+    check(!v0.error && v0.compare?.with === "prev" && vTab.opts[0] === "prev" && vTab.rows.join() === v0.compare.rows.map(r => r.key).join() && vTab.rows.includes("maxvm") && vTab.rows.includes("maxu")
+      && !v1.error && v1.asm && v1.kind === "modal" && vf(v1) > 0 && vNone && v2.study !== v1.study
+      && !v3.error && v3.compare?.with === v1.study && Math.abs(v3.compare.rows[0].a - v3.compare.rows[0].b - 1) < 0.01 && v3.compare.rows[1].key === "f1" && v3.compare.rows[1].change < -5 && vf(v3) < vf(v1)
+      && vRu.length === 0 && vWide <= 0 && v4.study === vStatic,
+      `sim 1.641: an assembly's modal study finds its frequencies; a copy of the study with a mass is compared with it, and a result with the one before the last change; translated (${JSON.stringify({ error: [v0.error, v1.error, v3.error], prev: v0.compare, vTab, f: [vf(v1), vf(v3)], vNone, compare: v3.compare, vRu, vWide, back: [v4.study, vStatic] })})`);
     // left out: the load on it can no longer be solved, and the message says why; the last component cannot be left out
     await mp.uncheck('#sim-tree .sim-complist li[data-comp="c2"] [data-k="compon"]');
     await mp.waitForTimeout(400);

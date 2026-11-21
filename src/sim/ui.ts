@@ -30,6 +30,7 @@ import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
 import type { SectionManager } from "../viewer/Section";
 import { nearExcitation, parseExcitation } from "./excite";
+import { compareRows, noteSummary, parseSummaries, type CompareRow, type Summary, type SummaryStore } from "./compare";
 import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, type PathRow } from "./path";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, envelope, positiveAxis, studyProblem, withoutFaces, type PassResult, type SimBody } from "./run";
@@ -239,6 +240,11 @@ export class SimController {
   /** Mode animation speed (1 = one swing in `MODE_PERIOD`) and whether the mode table adds the effective masses up; view only. */
   private speed = 1;
   private cumul = false;
+  /** Peak values of the studies' last results (and the ones before the last change), kept per document in localStorage. */
+  private sums: SummaryStore = {};
+  private sumsDoc = "";
+  /** What each study is compared with: "prev" or another study's id (view only). */
+  private cmpSel: Record<string, string> = {};
   /** The load case shown (index into the results' cases); -1 = the envelope of them all. */
   private caseSel = -1;
   private errorIn = "";
@@ -427,7 +433,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -483,6 +489,7 @@ export class SimController {
     this.caseSel = -1; this.compSel = -1;
     this.applyCase();
     this.cacheHits++;
+    this.noteResult();
     this.plot.on = false;
     this.syncProbes();
     this.syncPath();
@@ -877,6 +884,7 @@ export class SimController {
       if (!whole && made?.cases && this.res === made) { this.res = null; this.clearPlot(); }
     } finally {
       this.running = false;
+      if (whole) this.noteResult();
       this.renderAll();
       this.drawMarks();
     }
@@ -2163,6 +2171,7 @@ export class SimController {
     blocks.push({ kind: "p", muted: true, text: last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
       : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(st.settings.energyTol), n: sig(last.change) })
       : t("One pass only: no convergence check.") });
+    this.compareBlocks(blocks);
     blocks.push({ kind: "h", text: t("Assumptions") });
     blocks.push({ kind: "p", text: t(ASSUMPTIONS) });
     return { title: t("Structural analysis report"), sub: `${doc.name} · ${st.name} · ${new Date().toLocaleString(lang())} · MöbiusCAD ${__APP_VERSION__}`, blocks };
@@ -2203,6 +2212,7 @@ export class SimController {
     blocks.push({ kind: "table", widths: [1, 2, 2, 2], rows: [[t("Pass"), t("Unknowns"), t("Frequency change"), t("Time")],
       ...res.passes.map(p => [String(p.pass), p.dofs.toLocaleString("en-US").replace(/,/g, " "), p.change == null ? "–" : `${sig(p.change)} %`, `${(p.ms / 1000).toFixed(1)} s`])] });
     blocks.push({ kind: "p", muted: true, text: this.modalNote(st, last) });
+    this.compareBlocks(blocks);
     blocks.push({ kind: "h", text: t("Assumptions") });
     blocks.push({ kind: "p", text: t(ASSUMPTIONS) });
     return { title: t("Structural analysis report"), sub: `${doc.name} · ${st.name} · ${new Date().toLocaleString(lang())} · MöbiusCAD ${__APP_VERSION__}`, blocks };
@@ -2300,7 +2310,7 @@ export class SimController {
     let html = `<div class="sim-head">`
       + (list.length > 1 ? `<select data-k="study" aria-label="${esc(t("Study"))}" translate="no">${list.map(s => `<option value="${s.id}"${s.id === st.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`
         : `<b translate="no">${esc(st.name)}</b>`)
-      + `<span class="muted" data-v="kind">${esc(st.kind === "modal" ? t("Modal") : t("Static"))}</span><button class="sim-ib" data-a="delstudy" title="${esc(t("Delete study"))}" aria-label="${esc(t("Delete study"))}">×</button></div>`;
+      + `<span class="muted" data-v="kind">${esc(st.kind === "modal" ? t("Modal") : t("Static"))}</span><button class="sim-ib" data-a="dupstudy" title="${esc(t("Duplicate study"))}" aria-label="${esc(t("Duplicate study"))}">⧉</button><button class="sim-ib" data-a="delstudy" title="${esc(t("Delete study"))}" aria-label="${esc(t("Delete study"))}">×</button></div>`;
     if (this.host.asm()) html += this.compsHtml(st) + this.boltsHtml(st)
       + (st.welds?.length ? `<div class="sim-sec sim-welds"><h4>${esc(t("Welds"))}</h4><p class="sim-note muted">${esc(t(WELD_NOTE))}</p><ul class="sim-list">${st.welds.map(w => row(w, false)).join("")}</ul></div>` : "")
       + this.linksHtml(st);
@@ -2336,6 +2346,67 @@ export class SimController {
       + (st.refine?.length ? `<ul class="sim-list sim-refs">${st.refine.map(r => row(r, false)).join("")}</ul>` : "") + `</div>`;
     html += `<div class="sim-sec sim-res" aria-live="polite"><h4>${esc(t("Results"))}</h4>${this.resultsHtml()}</div>`;
     el.innerHTML = html;
+  }
+
+  private sumStore(): SummaryStore {
+    const id = this.host.doc()?.id ?? "";
+    if (id !== this.sumsDoc) {
+      this.sumsDoc = id; this.sums = {};
+      try { this.sums = parseSummaries(localStorage.getItem(`mc:simSum:${id}`)); } catch { /* no storage */ }
+    }
+    return this.sums;
+  }
+  /** Keeps the shown results' peak values, so that a later result or another study can be compared with them (FR-STU-023). */
+  private noteResult() {
+    const st = this.study(), r = this.res, last = r?.passes.at(-1);
+    if (!st || !r || !last || r.study !== st.id || this.running) return;
+    let h = 5381;
+    for (let i = 0; i < r.key.length; i++) h = ((h << 5) + h + r.key.charCodeAt(i)) | 0;
+    const base = { name: st.name, key: String(h >>> 0), at: Date.now() };
+    let s: Summary;
+    if (last.modes) s = { ...base, kind: "modal", mass: (last.mass ?? 0) * 1000, freqs: last.modes.filter(m => !m.rigid).map(m => m.hz) };
+    else {
+      const hs = this.hotList(), real = hs.some(x => x.singular) ? hs.find(x => !x.singular) : undefined;
+      s = { ...base, kind: "static", maxU: last.maxU, maxVm: last.maxVm, sf: this.lowSf(last, real?.vm ?? last.maxVm) };
+    }
+    this.sums = noteSummary(this.sumStore(), st.id, s);
+    try { localStorage.setItem(`mc:simSum:${this.sumsDoc}`, JSON.stringify(this.sums)); } catch { /* no storage */ }
+  }
+  /** What the shown results can be compared with, and the pick. */
+  private compareWith(st: Study): { opts: { v: string; label: string; s: Summary }[]; sel: string; mine: Summary | null } {
+    const store = this.sumStore(), me = store[st.id], kind = st.kind === "modal" ? "modal" : "static";
+    const opts: { v: string; label: string; s: Summary }[] = [];
+    if (me?.before && me.before.kind === kind) opts.push({ v: "prev", label: t("Before the last change"), s: me.before });
+    for (const o of this.host.doc()?.studies ?? []) { const n = store[o.id]?.now; if (o.id !== st.id && n && n.kind === kind) opts.push({ v: o.id, label: o.name, s: n }); }
+    const want = this.cmpSel[st.id];
+    return { opts, sel: opts.some(o => o.v === want) ? want : opts[0]?.v ?? "", mine: me?.now && me.now.kind === kind ? me.now : null };
+  }
+  private compareLabel(k: string) { return k === "maxvm" ? t("von Mises stress") : k === "maxu" ? t("Displacement") : k === "sf" ? t("Safety factor") : k === "mass" ? t("Mass") : t("Mode {n}", { n: k.slice(1) }); }
+  private compareValue(k: string, v: number | null) { return v == null ? "–" : k === "maxvm" ? `${sig(v)} MPa` : k === "maxu" ? this.lenText(v) : k === "sf" ? sig(v) : k === "mass" ? `${sig(v)} kg` : `${sig(v)} Hz`; }
+  private compareChange(r: CompareRow) { return r.change == null ? "–" : Math.abs(r.change) < 0.05 ? "0 %" : `${r.change > 0 ? "+" : "−"}${Math.abs(r.change) < 10 ? Math.abs(r.change).toFixed(1) : Math.abs(r.change).toFixed(0)} %`; }
+  private compared(): { with: string; label: string; rows: CompareRow[] } | null {
+    const st = this.study();
+    if (!st || !this.res || this.running || this.stale()) return null;
+    const c = this.compareWith(st), o = c.opts.find(x => x.v === c.sel);
+    return c.mine && o ? { with: o.v, label: o.label, rows: compareRows(c.mine, o.s) } : null;
+  }
+  /** This result beside another study's, or beside this study's own before the last change. */
+  private compareHtml(): string {
+    const st = this.study();
+    if (!st || !this.res || this.running || this.stale()) return "";
+    const c = this.compareWith(st), cmp = this.compared();
+    let html = `<h5 class="sim-sub">${esc(t("Compare"))}</h5>`;
+    if (!cmp) return html + `<p class="sim-note muted" data-v="cmpnone">${esc(t("Nothing to compare with yet: solve another study of this kind, or change the model and solve again."))}</p>`;
+    html += `<label class="pm-field"><span>${esc(t("With"))}</span><select data-k="cmp">${c.opts.map(o => `<option value="${esc(o.v)}"${o.v === c.sel ? " selected" : ""}${o.v === "prev" ? "" : ' translate="no"'}>${esc(o.label)}</option>`).join("")}</select></label>`;
+    html += `<table class="sim-passes sim-cmptable"><thead><tr><th></th><th>${esc(t("This"))}</th><th>${esc(t("Other"))}</th><th>${esc(t("Difference"))}</th></tr></thead><tbody>`
+      + cmp.rows.map(r => `<tr data-cmp="${r.key}"><td>${esc(this.compareLabel(r.key))}</td><td>${esc(this.compareValue(r.key, r.a))}</td><td>${esc(this.compareValue(r.key, r.b))}</td><td data-v="cmpchange">${esc(this.compareChange(r))}</td></tr>`).join("") + `</tbody></table>`;
+    return html;
+  }
+  private compareBlocks(blocks: ReportBlock[]) {
+    const cmp = this.compared();
+    if (!cmp) return;
+    blocks.push({ kind: "h", text: t("Compare") });
+    blocks.push({ kind: "table", widths: [4, 3, 3, 2], rows: [["", t("This"), `${t("Other")}: ${cmp.label}`, t("Difference")], ...cmp.rows.map(r => [this.compareLabel(r.key), this.compareValue(r.key, r.a), this.compareValue(r.key, r.b), this.compareChange(r)])] });
   }
 
   private lenText(mm: number) { return `${sig(mm * UNITS[units.current].f)} ${units.current}`; }
@@ -2394,6 +2465,7 @@ export class SimController {
     html += this.boltTableHtml() + this.weldTableHtml() + this.connTableHtml();
     html += this.probesHtml();
     html += this.pathHtml();
+    html += this.compareHtml();
     if (!this.running) {
       if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
       if (!env) html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
@@ -2428,6 +2500,7 @@ export class SimController {
     if (rigid) html += `<p class="sim-note muted sim-rigid">${esc(t("{n} mode at 0 Hz is a motion of the whole part: the supports leave it free.|{n} modes at 0 Hz are motions of the whole part: the supports leave it free.", { n: rigid }))}</p>`;
     html += `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Frequency change"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
       + r.passes.map(p => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`;
+    html += this.compareHtml();
     if (!this.running) {
       const st = this.study();
       if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
@@ -2632,6 +2705,16 @@ export class SimController {
         if (set.has(id)) set.delete(id); else set.add(id);
         if (set.size) s.suppressed = [...set]; else delete s.suppressed;
       });
+    } else if (a === "dupstudy" && st) {
+      const list = this.host.doc()?.studies ?? [], blank = newStudy(list, st.kind === "modal" ? "modal" : "static");
+      let k = 2;
+      while (list.some(x => x.name === `${st.name} (${k})`)) k++;
+      const copy: Study = { ...(JSON.parse(JSON.stringify(st)) as Study), id: blank.id, name: `${st.name} (${k})` };
+      this.client.cancel();
+      this.edit = null; this.res = null; this.error = null; this.probes = []; this.probeKey = ""; this.probing = false;
+      this.clearPlot();
+      this.activeId = copy.id;
+      this.host.change(t("Duplicate study"), d => { (d.studies ??= []).push(copy); });
     } else if (a === "delstudy" && st) {
       this.client.cancel();
       this.edit = null; this.res = null; this.error = null; this.probes = []; this.probeKey = ""; this.probing = false;
@@ -2705,6 +2788,7 @@ export class SimController {
     }
     else if (el.dataset.k === "relief") this.host.change(t("Inertia relief"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) { if (el.checked) s.settings.relief = true; else delete s.settings.relief; } });
     else if (el.dataset.k === "case") this.pickCase(Number(el.value));
+    else if (el.dataset.k === "cmp") { const s = this.study(); if (s) { this.cmpSel[s.id] = el.value; this.renderTree(); } }
     else if (el.dataset.k === "cname" || el.dataset.k === "cload") {
       const cid = el.closest<HTMLElement>("[data-c]")?.dataset.c, cur = st.cases?.find(c => c.id === cid), lid = el.dataset.l ?? "";
       if (!cur) return;

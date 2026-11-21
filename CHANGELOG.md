@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.641.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **modal studies of assemblies** (SA4). **Modal study** on the Simulation tab of an assembly finds the natural frequencies and mode shapes of the components vibrating together, through the same connections, bolts, welds, connectors and masses as a static study.
+- Structural analysis: **Compare** (FR-STU-023). The end of a study's results puts them beside another solved study of the same kind, or beside this study's own result before the last change: highest stress, displacement and safety factor, or mass and the first six natural frequencies, with the difference in per cent. The comparison is in the report too.
+- **Duplicate study** (⧉ next to the study's name) copies a study with its supports, loads and settings, to try a change and compare.
+
 ## [1.640.0] - 2026-11-21
 
 ### Added
@@ -4165,7 +4173,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.640.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.641.0...HEAD
+[1.641.0]: https://github.com/kothf/step-viewer/compare/v1.640.0...v1.641.0
 [1.640.0]: https://github.com/kothf/step-viewer/compare/v1.639.0...v1.640.0
 [1.639.0]: https://github.com/kothf/step-viewer/compare/v1.638.0...v1.639.0
 [1.638.0]: https://github.com/kothf/step-viewer/compare/v1.637.0...v1.638.0

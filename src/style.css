@@ -1726,6 +1726,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-cases > .btn { margin-top: 6px; }
 .sim-casetable tbody tr { cursor: pointer; }
 .sim-casetable tbody tr.sel { font-weight: 600; }
+.sim-cmptable th:first-child, .sim-cmptable td:first-child { text-align: left; white-space: normal; overflow-wrap: anywhere; font-family: inherit; }
+.sim-cmptable td { white-space: normal; overflow-wrap: anywhere; }
 .sim-comptable { table-layout: fixed; width: 100%; }
 .sim-comptable th:first-child { width: 38%; }
 .sim-comptable th:first-child, .sim-comptable td:first-child { text-align: left; }
