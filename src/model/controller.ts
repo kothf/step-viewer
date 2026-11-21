@@ -21,6 +21,7 @@ import type { Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, PartData } from "../topology";
 import { edgeLoop, sameEdges, tangentChain } from "./chain";
 import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
+import { hasHolePoints, syncHole, syncHoleSketches } from "./holePos";
 import { canCopy, copyClip, pasteClip, type Clip } from "./paste";
 import { activate, addConfig, applyConfigTable, configTable, nextConfigName, removeConfig, renameConfig } from "./configs";
 import { download } from "../tools/exporters";
@@ -170,7 +171,7 @@ type Mode =
 /** Features that take a Feature scope (FR-FT-007). */
 type ScopedFeature = ExtrudeFeature | RevolveFeature | SweepFeature | LoftFeature | HoleFeature;
 const isScoped = (f: Feature): f is ScopedFeature => f.type === "extrude" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "hole";
-type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours" | "skip" | "pref" | "pref2" | "scope" | "smvertex";
+type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "hsketch" | "pts" | "nplane" | "sbv" | "contours" | "skip" | "pref" | "pref2" | "scope" | "smvertex";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature | FlexFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
@@ -807,6 +808,8 @@ export class ModelController {
       // Equations: every change re-evaluates the kept expressions (FR-PAR-002/003).
       this.store.normalize = d => {
         refreshExprs(d, units.current);
+        // Holes placed by sketch points follow their sketch.
+        syncHoleSketches(d);
         // Folders and the freeze bar follow the features: gone ids drop out, empty folders go.
         const have = new Set(d.features.map(f => f.id));
         if (d.folders) { for (const g of d.folders) g.ids = g.ids.filter(x => have.has(x)); d.folders = d.folders.filter(g => g.ids.length); if (!d.folders.length) delete d.folders; }
@@ -889,6 +892,8 @@ export class ModelController {
       const sk = this.store!.feature(m.id);
       if (!sk || sk.type !== "sketch") { this.exitMode(false); void this.rebuild(); }
       else if (why === "undo" || why === "redo") m.editor.setSketch(sk, this.frameOf(sk));
+      // A hole waiting on this sketch previews live: the holes follow each point and dimension.
+      if (sk && this.holeParked?.sketch === m.id) { clearTimeout(this.holeSkTimer); this.holeSkTimer = window.setTimeout(() => { const mm = this.mode; if (mm.kind === "sketch" && mm.id === m.id) void this.rebuild(); }, 120); }
       this.renderPanel();
     } else if (m.kind === "feature" && (why === "undo" || why === "redo")) {
       this.exitMode(false);
@@ -918,6 +923,15 @@ export class ModelController {
     if (m.kind === "sketch") {
       const i = d.features.findIndex(f => f.id === m.id);
       d.rollback = i + 1;
+      // The hole waiting on its position sketch shows behind it, so the holes move as points are placed and dimensioned.
+      const park = this.holeParked?.sketch === m.id ? this.holeParked : null;
+      if (park && i >= 0) {
+        const h = structuredClone(park.draft);
+        h.sketch = m.id;
+        syncHole(d, h);
+        const j = park.isNew ? -1 : d.features.findIndex(f => f.id === h.id);
+        if (j > i) { d.features[j] = h; d.rollback = j + 1; } else if (h.pts.length || h.spots?.length) { d.features.splice(i + 1, 0, h); d.rollback = i + 2; }
+      }
     } else if (m.kind === "plane" && m.edit) {
       // Edit sketch plane: rolled back to the sketch, which shows on the plane picked so far.
       const i = d.features.findIndex(f => f.id === m.edit!.id);
@@ -1172,7 +1186,7 @@ export class ModelController {
     await this.editSketch(id, before, true, mark, project);
   }
 
-  async editSketch(id: string, entry = JSON.stringify(this.doc), isNew = false, mark = this.store?.mark() ?? 0, project?: { ed: EdgeInfo; ref: EdgeRef | null }[]) {
+  async editSketch(id: string, entry = JSON.stringify(this.doc), isNew = false, mark = this.store?.mark() ?? 0, project?: { ed: EdgeInfo; ref: EdgeRef | null }[], turn = true) {
     const sk = this.store?.feature(id);
     if (!sk || sk.type !== "sketch") return;
     if (!isNew && this.isFrozen(id)) { this.frozenToast(); return; }
@@ -1253,7 +1267,7 @@ export class ModelController {
       m.editor.setSketch(this.store!.feature(id) as SketchFeature, f);
       if (project?.length) m.editor.projectEdges(project);
       // Normal to the sketch, framing the model and the whole sketch, which may reach past the body (exam #96).
-      if (getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n), true, m.editor.sketchBox());
+      if (turn && getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n), true, m.editor.sketchBox());
     }
   }
 
@@ -1410,6 +1424,9 @@ export class ModelController {
       const fid = shellFace;
       const face = fid != null ? this.host.viewer.parts[0]?.data.faces[fid] : undefined;
       if (fid != null && face?.type === "plane") { const pr = this.planeOfFace(fid); if (pr) h.plane = pr; }
+      // A sketch with points selected first places the holes (Hole Wizard on existing sketch points).
+      const psk = this.selected ? this.store!.feature(this.selected) : undefined;
+      if (psk?.type === "sketch" && hasHolePoints(psk)) { h.sketch = psk.id; syncHole(d, h); }
       draft = h;
     } else if (type === "thread") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
@@ -1623,8 +1640,10 @@ export class ModelController {
     if (m.kind === "sketch") {
       if (m.editor.sk.editBlock) m.editor.finishEditBlock();
       const sk = this.store!.feature(m.id);
+      const park = this.holeParked?.sketch === m.id ? this.holeParked : null;
       this.exitMode(true);
       if (sk) this.store!.collapse(this.sketchMark, m.isNew ? `Add ${sk.name}` : `Edit ${sk.name}`);
+      if (park) { this.resumeHole(park); return; }
       this.renderBar();
       void this.rebuild();
       // Extrude/Cut/Revolve started with no sketch to use: the new sketch goes straight into it, as in other CAD apps.
@@ -1738,6 +1757,9 @@ export class ModelController {
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
       if (m.isNew && d.rollback != null) d.rollback++;
     });
+    // A hole and the position sketch made or edited in its command are one undo step.
+    if (f.type === "hole" && this.holeCmd?.id === f.id) { this.store!.collapse(this.holeCmd.mark, m.isNew ? `Add ${f.name}` : `Edit ${f.name}`); }
+    if (f.type === "hole") this.holeCmd = null;
     // After OK nothing stays selected (FR-SEL-012), as in other CAD apps: the new feature's faces are not lit.
     this.selected = null;
     this.clearDecor();
@@ -1818,23 +1840,31 @@ export class ModelController {
     if (m.kind === "sketch") {
       const changed = JSON.stringify(this.doc) !== m.entry;
       if (changed && !(await confirmModal(t("Discard the changes made to this sketch?"), t("Discard"), t("Exit sketch")))) return;
+      const park = this.holeParked?.sketch === m.id ? this.holeParked : null;
       this.exitMode(false);
       if (changed) {
         const entry = JSON.parse(m.entry) as PartDoc;
         this.store!.change("Discard sketch changes", d => { d.features = entry.features; d.rollback = entry.rollback; });
-      } else void this.rebuild();
+      } else if (!park) void this.rebuild();
+      if (park) this.resumeHole(park);
       return;
     }
     if (m.kind === "none") return;
     // Cancel leaves no selection either (FR-SEL-012).
     if (m.kind === "feature") this.selected = null;
     this.exitMode(false);
+    // A hole command takes its position sketch (made or edited in it) away with it.
+    const hc = m.kind === "feature" && m.draft.type === "hole" && this.holeCmd?.id === m.draft.id ? this.holeCmd : null;
+    if (m.kind === "feature" && m.draft.type === "hole") this.holeCmd = null;
+    if (hc && this.store!.discardSince(hc.mark)) return;
     void this.rebuild();
   }
 
   private exitMode(_keep: boolean) {
     const m = this.mode;
     if (m.kind === "sketch") {
+      if (this.holeParked?.sketch === m.id) this.holeParked = null;
+      clearTimeout(this.holeSkTimer);
       m.editor.dispose();
       $("#mc-status").textContent = "";
       document.getElementById("app")!.classList.remove("sketching");
@@ -1919,6 +1949,14 @@ export class ModelController {
   /** Hole panel tab (view-only) and the draft it belongs to: a new hole panel opens on Type. */
   private holeTab: "type" | "pos" = "type";
   private holeTabOf?: HoleFeature;
+  /**
+   * A hole command waiting while its position sketch is edited (Hole Wizard Positions): the draft, where it goes,
+   * the sketch it waits on, and what it used before (so ✕ on the sketch puts it back).
+   */
+  private holeParked: { draft: HoleFeature; isNew: boolean; index: number; base: number; sketch: string; prev?: string } | null = null;
+  /** The open hole command's first undo mark: ✓ folds the position sketch and the hole into one step, ✕ throws both away. */
+  private holeCmd: { id: string; mark: number } | null = null;
+  private holeSkTimer = 0;
   /** Folders collapsed in the tree (view state, not saved). */
   private closedFolders = new Set<string>();
   /** Features whose absorbed sketch rows are folded away (view state, FR-HIS-013). */
@@ -4595,16 +4633,19 @@ export class ModelController {
       this.draftChanged();
       return;
     }
-    if (m.focus === "hplane" || !f.plane) {
+    if ((m.focus === "hplane" && !f.sketch) || (!f.plane && !f.sketch)) {
       const r = this.pickRef(e);
       if (!r || ("face" in r && own(r.face.name))) return;
       f.plane = r;
       f.pts = [];
       m.focus = "pts";
-      // The first click on a face also places the first hole there.
+      // The first click on a face opens the hole's position sketch there with a point where it was clicked
+      // (a CAD app's Hole Wizard Positions), so the holes can be dimensioned.
       const hit = this.host.faceAt(e.clientX, e.clientY);
-      this.pendingHole = hit && "face" in r ? [{ p: hit.point, at: { clientX: e.clientX, clientY: e.clientY } }] : [];
-      this.draftChanged();
+      // Snapped as later clicks are (origin, vertices, centres on the face): the face's plane stands in for the sketch frame.
+      const fc = hit ? this.host.viewer.parts[0]?.data.faces[hit.faceId] : undefined;
+      const sn = hit && fc?.normal ? this.holeSnap(e, { o: fc.centroid, n: fc.normal, x: [1, 0, 0], y: [0, 1, 0] }) : null;
+      void this.holePositions(hit && "face" in r ? sn ?? hit.point : undefined);
       return;
     }
     const hit = this.host.faceAt(e.clientX, e.clientY);
@@ -4613,6 +4654,8 @@ export class ModelController {
     // A face other than the hole's face (FR-FT-052): a hole there, square to that face where it was clicked (curved faces too).
     const other = f.plane && "face" in f.plane ? this.faceRef(hit.faceId) : null;
     if (other && !other.name.startsWith(`${f.id}:`) && "face" in f.plane! && other.name !== f.plane.face.name) { this.toggleSpot(f, other, hit.point); return; }
+    // On the hole's face: into the position sketch, with a point here.
+    if (fr) { void this.holePositions(this.holeSnap(e, fr) ?? hit.point); return; }
     // Clicks made before the plane's frame arrives are placed once it does.
     if (!fr || this.pendingHole.length) { this.pendingHole.push({ p: hit.point, at: { clientX: e.clientX, clientY: e.clientY } }); return; }
     this.placeHole(f, this.holeSnap(e, fr) ?? hit.point, fr);
@@ -4671,7 +4714,7 @@ export class ModelController {
     const len = (v: number) => trimNum(v * fu, Math.max(dec, 2)), ang = (v: number) => trimNum(v, 2);
     const s = holeSection(f), lines = holeCallout(f, len, ang, x => t(x), holeCount(f));
     return `<div class="pm-hpreview" data-hpreview>${s ? holeDiagram(s) : ""}<div class="pm-hcallout" translate="no" aria-label="${esc(t("Callout"))}">${lines.map(l => `<div>${esc(l)}</div>`).join("")}</div>`
-      + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p></div>`;
+      + `<p class="pm-help muted">${esc(f.sketch ? t("The hole centres are the points of the position sketch: dimension and constrain them there. Click the face to add a point.") : f.plane ? t("Click on the face: the position sketch opens with the Point tool, so the holes can be dimensioned. Or pick a sketch with points in the tree.") : t("Click the flat face (or a plane) for the holes, or pick a sketch with points in the tree."))}</p></div>`;
   }
 
   /**
@@ -4691,6 +4734,63 @@ export class ModelController {
       if (Math.abs(off) < 1e-4 * Math.max(1, Math.hypot(...s.point))) return s.point;
     }
     return null;
+  }
+
+  /**
+   * Hole Wizard Positions (FR-FT-050): the hole waits while its position sketch is open with the Point tool (made on
+   * the hole's face when it has none, holding the positions it had as points), so hole centres are placed,
+   * dimensioned and constrained like any sketch points; ✓ on the sketch comes back to the hole. `at` = a point
+   * clicked on the face: the first new point.
+   */
+  private async holePositions(at?: V3) {
+    const m = this.mode;
+    if (m.kind !== "feature" || m.draft.type !== "hole" || !this.store) return;
+    const f = m.draft;
+    if (!f.plane && !f.sketch) { toast(t("Pick a flat face or a plane for the holes."), true); return; }
+    if (this.holeCmd?.id !== f.id) this.holeCmd = { id: f.id, mark: this.store.mark() };
+    const prev = f.sketch, base = m.index;
+    let sid = f.sketch && this.store.feature(f.sketch)?.type === "sketch" ? f.sketch : undefined;
+    if (sid && this.isFrozen(sid)) { this.frozenToast(); return; }
+    const entry = JSON.stringify(this.doc), mark = this.store.mark();
+    let index = base, made = false;
+    if (!sid) {
+      const id = uid("f_"), plane = structuredClone(f.plane!);
+      const ents: SkEnt[] = f.pts.map(p => ({ id: uid("p"), t: "point", x: p[0], y: p[1] }));
+      this.mode = { kind: "none" };
+      this.store.change("New sketch", d => {
+        d.features.splice(base, 0, { id, type: "sketch", name: nextName(d, "sketch"), plane, ents, rels: [], dims: [] });
+        if (d.rollback != null && d.rollback >= base) d.rollback++;
+      });
+      sid = id; made = true; index = base + 1;
+    }
+    f.sketch = sid;
+    this.holeParked = { draft: f, isNew: m.isNew, index, base, sketch: sid, prev };
+    this.holeTab = "pos";
+    // The view stays as it is (a CAD app's Positions tab places holes on the model as seen).
+    await this.editSketch(sid, entry, made, mark, undefined, false);
+    const mm = this.mode;
+    if (mm.kind !== "sketch" || mm.id !== sid) { if (this.holeParked?.sketch === sid && mm.kind !== "sketch") this.holeParked = null; return; }
+    mm.editor.setTool("point");
+    if (at) {
+      const fr = mm.editor.frame, d: V3 = [at[0] - fr.o[0], at[1] - fr.o[1], at[2] - fr.o[2]];
+      mm.editor.addPointAt([d[0] * fr.x[0] + d[1] * fr.x[1] + d[2] * fr.x[2], d[0] * fr.y[0] + d[1] * fr.y[1] + d[2] * fr.y[2]]);
+    }
+    toast(t("Hole positions: place points, dimension them, then ✓ to go back to the hole."));
+    this.renderBar();
+  }
+
+  /** Back to the hole command after its position sketch: the hole takes the sketch's points (or what it had, when the sketch was thrown away). */
+  private resumeHole(p: NonNullable<ModelController["holeParked"]>) {
+    const f = p.draft;
+    let index = p.index;
+    if (this.store?.feature(p.sketch)?.type === "sketch") f.sketch = p.sketch;
+    else { if (p.prev) f.sketch = p.prev; else delete f.sketch; index = p.base; }
+    if (!p.isNew) { const j = this.doc.features.findIndex(x => x.id === f.id); if (j >= 0) index = j; }
+    if (f.sketch) syncHole(this.doc, f);
+    this.mode = { kind: "feature", draft: f, index, isNew: p.isNew, focus: "pts" };
+    this.holeTab = "pos";
+    this.renderAll();
+    void this.rebuild();
   }
 
   /** A first hole waiting for the hole's plane frame (it comes with the next rebuild). */
@@ -7389,6 +7489,17 @@ export class ModelController {
         }
         if (mm.kind === "feature" && asRef && mm.draft.type === "revolve" && mm.draft.end === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && asRef && mm.draft.type === "axis" && mm.draft.mode === "planes") { mm.draft.planes = [...(mm.draft.planes ?? []), asRef].slice(-2); this.draftChanged(); return; }
+        // Hole positions from the points of an existing sketch before it (Hole Wizard: pick a sketch of points).
+        if (mm.kind === "feature" && mm.draft.type === "hole" && this.store!.feature(id)?.type === "sketch" && mm.focus !== "hupto") {
+          const si = this.doc.features.findIndex(x => x.id === id);
+          if (si >= mm.index) { toast(t("Pick a sketch made before the hole."), true); return; }
+          if (!hasHolePoints(this.store!.feature(id))) { toast(t("This sketch has no points for holes: add sketch points (or line ends that are not construction)."), true); return; }
+          mm.draft.sketch = id;
+          syncHole(this.doc, mm.draft);
+          mm.focus = "pts";
+          this.draftChanged();
+          return;
+        }
         if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && mm.focus === "hupto" && (mm.draft.end === "upto" || mm.draft.end === "offset")) { mm.draft.upTo = asRef; mm.focus = "pts"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "hole" && mm.focus === "hupto" && mm.draft.end === "vertex" && this.store!.feature(id)?.type === "point") { mm.draft.upToVertex = { point: id }; mm.focus = "pts"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && (mm.focus === "hplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.draft.pts = []; mm.focus = "pts"; this.draftChanged(); return; }
@@ -7558,6 +7669,7 @@ export class ModelController {
     if (f) {
       items.push([f.type === "sketch" ? t("Edit sketch") : t("Edit feature"), () => this.editFeature(f.id)]);
       if (f.type === "extrude" || f.type === "revolve") items.push([t("Edit sketch"), () => void this.editSketch(f.sketch)]);
+      if (f.type === "hole" && f.sketch && this.store!.feature(f.sketch)) items.push([t("Edit position sketch"), () => void this.editSketch(f.sketch!)]);
       if (f.type === "sketch") items.push([t("Edit sketch plane"), () => this.editSketchPlane(f.id)]);
       if (canCopy(f)) items.push([t("Copy (Ctrl+C)"), () => { this.copyFeature(f.id); }]);
       // Appearance (gap list M2): features that make faces take a colour of their own.
@@ -8065,12 +8177,18 @@ export class ModelController {
           + (headKind(f) !== "csink" ? chk("optNear", !!f.nearCs, t("Near side countersink")) + (f.nearCs ? numField("nearCs.dia", t("Diameter"), f.nearCs.dia, "length") + numField("nearCs.angle", t("Angle"), f.nearCs.angle, "angle") : "") : "")
           + (headKind(f) === "cbore" ? chk("optUnder", !!f.underCs, t("Under head countersink")) + (f.underCs ? numField("underCs.dia", t("Diameter"), f.underCs.dia, "length") + numField("underCs.angle", t("Angle"), f.underCs.angle, "angle") : "") : "")
           + (holeExits(f) && f.kind !== "slot" ? chk("optFar", !!f.farCs, t("Far side countersink")) + (f.farCs ? numField("farCs.dia", t("Diameter"), f.farCs.dia, "length") + numField("farCs.angle", t("Angle"), f.farCs.angle, "angle") : "") : "")));
-      const posTab = group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: holeCount(f) }))
-          + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
-          + (f.plane ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
+      const psk = f.sketch ? this.store!.feature(f.sketch) : undefined;
+      const ha = holeAxes(this.last?.frames[f.id]);
+      // Positions from a sketch (Hole Wizard Positions): the points' coordinates show; they change in the sketch.
+      const skList = psk && f.pts.length ? `<ul class="pm-items pm-hpts pm-hskpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${ha.names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><span data-hpv="${i}:${j}" translate="no">${esc(trimNum(ha.show(p)[j] * UNITS[unit].f, 4))}</span></span>`).join("")}</li>`).join("")}</ul>` : "";
+      const posTab = group(t("Positions"), (psk ? hbox("hsketch", t("Position sketch"), featureLabel(psk.name)) : hbox("hplane", t("Face"), this.refLabel(f.plane))) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: holeCount(f) }))
+          + (f.plane || psk ? `<button class="btn small pm-hpos" data-k="hpos">${esc(psk ? t("Edit positions in the sketch") : t("Place and dimension positions"))}</button>` : "")
+          + skList
+          + (!psk && f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
+          + (f.plane && !psk && f.pts.length ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
           + (f.spots?.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Holes on other faces"))}">${f.spots.map((sp, i) => `<li><span>${f.pts.length + i + 1}</span><span class="muted" translate="no">${esc(this.refLabel({ face: sp.face }))}</span><button class="icon" data-rms="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: f.pts.length + i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
-          + (holeCount(f) ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
-          + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`
+          + ((psk ? f.spots?.length : holeCount(f)) ? `<button class="btn small" data-k="clearPts">${esc(psk ? t("Clear holes on other faces") : t("Clear holes"))}</button>` : "")
+          + `<p class="pm-help muted">${esc(psk ? t("The hole centres are the points of the position sketch: dimension and constrain them there. Click the face to add a point.") : f.plane ? t("Click on the face: the position sketch opens with the Point tool, so the holes can be dimensioned. Or pick a sketch with points in the tree.") : t("Click the flat face (or a plane) for the holes, or pick a sketch with points in the tree."))}</p>`
           + (f.plane && "face" in f.plane ? `<p class="pm-help muted">${esc(t("Click another face, flat or curved, for a hole square to it there."))}</p>` : ""));
       const tabBtn = (k: "type" | "pos", label: string) => `<button type="button" role="tab" data-tab="${k}" data-htab="${k}" class="${tab === k ? "on" : ""}" aria-selected="${tab === k}" tabindex="${tab === k ? 0 : -1}">${esc(label)}</button>`;
       body = `<div class="tabs pm-htabs" role="tablist" aria-label="${esc(t("Hole"))}">${tabBtn("type", t("Type"))}${tabBtn("pos", holeCount(f) ? `${t("Positions")} (${holeCount(f)})` : t("Positions"))}</div>`
@@ -8889,7 +9007,8 @@ export class ModelController {
     }
     if (f.type === "sketch3d") this.bindSk3Panel(pm, f, unit);
     pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
-    pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; delete f.spots; this.draftChanged(); } });
+    pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { if (!f.sketch) f.pts = []; delete f.spots; this.draftChanged(); } });
+    pm.querySelector("[data-k=hpos]")?.addEventListener("click", () => { if (f.type === "hole") void this.holePositions(); });
     pm.querySelectorAll<HTMLButtonElement>("[data-rms]").forEach(b => b.addEventListener("click", () => { if (f.type === "hole" && f.spots) { f.spots.splice(+b.dataset.rms!, 1); if (!f.spots.length) delete f.spots; this.draftChanged(); } }));
     // Hole positions typed as X/Y in the face's sketch axes (FR-FT-052): a clicked position can be made exact.
     pm.querySelector("[data-k=addPt]")?.addEventListener("click", () => {
@@ -10204,6 +10323,7 @@ function absorbs(g: Feature, sketch: string): boolean {
   if (g.type === "loft") return g.profiles.includes(sketch) || onPath(g.centerline) || (g.guides ?? []).some(onPath);
   if (g.type === "rib" || g.type === "split" || g.type === "wrap" || g.type === "planesurf" || g.type === "extsurf" || g.type === "spattern") return g.sketch === sketch;
   if (g.type === "member") return g.profile === "sketch" && g.psketch === sketch;
+  if (g.type === "hole") return g.sketch === sketch;
   return false;
 }
 

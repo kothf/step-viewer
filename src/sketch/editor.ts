@@ -1531,6 +1531,15 @@ export class SketchEditor {
   }
 
   /** A point for a new entity: an existing point, the origin (fixed by a relation), or a new one. */
+  /** Adds a sketch point at `p` (sketch coordinates) as one step: a hole position clicked on the face before its sketch opened. */
+  addPointAt(p: V2): string {
+    const id = uid("p");
+    this.sk.ents.push({ id, t: "point", x: p[0], y: p[1] });
+    this.commit("Add point");
+    this.render();
+    return id;
+  }
+
   private usePoint(p: V2, snapId: string | null, curve: string | null, rels: SkRel[]): string {
     if (snapId && snapId !== ORIGIN) return snapId;
     const id = uid("p");

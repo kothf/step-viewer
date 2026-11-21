@@ -609,6 +609,12 @@ export interface HoleFeature {
   /** Feature scope (FR-FT-007), as on an extrude: the bodies the holes cut. */
   scope?: FaceRef[];
   plane?: PlaneRef;
+  /**
+   * Position sketch (a CAD app's Hole Wizard Positions): the hole centres are this sketch's points
+   * (`holePos.ts` `holeSketchPoints`), so they can be dimensioned and constrained; `plane` and `pts` then mirror
+   * the sketch (kept in step on every change). Absent in older files: `pts` alone.
+   */
+  sketch?: string;
   /** Hole centres in the plane's frame (x, y). */
   pts: [number, number][];
   /** Holes on other faces, flat or curved (FR-FT-052): a point on the face (world mm), drilled square to the face there. */

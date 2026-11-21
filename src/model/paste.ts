@@ -23,6 +23,10 @@ const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 export function copyClip(doc: PartDoc, id: string): Clip | null {
   const f = doc.features.find(x => x.id === id);
   if (!f) return null;
+  if (f.type === "hole" && f.sketch) {
+    const sk = doc.features.find(x => x.id === f.sketch);
+    return sk?.type === "sketch" ? { feats: [clone(sk), clone(f)] } : { feats: [clone(f)] };
+  }
   if (f.type === "sketch" || f.type === "hole") return { feats: [clone(f)] };
   if (f.type === "extrude" || f.type === "revolve") {
     const sk = doc.features.find(x => x.id === f.sketch);
@@ -69,6 +73,7 @@ export function pasteClip(doc: PartDoc, clip: Clip, plane: PlaneRef, newId: (p: 
       f.name = nextName(names, "revolve");
     } else if (f.type === "hole") {
       f.plane = plane;
+      if (f.sketch) { const sid = ids.get(f.sketch); if (sid) f.sketch = sid; else delete f.sketch; }
       if (f.end === "upto") { f.end = "blind"; lost.add(LOST.end); }
       delete f.upTo; delete f.scope;
       f.name = nextName(names, "hole");
