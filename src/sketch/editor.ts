@@ -1250,8 +1250,9 @@ export class SketchEditor {
     let on: { p: V2; ed: ModelEdge; g: ExtGeo; at: "on" } | null = null;
     for (const ed of this.host.modelEdge(this.lastEv)) {
       const g = projectEdge(ed, this.frame);
-      // Snaps take straight and round edges only; other curves are converted with Convert Entities.
-      if (!g || g.t === "spline" || (g.t === "line" && ed.type !== "line")) continue;
+      // Snaps take edges that show as straight or round: other curves (splines) are converted with Convert Entities.
+      // A round or curved edge seen edge-on (an arc of a fillet's end face) shows as a line between its extremes.
+      if (!g || g.t === "spline") continue;
       const cands: [V2, "a" | "b" | "mid" | "c"][] = g.t === "line" ? [[g.a, "a"], [g.b, "b"], [[(g.a[0] + g.b[0]) / 2, (g.a[1] + g.b[1]) / 2], "mid"]]
         : g.t === "circle" ? [[g.c, "c"]] : [[g.a, "a"], [g.b, "b"], [uvOf(this.frame, ed.mid), "mid"], [g.c, "c"]];
       let best: [V2, "a" | "b" | "mid" | "c"] | null = null, bd = tol;

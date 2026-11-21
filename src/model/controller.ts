@@ -35,6 +35,7 @@ import { parseXyz } from "./curves";
 import { textPolys, TEXT_FONTS } from "../sketch/text";
 import { allCtxRefs, ctxMark, moveEdgeGeo, type AnyCtxRef, type PartContext } from "./context";
 import type { ModelEdge } from "../sketch/external";
+import { silhouettes } from "../sketch/silhouette";
 import { applyDir as tfDir, applyPoint as tfPoint, invert as tfInvert } from "../asm/math";
 import { segPoints, solve3d } from "../sketch/sketch3d";
 import type { SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
@@ -117,6 +118,10 @@ export interface ModelHost {
   faceAt(clientX: number, clientY: number): { faceId: number; point: V3 } | null;
   /** Edge under a screen point (snapping), or the face when no edge is close. */
   edgeAt(clientX: number, clientY: number): { edge?: EdgeInfo; faceId?: number } | null;
+  /** The nearest visible edge within the snap radius of a screen point, even where a point snap would win; `px` = its distance. */
+  edgeNear?(clientX: number, clientY: number): { edge: EdgeInfo; px: number } | null;
+  /** Whether nothing opaque hides a world point. */
+  visibleAt?(p: V3): boolean;
   /** A snap point near a screen point (vertex, arc centre, midpoint, quadrant, face centre), if any. */
   snapAt?(clientX: number, clientY: number): { point: V3; kind: string } | null;
   /** The face picked with Smart measure, if any (used as the sketch plane). */
@@ -468,6 +473,60 @@ export class ModelController {
 
   /** References of the context edges handed to the sketcher (FR-ASM-030), by the edge objects it gets. */
   private ctxEdgeRefs = new WeakMap<object, EdgeRef>();
+  /** Silhouette edges of the shown part's round faces for one sketch normal (kept until the part or the normal changes). */
+  private silCache: { data: PartData; n: string; list: { ed: ModelEdge; face: number }[] } | null = null;
+  /** The On edge reference of each silhouette edge handed to the sketch editor. */
+  private silRefs = new WeakMap<object, EdgeRef>();
+
+  /** The silhouettes (outline lines and circles that are no model edge) of the shown part's round faces seen along n. */
+  private silhouettesFor(n: V3) {
+    const data = this.host.viewer.parts[0]?.data, key = n.map(x => x.toFixed(9)).join(",");
+    if (!data) return [];
+    if (this.silCache?.data === data && this.silCache.n === key) return this.silCache.list;
+    const list: { ed: ModelEdge; face: number }[] = [];
+    for (const f of data.faces) {
+      const kind = f.surface ?? f.type;
+      if (kind !== "cylinder" && kind !== "cone" && kind !== "sphere") continue;
+      const tris = new Float32Array(f.triCount * 9);
+      for (let t = 0; t < f.triCount; t++) for (let k = 0; k < 3; k++) {
+        const v = data.index[(f.triStart + t) * 3 + k] * 3;
+        tris.set([data.positions[v], data.positions[v + 1], data.positions[v + 2]], t * 9 + k * 3);
+      }
+      const edges = f.edges.map(i => data.edges[i]).filter(Boolean);
+      for (const ed of silhouettes({ kind, axis: f.axis, center: f.center, radius: f.radius, tris, edges }, n)) list.push({ ed, face: f.id });
+    }
+    this.silCache = { data, n: key, list };
+    return list;
+  }
+
+  /**
+   * The silhouette edge within snap reach of a screen point and seen (not behind other material), nearest first,
+   * with its On edge reference (the face's name, `sil`); `px` = its distance on screen.
+   */
+  private silhouetteAt(x: number, y: number, n: V3): { ed: ModelEdge; px: number } | null {
+    const v = this.host.viewer, part = v.parts[0], names = this.last?.faceNames ?? [];
+    if (!part) return null;
+    const r = v.renderer.domElement.getBoundingClientRect();
+    const scr = (p: V3) => { const q = v.toWorld(part, p).project(v.camera); return q.z > 1 ? null : [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+    let best: { ed: ModelEdge; px: number; at: V3; face: number } | null = null;
+    for (const { ed, face } of this.silhouettesFor(n)) {
+      const P = ed.pts ?? [];
+      for (let i = 3; i + 2 < P.length; i += 3) {
+        const a: V3 = [P[i - 3], P[i - 2], P[i - 1]], b: V3 = [P[i], P[i + 1], P[i + 2]];
+        const sa = scr(a), sb = scr(b);
+        if (!sa || !sb) continue;
+        const dx = sb[0] - sa[0], dy = sb[1] - sa[1], l2 = dx * dx + dy * dy || 1;
+        const t = Math.max(0, Math.min(1, ((x - sa[0]) * dx + (y - sa[1]) * dy) / l2));
+        const px = Math.hypot(sa[0] + dx * t - x, sa[1] + dy * t - y);
+        if (px <= 12 && (!best || px < best.px)) best = { ed, px, face, at: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t] };
+      }
+    }
+    if (!best || !names[best.face]) return null;
+    const w = v.toWorld(part, best.at);
+    if (this.host.visibleAt && !this.host.visibleAt([w.x, w.y, w.z])) return null;
+    if (!this.silRefs.has(best.ed)) this.silRefs.set(best.ed, { faces: [names[best.face], names[best.face]], hint: best.ed.mid.slice() as V3, sil: true });
+    return { ed: best.ed, px: best.px };
+  }
 
   /**
    * Edges of context components near the pointer (within `px` screen pixels), nearest first, in this part's
@@ -1147,8 +1206,13 @@ export class ModelController {
       modelEdges: e => {
         const hit = this.host.edgeAt(e.clientX, e.clientY);
         const data = this.host.viewer.parts[0]?.data;
+        // The outline of a round face seen side-on (no model edge) right under the pointer, else the nearest edge.
+        const sil = this.silhouetteAt(e.clientX, e.clientY, editor.frame.n);
+        const near = hit?.edge ? null : this.host.edgeNear?.(e.clientX, e.clientY);
+        if (sil && (sil.px < 4 || !(hit?.edge || near))) return [sil.ed];
         // Edges of other components while editing in context (FR-ASM-030) come after this part's own edge.
         if (hit?.edge) return [hit.edge];
+        if (near) return [near.edge];
         const cx = this.ctxEdgesAt(e.clientX, e.clientY);
         if (cx.length) return cx.slice(0, 1);
         if (hit && data && hit.faceId != null) return data.edges.filter(x => x.faces.includes(hit.faceId!));
@@ -1167,13 +1231,19 @@ export class ModelController {
         }
         return { tri, type: face.type, axis: face.axis, center: face.center, radius: face.radius };
       },
-      edgeRef: ed => this.ctxEdgeRefs.get(ed) ?? this.refOfEdge(ed as EdgeInfo),
+      edgeRef: ed => this.ctxEdgeRefs.get(ed) ?? this.silRefs.get(ed) ?? this.refOfEdge(ed as EdgeInfo),
       modelEdge: e => {
         // The edge under the pointer, then every edge that ends or is centred at the snapped point (a vertex
         // snap may name an edge square to the sketch, which projects to nothing).
-        const out: EdgeInfo[] = [];
+        const out: ModelEdge[] = [];
         const hit = this.host.edgeAt(e.clientX, e.clientY);
+        // The outline of a round face seen side-on (a fillet, a pin lying along the sketch: no model edge there).
+        const sil = this.silhouetteAt(e.clientX, e.clientY, editor.frame.n);
+        if (sil && sil.px < 4) out.push(sil.ed);
         if (hit?.edge) out.push(hit.edge);
+        // A point snap with no edge (a narrow face's centre, a fillet's virtual corner) may beat the edge beside it.
+        else { const near = this.host.edgeNear?.(e.clientX, e.clientY); if (near) out.push(near.edge); }
+        if (sil && !out.includes(sil.ed)) out.push(sil.ed);
         const sp = this.host.snapAt?.(e.clientX, e.clientY), data = this.host.viewer.parts[0]?.data;
         if (sp && data) {
           const near = (q?: V3) => !!q && Math.hypot(q[0] - sp.point[0], q[1] - sp.point[1], q[2] - sp.point[2]) < 1e-4 * (1 + Math.hypot(...sp.point));

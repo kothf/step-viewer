@@ -3912,7 +3912,7 @@ try {
     const vNoShell = await vol();
     await mp.keyboard.press("Escape");
     await mp.click('#mc-tools [data-c="hole"]');
-    // 1.638 (FR-FT-052): the first click opens the hole's position sketch with a point there; the second adds a point with the Point tool; ✓ goes back to the hole.
+    // 1.639 (FR-FT-052): the first click opens the hole's position sketch with a point there; the second adds a point with the Point tool; ✓ goes back to the hole.
     const hA = await world([30, 15, 20]);
     await mp.mouse.click(hA[0], hA[1]);
     await mp.waitForFunction(() => window.__sv.model.mode().kind === "sketch", null, { timeout: 30000 });
@@ -17209,7 +17209,7 @@ try {
     await ctx.close();
   }
   if (inShard(1)) {
-    // model 1.638: holes placed by the points of a position sketch (FR-FT-052): drilled there, following the sketch.
+    // model 1.639: holes placed by the points of a position sketch (FR-FT-052): drilled there, following the sketch.
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const hp = await ctx.newPage();
     hp.on("pageerror", e => errors.push(e.message));
@@ -17236,7 +17236,7 @@ try {
     const cyl = Math.PI * 25 * 10;
     check(r0.ok && r1.ok && r0.pts.length === 2 && r0.plane?.face?.name === "x:end" && Math.abs(r0.v - (60000 - 2 * cyl)) < 0.5
       && r1.pts.length === 3 && r1.pts[1][0] === -35 && Math.abs(r1.v - (60000 - 3 * cyl)) < 0.5 && Math.abs(r1.com[0] - 15 * cyl / (60000 - 3 * cyl)) < 1e-3,
-      `model 1.638: a hole takes its centres from its position sketch's points (construction left out) and follows when they move (${JSON.stringify({ r0, r1 })})`);
+      `model 1.639: a hole takes its centres from its position sketch's points (construction left out) and follows when they move (${JSON.stringify({ r0, r1 })})`);
     await ctx.close();
   }
 } catch (err) {
