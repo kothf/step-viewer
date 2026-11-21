@@ -22,13 +22,13 @@ export class SimClient {
    * The kept solution at these points (part coordinates, mm); with `scale` the points are places on the shape
    * deformed that much. Null when the worker holds no solution (stopped, another solve, results from the cache).
    */
-  sample(pos: Float32Array, scale = 0): Promise<SampleResult | null> {
+  sample(pos: Float32Array, scale = 0, solid = false): Promise<SampleResult | null> {
     const w = this.worker, of = this.solution;
     if (!w || !of) return Promise.resolve(null);
     const id = ++this.seq;
     return new Promise(resolve => {
       this.asks.set(id, resolve);
-      w.postMessage({ id, type: "sample", of, pos, scale });
+      w.postMessage({ id, type: "sample", of, pos, scale, solid });
     });
   }
 

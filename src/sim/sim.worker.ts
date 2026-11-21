@@ -7,7 +7,7 @@ import { runModal, runStatic, sampleAt, type PassResult, type RunInput, type Sam
 
 export type SimRequest =
   | { id: number; type: "static" | "modal"; input: RunInput }
-  | { id: number; type: "sample"; of: number; pos: Float32Array; scale: number };
+  | { id: number; type: "sample"; of: number; pos: Float32Array; scale: number; solid?: boolean };
 export type SimReply =
   | { id: number; pass: PassResult }
   | { id: number; done: true }
@@ -15,18 +15,18 @@ export type SimReply =
   | { id: number; error: string };
 
 const post = (m: SimReply, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(m, transfer);
-let kept: { of: number; sample: Sampler } | null = null;
+let kept: { of: number; sample: Sampler; inside: (x: number, y: number, z: number) => boolean } | null = null;
 
 self.onmessage = (e: MessageEvent<SimRequest>) => {
   const r = e.data;
   try {
     if (r.type === "sample") {
-      const s = kept && kept.of === r.of ? sampleAt(kept.sample, r.pos, r.scale) : null;
-      post({ id: r.id, sample: s }, s ? [s.u.buffer, s.vm.buffer, s.err.buffer, s.hit.buffer] : []);
+      const s = kept && kept.of === r.of ? sampleAt(kept.sample, r.pos, r.scale, r.solid ? kept.inside : undefined) : null;
+      post({ id: r.id, sample: s }, s ? [s.u.buffer, s.vm.buffer, s.err.buffer, s.hit.buffer, ...(s.solid ? [s.solid.buffer] : [])] : []);
       return;
     }
     kept = null;
-    const passes = r.type === "modal" ? runModal(r.input) : runStatic(r.input, s => { kept = { of: r.id, sample: s }; });
+    const passes = r.type === "modal" ? runModal(r.input) : runStatic(r.input, (s, inside) => { kept = { of: r.id, sample: s, inside }; });
     for (const pass of passes) post({ id: r.id, pass }, [pass.u.buffer, pass.vm.buffer, pass.err.buffer, ...(pass.shapes ?? []).map(s => s.buffer)]);
     post({ id: r.id, done: true });
   } catch (err) {

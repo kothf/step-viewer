@@ -4,6 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { studyProblem, runStatic, sampleAt, type Sampler } from "../../src/sim/run";
 import { newStudy } from "../../src/sim/types";
+import { pathChart, pathChartSvg, pathCsv, pathPoints, pathRows } from "../../src/sim/path";
+import { MeshBody, insideOf } from "../../src/sim/body";
 
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
   const a1 = (axis + 1) % 3, a2 = (axis + 2) % 3;
@@ -57,4 +59,36 @@ test("section results: points of the deformed shape are traced back to where the
   assert.equal(back.hit[0], 1);
   for (let i = 0; i < 3; i++) assert.ok(Math.abs(back.u[i] - u[i]) < 1e-3 * Math.hypot(...u), `${back.u[i]} vs ${u[i]}`);
   assert.ok(Math.abs(back.vm[0] - plain.vm[0]) < 0.01 * plain.vm[0] + 1e-6);
+});
+
+test("results along a path: a line through the bar's depth reads the bending stress, with gaps outside the part", () => {
+  // from below the bar to above it, at mid length: inside for 0 < z < T
+  const a = [L / 2, B / 2, -T / 2], b = [L / 2, B / 2, 1.5 * T], pos = pathPoints(a, b, 41);
+  assert.equal(pos.length, 123);
+  assert.deepEqual([pos[0], pos[1], pos[2]], a);
+  assert.ok(Math.abs(pos[122] - b[2]) < 1e-6);
+  const r = sampleAt(kept!, pos, 0, insideOf(new MeshBody(body.tris)));
+  const rows = pathRows(pos, r.vm, r.u, r.solid!);
+  const inside = rows.filter(q => q.ok);
+  assert.ok(inside.length >= 18 && inside.length <= 21, String(inside.length));
+  assert.ok(inside.every(q => q.at[2] > -1e-6 && q.at[2] < T + 1e-6));
+  assert.ok(Math.abs(rows[40].d - 2 * T) < 1e-5);
+  const I = (B * T ** 3) / 12, top = (100 * (L / 2) * (T / 2)) / I;
+  // highest at the outer fibres, lowest near the neutral axis
+  const hi = Math.max(...inside.map(q => q.vm)), lo = Math.min(...inside.map(q => q.vm));
+  assert.ok(Math.abs(hi / top - 1) < 0.12 && lo < 0.25 * top, `${hi} ${lo} vs ${top}`);
+  const c = pathChart(rows.map(q => q.d), rows.map(q => q.vm), rows.map(q => (q.ok ? 1 : 0)))!;
+  assert.equal(c.lines.length, 1);
+  assert.equal(c.lines[0].length, inside.length);
+  assert.ok(c.lo === 0 && Math.abs(c.hi - hi) < 1e-9 && Math.abs(c.length - 2 * T) < 1e-5);
+  const svg = pathChartSvg(c, "von Mises stress", v => v.toFixed(1), "20 mm");
+  assert.ok(svg.includes("<polyline") && svg.includes("20 mm") && svg.includes("sim-pathchart"));
+  const csv = pathCsv(rows).trim().split("\r\n");
+  assert.equal(csv.length, 42);
+  assert.ok(csv[0].startsWith("Distance (mm),X (mm)"));
+  assert.equal(csv[1].split(",").slice(4).join(""), "", "no values outside the part");
+  assert.equal(csv[21].split(",").length, 9);
+  assert.ok(Number(csv[21].split(",")[4]) >= 0);
+  // nothing to chart for a path that misses the part
+  assert.equal(pathChart([0, 1, 2], [1, 2, 3], [0, 0, 0]), null);
 });
