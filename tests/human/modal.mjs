@@ -61,6 +61,18 @@ const sel = await pg.evaluate(() => ({ row: document.querySelector("#sim-tree ta
 const img3 = await snap(pg, "mode-3-still");
 check("SA2-3", r3.mode === 2 && sel.row === "2" && sel.legend === "2" && r3.animating && !r4.animating && r4.plot.shown, "a mode picked in the table is drawn, and Animate off holds its shape still", { mode: r3.mode, sel, animating: [r3.animating, r4.animating] }, img3);
 
+// SA2-6: an excitation frequency near the first modes is flagged; Record GIF saves one swing of the shown mode.
+await pg.fill('#sim-tree [data-k="excite"]', "1600 Hz");
+await pg.keyboard.press("Tab");
+await pg.waitForTimeout(400);
+const ex = await pg.evaluate(() => ({ near: window.__sv.sim.state().near, rows: document.querySelectorAll("#sim-tree table.sim-modes tbody tr.near").length, note: document.querySelector("#sim-tree .sim-excite")?.textContent ?? "", shown: window.__sv.sim.state().plot.shown }));
+const img6 = await snap(pg, "excitation");
+await pg.click('#sim-legend [data-a="gif"]');
+await pg.waitForFunction(() => window.__sv.sim.state().gifs === 1, null, { timeout: 60000 });
+const gif = (await sim()).gif;
+check("SA2-6", ex.near.length >= 2 && ex.rows === ex.near.length && /1600/.test(ex.note) && ex.shown && gif.frames === 24 && gif.bytes > 20000,
+  "modes within 10 % of the typed excitation frequency are marked, and the mode's swing is saved as a GIF", { ex, gif }, img6);
+
 // SA2-4: the report of a modal study saves with the mode table and pictures of the shapes.
 await pg.evaluate(() => window.__sv.sim.report("html"));
 await pg.waitForTimeout(1500);
