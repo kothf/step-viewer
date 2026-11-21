@@ -54,8 +54,8 @@ interface Kept { passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
-const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "hydro", "gravity", "centrifugal"];
-const ICON: Record<string, string> = { newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
+const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "remote", "hydro", "gravity", "centrifugal"];
+const ICON: Record<string, string> = { newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
 const TIP: Record<string, string> = {
   fixed: "Fixed support: the faces cannot move",
   sliding: "Sliding support: the faces slide in their own plane but cannot move across it",
@@ -71,6 +71,7 @@ const TIP: Record<string, string> = {
   torque: "Torque on cylindrical faces, about their axis",
   bearing: "Bearing load: a force pressed onto the half of a hole or shaft that faces it",
   hydro: "Hydrostatic pressure: a fluid presses on the faces, more with depth",
+  remote: "Remote load: a force and a moment at a point, carried to the faces",
 };
 const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"], ["sf", "Safety factor"], ["err", "Error estimate"]];
 /** Safety factors above this are drawn as this (lightly loaded regions would hide the rest of the scale). */
@@ -134,6 +135,8 @@ export class SimController {
   private usedScale = 0;
   /** Probe mode: a click on the plot pins the value there. */
   private probing = false;
+  /** Remote load panel: the next click in the view sets the point. */
+  private pickingAt = false;
   /** The study's probes found on the plot mesh: a triangle (three vertices) and the weights of the point in it. */
   private probes: Located[] = [];
   private probeKey = "";
@@ -302,6 +305,7 @@ export class SimController {
       else if (type === "torque") d.value = { v: 10000 };
       else if (type === "bearing") d.comp = [{ v: 0 }, { v: 0 }, { v: -1000 }];
       else if (type === "hydro") { d.value = { v: 1000 }; d.axis = "z"; d.level = 0; }
+      else if (type === "remote") { d.comp = [{ v: 0 }, { v: 0 }, { v: -100 }]; d.mom = [{ v: 0 }, { v: 0 }, { v: 0 }]; d.at = [0, 0, 0]; }
       else d.comp = [{ v: 0 }, { v: 0 }, { v: -GRAVITY }];
       this.edit = { kind: "load", isNew: true, draft: d };
     } else return;
@@ -350,6 +354,7 @@ export class SimController {
     const sid = st.id;
     const label = e.isNew ? t((SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]) : t("Edit {name}", { name: d.name ?? "" });
     this.edit = null;
+    this.pickingAt = false;
     this.problems.delete(d.id);
     this.host.change(label, doc => {
       const s = doc.studies?.find(x => x.id === sid);
@@ -364,6 +369,7 @@ export class SimController {
 
   private cancel() {
     this.edit = null;
+    this.pickingAt = false;
     this.renderAll();
     this.drawMarks();
   }
@@ -374,6 +380,16 @@ export class SimController {
     if (!ed && this.probing && this.saved) { this.probeAt(e.clientX, e.clientY); return true; }
     if (!ed) return false;
     if (ed.draft.type === "gravity") return true;
+    if (ed.draft.type === "remote" && this.pickingAt) {
+      // the point the load acts at: a snapped point of the model, else the place on the face under the pointer
+      const s = this.host.snapAt(e.clientX, e.clientY), q = s?.point ?? this.host.faceAt(e.clientX, e.clientY)?.point;
+      if (!q) { toast(t("Click a point on the model."), "warn"); return true; }
+      (ed.draft as StudyLoad).at = [q[0], q[1], q[2]].map(v => Math.round(v * 1e4) / 1e4) as [number, number, number];
+      this.pickingAt = false;
+      this.renderPanel();
+      this.drawMarks();
+      return true;
+    }
     if (ed.draft.on) { this.pickEdgeOrPoint(ed.draft, e); return true; }
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const name = hit ? this.host.faceNames()[hit.faceId] : undefined;
@@ -635,6 +651,20 @@ export class SimController {
         dir = ax ? new THREE.Vector3(...positiveAxis(ax) as [number, number, number]).multiplyScalar(l.flip ? -1 : 1) : null;
       }
       else if (l.type === "hydro") dir = g.normal ? g.normal.clone().multiplyScalar(-1) : null;
+      else if (l.type === "remote") {
+        // the point, joined to the faces' centre; the arrow ends on the point
+        const q = new THREE.Vector3(...(l.at ?? [0, 0, 0]));
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute([q.x, q.y, q.z, at.x, at.y, at.z], 3));
+        const line = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
+        const one = new THREE.BufferGeometry();
+        one.setAttribute("position", new THREE.Float32BufferAttribute([q.x, q.y, q.z], 3));
+        const dot = new THREE.Points(one, new THREE.PointsMaterial({ color, size: 11, sizeAttenuation: false, depthTest: false, transparent: true }));
+        for (const o of [line, dot]) { o.renderOrder = 2940; o.userData.simMark = it.id; o.raycast = () => {}; this.marks.add(o); }
+        at = q;
+        dir = comp();
+        if (dir.lengthSq() === 0) dir = new THREE.Vector3(...(l.mom ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v) as [number, number, number]);
+      }
       else if (l.type === "pressure" || (l.type === "force" && l.normal)) dir = g.normal ? g.normal.clone().multiplyScalar(l.flip ? 1 : -1) : null;
       else dir = comp();
       if (!dir || dir.lengthSq() === 0) return;
@@ -1048,7 +1078,8 @@ export class SimController {
       const val = l.type === "force" ? (l.normal && !l.on ? `${sig(l.value?.v ?? 0)} N, ${t("Along the face normal")}${pull}` : n3(c, 1, "N"))
         : l.type === "pressure" ? `${sig(l.value?.v ?? 0)} MPa${pull}` : l.type === "centrifugal" ? `${sig(l.value?.v ?? 0)} rpm${l.accel ? `, ${sig(l.accel)} rad/s²` : ""}`
         : l.type === "torque" ? `${sig((l.value?.v ?? 0) * 1e-3)} N·m${l.flip ? `, ${t("Reverse direction")}` : ""}` : l.type === "bearing" ? n3(c, 1, "N")
-        : l.type === "hydro" ? `${sig(l.value?.v ?? 0)} kg/m³, ${this.levelText(l)}` : l.type === "moment" ? n3(c, 1e-3, "N·m") : n3(c, 1e-3, "m/s²");
+        : l.type === "hydro" ? `${sig(l.value?.v ?? 0)} kg/m³, ${this.levelText(l)}`
+        : l.type === "remote" ? `${n3(c, 1, "N")}; ${n3((l.mom ?? []).map(x => x?.v ?? 0), 1e-3, "N·m")}; ${t("at ({x}, {y}, {z}) mm", { x: sig((l.at ?? [0, 0, 0])[0]), y: sig((l.at ?? [0, 0, 0])[1]), z: sig((l.at ?? [0, 0, 0])[2]) })}` : l.type === "moment" ? n3(c, 1e-3, "N·m") : n3(c, 1e-3, "m/s²");
       return [name(l), t(LOAD_LABEL[l.type]), faces(l), val];
     })] });
     blocks.push({ kind: "h", text: t("Results") });
@@ -1380,6 +1411,15 @@ export class SimController {
         + `<label class="pm-field"><span>${esc(t("Up"))}</span><select data-k="up">${["x", "y", "z", "-x", "-y", "-z"].map(a => `<option value="${a}"${(l.flip ? "-" : "") + (l.axis ?? "z") === a ? " selected" : ""}>${a.length > 1 ? "−" : "+"}${a.slice(-1).toUpperCase()}</option>`).join("")}</select></label>`
         + `<label class="pm-field"><span>${esc(t("Surface at"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="level" value="${trim(l.level ?? 0)}" spellcheck="false" /><span class="muted">${(l.axis ?? "z").toUpperCase()}, mm</span></span></label>`
         + `<p class="pm-help muted">${esc(t("The pressure grows with the depth below the fluid's surface; faces above it carry none."))}</p>`);
+      else if (l.type === "remote") {
+        const at = l.at ?? [0, 0, 0], m = l.mom ?? [];
+        const mf = (k: string, label: string, v: Num | undefined) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" data-n="${k}" value="${esc(shownValue(v, "moment"))}" title="${esc(hint)}" spellcheck="false" translate="no" /><span class="muted">N·m</span></span></label>`;
+        body += group(t("Point"), ["X", "Y", "Z"].map((a, i) => `<label class="pm-field"><span>${a}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="a${i}" value="${trim(at[i])}" spellcheck="false" /><span class="muted">mm</span></span></label>`).join("")
+          + `<button class="btn small${this.pickingAt ? " on" : ""}" data-k="pickat" aria-pressed="${this.pickingAt}">${esc(this.pickingAt ? t("Click a point on the model") : t("Pick on the model"))}</button>`)
+          + group(t("Force"), nf("c0", "X", c[0], "N") + nf("c1", "Y", c[1], "N") + nf("c2", "Z", c[2], "N"))
+          + group(t("Moment"), mf("r0", "X", m[0]) + mf("r1", "Y", m[1]) + mf("r2", "Z", m[2])
+            + `<p class="pm-help muted">${esc(t("The force and the moment act at the point and are spread over the faces, as if the point were joined to them."))}</p>`);
+      }
       else body += group(t("Acceleration"), nf("g0", "X", c[0], "m/s²") + nf("g1", "Y", c[1], "m/s²") + nf("g2", "Z", c[2], "m/s²") + `<p class="pm-help muted">${esc(t("Uses the material's density."))}</p>`);
     }
     // keep the caret when the panel is drawn again after a pick
@@ -1509,6 +1549,7 @@ export class SimController {
     const k = (e.target as HTMLElement).closest<HTMLElement>("button[data-k]")?.dataset.k;
     if (k === "ok") this.ok();
     else if (k === "cancel") this.cancel();
+    else if (k === "pickat" && this.edit) { this.pickingAt = !this.pickingAt; this.renderPanel(); }
     else if (k === "clear" && this.edit) {
       const d = this.edit.draft as StudyLoad;
       d.faces = [];
@@ -1541,13 +1582,14 @@ export class SimController {
       if (q === "kn") sup.kn = v; else if (q === "kt") sup.kt = v;
       else if (q === "accel") (e.draft as StudyLoad).accel = v || undefined;
       else if (q === "level") (e.draft as StudyLoad).level = v;
+      else if (q[0] === "a") { const l = e.draft as StudyLoad, a = [...(l.at ?? [0, 0, 0])] as [number, number, number]; a[Number(q[1])] = v; l.at = a; }
       else { const a = [...(sup.disp ?? [0, 0, 0])] as [number, number, number]; a[Number(q[1])] = v; sup.disp = a; }
     }
     else if (k?.startsWith("dir")) { const a = [...(d.dirs ?? [true, true, true])] as [boolean, boolean, boolean]; a[Number(k[3])] = el.checked; d.dirs = a; }
     else if (nk) {
       let v: Num;
       const doc = this.host.doc();
-      try { v = typedValue(el.value, e.draft.type as LoadType, doc ? evalVars(doc, units.current).values : {}); el.setAttribute("aria-invalid", "false"); el.title = ""; }
+      try { v = typedValue(el.value, nk[0] === "r" ? "moment" : e.draft.type as LoadType, doc ? evalVars(doc, units.current).values : {}); el.setAttribute("aria-invalid", "false"); el.title = ""; }
       catch (err) {
         const x = err as ExprError;
         el.setAttribute("aria-invalid", "true");
@@ -1555,6 +1597,11 @@ export class SimController {
         return;
       }
       if (nk === "value") d.value = v;
+      else if (nk[0] === "r") {
+        const l = e.draft as StudyLoad, m = (l.mom ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => ({ ...x })) as NonNullable<StudyLoad["mom"]>;
+        m[Number(nk[1])] = v;
+        l.mom = m;
+      }
       else {
         const c = (d.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => ({ ...x })) as NonNullable<StudyLoad["comp"]>;
         c[Number(nk[1])] = v;

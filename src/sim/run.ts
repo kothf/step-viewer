@@ -2,7 +2,7 @@
 // Pure: runs in the solver worker and in node tests.
 
 import { MeshBody, insideOf } from "./body";
-import { solveStatic, triArea, triNormals, type Load, type Reaction, type Support } from "./static";
+import { solveStatic, momentField, triArea, triNormals, type Load, type Reaction, type Support } from "./static";
 import type { Grid } from "./grid";
 import { GRAVITY, type Study, type StudyEdge, type StudyPoint } from "./types";
 
@@ -272,6 +272,16 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
       const d = comp[0] * a[0] + comp[1] * a[1] + comp[2] * a[2], f = comp.map((c, i) => c - d * a[i]);
       if (!(Math.hypot(f[0], f[1], f[2]) > 1e-9 * Math.max(1, Math.hypot(comp[0], comp[1], comp[2])))) { out.problems.push({ id: l.id, code: "E-SIM-BEARING" }); continue; }
       out.loads.push({ tris, bearing: f });
+      continue;
+    }
+    if (l.type === "remote") {
+      // carried to the faces as a distributed coupling: the force spread evenly (its resultant sits at the faces' centre)
+      // plus the moment that moving it there from the point leaves, as a linear traction
+      const c = momentField(tris, [0, 0, 0]).c, at = l.at ?? [0, 0, 0], r = [at[0] - c[0], at[1] - c[1], at[2] - c[2]];
+      const m = (l.mom ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v);
+      const M = [m[0] + r[1] * comp[2] - r[2] * comp[1], m[1] + r[2] * comp[0] - r[0] * comp[2], m[2] + r[0] * comp[1] - r[1] * comp[0]];
+      if (Math.hypot(comp[0], comp[1], comp[2]) > 0) out.loads.push({ tris, force: comp });
+      if (Math.hypot(M[0], M[1], M[2]) > 0) out.loads.push({ tris, moment: M });
       continue;
     }
     if (l.type === "hydro") {

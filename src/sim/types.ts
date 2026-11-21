@@ -5,7 +5,7 @@
 import type { FaceRef, Num, V3 } from "../model/types";
 
 export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp";
-export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro";
+export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote";
 
 export interface StudySupport {
   id: string;
@@ -49,6 +49,9 @@ export interface StudyLoad {
   accel?: number;
   /** Hydrostatic pressure: the coordinate of the fluid's surface on `axis`, mm. The density is `value`, kg/m³. */
   level?: number;
+  /** Remote load: the point the force (`comp`) and the moment (`mom`, N·mm) act at, mm. */
+  at?: V3;
+  mom?: [Num, Num, Num];
   /** Force only: what it acts on, absent = faces. A force on edges or points is given by components. */
   on?: "edges" | "points";
   edges?: StudyEdge[];
@@ -121,7 +124,7 @@ export function nextId(st: Study, prefix: "s" | "l"): string {
 }
 
 export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement" };
-export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure" };
+export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure", remote: "Remote load" };
 
 /** Default name of a new item: "Fixed 1", "Force 2". */
 export function itemName(st: Study, type: SupportType | LoadType): string {

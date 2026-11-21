@@ -15,6 +15,7 @@ const UNITS: Record<LoadType, Record<string, number>> = {
   torque: { "N·m": 1, "N*m": 1, Nm: 1, "N·mm": 1e-3, "N*mm": 1e-3, Nmm: 1e-3, "kN·m": 1000, "kN*m": 1000, kNm: 1000, "Н·м": 1, "Н*м": 1, Нм: 1, "Н·мм": 1e-3, "кН·м": 1000 },
   bearing: { N: 1, kN: 1000, lbf: 4.4482216152605, kgf: 9.80665, Н: 1, кН: 1000, кгс: 9.80665 },
   hydro: { "kg/m³": 1, "kg/m3": 1, "g/cm³": 1000, "g/cm3": 1000, "кг/м³": 1, "кг/м3": 1, "г/см³": 1000, "г/см3": 1000 },
+  remote: { N: 1, kN: 1000, lbf: 4.4482216152605, kgf: 9.80665, Н: 1, кН: 1000, кгс: 9.80665 },
   centrifugal: { rpm: 1, "rad/s": 30 / Math.PI, Hz: 60, "об/мин": 1, "рад/с": 30 / Math.PI, Гц: 60 },
 };
 
@@ -58,10 +59,12 @@ export function typedValue(text: string, type: LoadType, vars: Record<string, Va
 }
 
 /** Every expression-driven load value of the document's studies. */
-export function studyTargets(doc: PartDoc): { load: StudyLoad; study: string; num: Num }[] {
-  const out: { load: StudyLoad; study: string; num: Num }[] = [];
+export function studyTargets(doc: PartDoc): { load: StudyLoad; study: string; num: Num; type: LoadType }[] {
+  const out: { load: StudyLoad; study: string; num: Num; type: LoadType }[] = [];
   for (const st of doc.studies ?? []) for (const l of st.loads) {
-    for (const n of [l.value, ...(l.comp ?? [])]) if (n?.expr) out.push({ load: l, study: st.name, num: n });
+    for (const n of [l.value, ...(l.comp ?? [])]) if (n?.expr) out.push({ load: l, study: st.name, num: n, type: l.type });
+    // a remote load's moment is typed like a moment
+    for (const n of l.mom ?? []) if (n?.expr) out.push({ load: l, study: st.name, num: n, type: "moment" });
   }
   return out;
 }
@@ -70,7 +73,7 @@ export function studyTargets(doc: PartDoc): { load: StudyLoad; study: string; nu
 export function refreshStudyValues(doc: PartDoc, vars: Record<string, VarValue>): { key: string; owner: string; error: { key: string; params?: Record<string, string> } }[] {
   const failed: { key: string; owner: string; error: { key: string; params?: Record<string, string> } }[] = [];
   for (const t of studyTargets(doc)) {
-    try { t.num.v = loadValue(t.num.expr!, t.load.type, vars) * storeFactor(t.load.type); }
+    try { t.num.v = loadValue(t.num.expr!, t.type, vars) * storeFactor(t.type); }
     catch (e) { failed.push({ key: t.load.name ?? t.load.id, owner: t.study, error: { key: (e as ExprError).key ?? String(e), params: (e as ExprError).params } }); }
   }
   return failed;
