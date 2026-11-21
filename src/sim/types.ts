@@ -75,6 +75,8 @@ export interface Study {
   suppressed?: string[];
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
+  /** Modal studies: a frequency the part is excited at, as typed ("3000 rpm", "50 Hz"); modes near it are flagged. Not part of the solve. */
+  excite?: string;
   /** View state: the plot shown and the deformation scale (0 = automatic). */
   plot?: { kind: PlotKind; scale?: number; deformed?: boolean };
 }

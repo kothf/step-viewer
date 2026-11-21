@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.618.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **Record GIF** in the legend of a modal study saves one swing of the shown mode shape, in the current view, as a looping animated GIF.
+- Structural analysis: a modal study takes an **Excitation** frequency (for example `3000 rpm` or `50 Hz`). Modes within 10 % of it are marked in the mode table, with a resonance warning in the Study tab and in the report. Changing it does not make the results out of date.
+
 ## [1.617.0] - 2026-11-21
 
 ### Added
@@ -3970,6 +3977,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.617.0...HEAD
+[1.618.0]: https://github.com/kothf/step-viewer/compare/v1.617.0...v1.618.0
 [1.617.0]: https://github.com/kothf/step-viewer/compare/v1.616.0...v1.617.0
 [1.616.0]: https://github.com/kothf/step-viewer/compare/v1.615.0...v1.616.0
 [1.615.0]: https://github.com/kothf/step-viewer/compare/v1.614.0...v1.615.0

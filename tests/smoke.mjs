@@ -16496,14 +16496,31 @@ try {
     await mp.uncheck('#sim-legend [data-k="animate"]');
     await mp.waitForTimeout(200);
     const m4 = await sim();
+    // 1.618: an excitation frequency marks the modes near it; the shown mode is recorded as a GIF
+    await mp.fill('#sim-tree [data-k="excite"]', "25000 rpm");
+    await mp.keyboard.press("Tab");
+    await mp.waitForTimeout(400);
+    const x1 = await sim();
+    const xTab = await mp.evaluate(() => ({ near: [...document.querySelectorAll("#sim-tree table.sim-modes tbody tr.near")].map(r => r.dataset.mode).join(), note: document.querySelector("#sim-tree .sim-excite")?.textContent ?? "", warn: !!document.querySelector("#sim-tree .sim-excite.warn"),
+      wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.fill('#sim-tree [data-k="excite"]', "50 Hz");
+    await mp.keyboard.press("Tab");
+    await mp.waitForTimeout(400);
+    const x2 = await mp.evaluate(() => ({ near: window.__sv.sim.state().near.length, warn: !!document.querySelector("#sim-tree .sim-excite.warn"), note: !!document.querySelector("#sim-tree .sim-excite") }));
+    await mp.click('#sim-legend [data-a="gif"]');
+    await mp.waitForFunction(() => window.__sv.sim.state().gifs === 1, null, { timeout: 60000 });
+    const x3 = await sim();
+    check(x1.near.join() === "0,1" && xTab.near === "0,1" && xTab.warn && /417|416/.test(xTab.note) && xTab.wide <= 0 && x1.plot.shown && x2.near === 0 && !x2.warn && x2.note
+      && x3.gif.frames === 24 && x3.gif.bytes > 20000 && x3.gif.w > 100 && x3.plot.shown && !x3.animating,
+      `sim 1.618: modes within 10 % of a typed excitation frequency are marked without making the results stale, and a mode's swing is saved as a GIF (${JSON.stringify({ near: x1.near, xTab, x2, gif: x3.gif })})`);
     await mp.click("#lang-btn");
     await mp.waitForTimeout(300);
     const mLeft = await mp.evaluate(() => {
       const bad = [];
       for (const root of [document.querySelector("#sim-tree"), document.querySelector("#sim-tools"), document.querySelector("#sim-legend")]) {
         const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        for (let n = w.nextNode(); n; n = w.nextNode()) if (!n.parentElement.closest('[translate="no"]') && /[A-Za-z]{3,}/.test(n.data.replace(/\b(GPa|MPa|mm)\b/g, ""))) bad.push(n.data.trim());
-        for (const e of root.querySelectorAll("[title], [aria-label]")) for (const a of ["title", "aria-label"]) { const v = e.getAttribute(a); if (v && /[A-Za-z]{3,}/.test(v) && !e.closest('[translate="no"]')) bad.push(v); }
+        for (let n = w.nextNode(); n; n = w.nextNode()) if (!n.parentElement.closest('[translate="no"]') && /[A-Za-z]{3,}/.test(n.data.replace(/\b(GPa|MPa|mm|GIF)\b/g, ""))) bad.push(n.data.trim());
+        for (const e of root.querySelectorAll("[title], [aria-label]")) for (const a of ["title", "aria-label"]) { const v = e.getAttribute(a); if (v && /[A-Za-z]{3,}/.test(v.replace(/\bGIF\b/g, "")) && !e.closest('[translate="no"]')) bad.push(v); }
       }
       return bad;
     });

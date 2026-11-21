@@ -11,6 +11,7 @@ import { cacheGet, cacheKey, cachePut } from "../buildCache";
 import type { ExprError } from "../model/expr";
 import { evalVars } from "../model/params";
 import type { FaceRef, Num, PartDoc } from "../model/types";
+import { encodeGif, gifDelays } from "../motion/gif";
 import { download, pdfWriter } from "../tools/exporters";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
@@ -21,6 +22,7 @@ import { SIM_STOPPED, SimClient } from "./client";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
 import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
+import { nearExcitation, parseExcitation } from "./excite";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, studyProblem, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
@@ -70,6 +72,8 @@ const SF_TOP = 10;
 const MODE_PLOTS: PlotKind[] = ["u", "ux", "uy", "uz"];
 /** One swing of an animated mode shape, ms. */
 const MODE_PERIOD = 1600;
+/** Frames of a recorded mode shape: one swing. */
+const GIF_FRAMES = 24;
 const SUPPORT_COLOR = 0x2f9e44, LOAD_COLOR = 0xd6336c;
 /** Blue, cyan, green, yellow, red. */
 const RAMP: [number, number, number][] = [[0.11, 0.3, 0.85], [0.1, 0.75, 0.85], [0.25, 0.75, 0.3], [0.95, 0.85, 0.2], [0.88, 0.2, 0.15]];
@@ -134,6 +138,9 @@ export class SimController {
   /** Modal results: the mode shown (−1 = the first elastic one) and whether its shape swings. */
   private modeSel = -1;
   private animate = true;
+  private recording = false;
+  private gifs = 0;
+  private lastGif: { bytes: number; frames: number; w: number; h: number } | null = null;
   private anim: { raf: number; base: Float32Array; u: Float32Array; scale: number; t0: number; frames: number } | null = null;
 
   constructor(private host: SimHost) {
@@ -156,6 +163,7 @@ export class SimController {
       else if (a === "probe") { this.probing = !this.probing; this.renderLegend(); }
       else if (a === "noprobes") this.setProbes(t("Clear probes"), () => []);
       else if (a === "probecsv") this.exportProbes();
+    else if (a === "gif") void this.recordGif().then(b => { if (b) toast(t("GIF saved"), "success"); });
     });
     onCmTab(tab => { if (tab === "simulation" && this.host.doc()) this.host.showTab(); this.renderAll(); this.drawMarks(); });
     onLangChange(() => this.renderAll());
@@ -202,7 +210,7 @@ export class SimController {
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
-      animating: !!this.anim, frames: this.anim?.frames ?? 0,
+      animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)),
       hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
     };
   }
@@ -887,6 +895,53 @@ export class SimController {
     a.raf = requestAnimationFrame(step);
   }
 
+  /** One swing of the shown mode shape as a looping GIF of the current view (up to `maxW` px wide). */
+  async recordGif(maxW = 640): Promise<Blob | null> {
+    const ov = this.overlay, r = this.res?.passes.at(-1), doc = this.host.doc(), st = this.study();
+    const mi = this.modeIndex(r), shape = r?.shapes?.[mi], pm = this.res?.mesh;
+    if (!ov || !r?.modes || !shape || !pm || !doc || !st || !this.plot.deformed || this.recording) return null;
+    const v = this.host.viewer, src = v.renderer.domElement;
+    if (!src.width || !src.height) return null;
+    this.recording = true;
+    const was = this.anim;
+    this.anim = null;
+    if (was) cancelAnimationFrame(was.raf);
+    const n = GIF_FRAMES, fps = Math.round((1000 * n) / MODE_PERIOD), k = Math.min(1, maxW / src.width);
+    const c = document.createElement("canvas");
+    c.width = Math.max(2, Math.round(src.width * k)); c.height = Math.max(2, Math.round(src.height * k));
+    const g = c.getContext("2d", { willReadFrequently: true })!, frames: Uint8ClampedArray[] = [];
+    const pa = ov.geometry.getAttribute("position") as THREE.BufferAttribute, arr = pa.array as Float32Array, scale = this.usedScale;
+    const mode = r.modes[mi], label = `${t("Mode {n}", { n: mi + 1 })}: ${mode.rigid ? t("rigid body") : `${sig(mode.hz)} Hz`}`;
+    v.bareKeep = new Set();
+    try {
+      for (let f = 0; f < n; f++) {
+        const a = scale * Math.cos((2 * Math.PI * f) / n);
+        for (let i = 0; i < arr.length; i++) arr[i] = pm.pos[i] + a * shape[i];
+        pa.needsUpdate = true;
+        v.render();
+        g.fillStyle = "#ffffff"; g.fillRect(0, 0, c.width, c.height);
+        g.drawImage(src, 0, 0, c.width, c.height);
+        g.fillStyle = "#111827"; g.font = `13px "DejaVu Sans", system-ui, sans-serif`; g.textBaseline = "top"; g.textAlign = "left";
+        g.fillText(label, 8, 8);
+        frames.push(g.getImageData(0, 0, c.width, c.height).data);
+        if (f % 6 === 5) await new Promise(res => setTimeout(res, 0));
+      }
+    } finally { v.bareKeep = null; this.recording = false; }
+    const blob = new Blob([encodeGif(frames, c.width, c.height, gifDelays(n, fps))], { type: "image/gif" });
+    this.gifs++;
+    this.lastGif = { bytes: blob.size, frames: n, w: c.width, h: c.height };
+    download(blob, `${`${doc.name}-${st.name}`.replace(/[\\/:*?"<>|]+/g, "_")}-mode${mi + 1}.gif`);
+    // back to the live swing (or the still shape)
+    if (this.overlay === ov) { if (this.animate) this.startAnim(pm.pos, shape, scale); else { for (let i = 0; i < arr.length; i++) arr[i] = pm.pos[i] + scale * shape[i]; pa.needsUpdate = true; v.invalidate(); } }
+    return blob;
+  }
+
+  /** Modes of the pass that lie within 10 % of the study's excitation frequency. */
+  private nearModes(r: PassResult | undefined): number[] {
+    const ex = parseExcitation(this.study()?.excite ?? "");
+    return ex == null || !r?.modes ? [] : nearExcitation(r.modes.map(m => (m.rigid ? 0 : m.hz)), ex);
+  }
+
   /** The modes as rows of text: number, frequency, effective mass along X, Y, Z (%). */
   private modeRows(r: PassResult): string[][] {
     return (r.modes ?? []).map((m, i) => [String(i + 1), m.rigid ? `0 (${t("rigid body")})` : sig(m.hz), ...m.eff.map(e => (100 * e).toFixed(1))]);
@@ -1009,6 +1064,10 @@ export class SimController {
     blocks.push({ kind: "h", text: t("Modes") });
     const sum = [0, 1, 2].map(c => (last.modes ?? []).reduce((a, x) => a + x.eff[c], 0));
     blocks.push({ kind: "table", widths: [1, 3, 2, 2, 2], rows: [["#", `${t("Frequency")}, Hz`, `${t("Effective mass")} X, %`, "Y, %", "Z, %"], ...this.modeRows(last), ["", t("Sum"), ...sum.map(v => (100 * v).toFixed(1))]] });
+    const ex = parseExcitation(st.excite ?? ""), near = this.nearModes(last);
+    if (ex != null) blocks.push({ kind: "p", text: near.length
+      ? t("Resonance risk: mode {list} lies within 10 % of the excitation at {f} Hz.|Resonance risk: modes {list} lie within 10 % of the excitation at {f} Hz.", { n: near.length, list: near.map(i => `${i + 1} (${sig(last.modes![i].hz)} Hz)`).join(", "), f: sig(ex) })
+      : t("No mode found lies within 10 % of the excitation at {f} Hz.", { f: sig(ex) }) });
     const keep = { ...this.plot }, sel = this.modeSel, anim = this.animate;
     this.animate = false;
     const elastic = (last.modes ?? []).map((x, i) => (x.rigid ? -1 : i)).filter(i => i >= 0).slice(0, 4);
@@ -1117,7 +1176,8 @@ export class SimController {
     if (modal) html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Modes"))}</span><input type="number" data-k="modes" min="1" max="${MAX_MODES}" step="1" value="${st.settings.modes ?? DEFAULT_MODES}"></label>`
       + `<label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: MODAL_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === Math.min(MODAL_PASSES, st.settings.passes) ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
       + `<label class="pm-field"><span>${esc(t("Stop at frequency change"))}, %</span><input type="number" data-k="tol" min="0" max="20" step="0.1" value="${sig(st.settings.energyTol)}"></label>`
-      + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once no frequency changes by more than {n} %.", { n: sig(st.settings.energyTol) }))}</p></div>`;
+      + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once no frequency changes by more than {n} %.", { n: sig(st.settings.energyTol) }))}</p>`
+      + `<label class="pm-field"><span>${esc(t("Excitation"))}</span><input type="text" data-k="excite" value="${esc(st.excite ?? "")}" placeholder="${esc(t("e.g. 3000 rpm or 50 Hz"))}" title="${esc(t("A frequency the part is shaken at, such as a motor speed: modes within 10 % of it are marked"))}" spellcheck="false" /></label></div>`;
     else html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: MAX_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === st.settings.passes ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
       + `<label class="pm-field"><span>${esc(t("Stop at energy change"))}, %</span><input type="number" data-k="tol" min="0" max="20" step="0.1" value="${sig(st.settings.energyTol)}"></label>`
       + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once the strain energy changes by less than {n} %.", { n: sig(st.settings.energyTol) }))} ${esc(t("Passes after the third raise it only where the estimated error is highest."))}</p></div>`;
@@ -1179,12 +1239,17 @@ export class SimController {
   private modalHtml(r: Results, last: PassResult): string {
     const modes = last.modes ?? [], sel = this.modeIndex(last), first = modes.find(m => !m.rigid), rigid = modes.filter(m => m.rigid).length;
     const sum = [0, 1, 2].map(c => modes.reduce((a, x) => a + x.eff[c], 0));
+    const near = new Set(this.nearModes(last));
     let html = `<dl class="sim-kv">` + (first ? `<dt>${esc(t("Lowest natural frequency"))}</dt><dd data-v="f1">${sig(first.hz)} Hz</dd>` : "")
       + `<dt>${esc(t("Mass"))}</dt><dd data-v="mass">${sig((last.mass ?? 0) * 1000)} kg</dd></dl>`;
     html += `<table class="sim-hot sim-modes"><thead><tr><th>#</th><th>${esc(t("Frequency"))}, Hz</th><th title="${esc(t("Effective mass: the share of the part's mass that moves with the mode along each axis"))}">X, %</th><th>Y, %</th><th>Z, %</th></tr></thead><tbody>`
-      + this.modeRows(last).map((c, i) => `<tr data-a="mode" data-mode="${i}" tabindex="0" class="${modes[i].rigid ? "rigid" : ""}${i === sel ? " sel" : ""}">${c.map(x => `<td>${esc(x)}</td>`).join("")}</tr>`).join("")
+      + this.modeRows(last).map((c, i) => `<tr data-a="mode" data-mode="${i}" tabindex="0" class="${modes[i].rigid ? "rigid" : ""}${i === sel ? " sel" : ""}${near.has(i) ? " near" : ""}">${c.map((x, j) => `<td>${esc(x)}${j === 1 && near.has(i) ? ` <span class="sim-warn" title="${esc(t("Within 10 % of the excitation frequency"))}">⚠</span>` : ""}</td>`).join("")}</tr>`).join("")
       + `</tbody><tfoot><tr><td></td><td>${esc(t("Sum"))}</td>${sum.map(v => `<td>${(100 * v).toFixed(1)}</td>`).join("")}</tr></tfoot></table>`;
     html += `<p class="sim-note muted">${esc(t("X, Y, Z: effective mass, the share of the part's mass that moves with the mode along each axis. Click a mode to see its shape."))}</p>`;
+    const ex = parseExcitation(this.study()?.excite ?? "");
+    if (ex != null) html += near.size
+      ? `<p class="sim-note sim-excite warn">${esc(t("Resonance risk: mode {list} lies within 10 % of the excitation at {f} Hz.|Resonance risk: modes {list} lie within 10 % of the excitation at {f} Hz.", { n: near.size, list: [...near].map(i => `${i + 1} (${sig(modes[i].hz)} Hz)`).join(", "), f: sig(ex) }))}</p>`
+      : `<p class="sim-note muted sim-excite">${esc(t("No mode found lies within 10 % of the excitation at {f} Hz.", { f: sig(ex) }))}</p>`;
     if (rigid) html += `<p class="sim-note muted sim-rigid">${esc(t("{n} mode at 0 Hz is a motion of the whole part: the supports leave it free.|{n} modes at 0 Hz are motions of the whole part: the supports leave it free.", { n: rigid }))}</p>`;
     html += `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Frequency change"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
       + r.passes.map(p => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`;
@@ -1259,7 +1324,7 @@ export class SimController {
       + (k === "err" ? `<p class="ana-note">${esc(t("Where the last pass still changed the solution: the places that would gain most from more accuracy."))}</p>` : "")
       + `<label class="chk"><input type="checkbox" data-k="deformed"${this.plot.deformed ? " checked" : ""} />${esc(t("Deformed shape"))}</label>`
       + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "")
-      + (modes ? (this.plot.deformed ? `<label class="chk"><input type="checkbox" data-k="animate"${this.animate ? " checked" : ""} />${esc(t("Animate"))}</label>` : "") + `<p class="ana-note">${esc(t("Mode shapes have no scale: only the pattern of the motion is meaningful."))}</p>` : "")
+      + (modes ? (this.plot.deformed ? `<label class="chk"><input type="checkbox" data-k="animate"${this.animate ? " checked" : ""} />${esc(t("Animate"))}</label><button class="btn small" data-a="gif" title="${esc(t("Save one swing of this mode shape as an animated GIF of the current view"))}">${esc(t("Record GIF"))}</button>` : "") + `<p class="ana-note">${esc(t("Mode shapes have no scale: only the pattern of the motion is meaningful."))}</p>` : "")
       + (modes ? "" : `<label class="chk"><input type="checkbox" data-k="marks"${this.plot.marks ? " checked" : ""} />${esc(t("Highest and lowest values"))}</label>`)
       + (modes ? "" : `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the plot to read the value at a point"))}">${esc(t("Probe"))}</button>`
       + (this.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button><button class="btn small" data-a="probecsv" title="${esc(t("Save the probes' places and values as a CSV file"))}">${esc(t("Export CSV"))}</button>` : "") + `</div>`);
@@ -1286,6 +1351,7 @@ export class SimController {
     else if (a === "solve") void this.solve();
     else if (a === "report") void this.report();
     else if (a === "probecsv") this.exportProbes();
+    else if (a === "gif") void this.recordGif().then(b => { if (b) toast(t("GIF saved"), "success"); });
     else if (a === "rmprobe") { const i = Number(b.dataset.i); this.setProbes(t("Remove probe"), l => l.filter((_p, k) => k !== i)); this.renderAll(); }
     else if (a === "hot") {
       const i = Number(b.dataset.hot);
@@ -1331,6 +1397,11 @@ export class SimController {
       const v = Math.round(Number(el.value));
       if (!(v >= 1 && v <= MAX_MODES)) { el.value = String(st.settings.modes ?? DEFAULT_MODES); return; }
       this.host.change(t("Modes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.modes = v; });
+    }
+    else if (el.dataset.k === "excite") {
+      const v = el.value.trim();
+      if (v && parseExcitation(v) == null) { el.setAttribute("aria-invalid", "true"); toast(t("Type a frequency such as 50 Hz or 3000 rpm."), "warn"); return; }
+      this.host.change(t("Excitation"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) { if (v) s.excite = v; else delete s.excite; } });
     }
     else if (el.dataset.k === "tol") {
       const v = Number(el.value);
