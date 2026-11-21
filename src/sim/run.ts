@@ -2,7 +2,7 @@
 // Pure: runs in the solver worker and in node tests.
 
 import { MeshBody, insideOf } from "./body";
-import { solveStatic, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support } from "./static";
+import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { GRAVITY, MAX_REFINE, type Study, type StudyEdge, type StudyPoint } from "./types";
@@ -360,6 +360,10 @@ export interface PassResult {
   raised?: number;
   dofs: number;
   cells: number;
+  /** What the stiffness matrix took, bytes. */
+  memory?: number;
+  /** The next pass would take more memory than the budget: megabytes it would need. The passes end here (FR-SOL-020). */
+  capped?: number;
   /** Strain energy, N·mm. */
   energy: number;
   /** An assembly: the pairs of components found joined (by region index), with the area they share, mm². */
@@ -435,6 +439,8 @@ export interface RunInput {
   passes: number;
   /** Energy change target, %. */
   energyTol: number;
+  /** The memory budget, bytes (default `MEMORY_LIMIT`). */
+  memory?: number;
   /** Where results are wanted: positions and outward normals (3 each). */
   pos: Float32Array;
   nrm: Float32Array;
@@ -617,7 +623,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     const r = solveStatic({
       lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts, welds: inp.welds, connectors: inp.problem.connectors, masses: inp.problem.masses,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
-      fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin, relief: inp.problem.relief,
+      fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin, relief: inp.problem.relief, memory: inp.memory,
     });
     grid = r.grid;
     prev = r.x;
@@ -635,8 +641,23 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     const change = k ? (Math.abs(r.energy - last) / Math.abs(r.energy || 1)) * 100 : null;
     last = r.energy;
     const converged = change != null && change <= inp.energyTol;
-    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), ...(r.contacts ? { contacts: r.contacts } : {}), ...(r.bolts ? { bolts: r.bolts } : {}), ...(r.welds ? { welds: r.welds } : {}), ...(r.connectors ? { connectors: r.connectors } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
-    if (converged) return;
+    // what the next pass would take: over the budget, the passes end with this one
+    let capped = 0;
+    if (!converged && k + 1 < passes) {
+      let need = 0;
+      if (k + 1 < GLOBAL_PASSES) {
+        const d = boost ? Int8Array.from(boost, b => Math.min(LOCAL_DEGREE, k + 3 + b)) : null;
+        need = staticMemory(r.grid, d ? d.reduce((a, v) => Math.max(a, v), 0) : k + 3, d);
+      } else {
+        const d = degrees ? Int8Array.from(degrees) : new Int8Array(ind.length).fill(GLOBAL_PASSES + 1);
+        const mk = markElements(ind, d);
+        for (const e of mk) d[e]++;
+        if (mk.length) need = staticMemory(r.grid, d.reduce((a, v) => Math.max(a, v), 0), d);
+      }
+      if (need > (inp.memory ?? MEMORY_LIMIT)) capped = Math.ceil(need / 2 ** 20);
+    }
+    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, ...(capped ? { capped } : {}), energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), ...(r.contacts ? { contacts: r.contacts } : {}), ...(r.bolts ? { bolts: r.bolts } : {}), ...(r.welds ? { welds: r.welds } : {}), ...(r.connectors ? { connectors: r.connectors } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || capped > 0 || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
+    if (converged || capped) return;
   }
 }
 
@@ -661,7 +682,7 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
     const solve = () => solveStatic({
       lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts, welds: inp.welds, connectors: inp.problem.connectors, masses: inp.problem.masses,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
-      fixed: inp.problem.fixed, loads: [], modal: { count, start },
+      fixed: inp.problem.fixed, loads: [], modal: { count, start }, memory: inp.memory,
     });
     let r = solve();
     grid = r.grid; start = r.space;
@@ -698,12 +719,14 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
     const first = Math.max(0, kept.findIndex(m => !m.rigid));
     const n = inp.pos.length / 3;
     const converged = change != null && change <= inp.energyTol;
+    const need = !converged && k + 1 < passes ? staticMemory(r.grid, p + 1) : 0;
+    const capped = need > (inp.memory ?? MEMORY_LIMIT) ? Math.ceil(need / 2 ** 20) : 0;
     yield {
-      pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, energy: 0, change, ms: Date.now() - t0, reactions: [], applied: none,
+      pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, ...(capped ? { capped } : {}), energy: 0, change, ms: Date.now() - t0, reactions: [], applied: none,
       u: keptShapes[first] ? Float32Array.from(keptShapes[first]) : new Float32Array(3 * n), vm: new Float32Array(n), err: new Float32Array(n), errors: [],
-      maxU: keptShapes.length ? 1 : 0, maxVm: 0, converged, done: converged || k === passes - 1,
+      maxU: keptShapes.length ? 1 : 0, maxVm: 0, converged, done: converged || capped > 0 || k === passes - 1,
       modes: kept.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })), shapes: keptShapes, mass: r.mass, ...(more ? { more: true } : {}),
     };
-    if (converged) return;
+    if (converged || capped) return;
   }
 }

@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.642.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **Solve on change** (FR-STU-022). Ticked under Accuracy, a study is solved again by itself a moment after every change to the model or to the study, once it has a support and a load; an open panel or command is waited for.
+- Structural analysis: the **memory a pass needs** is worked out before the pass starts (FR-SOL-020). A study whose first pass would take more than 1.5 GB is refused with what it needs and what to do; a later pass that would not fit is not started, and the results say that the passes ended there. Hover the Unknowns of a pass for the memory it took.
+
 ## [1.641.0] - 2026-11-21
 
 ### Added
@@ -4176,7 +4183,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.641.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.642.0...HEAD
+[1.642.0]: https://github.com/kothf/step-viewer/compare/v1.641.0...v1.642.0
 [1.641.0]: https://github.com/kothf/step-viewer/compare/v1.640.0...v1.641.0
 [1.640.0]: https://github.com/kothf/step-viewer/compare/v1.639.0...v1.640.0
 [1.639.0]: https://github.com/kothf/step-viewer/compare/v1.638.0...v1.639.0

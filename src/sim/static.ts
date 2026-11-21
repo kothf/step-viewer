@@ -6,7 +6,7 @@
 
 import { Basis, basisSize } from "./basis";
 import { gauss, gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
-import { makeGrid, refit, type Grid } from "./grid";
+import { makeGrid, memoryBytes, refit, type Grid } from "./grid";
 import { BlockMatrix, Envelope } from "./sparse";
 import { pcgSolver } from "./pcg";
 import { subspace } from "./eigen";
@@ -228,6 +228,8 @@ export interface StaticProblem {
    * usual case: none). The result has no rigid motion (mass-weighted). Needs `mat.rho`.
    */
   relief?: boolean;
+  /** The most memory the stiffness matrix may take, bytes (default `MEMORY_LIMIT`); more = E-SIM-MEMORY: <MB>. */
+  memory?: number;
 }
 
 export interface Mode {
@@ -256,6 +258,8 @@ export interface StaticResult {
   grid: Grid;
   p: number;
   dofs: number;
+  /** What the stiffness matrix took, bytes. */
+  memory: number;
   /** Coefficients per element: element e, basis b, component c at (e·n + b)·3 + c. */
   x: Float64Array;
   /** PCG iterations (0 for the direct solver). */
@@ -302,6 +306,14 @@ export interface StaticResult {
 
 /** Unknowns up to which the direct solver is used. */
 export const DIRECT_LIMIT = 6000;
+/** The memory budget of a solve (NFR-SIM-005), bytes. */
+export const MEMORY_LIMIT = 1.5 * 2 ** 30;
+/** What the stiffness matrix of a pass takes, bytes (FR-SOL-020): degree `p`, or each element's own up to `p`. */
+export function staticMemory(grid: Grid, p: number, degrees?: ArrayLike<number> | null): number {
+  return memoryBytes(grid, e => 3 * basisSize(degrees ? Math.min(p, Math.max(1, degrees[e])) : p));
+}
+/** The megabytes an E-SIM-MEMORY error names. */
+export const memoryMb = (bytes: number) => Math.ceil(bytes / 2 ** 20);
 /** The same for a modal solve, where one factorisation serves many solves. */
 export const MODAL_DIRECT = 9000;
 
@@ -360,6 +372,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   // functions per element: the leading ones of the hierarchical basis up to the element's own degree
   const nbs = new Int32Array(nel).fill(nb);
   if (deg) for (let e = 0; e < nel; e++) nbs[e] = basisSize(Math.min(p, Math.max(1, deg[e])));
+  const memory = memoryBytes(grid, e => 3 * nbs[e]);
+  if (memory > (pb.memory ?? MEMORY_LIMIT)) throw new Error(`E-SIM-MEMORY: ${memoryMb(memory)}`);
   const A = new BlockMatrix(nel, Array.from(nbs, v => 3 * v));
   const off = A.off;
   const f = new Float64Array(A.size);
@@ -1428,7 +1442,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     return grid.cells[c].el;
   };
   return {
-    grid, p, dofs: A.size, x, energy, iterations,
+    grid, p, dofs: A.size, memory, x, energy, iterations,
     ms: { grid: t1 - t0, assemble: t2 - t1, factor: t3 - t2, solve: t4 - t3 },
     reactions, applied, eta, prevError, accel,
     ...(doms ? { contacts } : {}),
