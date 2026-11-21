@@ -52,6 +52,20 @@ export function aloneIndex(index: Uint32Array, dom: ArrayLike<number>, d: number
 }
 
 /**
+ * Iso-clipping (FR-RES-007): the triangles with a vertex on the wanted side of `value` are kept (at or above it,
+ * or at or below), the others made degenerate like `aloneIndex` does.
+ */
+export function isoIndex(index: Uint32Array, val: ArrayLike<number>, value: number, above: boolean): Uint32Array {
+  const out = new Uint32Array(index.length), ok = (v: number) => (above ? val[v] >= value : val[v] <= value);
+  for (let t = 0; t < index.length; t += 3) {
+    const a = index[t], b = index[t + 1], c = index[t + 2];
+    if (a !== b && (ok(a) || ok(b) || ok(c))) { out[t] = a; out[t + 1] = b; out[t + 2] = c; }
+    else { out[t] = a; out[t + 1] = a; out[t + 2] = a; }
+  }
+  return out;
+}
+
+/**
  * Which part each vertex of the plot mesh belongs to. The first vertices are the joined display mesh's, `counts[k]`
  * of them per part in order; the refined mesh adds midpoints after them, which take the part of their triangle
  * (parts share no vertices). -1 = a vertex no triangle uses.
