@@ -1273,6 +1273,8 @@ export class SketchEditor {
     if (!ent) {
       ent = this.entFrom(ms.g);
       ent.cons = true;
+      // Hidden: a snap or a pick holds the relation to the model edge, it does not draw the edge into the sketch.
+      (ent as { ref?: boolean }).ref = true;
       this.sk.rels.push({ id: uid("r"), t: "fix", e: [ent.id], ...(ref ? { ext: ref } : {}) });
     }
     if (ms.at === "on") return { id: null, curve: ent.id };
@@ -2246,7 +2248,7 @@ export class SketchEditor {
     if (kind === "symmetric") {
       // The line of symmetry last: a construction line if there is one.
       const lines = e.filter(id => kindOf(id) === "line");
-      const axis = lines.find(id => (this.ent(id) as SkEnt & { cons?: boolean }).cons) ?? lines.at(-1)!;
+      const axis = lines.find(id => (this.ent(id) as SkEnt & { cons?: boolean }).cons && !this.isRef(id)) ?? lines.at(-1)!;
       e = [...e.filter(id => id !== axis), axis];
     }
     if (kind === "midpoint" || kind === "coincident" || kind === "intersection") e.sort((a, b) => (kindOf(a) === "point" ? -1 : 0) - (kindOf(b) === "point" ? -1 : 0));
@@ -2346,7 +2348,7 @@ export class SketchEditor {
     let n = 0;
     for (const id of this.selection) {
       const e = this.ent(id);
-      if (e && e.t !== "point") { e.cons = !e.cons; n++; }
+      if (e && e.t !== "point") { e.cons = !e.cons; delete (e as { ref?: boolean }).ref; n++; }
     }
     if (n) {
       this.commit("Toggle construction");
@@ -3802,6 +3804,61 @@ export class SketchEditor {
     return ent;
   }
 
+  /** A hidden model edge copy (`SkEnt.ref`), made by a snap or a pick on the model. */
+  private isRef(id: string): boolean {
+    const e = this.ent(id);
+    return !!e && "ref" in e && !!e.ref;
+  }
+
+  /**
+   * Hidden model edge copies not drawn now, with their own points: all of them but the selected one and the one
+   * under the pointer. A point stays drawn when a drawn curve, a relation or a dimension uses it.
+   */
+  private hiddenRefs(): Set<string> {
+    const out = new Set<string>();
+    // A copy whose model edge is gone shows (olive), so the dangling reference can be seen and re-attached.
+    const lost = new Set(this.sk.rels.filter(r => r.ext && r.dangling).map(r => r.e[0]));
+    const refs = this.sk.ents.filter(e => "ref" in e && e.ref && !lost.has(e.id) && !this.selection.has(e.id) && this.hover?.id !== e.id && !this.relHot.has(e.id));
+    if (!refs.length) return out;
+    for (const e of refs) out.add(e.id);
+    const used = new Set<string>();
+    for (const e of this.sk.ents) if (e.t !== "point" && !out.has(e.id)) for (const p of refPts(e)) used.add(p);
+    for (const r of this.sk.rels) if (!(r.t === "fix" && r.ext && out.has(r.e[0]))) for (const id of r.e) used.add(id);
+    for (const d of this.sk.dims) for (const id of d.e) used.add(id);
+    for (const e of refs) for (const p of refPts(e)) if (!used.has(p) && !this.selection.has(p) && this.hover?.id !== p) out.add(p);
+    return out;
+  }
+
+  /**
+   * Removes hidden model edge copies nothing uses any more (no relation but their own On edge one, no dimension,
+   * no other curve on their points, not selected), with that relation and the points only they had. Called on
+   * every commit, so deleting the line that snapped to a model edge also takes its hidden copy away.
+   */
+  private dropUnusedRefs() {
+    const refs = this.sk.ents.filter(e => "ref" in e && e.ref);
+    if (!refs.length) return;
+    const own = (r: SkRel, id: string) => r.t === "fix" && !!r.ext && r.e[0] === id;
+    const gone = new Set<string>();
+    for (const e of refs) {
+      if (this.selection.has(e.id)) continue;
+      const pts = new Set(refPts(e));
+      const used = this.sk.rels.some(r => !own(r, e.id) && r.e.some(x => x === e.id || pts.has(x)))
+        || this.sk.dims.some(d => d.e.some(x => x === e.id || pts.has(x)))
+        || this.sk.ents.some(o => o.id !== e.id && o.t !== "point" && (refPts(o).some(p => pts.has(p)) || (o.t === "text" && o.along === e.id)))
+        || [...pts].some(p => this.selection.has(p));
+      if (!used) gone.add(e.id);
+    }
+    if (!gone.size) return;
+    const pts = new Set<string>();
+    for (const e of refs) if (gone.has(e.id)) for (const p of refPts(e)) pts.add(p);
+    this.sk.ents = this.sk.ents.filter(e => !gone.has(e.id));
+    this.sk.rels = this.sk.rels.filter(r => !(r.t === "fix" && r.e.some(x => gone.has(x))));
+    for (const e of this.sk.ents) if (e.t !== "point") for (const p of refPts(e)) pts.delete(p);
+    for (const r of this.sk.rels) for (const id of r.e) pts.delete(id);
+    for (const d of this.sk.dims) for (const id of d.e) pts.delete(id);
+    if (pts.size) this.sk.ents = this.sk.ents.filter(e => !pts.has(e.id));
+  }
+
   /** Dangling On edge relations of the selection (or all of them when nothing dangling is selected). */
   danglingRels(): SkRel[] {
     const all = this.sk.rels.filter(r => r.ext && r.dangling);
@@ -3944,6 +4001,7 @@ export class SketchEditor {
   private lastCommitted: SketchFeature;
 
   private commit(label: string) {
+    this.dropUnusedRefs();
     this.lastCommitted = structuredClone(this.sk);
     this.info = solve(this.sk);
     this.host.commit(label, structuredClone(this.sk));
@@ -4366,7 +4424,9 @@ export class SketchEditor {
     push([-ax * 0.25, 0], [ax, 0], 0xd9480f, dimSegs, dimCols);
     push([0, -ax * 0.25], [0, ax], 0x2f9e44, dimSegs, dimCols);
 
+    const hidden = this.hiddenRefs();
     for (const e of this.sk.ents) {
+      if (hidden.has(e.id)) continue;
       const c = color(e.id, e.cons);
       cur = hot(e.id) ? { s: hotSegs, c: hotCols } : e.cons ? { s: consSegs, c: consCols } : { s: segs, c: cols };
       if (e.t === "line") push(this.pt(e.a), this.pt(e.b), c);
@@ -4585,7 +4645,7 @@ export class SketchEditor {
     const pp: number[] = [], pc: number[] = [];
     const addPt = (p: V2, c: number) => { const w = this.w(p); pp.push(w.x, w.y, w.z); const k = new THREE.Color(c); pc.push(k.r, k.g, k.b); };
     addPt([0, 0], this.selection.has(ORIGIN) ? color(ORIGIN) : 0xd9480f);
-    for (const e of this.sk.ents) if (e.t === "point") addPt([e.x, e.y], color(e.id));
+    for (const e of this.sk.ents) if (e.t === "point" && !hidden.has(e.id)) addPt([e.x, e.y], color(e.id));
     if (d.cursor && !["select", "dim", "hord", "vord", "trim", "fillet", "chamfer", "extend", "split", "jog", "segment", "offset", "convert", "intersect", "eqn"].includes(this.tool)) addPt(d.cursor, C.pre);
     const pg = new THREE.BufferGeometry();
     pg.setAttribute("position", new THREE.Float32BufferAttribute(pp, 3));
@@ -4836,6 +4896,8 @@ export class SketchEditor {
     const per = new Map<string, number>();
     for (const r of this.sk.rels) {
       if (r.t === "coincident" || r.t === "onCurve" || this.lockedInsert(r.id)) continue;
+      // The On edge relation of a hidden model edge copy has no glyph of its own: the relation the snap made shows.
+      if (r.t === "fix" && r.ext && !r.dangling && this.isRef(r.e[0]) && !this.selection.has(r.id) && !this.selection.has(r.e[0])) continue;
       // A plain fix is a lock on the point or curve (gap list S11), shown even with the glyphs hidden.
       const lock = r.t === "fix" && !r.ext;
       // Hidden glyphs (FR-SK-053) still show while selected, so a relation picked in the list can be seen.

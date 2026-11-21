@@ -1397,7 +1397,7 @@ export class ModelController {
     } else if (type === "revolve") {
       if (!pick) { toast(t("Draw a sketch first."), true); return; }
       const lines = pick.ents.filter(e => e.t === "line");
-      const axis = (lines.find(l => l.cons) ?? lines[0])?.id ?? "";
+      const axis = (lines.find(l => l.cons && !l.ref) ?? lines.find(l => !l.ref) ?? lines[0])?.id ?? "";
       draft = { id, type: "revolve", name: nextName(d, "revolve"), sketch: pick.id, op: "boss", axis, angle: { v: 2 * Math.PI } } satisfies RevolveFeature;
     } else if (type === "plane") {
       const selPlane = this.selected?.startsWith("std:") ? { std: this.selected.slice(4) as "XY" } : this.selected && this.store.feature(this.selected)?.type === "plane" ? { plane: this.selected } : null;
@@ -4452,7 +4452,7 @@ export class ModelController {
       const sk = (sel && hasLine(sel) ? sel : undefined) ?? sketches.filter(s => !used.has(s.id) && !this.doc.features.some(g => absorbs(g, s.id)) && hasLine(s)).at(-1) ?? sketches.filter(hasLine).at(-1);
       if (!sk) { toast(t("Draw a sketch with a line for the axis first."), true); return null; }
       const lines = sk.ents.filter(e => e.t === "line");
-      return { id, type, name: nm, sketch: sk.id, axis: (lines.find(l => l.cons) ?? lines[0]).id, angle: { v: 2 * Math.PI } } satisfies RevolveSurfFeature;
+      return { id, type, name: nm, sketch: sk.id, axis: (lines.find(l => l.cons && !l.ref) ?? lines.find(l => !l.ref) ?? lines[0]).id, angle: { v: 2 * Math.PI } } satisfies RevolveSurfFeature;
     }
     if (type === "sweepsurf") {
       // Profile: the selected (or last unused) chain sketch; path: the last helix or curve, else another unused sketch.
@@ -7521,7 +7521,7 @@ export class ModelController {
         if (mm.kind === "feature" && isCopy(mm.draft) && (mm.draft.copy ?? "features") === "features" && SEED_TYPES.has(this.store!.feature(id)?.type ?? "") && id !== mm.draft.id) { this.toggleSeed(mm.draft, id); return; }
         if (mm.kind === "feature" && (mm.draft.type === "extrude" || mm.draft.type === "revolve") && this.store!.feature(id)?.type === "sketch") {
           mm.draft.sketch = id;
-          if (mm.draft.type === "revolve") { const sk = this.store!.feature(id) as SketchFeature; const ls = sk.ents.filter(x => x.t === "line"); mm.draft.axis = (ls.find(l => l.cons) ?? ls[0])?.id ?? ""; }
+          if (mm.draft.type === "revolve") { const sk = this.store!.feature(id) as SketchFeature; const ls = sk.ents.filter(x => x.t === "line"); mm.draft.axis = (ls.find(l => l.cons && !l.ref) ?? ls.find(l => !l.ref) ?? ls[0])?.id ?? ""; }
           this.draftChanged();
           return;
         }
@@ -8730,7 +8730,7 @@ export class ModelController {
         if (f.type === "revsurf" && k === "sketch") {
           const sk = this.store!.feature(String(val)) as SketchFeature;
           const ls = sk.ents.filter(x => x.t === "line");
-          upd(() => { f.sketch = String(val); f.axis = (ls.find(l => l.cons) ?? ls[0])?.id ?? ""; }, true);
+          upd(() => { f.sketch = String(val); f.axis = (ls.find(l => l.cons && !l.ref) ?? ls.find(l => !l.ref) ?? ls[0])?.id ?? ""; }, true);
           return;
         }
         if (f.type === "untrimsurf" && k === "untrimMode") { upd(() => { if (val === "holes") f.mode = "holes"; else delete f.mode; }, true); return; }
@@ -8805,7 +8805,7 @@ export class ModelController {
         if (k === "sketch" && f.type === "revolve") {
           const sk = this.store!.feature(String(val)) as SketchFeature;
           const ls = sk.ents.filter(x => x.t === "line");
-          upd(() => { f.sketch = String(val); f.axis = (ls.find(l => l.cons) ?? ls[0])?.id ?? ""; }, true);
+          upd(() => { f.sketch = String(val); f.axis = (ls.find(l => l.cons && !l.ref) ?? ls.find(l => !l.ref) ?? ls[0])?.id ?? ""; }, true);
           return;
         }
         upd(() => {

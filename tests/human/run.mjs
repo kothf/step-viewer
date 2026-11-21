@@ -9,7 +9,7 @@ const out = process.env.HT_OUT || "/mnt/project-files/gap-tests";
 mkdirSync(out, { recursive: true });
 const lines = [];
 let fails = 0;
-for (const f of (process.argv.slice(2).length ? process.argv.slice(2) : ["sketch", "model", "asm", "asm2", "select", "drawing", "keys", "polish", "polish2", "gtol", "attach", "clip", "drwmenu", "cutflow", "convert", "filletdim", "relicons", "vaultusers", "sim", "holepos"])) {
+for (const f of (process.argv.slice(2).length ? process.argv.slice(2) : ["sketch", "model", "asm", "asm2", "select", "drawing", "keys", "polish", "polish2", "gtol", "attach", "clip", "drwmenu", "cutflow", "convert", "filletdim", "relicons", "vaultusers", "sim", "holepos", "snapref"])) {
   const r = spawnSync("node", [join(dir, `${f}.mjs`)], { encoding: "utf8", env: { ...process.env, HT_OUT: out } });
   const rows = (r.stdout + r.stderr).split("\n").filter(l => /^(PASS|FAIL) /.test(l));
   if (r.status) rows.push(`FAIL ${f}: the script stopped: ${(r.stderr.split("\n").find(l => /Error/.test(l)) ?? "").trim()}`);
