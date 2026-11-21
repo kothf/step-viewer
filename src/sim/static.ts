@@ -7,7 +7,7 @@
 import { Basis, basisSize } from "./basis";
 import { gauss, gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
 import { makeGrid, memoryBytes, refit, type Grid } from "./grid";
-import { BlockMatrix, Envelope } from "./sparse";
+import { BlockMatrix, Envelope, envelopeCost } from "./sparse";
 import { pcgSolver, cholesky } from "./pcg";
 import { subspace } from "./eigen";
 
@@ -326,6 +326,18 @@ export function staticMemory(grid: Grid, p: number, degrees?: ArrayLike<number> 
 export const memoryMb = (bytes: number) => Math.ceil(bytes / 2 ** 20);
 /** The same for a modal solve, where one factorisation serves many solves. */
 export const MODAL_DIRECT = 9000;
+/**
+ * Above those sizes the direct solver is still used while its factorisation is cheap: a slender part (a shaft,
+ * a strip) has a narrow envelope whatever its size, and the iterative solver suits it badly (a 12 000-unknown
+ * shaft's modal pass took 160 s with it, 15 s without). Multiplications of the factorisation, and its values.
+ */
+export const DIRECT_FLOPS = 4e10, MODAL_FLOPS = 2e11, DIRECT_VALUES = 5e7;
+/** Whether the direct solver is the one to use for A (and the element order it found, to factor with). */
+function directFits(A: BlockMatrix, limit: number, flops: number): { direct: boolean; order?: Int32Array } {
+  if (A.size <= limit) return { direct: true };
+  const c = envelopeCost(A);
+  return { direct: c.flops <= flops && c.values <= DIRECT_VALUES, order: c.order };
+}
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
@@ -469,6 +481,90 @@ function measurePenalty(grid: Grid, nel: number, nbs: ArrayLike<number>, gam: Fl
 /** A rigid domain's stiffness beside the stiffest material of the model. */
 const RIGID_STIFF = 1e3;
 
+/**
+ * The stiffness of one cell's quadrature points into its element's matrix (blocks b ≥ a; see mirrorBlocks).
+ * Kept out of solveStatic, like the other hot loops: inside that long function Chrome ran this one unoptimised
+ * (37 s for a 12 000-unknown shaft at degree 4, 3 s here).
+ */
+function volumeCell(K: Float64Array, P: { a: ArrayLike<number>; n: number }, bas: Basis, c: number[], sz: number, nb: number, lam: number, mu: number) {
+  const m = 3 * nb, g = bas.g, lm = lam + mu;
+  for (let k = 0; k < P.n; k++) {
+    const o = 4 * k, w = P.a[o + 3];
+    bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], c, sz);
+    for (let a = 0; a < nb; a++) {
+      const ax = g[3 * a] * w, ay = g[3 * a + 1] * w, az = g[3 * a + 2] * w;
+      for (let b = a; b < nb; b++) {
+        const bx = g[3 * b], by = g[3 * b + 1], bz = g[3 * b + 2];
+        const md = mu * (ax * bx + ay * by + az * bz);
+        // K[(a,c),(b,d)] = λ ga_c gb_d + μ ga_d gb_c + δ_cd μ ga·gb
+        let r = 3 * a * m + 3 * b;
+        K[r] += lm * ax * bx + md; K[r + 1] += lam * ax * by + mu * ay * bx; K[r + 2] += lam * ax * bz + mu * az * bx;
+        r += m;
+        K[r] += lam * ay * bx + mu * ax * by; K[r + 1] += lm * ay * by + md; K[r + 2] += lam * ay * bz + mu * az * by;
+        r += m;
+        K[r] += lam * az * bx + mu * ax * bz; K[r + 1] += lam * az * by + mu * ay * bz; K[r + 2] += lm * az * bz + md;
+      }
+    }
+  }
+}
+
+/** The mass of one cell's quadrature points into its element's mass matrix M and sums S; returns the cell's mass. */
+function massCell(M: Float64Array, S: Float64Array, Q: { a: ArrayLike<number>; n: number }, bas: Basis, c: number[], sz: number, ne: number, rho: number): number {
+  const v = bas.v;
+  let mass = 0;
+  for (let k = 0; k < Q.n; k++) {
+    const o = 4 * k, w = Q.a[o + 3] * rho;
+    bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], c, sz);
+    mass += w;
+    for (let a = 0; a < ne; a++) {
+      const va = v[a] * w, r = a * ne;
+      S[a] += va;
+      for (let b = a; b < ne; b++) M[r + b] += va * v[b];
+    }
+  }
+  return mass;
+}
+
+/** Copies the blocks b > a of an element matrix (n functions, 3 unknowns each) to the blocks under the diagonal. */
+function mirrorBlocks(K: Float64Array, n: number) {
+  const m = 3 * n;
+  for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++)
+    K[(3 * b + d) * m + 3 * a + c] = K[(3 * a + c) * m + 3 * b + d];
+}
+
+/** Adds S, summed for the blocks b ≥ a only, to K with its mirror image. */
+function addSym(K: Float64Array, S: Float64Array, n: number) {
+  const m = 3 * n;
+  for (let a = 0; a < n; a++) {
+    for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) K[(3 * a + c) * m + 3 * a + d] += S[(3 * a + c) * m + 3 * a + d];
+    for (let b = a + 1; b < n; b++) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) {
+      const v = S[(3 * a + c) * m + 3 * b + d];
+      K[(3 * a + c) * m + 3 * b + d] += v; K[(3 * b + d) * m + 3 * a + c] += v;
+    }
+  }
+}
+
+/**
+ * The interior-face terms of one quadrature point into the block (rows i, columns j):
+ * −½ s_i N_i M_j − ½ s_j N_j M_iᵀ + γ s_i s_j N_i N_j I; `upper` = only the blocks b ≥ a (i and j the same side).
+ */
+function facePair(K: Float64Array, Ni: Float64Array, Mi: Float64Array, si: number, ni: number, Nj: Float64Array, Mj: Float64Array, sj: number, nj: number, w: number, gamma: number, upper: boolean) {
+  const hw = 0.5 * w, gw = gamma * w * si * sj, m = 3 * nj;
+  for (let a = 0; a < ni; a++) {
+    const na = Ni[a] * si * hw, pa = gw * Ni[a], a9 = 9 * a;
+    const i0 = Mi[a9], i1 = Mi[a9 + 1], i2 = Mi[a9 + 2], i3 = Mi[a9 + 3], i4 = Mi[a9 + 4], i5 = Mi[a9 + 5], i6 = Mi[a9 + 6], i7 = Mi[a9 + 7], i8 = Mi[a9 + 8];
+    for (let b = upper ? a : 0; b < nj; b++) {
+      const nbv = Nj[b] * sj * hw, pen = pa * Nj[b], b9 = 9 * b;
+      let r = 3 * a * m + 3 * b;
+      K[r] += pen - na * Mj[b9] - nbv * i0; K[r + 1] -= na * Mj[b9 + 1] + nbv * i3; K[r + 2] -= na * Mj[b9 + 2] + nbv * i6;
+      r += m;
+      K[r] -= na * Mj[b9 + 3] + nbv * i1; K[r + 1] += pen - na * Mj[b9 + 4] - nbv * i4; K[r + 2] -= na * Mj[b9 + 5] + nbv * i7;
+      r += m;
+      K[r] -= na * Mj[b9 + 6] + nbv * i2; K[r + 1] -= na * Mj[b9 + 7] + nbv * i5; K[r + 2] += pen - na * Mj[b9 + 8] - nbv * i8;
+    }
+  }
+}
+
 export function solveStatic(pb: StaticProblem): StaticResult {
   const t0 = now();
   const p = pb.p, q = p + 1;
@@ -521,34 +617,15 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   for (let e = 0; e < nel; e++) {
     const E = grid.elems[e];
     const K = A.block(e, e);
-    const nb = nbs[e], m = 3 * nb;
+    const nb = nbs[e];
     setMat(e);
-    for (const ci of E.cells) {
-      const P = grid.cells[ci].pts;
-      for (let k = 0; k < P.n; k++) {
-        const o = 4 * k, w = P.a[o + 3];
-        bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], E.c, E.s);
-        const g = bas.g;
-        for (let a = 0; a < nb; a++) {
-          const ax = g[3 * a] * w, ay = g[3 * a + 1] * w, az = g[3 * a + 2] * w;
-          for (let b = 0; b < nb; b++) {
-            const bx = g[3 * b], by = g[3 * b + 1], bz = g[3 * b + 2];
-            const md = mu * (ax * bx + ay * by + az * bz);
-            // K[(a,c),(b,d)] = λ ga_c gb_d + μ ga_d gb_c + δ_cd μ ga·gb
-            let r = 3 * a * m + 3 * b;
-            K[r] += (lam + mu) * ax * bx + md; K[r + 1] += lam * ax * by + mu * ay * bx; K[r + 2] += lam * ax * bz + mu * az * bx;
-            r += m;
-            K[r] += lam * ay * bx + mu * ax * by; K[r + 1] += (lam + mu) * ay * by + md; K[r + 2] += lam * ay * bz + mu * az * by;
-            r += m;
-            K[r] += lam * az * bx + mu * ax * bz; K[r + 1] += lam * az * by + mu * ay * bz; K[r + 2] += (lam + mu) * az * bz + md;
-          }
-        }
-      }
-    }
+    for (const ci of E.cells) volumeCell(K, grid.cells[ci].pts, bas, E.c, E.s, nb, lam, mu);
+    mirrorBlocks(K, nb);
   }
 
   // interior faces between cells of different elements
   const MA = new Float64Array(9 * nb), MB = new Float64Array(9 * nb);
+  const Saa = new Float64Array(9 * nb * nb), Sab = new Float64Array(9 * nb * nb), Sbb = new Float64Array(9 * nb * nb);
   /** Quadrature of the face of cell `ca` on its high side along `axis`, for the elements `ea` and `eb` it parts. */
   const fitted = new Map<number, ReturnType<typeof facePoints>>();
   const facePts = (ca: number, ea: number, eb: number, axis: number) => {
@@ -581,17 +658,21 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     nrm[axis] = 1;
     const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
     gamma = Math.max(gam[ea], gam[eb]);
+    // the four blocks are symmetric as a whole: aa and bb are summed for b ≥ a, ab in full, ba is its transpose
+    const ma = 3 * na, mc = 3 * nc;
+    Saa.fill(0, 0, ma * ma); Sab.fill(0, 0, ma * mc); Sbb.fill(0, 0, mc * mc);
     for (let k = 0; k < pts.n; k++) {
       const o = 4 * k, w = pts.a[o + 3];
       const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
       bas.eval(x, y, z, EA.c, EA.s);
       bas2.eval(x, y, z, EB.c, EB.s);
       for (let b = 0; b < nb; b++) { traction(bas.g, 3 * b, nrm, lam, mu, MA, 9 * b); traction(bas2.g, 3 * b, nrm, lam, mu, MB, 9 * b); }
-      pair(Kaa, bas.v, MA, 1, na, bas.v, MA, 1, na, w);
-      pair(Kab, bas.v, MA, 1, na, bas2.v, MB, -1, nc, w);
-      pair(Kba, bas2.v, MB, -1, nc, bas.v, MA, 1, na, w);
-      pair(Kbb, bas2.v, MB, -1, nc, bas2.v, MB, -1, nc, w);
+      facePair(Saa, bas.v, MA, 1, na, bas.v, MA, 1, na, w, gamma, true);
+      facePair(Sab, bas.v, MA, 1, na, bas2.v, MB, -1, nc, w, gamma, false);
+      facePair(Sbb, bas2.v, MB, -1, nc, bas2.v, MB, -1, nc, w, gamma, true);
     }
+    addSym(Kaa, Saa, na); addSym(Kbb, Sbb, nc);
+    for (let i = 0; i < ma; i++) for (let j = 0; j < mc; j++) { const v = Sab[i * mc + j]; Kab[i * mc + j] += v; Kba[j * ma + i] += v; }
   };
   // a sliding joint shares only the motion along this normal (null: all of it)
   let slideN: number[] | null = null;
@@ -1334,19 +1415,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     for (let e = 0; e < nel; e++) {
       const E = grid.elems[e], ne = nbs[e], rho = rhoOf(e);
       const M = new Float64Array(ne * ne), S = new Float64Array(ne);
-      for (const ci of E.cells) {
-        const Q = grid.cells[ci].pts;
-        for (let k = 0; k < Q.n; k++) {
-          const o = 4 * k, w = Q.a[o + 3] * rho;
-          bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s);
-          mass += w;
-          for (let a = 0; a < ne; a++) {
-            const va = bas.v[a] * w;
-            S[a] += va;
-            for (let b = 0; b < ne; b++) M[a * ne + b] += va * bas.v[b];
-          }
-        }
-      }
+      for (const ci of E.cells) mass += massCell(M, S, grid.cells[ci].pts, bas, E.c, E.s, ne, rho);
+      for (let a = 0; a < ne; a++) for (let b = a + 1; b < ne; b++) M[b * ne + a] = M[a * ne + b];
       Mel.push(M); Sel.push(S);
     }
     eachMass((e, x, y, z, w) => {
@@ -1376,9 +1446,10 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     }
     modalRun = () => {
       const n = A.size;
-      const direct = pb.solver === "direct" || (pb.solver !== "pcg" && n <= MODAL_DIRECT);
+      const fits = pb.solver ? { direct: pb.solver === "direct" } as ReturnType<typeof directFits> : directFits(A, MODAL_DIRECT, MODAL_FLOPS);
+      const direct = fits.direct;
       let solve: (b: Float64Array, g?: Float64Array) => Float64Array;
-      if (direct) { const F = new Envelope(A); solve = b => F.solve(b); }
+      if (direct) { const F = new Envelope(A, fits.order); solve = b => F.solve(b); }
       else { const S = pcgSolver(A, { coarse: 3 * basisSize(1), tol: 1e-6, maxIt: 300 }); solve = (b, g) => { const r = S.solve(b, g); iterations += r.iterations; return r.x; }; }
       // an earlier pass's vectors in this pass's layout (zeros for the functions it did not have)
       const start = (modal.start ?? []).map(v => {
@@ -1387,7 +1458,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         for (let e = 0; e < nel; e++) w.set(v.subarray(e * pm, e * pm + Math.min(pm, m)), e * m);
         return w;
       });
-      const r = subspace(n, solve, (v, y) => { A.mul(v, y); }, mulM, { count: modal.count, start, tol: modal.tol ?? (direct ? 1e-9 : 1e-6) });
+      const r = subspace(n, solve, (v, y) => { A.mul(v, y); }, mulM, { count: modal.count, start, tol: modal.tol ?? (direct ? 1e-8 : 1e-6), exact: direct });
       space = r.space;
       modes = r.values.map((th, k) => {
         const v = r.vectors[k], lambda = th - sigma, rigid = lambda < 1e-5 * (sigma || scale * 1e-4) ;
@@ -1465,7 +1536,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     for (let k = n - 1; k >= 0; k--) { let v = rhs[k]; for (let j = k + 1; j < n; j++) v -= T[k * n + j] * rhs[j]; rhs[k] = v / (T[k * n + k] || 1); }
     pre.forEach((b, k) => { b.f0 = rhs[k]; for (let i = 0; i < f.length; i++) f[i] += rhs[k] * b.g![i]; });
   };
-  const useCg = pb.solver === "pcg" || (pb.solver !== "direct" && p >= 2 && A.size > DIRECT_LIMIT);
+  const fitsS = modalRun || pb.solver || p < 2 ? null : directFits(A, DIRECT_LIMIT, DIRECT_FLOPS);
+  const useCg = pb.solver === "pcg" || (pb.solver !== "direct" && p >= 2 && !(fitsS?.direct ?? A.size <= DIRECT_LIMIT));
   if (modalRun) {
     t3 = t2;
     xs = modalRun();
@@ -1483,7 +1555,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       xs = r2.x; iterations += r2.iterations;
     }
   } else {
-    const L = new Envelope(A);
+    const L = new Envelope(A, fitsS?.order);
     t3 = now();
     tighten(b => L.solve(b));
     xs = L.solve(f);

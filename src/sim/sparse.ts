@@ -79,6 +79,26 @@ function peripheral(adj: Set<number>[], s: number, seen: Uint8Array) {
   return s;
 }
 
+/**
+ * What an envelope factorisation of A would take, without making it: the element order, the values it stores
+ * and the multiplications of the factorisation (Σ row width²: a slender part's are few, a bulky part's many).
+ */
+export function envelopeCost(A: BlockMatrix): { order: Int32Array; values: number; flops: number } {
+  const nel = A.nel, ms = A.ms, order = rcm(A.adj), pos = new Int32Array(nel);
+  order.forEach((e, k) => (pos[e] = k));
+  const poff = new Float64Array(nel + 1);
+  for (let k = 0; k < nel; k++) poff[k + 1] = poff[k] + ms[order[k]];
+  let values = 0, flops = 0;
+  for (let k = 0; k < nel; k++) {
+    let lo = k;
+    for (const b of A.adj[order[k]]) lo = Math.min(lo, pos[b]);
+    // rows poff[k] .. poff[k + 1] − 1 start at column poff[lo]
+    const m = ms[order[k]], w0 = poff[k] - poff[lo] + 1;
+    for (let i = 0; i < m; i++) { const w = w0 + i; values += w; flops += w * w; }
+  }
+  return { order, values, flops };
+}
+
 /** Envelope Cholesky factor of a BlockMatrix (symmetric positive definite). */
 export class Envelope {
   readonly n: number;
@@ -89,12 +109,13 @@ export class Envelope {
   private readonly first: Int32Array;
   private readonly start: Float64Array;
   private readonly data: Float64Array;
+  private rows: Float64Array[] = [];
   /** Unknowns per element and the start of each position's rows in the new order. */
   private readonly ms: Int32Array;
   private readonly poff: Int32Array;
-  constructor(A: BlockMatrix) {
+  constructor(A: BlockMatrix, order?: Int32Array) {
     const nel = A.nel, n = (this.n = A.size), ms = (this.ms = A.ms);
-    this.perm = rcm(A.adj);
+    this.perm = order ?? rcm(A.adj);
     this.pos = new Int32Array(nel);
     this.perm.forEach((e, k) => (this.pos[e] = k));
     const poff = (this.poff = new Int32Array(nel + 1));
@@ -125,18 +146,27 @@ export class Envelope {
         }
       }
     }
-    // factor row by row: L[r][c] = (A[r][c] − Σ L[r][k] L[c][k]) / L[c][c]
+    // factor row by row: L[r][c] = (A[r][c] − Σ L[r][k] L[c][k]) / L[c][c]. Each row is a view of its own, so
+    // the inner product runs over two plain typed arrays with integer offsets (four terms a step).
+    const first = this.first, start = this.start;
+    const rows: Float64Array[] = new Array(n);
+    for (let r = 0; r < n; r++) rows[r] = L.subarray(start[r], start[r + 1]);
+    this.rows = rows;
     for (let r = 0; r < n; r++) {
-      const fr = this.first[r], br = this.start[r] - fr;
+      const fr = first[r], R = rows[r];
       for (let c = fr; c <= r; c++) {
-        const fc = this.first[c], bc = this.start[c] - fc;
-        const k0 = Math.max(fr, fc);
-        let s = L[br + c];
-        for (let k = k0; k < c; k++) s -= L[br + k] * L[bc + k];
-        if (c < r) L[br + c] = s / L[bc + c];
+        const fc = first[c], C = rows[c];
+        const k0 = fr > fc ? fr : fc, len = c - k0;
+        let i = k0 - fr, j = k0 - fc, s = R[c - fr];
+        const end = i + len, end4 = i + (len & ~3);
+        let s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+        for (; i < end4; i += 4, j += 4) { s0 += R[i] * C[j]; s1 += R[i + 1] * C[j + 1]; s2 += R[i + 2] * C[j + 2]; s3 += R[i + 3] * C[j + 3]; }
+        for (; i < end; i++, j++) s0 += R[i] * C[j];
+        s -= s0 + s1 + s2 + s3;
+        if (c < r) R[c - fr] = s / C[c - fc];
         else {
           if (!(s > 0)) throw new Error(`E-SIM-SINGULAR: pivot ${s} at ${r}`);
-          L[br + r] = Math.sqrt(s);
+          R[r - fr] = Math.sqrt(s);
         }
       }
     }
@@ -144,21 +174,22 @@ export class Envelope {
   get values() { return this.data.length; }
   /** Solves A x = b (b in element-dof order); returns x in the same order. */
   solve(b: Float64Array): Float64Array {
-    const n = this.n, L = this.data, ms = this.ms, poff = this.poff, nel = this.perm.length;
+    const n = this.n, ms = this.ms, poff = this.poff, nel = this.perm.length;
     const off = new Int32Array(nel + 1);
     for (let e = 0; e < nel; e++) off[e + 1] = off[e] + ms[e];
     const y = new Float64Array(n);
     for (let k = 0; k < nel; k++) { const e = this.perm[k]; for (let i = 0; i < ms[e]; i++) y[poff[k] + i] = b[off[e] + i]; }
+    const first = this.first, rows = this.rows;
     for (let r = 0; r < n; r++) {
-      const fr = this.first[r], br = this.start[r] - fr;
-      let s = y[r];
-      for (let k = fr; k < r; k++) s -= L[br + k] * y[k];
-      y[r] = s / L[br + r];
+      const fr = first[r], R = rows[r], len = r - fr;
+      let s = 0;
+      for (let i = 0, k = fr; i < len; i++, k++) s += R[i] * y[k];
+      y[r] = (y[r] - s) / R[len];
     }
     for (let r = n - 1; r >= 0; r--) {
-      const fr = this.first[r], br = this.start[r] - fr;
-      const v = (y[r] /= L[br + r]);
-      for (let k = fr; k < r; k++) y[k] -= L[br + k] * v;
+      const fr = first[r], R = rows[r], len = r - fr;
+      const v = (y[r] /= R[len]);
+      if (v !== 0) for (let i = 0, k = fr; i < len; i++, k++) y[k] -= R[i] * v;
     }
     const x = new Float64Array(n);
     for (let k = 0; k < nel; k++) { const e = this.perm[k]; for (let i = 0; i < ms[e]; i++) x[off[e] + i] = y[poff[k] + i]; }

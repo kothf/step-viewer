@@ -415,14 +415,18 @@ export function fitPoints(src: Points, lo: number[], hi: number[], q: number): P
     for (let k = 2; k <= n; k++) out[k] = ((2 * k - 1) * x * out[k - 1] - (k - 1) * out[k - 2]) / k;
   };
   const M = new Float64Array(q * q * q);
-  const yz = new Float64Array(q * q);
   for (let t = 0; t < src.n; t++) {
     const o = 4 * t, w = src.a[o + 3];
     leg(deg, (src.a[o] - c[0]) / h[0], lx);
     leg(deg, (src.a[o + 1] - c[1]) / h[1], ly);
     leg(deg, (src.a[o + 2] - c[2]) / h[2], lz);
-    for (let j = 0; j < q; j++) for (let k = 0; k < q; k++) yz[j * q + k] = w * ly[j] * lz[k];
-    for (let i = 0; i < q; i++) { const X = lx[i], b = i * q * q; for (let jk = 0; jk < q * q; jk++) M[b + jk] += X * yz[jk]; }
+    // what is integrated with these points has total degree q − 1 at most (the cell basis is of total degree p,
+    // q = 2p + 1), so only the moments i + j + k ≤ q − 1 are needed: the others stay 0 and the fitted points
+    // integrate the same polynomials exactly
+    for (let i = 0; i < q; i++) {
+      const X = w * lx[i], bi = i * q * q;
+      for (let j = 0; i + j < q; j++) { const XY = X * ly[j], b = bi + j * q, kn = q - i - j; for (let k = 0; k < kn; k++) M[b + k] += XY * lz[k]; }
+    }
   }
   // divide by the norms ∫ L_i² = 2 / (2i + 1) on [−1, 1]
   for (let i = 0; i < q; i++) for (let j = 0; j < q; j++) for (let k = 0; k < q; k++)
@@ -433,13 +437,22 @@ export function fitPoints(src: Points, lo: number[], hi: number[], q: number): P
     const A = new Float64Array(q); leg(deg, g.x[a], A); LX.push(A);
   }
   LY.push(...LX); LZ.push(...LX);
+  // the polynomial at the Gauss points, one direction at a time (3 q⁴ steps, not q⁶)
+  const q2 = q * q, T1 = new Float64Array(q * q2), T2 = new Float64Array(q * q2);
+  for (let a = 0; a < q; a++) for (let i = 0; i < q; i++) {
+    const X = LX[a][i], ao = a * q2, io = i * q2;
+    if (X !== 0) for (let jk = 0; jk < q2; jk++) T1[ao + jk] += X * M[io + jk];
+  }
+  for (let a = 0; a < q; a++) for (let b = 0; b < q; b++) for (let j = 0; j < q; j++) {
+    const Y = LY[b][j], to = (a * q + b) * q, so = (a * q + j) * q;
+    for (let k = 0; k < q; k++) T2[to + k] += Y * T1[so + k];
+  }
   for (let a = 0; a < q; a++) for (let b = 0; b < q; b++) {
+    const to = (a * q + b) * q;
     for (let d = 0; d < q; d++) {
       let s = 0;
-      for (let i = 0; i < q; i++) {
-        const X = LX[a][i], base = i * q * q;
-        for (let j = 0; j < q; j++) { const XY = X * LY[b][j], bj = base + j * q; for (let k = 0; k < q; k++) s += XY * LZ[d][k] * M[bj + k]; }
-      }
+      const Z = LZ[d];
+      for (let k = 0; k < q; k++) s += Z[k] * T2[to + k];
       const w = g.w[a] * g.w[b] * g.w[d] * s;
       if (w !== 0) out.push(c[0] + h[0] * g.x[a], c[1] + h[1] * g.x[b], c[2] + h[2] * g.x[d], w);
     }

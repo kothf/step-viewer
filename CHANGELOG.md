@@ -5,11 +5,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.652.0] - 2026-11-21
+## [1.653.0] - 2026-11-21
 
 ### Added
 
 - **Board thermal maps**: open a board's STEP file together with the thermal package its design app writes (the `…-thermal.json` manifest with its `.vtu` temperatures and heat-source table, loose or as one zip, or a zip that holds the STEP too) and the temperatures are drawn on the 3D board and its parts. File ▸ Add thermal map… puts a package on the model already open, and a package alone opens on its own surface. Parts are matched to the model's bodies by name, then by size and place, and a package made for another version of the board says so. A **Thermal** tab in the command bar (Map on and off, Top and Bottom, Labels, Probe, Parts, Add map, Remove map) and a Thermal side page: where the result came from and how accurate it is, the problems (parts over their limit, short-lived capacitors, a hot board), the parts list sorted by margin with a filter and sortable columns, the power budget, probes with a CSV, and the life and board limits to check against. The legend sets the colours (heat, rainbow, grey), an automatic or fixed range and Rise above ambient; a summary card names the hottest parts; pointing at a part shows its power, temperature, limit and margin. The model stays measurable under the map.
+
+## [1.652.0] - 2026-11-21
+
+### Changed
+
+- Structural analysis: **much faster solves**, modal studies most of all. A 12 000-unknown shaft's modal study went from 5 min 28 s to 25 s in the same browser, with the same frequencies.
+  - Slender parts (shafts, strips, plates) stay on the direct solver whatever their size, as long as its factorisation is cheap; the iterative solver suited them badly (the third pass took 163 s with it, 17 s without).
+  - The stiffness and mass loops no longer run unoptimised in Chrome (37 s of a 49 s pass), and are summed for half the symmetric matrix only, as are the terms between neighbouring cells.
+  - Fitting the quadrature of cut cells takes a quarter of the moments (only those the cell's polynomials need) and evaluates them one direction at a time.
+  - The factorisation and its solves run on plain row views with integer offsets (about 1.6 × faster), and a modal pass no longer multiplies the stiffness matrix out for every vector.
 
 ## [1.651.0] - 2026-11-21
 
@@ -4258,7 +4268,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.652.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.653.0...HEAD
+[1.653.0]: https://github.com/kothf/step-viewer/compare/v1.652.0...v1.653.0
 [1.652.0]: https://github.com/kothf/step-viewer/compare/v1.651.0...v1.652.0
 [1.651.0]: https://github.com/kothf/step-viewer/compare/v1.650.0...v1.651.0
 [1.650.0]: https://github.com/kothf/step-viewer/compare/v1.649.0...v1.650.0

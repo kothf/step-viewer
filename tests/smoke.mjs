@@ -16242,7 +16242,7 @@ try {
     await ctx.close();
   }
   // --- Structural analysis 1.608 (FRS-structural SA1): a cantilever through the Simulation tab ---
-  // In shard 4 since 1.652.0: shard 1 reached the 12 minute limit.
+  // In shard 4 since 1.653.0: shard 1 reached the 12 minute limit.
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -17190,7 +17190,7 @@ try {
     await ctx.close();
   }
 
-  // --- Board thermal maps 1.652 (FRS-thermal TH1): a board's STEP with its thermal package ---
+  // --- Board thermal maps 1.653 (FRS-thermal TH1): a board's STEP with its thermal package ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const hp = await ctx.newPage();
@@ -17211,7 +17211,7 @@ try {
       hottest: document.querySelector('#th-summary [data-v="hottest"]')?.textContent, badge: document.querySelector("#th-count")?.textContent, probs: document.querySelectorAll("#th-side .th-list li").length,
       wide: document.querySelector("#tab-thermal").scrollWidth - document.querySelector("#tab-thermal").clientWidth, bar: document.querySelector("#cm-body").scrollWidth - document.querySelector("#cm-body").clientWidth }));
     check(m1.drawn && m1.parts === 6 && m1.matched === 7 && !m1.missing.length && m1.hidden === 7 && u1.cm === "thermal" && u1.min === "40" && u1.max === "182" && /V3 182/.test(u1.hottest) && u1.badge === "2" && u1.probs === 2 && u1.wide <= 0 && u1.bar <= 1,
-      `thermal map 1.652: a board's STEP and its thermal package opened together show the map on the model: every part matched, legend 40 to 182 °C, the hottest part, two problems (${JSON.stringify({ parts: m1.parts, matched: m1.matched, hidden: m1.hidden, u1 })})`);
+      `thermal map 1.653: a board's STEP and its thermal package opened together show the map on the model: every part matched, legend 40 to 182 °C, the hottest part, two problems (${JSON.stringify({ parts: m1.parts, matched: m1.matched, hidden: m1.hidden, u1 })})`);
     const r0 = await rows();
     await hp.click('#th-side th[data-sort="t"]');
     const r1 = await rows();
@@ -17220,7 +17220,7 @@ try {
     await hp.waitForTimeout(900);
     const sel = (await th()).sel;
     check(r0[0] === "R20" && r0[1] === "C13" && r1[0] === "V3" && sel === 2,
-      `thermal map 1.652: the parts list starts with the least margin, a heading sorts it, a row selects the part (${JSON.stringify({ r0, r1, sel })})`);
+      `thermal map 1.653: the parts list starts with the least margin, a heading sorts it, a row selects the part (${JSON.stringify({ r0, r1, sel })})`);
     // A probe on the board reads the package's own temperature there.
     await hp.click('#th-tools [data-th="flip"]');
     await hp.waitForTimeout(900);
@@ -17234,7 +17234,7 @@ try {
     const wantT = 44 + [[45, 62, 0.6], [45, 30, 1.6], [105.2, 6.3, 0.2], [74, 55, 0], [79, 22.5, 1.9], [95, 35, 0]].reduce((s, [cx, cy, pb]) => s + 30 * pb * Math.exp(-((20 - cx) ** 2 + (20 - cy) ** 2) / 260), 0);
     const labels = await hp.evaluate(() => document.querySelectorAll("#th-labels [data-probe]").length);
     check(pr.length === 1 && Math.abs(pr[0].t - wantT) < 0.05 && pr[0].part === 0 && labels === 1,
-      `thermal map 1.652: a probe click on the board gives the map's temperature at that point (${JSON.stringify({ got: pr[0]?.t, want: wantT, labels })})`);
+      `thermal map 1.653: a probe click on the board gives the map's temperature at that point (${JSON.stringify({ got: pr[0]?.t, want: wantT, labels })})`);
     await hp.click('#th-legend [data-a="noprobes"]');
     await hp.keyboard.press("Escape");
     // Fixed range, then the map off and on.
@@ -17251,7 +17251,7 @@ try {
     await hp.waitForTimeout(300);
     const on = await th();
     check(fx.range[1] === 120 && /▲ 120/.test(fx.max) && !off.drawn && off.hidden === 0 && offUi && on.drawn && on.hidden === 7,
-      `thermal map 1.652: a fixed range marks hotter values, and the Map button takes the temperatures off the model and puts them back (${JSON.stringify({ fx, off: [off.drawn, off.hidden], on: [on.drawn, on.hidden] })})`);
+      `thermal map 1.653: a fixed range marks hotter values, and the Map button takes the temperatures off the model and puts them back (${JSON.stringify({ fx, off: [off.drawn, off.hidden], on: [on.drawn, on.hidden] })})`);
     // Russian: nothing of the Thermal page, legend or summary stays in English.
     await hp.click("#lang-btn");
     await hp.waitForTimeout(400);
@@ -17268,7 +17268,7 @@ try {
       return out;
     });
     await hp.click("#lang-btn");
-    check(left.length === 0, `thermal map 1.652: no English left in the Russian thermal map UI${left.length ? ": " + left.slice(0, 8).join(" | ") : ""}`);
+    check(left.length === 0, `thermal map 1.653: no English left in the Russian thermal map UI${left.length ? ": " + left.slice(0, 8).join(" | ") : ""}`);
     // Remove map: the model stays; the package alone then opens on its own surface mesh.
     await hp.click('#th-tools [data-th="remove"]');
     await hp.waitForTimeout(400);
@@ -17277,7 +17277,7 @@ try {
     await mapped();
     const m2 = await th();
     check(!gone.has && gone.tab && gone.parts > 0 && m2.drawn && m2.parts === 6 && !m2.missing.length,
-      `thermal map 1.652: Remove map leaves the model; a package with its STEP inside opens the model and the map in one go (${JSON.stringify({ gone, m2: { drawn: m2.drawn, matched: m2.matched, own: m2.own } })})`);
+      `thermal map 1.653: Remove map leaves the model; a package with its STEP inside opens the model and the map in one go (${JSON.stringify({ gone, m2: { drawn: m2.drawn, matched: m2.matched, own: m2.own } })})`);
     await ctx.close();
   }
 
