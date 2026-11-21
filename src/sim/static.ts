@@ -101,7 +101,7 @@ export interface StaticProblem {
    * where their surfaces touch like elements inside a body are, each side with its own stiffness. `tris` =
    * the body's own closed surface, wound outwards. `inside`/`mat` are then not used.
    */
-  domains?: { inside: Inside; mat: Material; tris: ArrayLike<number> }[];
+  domains?: { inside: Inside; mat: Material; tris: ArrayLike<number>; rigid?: boolean }[];
   /**
    * Domains are also joined across a gap up to this wide, mm (imprecise assemblies, FR-CON-003): a point of
    * one's surface is on another when a step of the gap along its normal ends inside it.
@@ -243,21 +243,30 @@ function traction(g: Float64Array, o: number, n: ArrayLike<number>, lam: number,
     M[mo + ci * 3 + cj] = lam * G[cj] * n[ci] + (ci === cj ? mu * gn : 0) + mu * n[cj] * G[ci];
 }
 
+/** A rigid domain's stiffness beside the stiffest material of the model. */
+const RIGID_STIFF = 1e3;
+
 export function solveStatic(pb: StaticProblem): StaticResult {
   const t0 = now();
   const p = pb.p, q = p + 1;
   let grid = pb.grid;
-  const deg = pb.grid && pb.degrees && pb.degrees.length === pb.grid.elems.length ? pb.degrees : null;
-  if (grid) refit(grid, q, 2 * p + 1, deg ? c => deg[c.el] : undefined);
+  const deg0 = pb.grid && pb.degrees && pb.degrees.length === pb.grid.elems.length ? pb.degrees : null;
+  if (grid) refit(grid, q, 2 * p + 1, deg0 ? c => deg0[c.el] : undefined);
   const doms = pb.domains && pb.domains.length > 1 ? pb.domains : null;
-  if (!grid) grid = makeGrid(pb.lo, pb.hi, pb.h, pb.inside, { q, depth: pb.depth ?? 3, fit: 2 * p + 1, domains: doms?.map(d => d.inside) });
+  if (!grid) grid = makeGrid(pb.lo, pb.hi, pb.h, pb.inside, { q, depth: pb.depth ?? 3, fit: 2 * p + 1, domains: doms?.map(d => d.inside), rigid: doms?.map(d => !!d.rigid) });
   const t1 = now();
   // materials: one, or one per domain; `lam`/`mu` are those of the element being worked on (`setMat`)
-  const mats = doms ? doms.map(d => d.mat) : [pb.mat], lames = mats.map(lame);
+  // a rigid domain (FR-CON-001) keeps its density and gets a stiffness far above every other's; its one element
+  // is linear, so beside its six rigid motions only six uniform strains are left, and those cost that stiffness
+  const rigidD = doms ? doms.map(d => !!d.rigid) : [false], anyRigid = rigidD.some(Boolean);
+  const stiffest = doms ? Math.max(...doms.map(d => (d.rigid ? 0 : d.mat.E))) || Math.max(...doms.map(d => d.mat.E)) || 1 : pb.mat.E;
+  const mats = doms ? doms.map(d => (d.rigid ? { ...d.mat, E: RIGID_STIFF * stiffest, nu: 0.3 } : d.mat)) : [pb.mat], lames = mats.map(lame);
   let { lam, mu } = lames[0];
   const domE = Uint8Array.from(grid.elems, E => (doms ? grid!.cells[E.cells[0]].dom : 0));
   const setMat = (e: number) => { const L = lames[domE[e]]; lam = L.lam; mu = L.mu; };
   const rhoOf = (e: number) => mats[domE[e]].rho ?? 0;
+  const rigidE = (e: number) => rigidD[domE[e]];
+  const deg: ArrayLike<number> | null = anyRigid ? Int8Array.from(grid.elems, (_, e) => (rigidE(e) ? 1 : deg0 ? deg0[e] : p)) : deg0;
   const hasRho = mats.every(q => (q.rho ?? 0) > 0);
   /** The lowest E/ρ: the scale of the shift that stands in for stiffness the supports do not give. */
   const stiffRho = () => Math.min(...mats.map(q => q.E / q.rho!));
@@ -442,6 +451,13 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         }
         const na = nbs[ea], nc = nbs[eb];
         gamma = Math.max(gam[ea], gam[eb]);
+        // a rigid side has no stress of its own to share: the joint carries the other side's, with its penalty
+        if (rigidD[a] !== rigidD[b]) {
+          const [Z, D] = rigidD[a] ? [MA, MB] : [MB, MA];
+          Z.fill(0);
+          for (let q2 = 0; q2 < D.length; q2++) D[q2] *= 2;
+          gamma = gam[rigidD[a] ? eb : ea];
+        }
         joins.push(contacts.indexOf(f.c), ea, eb, x, y, z, w, nrm[0], nrm[1], nrm[2], gamma);
         pair(A.block(ea, ea), bas.v, MA, 1, na, bas.v, MA, 1, na, w);
         pair(A.block(ea, eb), bas.v, MA, 1, na, bas2.v, MB, -1, nc, w);
@@ -938,16 +954,18 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       const ci = joins[o], ea = joins[o + 1], eb = joins[o + 2], px = joins[o + 3], py = joins[o + 4], pz = joins[o + 5], w = joins[o + 6];
       const nrm = [joins[o + 7], joins[o + 8], joins[o + 9]], g = joins[o + 10];
       ta[0] = ta[1] = ta[2] = ua[0] = ua[1] = ua[2] = 0;
+      const oneRigid = rigidE(ea) !== rigidE(eb);
       for (const [e, sg] of [[ea, 1], [eb, -1]]) {
         const E = grid.elems[e];
         bas.eval(px, py, pz, E.c, E.s);
         setMat(e);
+        const half = oneRigid ? (rigidE(e) ? 0 : 1) : 0.5;
         for (let b = 0; b < nb; b++) {
           traction(bas.g, 3 * b, nrm, lam, mu, MA, 0);
           for (let d = 0; d < 3; d++) {
             const v = x[e * m + 3 * b + d];
             ua[d] += sg * bas.v[b] * v;
-            ta[0] += 0.5 * MA[d] * v; ta[1] += 0.5 * MA[3 + d] * v; ta[2] += 0.5 * MA[6 + d] * v;
+            ta[0] += half * MA[d] * v; ta[1] += half * MA[3 + d] * v; ta[2] += half * MA[6 + d] * v;
           }
         }
       }
@@ -998,7 +1016,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
             for (let j = 0; j < 3; j++) { G[c * 3 + j] += v * bas.g[3 * a + j]; H[c * 3 + j] += dv * bas.g[3 * a + j]; }
           }
           strain += w * dens(G);
-          if (prev) eta[e] += w * dens(H);
+          if (prev && !rigidE(e)) eta[e] += w * dens(H);
         }
       }
     }
@@ -1039,7 +1057,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         if (e < 0) continue;
         if (hit) hit[i] = 1;
         if (dom) dom[i] = domE[e];
-        err[i] = local[e];
+        const stiff = rigidE(e);
+        err[i] = stiff ? 0 : local[e];
         G.fill(0);
         let ux = 0, uy = 0, uz = 0;
         for (let a = 0; a < nb; a++) {
@@ -1049,7 +1068,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         }
         u[3 * i] = ux; u[3 * i + 1] = uy; u[3 * i + 2] = uz;
         const tr = G[0] + G[4] + G[8];
-        vm[i] = vonMises([lam * tr + 2 * mu * G[0], lam * tr + 2 * mu * G[4], lam * tr + 2 * mu * G[8], mu * (G[1] + G[3]), mu * (G[5] + G[7]), mu * (G[6] + G[2])]);
+        // a rigid component's stress is not a result
+        if (!stiff) vm[i] = vonMises([lam * tr + 2 * mu * G[0], lam * tr + 2 * mu * G[4], lam * tr + 2 * mu * G[8], mu * (G[1] + G[3]), mu * (G[5] + G[7]), mu * (G[6] + G[2])]);
       }
       return { u, vm, err, ...(hit ? { hit } : {}), ...(dom ? { dom } : {}) };
     },

@@ -157,6 +157,19 @@ check("SAS-11", !e1.stale && e1.pose?.moved >= 1 && size(e1.plotBox) > size(e0.p
 await pg.click("#cm-t-simulation").catch(() => {});
 await pg.waitForTimeout(300);
 
+// a rigid component: it moves as a body, shows no stress, and the assembly bends less
+const g0 = await sim();
+await pg.click('#sim-tree .sim-complist li:nth-child(2) [data-a="comprigid"]');
+await pg.waitForTimeout(400);
+await pg.click('#sim-tools [data-s="solve"]');
+await solved();
+const g1 = await sim();
+const gCell = await pg.evaluate(() => document.querySelector('#sim-tree .sim-comptable [data-v="crigid"]')?.textContent ?? "");
+check("SAS-12", g1.compList?.[1]?.rigid && !g1.error && g1.compRows?.[1]?.vm === 0 && gCell === "rigid" && g1.maxU < 0.9 * g0.maxU,
+  "Rigid beside a component makes it move as a body: its row says rigid, and the assembly deflects less than with it elastic", { list: g1.compList, error: g1.error, rows: g1.compRows, maxU: [g0.maxU, g1.maxU] }, await snap(pg, "component-rigid"));
+await pg.click('#sim-tree .sim-complist li:nth-child(2) [data-a="comprigid"]');
+await pg.waitForTimeout(400);
+
 // left out: the component is a ghost, and what was put on it is named when solving
 await pg.uncheck('#sim-tree .sim-complist li:nth-child(2) [data-k="compon"]');
 await pg.waitForTimeout(400);
