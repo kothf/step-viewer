@@ -68,6 +68,23 @@ export interface StudyLoad {
 }
 
 /** Local accuracy (FR-SOL-012): the solution starts `level` degrees higher where it meets these faces. */
+/**
+ * A weld (FR-CON-022), assemblies: along the picked edges of one component, where it meets another, the two
+ * are joined. `throat` = the weld's throat thickness, mm: the stress is the force per length over it.
+ */
+export interface StudyWeld {
+  id: string;
+  name?: string;
+  type: "weld";
+  /** Always empty: a weld is on edges. */
+  faces: FaceRef[];
+  on: "edges";
+  edges: StudyEdge[];
+  throat: number;
+}
+export const WELD_LABEL = "Weld";
+export const DEFAULT_THROAT = 3;
+
 export interface StudyRefine {
   id: string;
   name?: string;
@@ -116,6 +133,8 @@ export interface Study {
   comps?: Record<string, StudyComp>;
   /** Assemblies: how the bolts found among the fasteners are taken (FR-CON-020), by screw component id. */
   bolts?: Record<string, StudyBolt>;
+  /** Assemblies: welds along edges where two components meet (FR-CON-022). */
+  welds?: StudyWeld[];
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
   /** Static studies: load cases (FR-LOAD-022), each solved on its own with the same supports. None = one case with every load. */
@@ -184,8 +203,8 @@ export function newStudy(existing: Study[], kind: StudyKind = "static"): Study {
 }
 
 /** The next free id with a prefix among a study's supports and loads. */
-export function nextId(st: Study, prefix: "s" | "l" | "r"): string {
-  const ids = new Set([...st.supports, ...st.loads, ...(st.refine ?? [])].map(i => i.id));
+export function nextId(st: Study, prefix: "s" | "l" | "r" | "w"): string {
+  const ids = new Set([...st.supports, ...st.loads, ...(st.refine ?? []), ...(st.welds ?? [])].map(i => i.id));
   let n = 1;
   while (ids.has(`${prefix}${n}`)) n++;
   return `${prefix}${n}`;
@@ -197,16 +216,16 @@ export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: 
 export const REFINE_LABEL = "Local accuracy";
 
 /** Default name of a new item: "Fixed 1", "Force 2". */
-export function itemName(st: Study, type: SupportType | LoadType | "refine"): string {
-  const label = type === "refine" ? REFINE_LABEL : (SUPPORT_LABEL as Record<string, string>)[type] ?? (LOAD_LABEL as Record<string, string>)[type];
-  const names = new Set([...st.supports, ...st.loads, ...(st.refine ?? [])].map(i => i.name));
+export function itemName(st: Study, type: SupportType | LoadType | "refine" | "weld"): string {
+  const label = type === "refine" ? REFINE_LABEL : type === "weld" ? WELD_LABEL : (SUPPORT_LABEL as Record<string, string>)[type] ?? (LOAD_LABEL as Record<string, string>)[type];
+  const names = new Set([...st.supports, ...st.loads, ...(st.refine ?? []), ...(st.welds ?? [])].map(i => i.name));
   let n = 1;
   while (names.has(`${label} ${n}`)) n++;
   return `${label} ${n}`;
 }
 
 /** How many faces, edges or points an item is on. */
-export function pickCount(it: StudySupport | StudyLoad | StudyRefine): number {
+export function pickCount(it: StudySupport | StudyLoad | StudyRefine | StudyWeld): number {
   const l = it as { on?: "edges" | "points"; edges?: StudyEdge[]; points?: StudyPoint[] };
   return l.on === "edges" ? l.edges?.length ?? 0 : l.on === "points" ? l.points?.length ?? 0 : it.faces.length;
 }

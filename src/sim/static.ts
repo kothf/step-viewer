@@ -96,6 +96,28 @@ export interface Bolt {
   preload?: number;
 }
 
+/**
+ * A weld (FR-CON-022): two bodies that meet along a line share its motion there through an elastic strip.
+ * `lines` = segments of an edge of one body (9 numbers each: both ends and a direction into that body); the
+ * other body is the one found beside each point. `k` = the strip's stiffness per length, N/mm² (default: the
+ * softer body's elastic modulus, a strip as wide as it is thick).
+ */
+export interface Weld {
+  lines: ArrayLike<number>;
+  k?: number;
+}
+
+export interface WeldResult {
+  /** What the first body passes to the second through the weld, N, and the length that was joined, mm. */
+  force: [number, number, number];
+  length: number;
+  /** Largest and mean force per length, N/mm. */
+  peak: number;
+  mean: number;
+  /** Where the largest is. */
+  at: [number, number, number];
+}
+
 export interface BoltResult {
   /** Tension (pulling the two patches together), N; with a preload it starts from it. */
   axial: number;
@@ -140,6 +162,7 @@ export interface StaticProblem {
   fixed: Support[];
   loads: Load[];
   bolts?: Bolt[];
+  welds?: Weld[];
   /** Gravity, mm/s² (needs `mat.rho`). */
   gravity?: ArrayLike<number>;
   /**
@@ -219,6 +242,7 @@ export interface StaticResult {
   contacts?: Contact[];
   /** Per bolt, in the order given (static solves). */
   bolts?: BoltResult[];
+  welds?: WeldResult[];
   /** Inertia relief: the acceleration the loads give the free body (mm/s², rad/s²), its centre of mass (mm) and mass (t). */
   accel?: { a: number[]; alpha: number[]; com: number[]; mass: number };
   /**
@@ -599,6 +623,74 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       b.g = g;
     }
   }
+  // welds: an elastic strip along the line between the body the edge is on and the body beside it
+  // (weld, element a, element b, x, y, z, length weight, stiffness per length) per point
+  const weldPts: number[] = [];
+  const weldSets: RigidSet[] = [];
+  if (doms && pb.welds?.length) {
+    const e0 = 2e-3 * grid.h, far = Math.max(0, pb.gap ?? 0) + e0, gw = gauss(Math.max(2, p + 1));
+    const DIRS: number[][] = [];
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) if (i || j || k) { const l = Math.hypot(i, j, k); DIRS.push([i / l, j / l, k / l]); }
+    const PI3 = Float64Array.from([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    pb.welds.forEach((W, wi) => {
+      const S = W.lines, mine = new Map<number, RigidSet>();
+      for (let o = 0; o + 8 < S.length; o += 9) {
+        const d = [S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]], l = Math.hypot(d[0], d[1], d[2]);
+        if (!(l > 0)) continue;
+        const cuts = [0, 1];
+        for (let a = 0; a < 3; a++) {
+          if (Math.abs(d[a]) < 1e-12) continue;
+          const u0 = (S[o + a] - grid.lo[a]) / grid.h, u1 = u0 + d[a] / grid.h;
+          for (let q = Math.ceil(Math.min(u0, u1)); q <= Math.floor(Math.max(u0, u1)); q++) {
+            const tt = (q - u0) / (u1 - u0);
+            if (tt > 1e-9 && tt < 1 - 1e-9) cuts.push(tt);
+          }
+        }
+        cuts.sort((x, y) => x - y);
+        for (let i = 1; i < cuts.length; i++) {
+          const t0 = cuts[i - 1], t1 = cuts[i];
+          if (t1 - t0 < 1e-12) continue;
+          for (let g = 0; g < gw.x.length; g++) {
+            const tt = t0 + (t1 - t0) * (gw.x[g] + 1) / 2, w = (gw.w[g] / 2) * (t1 - t0) * l;
+            const x = S[o] + tt * d[0], y = S[o + 1] + tt * d[1], z = S[o + 2] + tt * d[2];
+            const ax = x + e0 * S[o + 6], ay = y + e0 * S[o + 7], az = z + e0 * S[o + 8];
+            let a = -1, b = -1, bx = 0, by = 0, bz = 0;
+            for (let q = 0; q < doms.length; q++) if (doms[q].inside(ax, ay, az)) { a = q; break; }
+            if (a < 0) continue;
+            for (const st of far > e0 ? [e0, far] : [e0]) {
+              for (const D of DIRS) {
+                bx = x + st * D[0]; by = y + st * D[1]; bz = z + st * D[2];
+                for (let q = 0; q < doms.length; q++) if (q !== a && doms[q].inside(bx, by, bz)) { b = q; break; }
+                if (b >= 0) break;
+              }
+              if (b >= 0) break;
+            }
+            if (b < 0) continue;
+            const ca = grid.cellOf(ax, ay, az, a), cb = grid.cellOf(bx, by, bz, b);
+            if (ca < 0 || cb < 0) continue;
+            const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb];
+            const soft = Math.min(...[a, b].filter(q => !rigidD[q]).map(q => mats[q].E), Infinity);
+            const k = W.k ?? (Number.isFinite(soft) ? soft : stiffest), kw = k * w;
+            bas.eval(x, y, z, EA.c, EA.s);
+            bas2.eval(x, y, z, EB.c, EB.s);
+            for (const [e1, N1, s1] of [[ea, bas.v, 1], [eb, bas2.v, -1]] as [number, Float64Array, number][])
+              for (const [e2, N2, s2] of [[ea, bas.v, 1], [eb, bas2.v, -1]] as [number, Float64Array, number][]) {
+                const K = A.block(e1, e2), n1 = nbs[e1], n2 = nbs[e2], m2 = 3 * n2;
+                for (let i2 = 0; i2 < n1; i2++) for (let j2 = 0; j2 < n2; j2++) {
+                  const v = kw * s1 * s2 * N1[i2] * N2[j2];
+                  if (v) for (let c = 0; c < 3; c++) K[(3 * i2 + c) * m2 + 3 * j2 + c] += v;
+                }
+              }
+            weldPts.push(wi, ea, eb, x, y, z, w, k);
+            let r = mine.get(a * doms.length + b);
+            if (!r) { r = new RigidSet(a, b, rc, rL); mine.set(a * doms.length + b, r); weldSets.push(r); }
+            r.add(PI3, x, y, z, w * rL);
+          }
+        }
+      }
+      if (!mine.size) throw new Error(`E-SIM-WELD: ${wi}`);
+    });
+  }
   /** The 12 mean motions of a bolt's two patches for the unknowns `v`. */
   const boltMotion = (b: (typeof boltSet)[number], v: Float64Array) => {
     const q = new Float64Array(12);
@@ -681,6 +773,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       for (const P of [b.pa, b.pc]) for (let o = 0; o < P.pts.length; o += 5) r.add(PI, P.pts[o + 1], P.pts[o + 2], P.pts[o + 3], P.pts[o + 4]);
       sets.push(r);
     }
+    for (const r of weldSets) sets.push(r);
     const fb = freeBodies(sets, doms.length);
     free = fb.free;
     if (free > 0 && !pb.modal && !(pb.relief && hasRho)) throw new Error(fb.loose.length && fb.loose.length < doms.length ? `E-SIM-LOOSE: ${fb.loose.join(",")}` : `E-SIM-FREE: ${free}`);
@@ -1109,6 +1202,27 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     };
   }) : undefined;
 
+  // welds: the strip's force per length is its stiffness times the jump of the two bodies' motion
+  const welds: WeldResult[] | undefined = pb.welds?.length && !modal ? pb.welds.map(() => ({ force: [0, 0, 0], length: 0, peak: 0, mean: 0, at: [0, 0, 0] })) : undefined;
+  if (welds) {
+    const ju = [0, 0, 0];
+    for (let o = 0; o < weldPts.length; o += 8) {
+      const R = welds[weldPts[o]], px = weldPts[o + 3], py = weldPts[o + 4], pz = weldPts[o + 5], w = weldPts[o + 6], k = weldPts[o + 7];
+      ju[0] = ju[1] = ju[2] = 0;
+      for (const [e, sg] of [[weldPts[o + 1], 1], [weldPts[o + 2], -1]]) {
+        const E = grid.elems[e];
+        bas.eval(px, py, pz, E.c, E.s);
+        for (let b = 0; b < nb; b++) for (let d = 0; d < 3; d++) ju[d] += sg * bas.v[b] * x[e * m + 3 * b + d];
+      }
+      const f = k * Math.hypot(ju[0], ju[1], ju[2]);
+      for (let d = 0; d < 3; d++) R.force[d] += w * k * ju[d];
+      R.length += w;
+      R.mean += w * f;
+      if (f > R.peak) { R.peak = f; R.at = [px, py, pz]; }
+    }
+    for (const R of welds) if (R.length > 0) R.mean /= R.length;
+  }
+
   // connection forces: the flux the joining terms carry, ½(σ_a + σ_b) n − γ (u_a − u_b), is what b does to a
   if (!modal && joins.length) {
     const tot = contacts.map(() => new Float64Array(10));
@@ -1206,6 +1320,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     reactions, applied, eta, prevError, accel,
     ...(doms ? { contacts } : {}),
     ...(bolts ? { bolts } : {}),
+    ...(welds ? { welds } : {}),
     modes, space, mass: modal ? mass : undefined,
     use(k) { const v = modes?.[k]; if (v) x = v.x; },
     sample(pos, nrm, hits) {

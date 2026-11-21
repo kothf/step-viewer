@@ -2,7 +2,7 @@
 // Pure: runs in the solver worker and in node tests.
 
 import { MeshBody, insideOf } from "./body";
-import { solveStatic, momentField, triArea, triNormals, type Bolt, type BoltResult, type Contact, type Load, type Reaction, type Support } from "./static";
+import { solveStatic, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Contact, type Load, type Reaction, type Support } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { GRAVITY, MAX_REFINE, type Study, type StudyEdge, type StudyPoint } from "./types";
@@ -345,6 +345,7 @@ export interface PassResult {
   contacts?: Contact[];
   /** Per bolt of the input, in its order. */
   bolts?: BoltResult[];
+  welds?: WeldResult[];
   /** Change of the energy from the pass before, %, null on the first. */
   change: number | null;
   ms: number;
@@ -406,6 +407,8 @@ export interface RunInput {
   asm?: { gap: number; links?: { a: number; b: number; type: "sliding" | "none" }[] };
   /** Bolts between the regions (FR-CON-020): beams between two patches of their surfaces. */
   bolts?: Bolt[];
+  /** Welds along edges where two components meet (FR-CON-022). */
+  welds?: Weld[];
   problem: StudyProblem;
   passes: number;
   /** Energy change target, %. */
@@ -590,7 +593,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
       for (let e = 0; e < degrees.length; e++) p = Math.max(p, degrees[e]);
     }
     const r = solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts, welds: inp.welds,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin, relief: inp.problem.relief,
     });
@@ -610,7 +613,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     const change = k ? (Math.abs(r.energy - last) / Math.abs(r.energy || 1)) * 100 : null;
     last = r.energy;
     const converged = change != null && change <= inp.energyTol;
-    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), ...(r.contacts ? { contacts: r.contacts } : {}), ...(r.bolts ? { bolts: r.bolts } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
+    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), ...(r.contacts ? { contacts: r.contacts } : {}), ...(r.bolts ? { bolts: r.bolts } : {}), ...(r.welds ? { welds: r.welds } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
     if (converged) return;
   }
 }
@@ -634,7 +637,7 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now(), p = k + 2;
     const solve = () => solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts, welds: inp.welds,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: [], modal: { count, start },
     });
