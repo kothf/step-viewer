@@ -3912,13 +3912,18 @@ try {
     const vNoShell = await vol();
     await mp.keyboard.press("Escape");
     await mp.click('#mc-tools [data-c="hole"]');
-    const hA = await world([30, 15, 20]), hB = await world([-30, 15, 20]);
+    // 1.639 (FR-FT-052): the first click opens the hole's position sketch with a point there; the second adds a point with the Point tool; ✓ goes back to the hole.
+    const hA = await world([30, 15, 20]);
     await mp.mouse.click(hA[0], hA[1]);
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "sketch", null, { timeout: 30000 });
     await idle();
-    await mp.waitForFunction(() => document.querySelector('#mc-pm [data-focus="pts"]')?.textContent === "1 hole", null, { timeout: 15000 }).catch(() => {});
-    await idle();
+    const hB = await world([-30, 15, 20]);
     await mp.mouse.click(hB[0], hB[1]);
     await idle();
+    await mp.click("#mc-ok");
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "feature", null, { timeout: 30000 });
+    await idle();
+    await mp.click('#mc-pm [data-htab="type"]');
     await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
     await idle();
     const holePanel = await mp.evaluate(() => ({ n: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent, d: document.querySelector('#mc-pm input[data-num="diameter"]')?.value, td: document.querySelector('#mc-pm input[data-num="threadDepth"]')?.value }));
@@ -5261,8 +5266,10 @@ try {
     await mp.click('#mc-tools [data-c="hole"]');
     const [hx, hy] = await world([0.3, 0.2, 20]);
     await mp.mouse.click(hx, hy);
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "sketch", null, { timeout: 30000 });
     await idle();
-    await mp.waitForFunction(() => document.querySelector('#mc-pm [data-focus="pts"]')?.textContent === "1 hole", null, { timeout: 15000 }).catch(() => {});
+    await mp.click("#mc-ok");
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "feature", null, { timeout: 30000 });
     await idle();
     await mp.click("#mc-ok");
     await idle();
@@ -17205,7 +17212,7 @@ try {
     check(g0.stale && g0.compList.find(c => c.id === "c2")?.rigid && !g1.error && g1.compRows?.length === 2 && g1.compRows[1].vm === 0 && g1.compRows[0].vm > 1 && gCell === "rigid"
       && g1.maxU > 0.05 && g1.maxU < 0.85 * c2.maxU && gWide <= 0 && gRu.length === 0 && g2.stale && !g2.compList.find(c => c.id === "c2")?.rigid,
       `sim 1.636: a rigid component shows no stress and stiffens the assembly; translated (${JSON.stringify({ stale: [g0.stale, g2.stale], list: g0.compList, error: g1.error, rows: g1.compRows, gCell, maxU: [c2.maxU, g1.maxU], gWide, gRu })})`);
-    // 1.639: a weld along two edges of the joint carries the whole load once the bars are not joined
+    // 1.640: a weld along two edges of the joint carries the whole load once the bars are not joined
     const scr = q => mp.evaluate(q => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(q[0], q[1], q[2]).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, q);
     await mp.click('#sim-tools [data-s="weld"]');
     await mp.waitForSelector("#sim-pm .pm-ok");
@@ -17243,7 +17250,7 @@ try {
     check(w0.weldList?.length === 1 && w0.weldList[0].edges === 2 && w0.weldList[0].throat === 5 && w0.stale
       && !w1.error && w1.welds?.length === 1 && Math.abs(w1.welds[0].force / 500 - 1) < 0.03 && Math.abs(w1.welds[0].length / 40 - 1) < 0.05 && w1.welds[0].peak >= w1.welds[0].mean && Math.abs(w1.welds[0].stress - w1.welds[0].peak / 5) < 1e-9
       && wTree.rows === 1 && Math.abs(wTree.force / 500 - 1) < 0.03 && wTree.wide <= 0 && wRu.length === 0 && /E-SIM-LOOSE/.test(w2.error ?? "") && !w3.weldList?.length,
-      `sim 1.639: a weld along two edges carries the whole load between bars that are not joined; left out, the bar is loose; translated (${JSON.stringify({ list: [w0.weldList, w3.weldList], error: [w1.error, w2.error], welds: w1.welds, wTree, wRu })})`);
+      `sim 1.640: a weld along two edges carries the whole load between bars that are not joined; left out, the bar is loose; translated (${JSON.stringify({ list: [w0.weldList, w3.weldList], error: [w1.error, w2.error], welds: w1.welds, wTree, wRu })})`);
     // 1.640: a rigid connector between the two bars' top faces carries the load instead; as a spring it gives force / stiffness
     await mp.selectOption("#sim-tree select[data-k=link]", "none");
     await mp.waitForTimeout(300);
@@ -17304,6 +17311,37 @@ try {
       && c1.compList[1].own && /6061/.test(c1.compList[1].material) && !c2.error && c2.done && c2.maxU > 1.1 * a1.maxU && cRu.length === 0 && cWide <= 0
       && c3.compList[1].off && /E-SIM-REF/.test(c4.error ?? "") && /left out of the study/.test(cSaid) && c5.compList.filter(c => c.off).length === 1,
       `sim 1.633: a component analysed with another material bends more; a component left out takes its load's faces with it; one component always stays (${JSON.stringify({ list: [c0.compList, c1.compList, c3.compList, c5.compList], stale: c1.stale, error: [c2.error, c4.error], maxU: [a1.maxU, c2.maxU], cRu, cWide, cSaid })})`);
+    await ctx.close();
+  }
+  if (inShard(1)) {
+    // model 1.639: holes placed by the points of a position sketch (FR-FT-052): drilled there, following the sketch.
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const hp = await ctx.newPage();
+    hp.on("pageerror", e => errors.push(e.message));
+    hp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await hp.goto(`${origin}/index.html?debug`);
+    await hp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await hp.goto(`${origin}/index.html?debug`);
+    await hp.waitForFunction(() => window.__sv);
+    await hp.click("#new-part");
+    await hp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await hp.waitForTimeout(150); await hp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 }); };
+    await hp.evaluate(() => window.__sv.model.store.change("Part", doc => {
+      const pt = (id, x, y) => ({ id, t: "point", x, y }), ln = (id, a, b) => ({ id, t: "line", a, b });
+      doc.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("a", -50, -30), pt("b", 50, -30), pt("c", 50, 30), pt("d", -50, 30), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "x:end" } }, rels: [], dims: [], ents: [pt("h1", 20, 0), pt("h2", -20, 0), { ...pt("hc", 0, 20), cons: true }] },
+        { id: "h", type: "hole", name: "Hole1", sketch: "k", pts: [], kind: "simple", diameter: { v: 10 }, end: "through", depth: { v: 10 } });
+    }));
+    await settle();
+    const r0 = await hp.evaluate(() => { const m = window.__sv.model, h = m.store.doc.features.find(f => f.id === "h"); return { pts: h.pts, plane: h.plane, v: m.last().props.volume, ok: m.last().statuses.every(s => s.ok) }; });
+    await hp.evaluate(() => window.__sv.model.store.change("Move point", doc => { const k = doc.features.find(f => f.id === "k"); k.ents.find(e => e.id === "h2").x = -35; k.ents.push({ id: "h3", t: "point", x: 0, y: -15 }); }));
+    await settle();
+    const r1 = await hp.evaluate(() => { const m = window.__sv.model, h = m.store.doc.features.find(f => f.id === "h"); return { pts: h.pts, v: m.last().props.volume, com: m.last().props.com, ok: m.last().statuses.every(s => s.ok) }; });
+    const cyl = Math.PI * 25 * 10;
+    check(r0.ok && r1.ok && r0.pts.length === 2 && r0.plane?.face?.name === "x:end" && Math.abs(r0.v - (60000 - 2 * cyl)) < 0.5
+      && r1.pts.length === 3 && r1.pts[1][0] === -35 && Math.abs(r1.v - (60000 - 3 * cyl)) < 0.5 && Math.abs(r1.com[0] - 15 * cyl / (60000 - 3 * cyl)) < 1e-3,
+      `model 1.639: a hole takes its centres from its position sketch's points (construction left out) and follows when they move (${JSON.stringify({ r0, r1 })})`);
     await ctx.close();
   }
 } catch (err) {

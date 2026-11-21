@@ -5,11 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.639.0] - 2026-11-21
+## [1.640.0] - 2026-11-21
 
 ### Added
 
 - Structural analysis of assemblies: **welds** (FR-CON-022). **Weld** on the Simulation tab joins two components along edges of one that lie on the other: click the edges on the model and type the throat. The weld is an elastic seam along those edges, so with the components' connection set to Sliding or Not joined it carries the load between them. After a solve the results list each weld's force, its largest force per length and the stress over the throat (hover a row for the welded length and the mean); the report has the same table. Only the part of an edge that lies on the other component is welded. A weld can be left out of a solve like a load.
+- Structural analysis: **connectors** (FR-CON-023), in parts and assemblies. **Connector** on the Simulation tab ties two groups of faces together: click the faces of the first side, then of the second. A rigid connector makes the two sides move as one; a spring connector takes a stiffness along X, Y and Z and, when wanted, a turning stiffness. With components set to Not joined a connector carries the load between them, and after a solve the results list each connector's force, moment and, for a spring, its stretch.
+- Structural analysis: **masses** on faces (FR-CON-023). **Mass** spreads a mass in kg over the clicked faces without adding stiffness. It counts in gravity, centrifugal loads and inertia relief, and it lowers the natural frequencies of a modal study.
+- The Simulation tab groups Weld, Connector and Mass under **Connections**.
+
+## [1.639.0] - 2026-11-21
+
+### Added
+
+- Hole: **positions from sketch points**, as in other CAD apps' Hole Wizard (FR-FT-052). A click on the face (or **Place and dimension positions** on the Positions tab) opens the hole's own position sketch on that face with the Point tool, with a point where you clicked. Place more points, dimension them to edges, the origin or each other, add relations, and the holes preview live as you go; ✓ goes back to the hole panel. The hole and its sketch are one undo step, and ✕ on the hole takes the sketch away again.
+- Holes can also use the points of an **existing sketch**: select it before Hole, or pick it in the tree while the hole panel is open. Free points and the ends of lines and arcs that are not construction get a hole.
+- The position sketch sits under the hole in the tree. **Edit position sketch** (right-click the hole) or a second double-click on the hole changes the positions later, and the holes follow. Copy and paste of a hole takes its sketch along.
+- Older holes with typed positions keep them; their first click on the face turns those positions into a position sketch.
 
 ## [1.638.0] - 2026-11-21
 
@@ -4153,7 +4165,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.639.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.640.0...HEAD
+[1.640.0]: https://github.com/kothf/step-viewer/compare/v1.639.0...v1.640.0
 [1.639.0]: https://github.com/kothf/step-viewer/compare/v1.638.0...v1.639.0
 [1.638.0]: https://github.com/kothf/step-viewer/compare/v1.637.0...v1.638.0
 [1.637.0]: https://github.com/kothf/step-viewer/compare/v1.636.0...v1.637.0
