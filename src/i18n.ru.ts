@@ -5563,6 +5563,7 @@ export const RU: Record<string, string> = {
   "level {n}": "уровень {n}",
   "The solution starts this many steps more accurate where it meets these faces, from the first pass on. Use it at fillets, holes and other places where the stress peaks.": "У этих граней расчёт с первого прохода идёт на столько шагов точнее. Используйте у скруглений, отверстий и в других местах, где напряжения максимальны.",
   "Level": "Уровень",
+  "Solve again to see the results on the section planes.": "Рассчитайте ещё раз, чтобы увидеть результаты на плоскостях сечения.",
   "Record GIF": "Записать GIF",
   "Excitation": "Возбуждение",
   "e.g. 3000 rpm or 50 Hz": "например 3000 rpm или 50 Hz",

@@ -22,6 +22,7 @@ import { SIM_STOPPED, SimClient } from "./client";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
 import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
+import type { SectionManager } from "../viewer/Section";
 import { nearExcitation, parseExcitation } from "./excite";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, positiveAxis, studyProblem, type PassResult, type SimBody } from "./run";
@@ -30,6 +31,8 @@ import { DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES
 
 export interface SimHost {
   viewer: Viewer;
+  /** The section planes of the view: their caps are painted with the results (FR-RES-030). */
+  section: SectionManager;
   doc(): PartDoc | null;
   change(label: string, fn: (d: PartDoc) => void): void;
   faceNames(): string[];
@@ -80,6 +83,8 @@ const SF_TOP = 10;
 const MODE_PLOTS: PlotKind[] = ["u", "ux", "uy", "uz"];
 /** One swing of an animated mode shape, ms. */
 const MODE_PERIOD = 1600;
+/** Section caps are painted on a grid of this many steps each way. */
+const CAP_GRID = 160;
 /** Frames of a recorded mode shape: one swing. */
 const GIF_FRAMES = 24;
 const SUPPORT_COLOR = 0x2f9e44, LOAD_COLOR = 0xd6336c, REFINE_COLOR = 0x1c7ed6;
@@ -130,6 +135,16 @@ export class SimController {
   private marks = new THREE.Group();
   private saved: { mesh: THREE.Mesh; mat: THREE.Material } | null = null;
   private overlay: THREE.Mesh | null = null;
+  // results on section planes: the caps as the section manager last made them, and what was painted
+  private caps: { mesh: THREE.Mesh }[] = [];
+  private capGeos = new Map<THREE.Mesh, THREE.BufferGeometry>();
+  private capBusy = false;
+  private capAgain = false;
+  private capsQueued = false;
+  private capNote = false;
+  private capInfo = { painted: 0, points: 0, hit: 0, min: 0, max: 0 };
+  /** The results the solver worker still holds the solution of. */
+  private solved: Results | null = null;
   private mats: THREE.Material[] = [];
   private range: [number, number] = [0, 0];
   private usedScale = 0;
@@ -157,6 +172,8 @@ export class SimController {
   private anim: { raf: number; base: Float32Array; u: Float32Array; scale: number; t0: number; frames: number } | null = null;
 
   constructor(private host: SimHost) {
+    host.section.capSource = () => (this.overlay && this.plot.deformed && !this.anim ? this.overlay.geometry : null);
+    host.section.onCaps = caps => this.capsChanged(caps);
     this.marks.name = "sim-marks";
     $("#sim-tools").addEventListener("click", e => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-s]");
@@ -225,6 +242,7 @@ export class SimController {
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
+      caps: { n: this.caps.length, ...this.capInfo },
       hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
     };
   }
@@ -520,6 +538,8 @@ export class SimController {
         this.renderAll();
         this.drawMarks();
       });
+      // the worker keeps the last solution: the section planes can show it
+      if (res.passes.length && this.res === res) { this.solved = res; this.running = false; this.capsSoon(); }
       // a finished solve is kept for the next time this document is opened
       if (res.passes.length) void cacheKey("sim", key).then(k => cachePut(k, { passes: res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts } satisfies Kept));
     } catch (e) {
@@ -881,6 +901,91 @@ export class SimController {
   /** A result plot is on the model. */
   get plotting() { return !!this.saved; }
 
+  // ---------- results on section planes (FR-RES-030) ----------
+
+  /** The shown plot can be carried onto the section caps: a static result whose solution the worker still holds. */
+  private capsPaintable() {
+    return !!this.saved && !!this.res && this.solved === this.res && !this.running && !this.res.passes.at(-1)?.modes && !!this.client.solution;
+  }
+
+  /** The plot came, went or changed: the section caps are made again (plain), then painted if they can be. */
+  private capsSoon() {
+    if (this.capsQueued) return;
+    this.capsQueued = true;
+    queueMicrotask(() => {
+      this.capsQueued = false;
+      if (this.host.section.planes.some(p => p.enabled)) this.host.section.rebuild();
+    });
+  }
+
+  private capsChanged(caps: { mesh: THREE.Mesh }[]) {
+    this.caps = caps;
+    for (const [m, g] of this.capGeos) if (!caps.some(c => c.mesh === m)) { g.dispose(); this.capGeos.delete(m); }
+    if (!this.capGeos.size) this.capInfo = { painted: 0, points: 0, hit: 0, min: 0, max: 0 };
+    const note = !!this.saved && caps.length > 0 && !this.running && !this.res?.passes.at(-1)?.modes && !this.capsPaintable();
+    if (note !== this.capNote) { this.capNote = note; this.renderLegend(); }
+    if (caps.length && this.capsPaintable()) void this.paintCaps();
+  }
+
+  /** Colours every section cap by the shown result, read from the solution inside the body. */
+  private async paintCaps() {
+    if (this.capBusy) { this.capAgain = true; return; }
+    this.capBusy = true;
+    try {
+      do {
+        this.capAgain = false;
+        const v = this.host.viewer, part = v.parts[0];
+        if (!part) return;
+        const size = v.modelSize * 1.3, back = new THREE.Matrix4().copy(v.placing(part)).invert();
+        const info = { painted: 0, points: 0, hit: 0, min: Infinity, max: -Infinity };
+        for (const cap of [...this.caps]) {
+          const mesh = cap.mesh;
+          let geo = this.capGeos.get(mesh);
+          if (!geo) {
+            geo = new THREE.PlaneGeometry(size, size, CAP_GRID, CAP_GRID);
+            geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(3 * geo.getAttribute("position").count), 3));
+          }
+          const pa = geo.getAttribute("position"), n = pa.count, pos = new Float32Array(3 * n), p = new THREE.Vector3();
+          mesh.updateMatrixWorld(true);
+          const m = new THREE.Matrix4().multiplyMatrices(back, mesh.matrixWorld);
+          for (let i = 0; i < n; i++) { p.fromBufferAttribute(pa, i).applyMatrix4(m); pos[3 * i] = p.x; pos[3 * i + 1] = p.y; pos[3 * i + 2] = p.z; }
+          const kind = this.plot.kind, range = this.range, res = this.res;
+          const s = await this.client.sample(pos, this.usedScale);
+          if (!s || !this.capsPaintable() || this.res !== res || !this.caps.some(c => c.mesh === mesh)) continue;
+          const val = Float32Array.from(this.values({ u: s.u, vm: s.vm, err: s.err } as PassResult, kind)), hit = s.hit, w = CAP_GRID + 1;
+          for (let i = 0; i < n; i++) if (hit[i]) { info.hit++; if (val[i] < info.min) info.min = val[i]; if (val[i] > info.max) info.max = val[i]; }
+          // points just outside the body's cells take a neighbour's value, so the cut's rim is not washed out
+          for (let k = 0; k < 2; k++) {
+            const was = Uint8Array.from(hit);
+            for (let j = 0; j < w; j++) for (let i = 0; i < w; i++) {
+              const o = j * w + i;
+              if (was[o]) continue;
+              let sum = 0, cnt = 0;
+              if (i > 0 && was[o - 1]) { sum += val[o - 1]; cnt++; }
+              if (i < w - 1 && was[o + 1]) { sum += val[o + 1]; cnt++; }
+              if (j > 0 && was[o - w]) { sum += val[o - w]; cnt++; }
+              if (j < w - 1 && was[o + w]) { sum += val[o + w]; cnt++; }
+              if (cnt) { val[o] = sum / cnt; hit[o] = 1; }
+            }
+          }
+          const ca = geo.getAttribute("color") as THREE.BufferAttribute, col = ca.array as Float32Array, sf = kind === "sf", span = range[1] - range[0] || 1;
+          for (let i = 0; i < n; i++) { const x = Math.max(0, Math.min(1, (val[i] - range[0]) / span)); ramp(sf ? 1 - x : x, col, 3 * i); }
+          ca.needsUpdate = true;
+          if (mesh.geometry !== geo) {
+            mesh.geometry = geo;
+            this.capGeos.set(mesh, geo);
+            const mat = mesh.material as THREE.MeshStandardMaterial;
+            mat.vertexColors = true; mat.color.set(0xffffff); mat.map = null; mat.needsUpdate = true;
+            mesh.userData.simCap = true;
+          }
+          info.painted++; info.points += n;
+        }
+        if (info.painted) this.capInfo = info.hit ? info : { ...info, min: 0, max: 0 };
+        this.host.viewer.invalidate();
+      } while (this.capAgain);
+    } finally { this.capBusy = false; }
+  }
+
   private clearPlot() {
     const was = !!this.saved;
     if (this.saved) {
@@ -890,7 +995,7 @@ export class SimController {
     }
     this.disposePlot();
     this.drawProbes();
-    if (was) this.host.redraw();
+    if (was) { this.host.redraw(); this.capsSoon(); }
     this.host.viewer.invalidate();
   }
 
@@ -951,6 +1056,7 @@ export class SimController {
     this.overlay.scale.copy(part.mesh.scale);
     this.overlay.updateMatrixWorld(true);
     if (shape && this.plot.deformed && this.animate) this.startAnim(pm.pos, shape, scale);
+    this.capsSoon();
     this.syncProbes();
     this.drawProbes();
     this.host.viewer.invalidate();
@@ -1462,6 +1568,7 @@ export class SimController {
       + `<button class="sim-ib" data-a="close" title="${esc(t("Hide the plot"))}" aria-label="${esc(t("Hide the plot"))}">×</button></div>`
       + `<div class="ana-ramp" style="background:${RAMP_CSS}${sf ? ";transform:scaleX(-1)" : ""}"></div><div class="ana-scale"><span data-v="min">${sig(this.range[0] * f)}</span><span>${esc(unit)}</span><span data-v="max">${top}</span></div>`
       + (sf ? `<p class="ana-note">${esc(t("Yield strength divided by the von Mises stress; below 1 the material yields."))}</p>` : "")
+      + (this.capNote ? `<p class="ana-note" data-v="capnote">${esc(t("Solve again to see the results on the section planes."))}</p>` : "")
       + (k === "err" ? `<p class="ana-note">${esc(t("Where the last pass still changed the solution: the places that would gain most from more accuracy."))}</p>` : "")
       + `<label class="chk"><input type="checkbox" data-k="deformed"${this.plot.deformed ? " checked" : ""} />${esc(t("Deformed shape"))}</label>`
       + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "")

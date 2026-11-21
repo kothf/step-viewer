@@ -168,7 +168,8 @@ export interface StaticResult {
   /** Displacement (3 per point, mm), von Mises stress (MPa) and the local share of `eta` (%, the body's
    * error were every element like the one the point is in) at points; `nrm` = outward normals, so a point on
    * the surface is read from the cell the material is in. */
-  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>): { u: Float32Array; vm: Float32Array; err: Float32Array };
+  /** `hit` (asked for with `hits`): 1 where the point lies in a cell of the grid, so the values there mean something. */
+  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array };
   /** Displacement at a point, mm. */
   disp(x: number, y: number, z: number): [number, number, number];
   /** Modal: the modes, lowest first; `use(k)` makes `sample`/`disp`/`stress` read mode k (the first to begin with). */
@@ -748,14 +749,18 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     reactions, applied, eta, prevError,
     modes, space, mass: modal ? mass : undefined,
     use(k) { const v = modes?.[k]; if (v) x = v.x; },
-    sample(pos, nrm) {
+    sample(pos, nrm, hits) {
       const n = pos.length / 3, u = new Float32Array(3 * n), vm = new Float32Array(n), err = new Float32Array(n);
+      const hit = hits ? new Uint8Array(n) : undefined;
       const eps = 1e-6 * grid.h, G = new Float64Array(9);
       for (let i = 0; i < n; i++) {
         let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
         if (nrm) { px -= eps * nrm[3 * i]; py -= eps * nrm[3 * i + 1]; pz -= eps * nrm[3 * i + 2]; }
+        // asked with `hits`: a point outside the grid's box has no value (the nearest cell's would be an extrapolation)
+        if (hit && (px < grid.lo[0] - eps || py < grid.lo[1] - eps || pz < grid.lo[2] - eps || px > grid.lo[0] + grid.n[0] * grid.h + eps || py > grid.lo[1] + grid.n[1] * grid.h + eps || pz > grid.lo[2] + grid.n[2] * grid.h + eps)) continue;
         const e = at(px, py, pz);
         if (e < 0) continue;
+        if (hit) hit[i] = 1;
         err[i] = local[e];
         G.fill(0);
         let ux = 0, uy = 0, uz = 0;
@@ -768,7 +773,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         const tr = G[0] + G[4] + G[8];
         vm[i] = vonMises([lam * tr + 2 * mu * G[0], lam * tr + 2 * mu * G[4], lam * tr + 2 * mu * G[8], mu * (G[1] + G[3]), mu * (G[5] + G[7]), mu * (G[6] + G[2])]);
       }
-      return { u, vm, err };
+      return hit ? { u, vm, err, hit } : { u, vm, err };
     },
     disp(px, py, pz) {
       const e = at(px, py, pz);

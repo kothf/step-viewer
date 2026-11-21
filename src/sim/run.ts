@@ -447,11 +447,34 @@ export function boostOf(grid: Grid, refine: { tris: ArrayLike<number>; level: nu
   return out;
 }
 
+/** Reads a solution anywhere in the body: what the worker keeps of the last pass (FR-RES-030). */
+export type Sampler = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean) => { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array };
+export interface SampleResult { u: Float32Array; vm: Float32Array; err: Float32Array; hit: Uint8Array }
+
+/**
+ * The solution at points of the body as drawn: with `scale` > 0 the points are places on the deformed shape
+ * (x + scale·u(x)), and the place x each came from is found first, by a few fixed-point steps.
+ */
+export function sampleAt(sample: Sampler, pos: ArrayLike<number>, scale = 0): SampleResult {
+  let at: ArrayLike<number> = pos;
+  if (scale > 0) {
+    const x = Float64Array.from(pos);
+    for (let k = 0; k < 4; k++) {
+      const u = sample(x).u;
+      for (let i = 0; i < x.length; i++) x[i] = pos[i] - scale * u[i];
+    }
+    at = x;
+  }
+  const r = sample(at, undefined, true);
+  return { u: r.u, vm: r.vm, err: r.err, hit: r.hit! };
+}
+
 /**
  * The passes of a static study on the same cells, until the energy settles: degree 2, 3, 4 everywhere,
  * then local passes that raise the degree by one only in the elements holding most of the error estimate.
+ * `keep` gets each pass's solution, to be read later at other points.
  */
-export function* runStatic(inp: RunInput): Generator<PassResult> {
+export function* runStatic(inp: RunInput, keep?: (s: Sampler) => void): Generator<PassResult> {
   if (inp.problem.problems.length) throw new Error(`${inp.problem.problems[0].code}: ${inp.problem.problems[0].id}`);
   if (!inp.problem.loads.length && !inp.problem.gravity && !inp.problem.spin?.omega && !inp.problem.spin?.alpha && !inp.problem.fixed.some(s => s.value)) throw new Error("E-SIM-NOLOAD");
   if (!inp.problem.fixed.length) throw new Error("E-SIM-FREE: 6");
@@ -497,6 +520,7 @@ export function* runStatic(inp: RunInput): Generator<PassResult> {
     else for (const e of marked) ind[e] = r.eta[e];
     if (r.prevError != null) known.push(r.prevError);
     const errors: (number | null)[] = [...known, passError(known)];
+    keep?.(r.sample);
     const { u, vm, err } = r.sample(inp.pos, inp.nrm);
     let maxU = 0, maxVm = 0;
     for (let i = 0; i < vm.length; i++) {

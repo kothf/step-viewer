@@ -49,6 +49,10 @@ export class SectionManager {
 
   private capObjects: THREE.Object3D[] = [];
   private capMeshes: { mesh: THREE.Mesh; sp: SectionPlane }[] = [];
+  /** Another shape to cut in place of a part's own mesh (a result plot drawn deformed); null = the part's. */
+  capSource: ((part: Viewer["parts"][number]) => THREE.BufferGeometry | null) | null = null;
+  /** Called whenever the caps were made or moved, with each cap and its plane (to paint results on them). */
+  onCaps: ((caps: { mesh: THREE.Mesh; sp: SectionPlane }[]) => void) | null = null;
   private profileRoot = new THREE.Group();
   private pivot = new THREE.Object3D();
   private planeHelper: THREE.Mesh;
@@ -138,7 +142,7 @@ export class SectionManager {
                 stencilWrite: true, stencilFunc: THREE.AlwaysStencilFunc,
                 stencilFail: op, stencilZFail: op, stencilZPass: op,
               });
-              const m = new THREE.Mesh(part.mesh.geometry, mat);
+              const m = new THREE.Mesh(this.capSource?.(part) ?? part.mesh.geometry, mat);
               m.renderOrder = order;
               m.raycast = () => {};
               part.group.add(m);
@@ -461,6 +465,7 @@ export class SectionManager {
       mesh.position.copy(o);
       mesh.lookAt(o.clone().sub(sp.plane.normal));
     }
+    this.onCaps?.(this.capMeshes);
   }
 
   private queueProfiles() {
