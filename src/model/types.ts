@@ -190,7 +190,7 @@ export interface SketchPicture { id: string; name?: string; src: string; c: V2; 
 export type RefSig = (string | number)[];
 export interface FaceRef { name: string; hint?: V3; g?: RefSig }
 /** An edge between two named faces; the hint picks between several shared edges. */
-export interface EdgeRef { faces: [string, string]; hint?: V3; g?: RefSig; /** An edge of another component (edit in context, sketch On edge relations only). */ ctx?: CtxEdge }
+export interface EdgeRef { faces: [string, string]; hint?: V3; g?: RefSig; /** An edge of another component (edit in context, sketch On edge relations only). */ ctx?: CtxEdge; /** The outline of the round face `faces[0]` seen along the sketch normal, on the side nearer `hint` (sketch On edge relations only; both faces name that face). */ sil?: true }
 
 // ---------- features ----------
 

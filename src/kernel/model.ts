@@ -25,6 +25,7 @@ import { segSpline } from "../sketch/wrap";
 import { FlexError, flexAffine, flexIdle, flexLinear, flexMap, flexPoint, type FlexMap } from "../model/flex";
 import { chain3d, solve3d } from "../sketch/sketch3d";
 import { applyExt, piercePoint, projectEdge, uvOf, type ModelEdge } from "../sketch/external";
+import { circleEdge, lineEdge } from "../sketch/silhouette";
 import { solve } from "../sketch/solver";
 import { evalSheet } from "../sheetmetal/kernel";
 import { SheetError, type SheetState } from "../sheetmetal/sheet";
@@ -436,6 +437,7 @@ export class Modeller {
       try {
         // An edge of another component (edit in context, FR-ASM-030): its last seen place, kept by the assembly.
         if (r.ext.ctx) { const g = ent && r.t !== "pierce" ? projectEdge(r.ext.ctx.geo, frame) : null; ok = !!g && applyExt(out, ent!, g); }
+        else if (r.ext.sil) { const g = body && ent && r.t !== "pierce" ? this.silhouette(body, r.ext, frame) : null; ok = !!g && applyExt(out, ent!, g); }
         else if (r.t === "pierce") ok = !!body && ent?.t === "point" && this.pierce(body, r.ext, frame, ent);
         else {
           const g = body && ent ? projectEdge(this.modelEdge(this.resolveEdge(body, r.ext)), frame) : null;
@@ -448,6 +450,42 @@ export class Modeller {
     if (JSON.stringify(out) === JSON.stringify(sk)) return null;
     solve(out);
     return JSON.stringify(out) === JSON.stringify(sk) ? null : out;
+  }
+
+  /**
+   * The outline of a round face seen along the sketch normal (`EdgeRef.sil`), projected: for a cylinder or cone
+   * lying along the plane the generator square to the normal on the side nearer the hint, over the face's V range;
+   * for a sphere the circle round its centre. Null when the face is gone or no longer shows such an outline.
+   */
+  private silhouette(body: Named, ref: EdgeRef, frame: Frame): ReturnType<typeof projectEdge> {
+    const oc = this.oc, T = oc.GeomAbs_SurfaceType;
+    const face = this.resolveFace(body, { name: ref.faces[0], hint: ref.hint });
+    const ad = new oc.BRepAdaptor_Surface_2(face, true);
+    try {
+      const ty = ad.GetType();
+      if (ty === T.GeomAbs_Sphere) {
+        const sp = ad.Sphere();
+        return projectEdge(circleEdge(this.xyz(sp.Location()), frame.n, sp.Radius()), frame);
+      }
+      if (ty !== T.GeomAbs_Cylinder && ty !== T.GeomAbs_Cone) return null;
+      const pos = ty === T.GeomAbs_Cylinder ? ad.Cylinder().Position() : ad.Cone().Position();
+      const z = this.xyz(pos.Direction()), x = this.xyz(pos.XDirection()), y = this.xyz(pos.YDirection());
+      if (Math.abs(dot(z, frame.n)) > 1e-6) return null;
+      const s = cross(z, frame.n), sl = Math.hypot(...s);
+      const u0 = Math.atan2(dot(s, y) / sl, dot(s, x) / sl);
+      const U1 = ad.FirstUParameter(), U2 = ad.LastUParameter(), V1 = ad.FirstVParameter(), V2 = ad.LastVParameter();
+      const inU = (u: number) => { let k = u; while (k < U1 - 1e-9) k += 2 * Math.PI; while (k > U1 + 2 * Math.PI) k -= 2 * Math.PI; return k <= U2 + 1e-9 ? k : null; };
+      let best: ModelEdge | null = null, bd = Infinity;
+      for (const u of [u0, u0 + Math.PI]) {
+        const k = inU(u);
+        if (k == null) continue;
+        const a = this.xyz(ad.Value(k, V1)), b = this.xyz(ad.Value(k, V2));
+        const ed = lineEdge(a, b);
+        const l = d3(a, b) || 1, d = ref.hint ? Math.hypot(...cross([ref.hint[0] - a[0], ref.hint[1] - a[1], ref.hint[2] - a[2]], [(b[0] - a[0]) / l, (b[1] - a[1]) / l, (b[2] - a[2]) / l])) : 0;
+        if (d < bd) { bd = d; best = ed; }
+      }
+      return best ? projectEdge(best, frame) : null;
+    } finally { ad.delete(); }
   }
 
   /**

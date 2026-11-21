@@ -17184,7 +17184,7 @@ try {
     check(g0.stale && g0.compList.find(c => c.id === "c2")?.rigid && !g1.error && g1.compRows?.length === 2 && g1.compRows[1].vm === 0 && g1.compRows[0].vm > 1 && gCell === "rigid"
       && g1.maxU > 0.05 && g1.maxU < 0.85 * c2.maxU && gWide <= 0 && gRu.length === 0 && g2.stale && !g2.compList.find(c => c.id === "c2")?.rigid,
       `sim 1.636: a rigid component shows no stress and stiffens the assembly; translated (${JSON.stringify({ stale: [g0.stale, g2.stale], list: g0.compList, error: g1.error, rows: g1.compRows, gCell, maxU: [c2.maxU, g1.maxU], gWide, gRu })})`);
-    // 1.638: a weld along two edges of the joint carries the whole load once the bars are not joined
+    // 1.639: a weld along two edges of the joint carries the whole load once the bars are not joined
     const scr = q => mp.evaluate(q => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(q[0], q[1], q[2]).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, q);
     await mp.click('#sim-tools [data-s="weld"]');
     await mp.waitForSelector("#sim-pm .pm-ok");
@@ -17222,7 +17222,7 @@ try {
     check(w0.weldList?.length === 1 && w0.weldList[0].edges === 2 && w0.weldList[0].throat === 5 && w0.stale
       && !w1.error && w1.welds?.length === 1 && Math.abs(w1.welds[0].force / 500 - 1) < 0.03 && Math.abs(w1.welds[0].length / 40 - 1) < 0.05 && w1.welds[0].peak >= w1.welds[0].mean && Math.abs(w1.welds[0].stress - w1.welds[0].peak / 5) < 1e-9
       && wTree.rows === 1 && Math.abs(wTree.force / 500 - 1) < 0.03 && wTree.wide <= 0 && wRu.length === 0 && /E-SIM-LOOSE/.test(w2.error ?? "") && !w3.weldList?.length,
-      `sim 1.638: a weld along two edges carries the whole load between bars that are not joined; left out, the bar is loose; translated (${JSON.stringify({ list: [w0.weldList, w3.weldList], error: [w1.error, w2.error], welds: w1.welds, wTree, wRu })})`);
+      `sim 1.639: a weld along two edges carries the whole load between bars that are not joined; left out, the bar is loose; translated (${JSON.stringify({ list: [w0.weldList, w3.weldList], error: [w1.error, w2.error], welds: w1.welds, wTree, wRu })})`);
     // left out: the load on it can no longer be solved, and the message says why; the last component cannot be left out
     await mp.uncheck('#sim-tree .sim-complist li[data-comp="c2"] [data-k="compon"]');
     await mp.waitForTimeout(400);

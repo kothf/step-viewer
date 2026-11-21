@@ -5,11 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.638.0] - 2026-11-21
+## [1.639.0] - 2026-11-21
 
 ### Added
 
 - Structural analysis of assemblies: **welds** (FR-CON-022). **Weld** on the Simulation tab joins two components along edges of one that lie on the other: click the edges on the model and type the throat. The weld is an elastic seam along those edges, so with the components' connection set to Sliding or Not joined it carries the load between them. After a solve the results list each weld's force, its largest force per length and the stress over the throat (hover a row for the welded length and the mean); the report has the same table. Only the part of an edge that lies on the other component is welded. A weld can be left out of a solve like a load.
+
+## [1.638.0] - 2026-11-21
+
+### Added
+
+- Sketches take the **outline of a round face** seen side-on as an edge, as other CAD apps do: the side of a fillet, a pin or a rod lying along the sketch plane, a cone, or a sphere seen from any side shows an outline where the model has no edge. Smart Dimension, relations (a click on the model in Select) and Convert Entities now pick it, and the sketch curve made from it stays on that outline when the model changes (a bigger pin moves the line out with it).
+
+### Fixed
+
+- A sketch dimension or relation could not take a round edge seen edge-on (the end arc of a fillet or a pin seen from above shows as a straight line): it is now picked as that line.
+- In a sketch, an edge right beside a narrow face's centre or a fillet's corner point could not be clicked for a dimension, a relation or Convert Entities: the point snap won and no edge was taken. The nearest edge is now used.
 
 ## [1.637.0] - 2026-11-21
 
@@ -4142,7 +4153,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.638.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.639.0...HEAD
+[1.639.0]: https://github.com/kothf/step-viewer/compare/v1.638.0...v1.639.0
 [1.638.0]: https://github.com/kothf/step-viewer/compare/v1.637.0...v1.638.0
 [1.637.0]: https://github.com/kothf/step-viewer/compare/v1.636.0...v1.637.0
 [1.636.0]: https://github.com/kothf/step-viewer/compare/v1.635.0...v1.636.0

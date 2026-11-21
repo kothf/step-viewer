@@ -126,6 +126,12 @@ const modeller = new ModelController({
     const s = snapper.pick(x - r.left, y - r.top);
     return s && s.kind !== "onEdge" && s.kind !== "onFace" && s.kind !== "onCap" ? { point: s.point.toArray() as [number, number, number], kind: s.kind } : null;
   },
+  visibleAt: p => snapper.isVisible(new THREE.Vector3(...p)),
+  edgeNear: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    const s = snapper.edgeNear(x - r.left, y - r.top);
+    return s?.edge && !s.section ? { edge: s.edge, px: s.px } : null;
+  },
   edgeAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();
     const s = snapper.pick(x - r.left, y - r.top);
