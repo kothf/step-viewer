@@ -5,7 +5,7 @@
 import type { FaceRef, Num, V3 } from "../model/types";
 
 export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp";
-export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal";
+export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro";
 
 export interface StudySupport {
   id: string;
@@ -38,23 +38,28 @@ export interface StudyLoad {
   id: string;
   name?: string;
   type: LoadType;
-  /** Not for gravity. Centrifugal: cylindrical faces whose axis the part spins about (none = `axis` through the origin). */
+  /**
+   * Not for gravity. Centrifugal: cylindrical faces whose axis the part spins about (none = `axis` through the origin).
+   * Torque and bearing load: cylindrical faces on one axis.
+   */
   faces: FaceRef[];
-  /** Centrifugal without faces: the world axis through the origin (default Z). */
+  /** Centrifugal without faces: the world axis through the origin (default Z). Hydrostatic pressure: the world axis that points up (`flip` = it points down). */
   axis?: "x" | "y" | "z";
   /** Centrifugal: angular acceleration, rad/s². The speed is `value`, rpm. */
   accel?: number;
+  /** Hydrostatic pressure: the coordinate of the fluid's surface on `axis`, mm. The density is `value`, kg/m³. */
+  level?: number;
   /** Force only: what it acts on, absent = faces. A force on edges or points is given by components. */
   on?: "edges" | "points";
   edges?: StudyEdge[];
   points?: StudyPoint[];
-  /** Force along the normal (N, into the face; total over the faces) or pressure (MPa). */
+  /** Force along the normal (N, into the face; total over the faces), pressure (MPa) or torque (N·mm, right-handed about the faces' axis taken towards +X, +Y or +Z). */
   value?: Num;
-  /** Force (N), gravity (mm/s²) or moment (N·mm) as X, Y, Z components. */
+  /** Force or bearing load (N), gravity (mm/s²) or moment (N·mm) as X, Y, Z components. */
   comp?: [Num, Num, Num];
   /** Force: along the faces' normals (`value`) instead of `comp`. */
   normal?: boolean;
-  /** Reverses a normal force or a pressure (pulls). */
+  /** Reverses a normal force or a pressure (pulls), or a torque. */
   flip?: boolean;
 }
 
@@ -116,7 +121,7 @@ export function nextId(st: Study, prefix: "s" | "l"): string {
 }
 
 export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement" };
-export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load" };
+export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure" };
 
 /** Default name of a new item: "Fixed 1", "Force 2". */
 export function itemName(st: Study, type: SupportType | LoadType): string {

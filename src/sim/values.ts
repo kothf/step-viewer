@@ -6,17 +6,20 @@ import { evaluate, ExprError, type VarValue } from "../model/expr";
 import type { Num, PartDoc } from "../model/types";
 import type { LoadType, StudyLoad } from "./types";
 
-/** Units a field takes, as factors to the unit the field shows (N, MPa, N·m, m/s², rpm). */
+/** Units a field takes, as factors to the unit the field shows (N, MPa, N·m, m/s², rpm, kg/m³). */
 const UNITS: Record<LoadType, Record<string, number>> = {
   force: { N: 1, kN: 1000, lbf: 4.4482216152605, kgf: 9.80665, Н: 1, кН: 1000, кгс: 9.80665 },
   pressure: { MPa: 1, kPa: 1e-3, Pa: 1e-6, GPa: 1000, bar: 0.1, psi: 0.006894757293168, МПа: 1, кПа: 1e-3, Па: 1e-6, ГПа: 1000, бар: 0.1 },
   moment: { "N·m": 1, "N*m": 1, Nm: 1, "N·mm": 1e-3, "N*mm": 1e-3, Nmm: 1e-3, "kN·m": 1000, "kN*m": 1000, kNm: 1000, "Н·м": 1, "Н*м": 1, Нм: 1, "Н·мм": 1e-3, "кН·м": 1000 },
   gravity: { "m/s²": 1, "m/s2": 1, "mm/s²": 1e-3, "mm/s2": 1e-3, g: 9.80665, "м/с²": 1, "м/с2": 1 },
+  torque: { "N·m": 1, "N*m": 1, Nm: 1, "N·mm": 1e-3, "N*mm": 1e-3, Nmm: 1e-3, "kN·m": 1000, "kN*m": 1000, kNm: 1000, "Н·м": 1, "Н*м": 1, Нм: 1, "Н·мм": 1e-3, "кН·м": 1000 },
+  bearing: { N: 1, kN: 1000, lbf: 4.4482216152605, kgf: 9.80665, Н: 1, кН: 1000, кгс: 9.80665 },
+  hydro: { "kg/m³": 1, "kg/m3": 1, "g/cm³": 1000, "g/cm3": 1000, "кг/м³": 1, "кг/м3": 1, "г/см³": 1000, "г/см3": 1000 },
   centrifugal: { rpm: 1, "rad/s": 30 / Math.PI, Hz: 60, "об/мин": 1, "рад/с": 30 / Math.PI, Гц: 60 },
 };
 
 /** From the unit a field shows to what the study stores (N, MPa, N·mm, mm/s²). */
-export const storeFactor = (type: LoadType) => (type === "moment" || type === "gravity" ? 1000 : 1);
+export const storeFactor = (type: LoadType) => (type === "moment" || type === "gravity" || type === "torque" ? 1000 : 1);
 
 /** Does the text need keeping (anything but a plain number)? */
 export const isPlain = (text: string) => /^[+-]?(\d+[.,]?\d*|[.,]\d+)(e[+-]?\d+)?$/i.test(text.trim());
