@@ -58,6 +58,7 @@ export type KernelRequest =
   /** Modelling: STEP of the last evaluated body. */
   | { id: number; type: "modelStep"; name: string; color: [number, number, number] }
   | { id: number; type: "importBody"; buffer: ArrayBuffer; name: string }
+  | { id: number; type: "importBodies"; buffer: ArrayBuffer; name: string }
   /** Structural analysis (FR-SARC-012): the last evaluated body as fine triangles with their faces' names. */
   | { id: number; type: "simGeo"; lin: number; ang: number }
   /** Structural analysis of an assembly (FR-CON-001): the shown components as fine triangles, each solid also on its own. */
@@ -354,6 +355,9 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
     } else if (r.type === "importBody") {
       kernel.load(new Uint8Array(r.buffer), r.name);
       post({ id: r.id, ok: true, ...kernel.brepText() });
+    } else if (r.type === "importBodies") {
+      kernel.load(new Uint8Array(r.buffer), r.name);
+      post({ id: r.id, ok: true, bodies: kernel.bodyBreps() });
     } else if (r.type === "modelStep") {
       if (!lastBody) throw new Error("There is no body to export yet.");
       kernel.meshes = [{ shape: lastBody.shape, faces: lastBody.faces, name: r.name, color: r.color, solid: true }];

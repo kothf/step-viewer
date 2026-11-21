@@ -67,6 +67,9 @@ export const STOPPED = "The geometry kernel was stopped.";
 /** `regions`: one per solid, with its component, its part's key and its own body material's name (null = the part's). */
 export interface AsmSimReply { geo: SimBody; regions: { comp: string; solid: number; part: string; mat: string | null; tris: Float64Array }[] }
 
+/** One body of a model file as BREP text. */
+export interface ImportedBody { name: string; color: [number, number, number] | null; brep: string; solid: boolean; faces: number }
+
 export class ModelKernel {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
@@ -224,6 +227,12 @@ export class ModelKernel {
   async importBody(buffer: ArrayBuffer, name: string): Promise<{ brep: string; solids: number; faces: number }> {
     await this.start();
     return this.call<{ brep: string; solids: number; faces: number }>({ type: "importBody", buffer, name });
+  }
+
+  /** Reads a STEP/IGES/BREP file into one BREP text per body, in the order the viewer shows them (FR-TSTU-004). */
+  async importBodies(buffer: ArrayBuffer, name: string): Promise<ImportedBody[]> {
+    await this.start();
+    return (await this.call<{ bodies: ImportedBody[] }>({ type: "importBodies", buffer, name })).bodies;
   }
 
   /** Evaluates another part document into BREP text for an inserted part (FR-BODY-005). */

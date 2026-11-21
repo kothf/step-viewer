@@ -51,7 +51,10 @@ import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
 import { packageMeshes, readPackageInWorker, thermalErrorText, ThermalMaps } from "./thermal/ui";
-import { findManifest } from "./thermal/package";
+import { findManifest, type ThermalPackage } from "./thermal/package";
+import type { ModelBody, PartMatch } from "./thermal/match";
+import { findMaterial, toRef, type MatRef } from "./tools/materials";
+import { BOARD_MATERIAL, boardConductivity, boardPlan } from "./thermal/study";
 import { unzipLimited, zip as zipFiles } from "./model/zip";
 import { bindModal, bindTabs, busy, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast, trapFocus } from "./ui";
 import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
@@ -101,7 +104,29 @@ const thermal = new ThermalMaps({
   changed: () => { syncThermalTab(); syncCmTabs(); },
   showTab: () => { if (!$("#t-thermal").hidden) showLeftTab("thermal"); },
   addMap: () => openPicker(),
+  simulate: (pkg, match, bodies) => { void simulateBoard(pkg, match, bodies); },
 });
+/**
+ * Simulate in MöbiusCAD (FRS-thermal J5): the board's STEP becomes an assembly, one component per body with a
+ * guessed material, and gets a thermal study with the package's heat, its ambient and cooling of every open surface.
+ */
+async function simulateBoard(pkg: ThermalPackage, match: PartMatch, bodies: ModelBody[]) {
+  const src = modelSrc;
+  if (!src) { toast(t("Open the board's STEP to measure it or simulate it."), "warn"); return; }
+  const plan = boardPlan(pkg.manifest, match, bodies);
+  const bk = boardConductivity(plan.thickness || 1.6);
+  const boardMat: MatRef = { name: BOARD_MATERIAL, density: Math.round(bk.density * 1000) / 1000, k: Math.round(bk.along * 100) / 100, cp: Math.round(bk.cp) };
+  const mats = plan.mats.map((name, i) => { if (i === plan.board) return boardMat; const m = findMaterial(name); return m ? toRef(m) : null; });
+  const ids = await asm.fromModel(src.data.slice(0), src.name, mats, plan.names);
+  if (!ids) return;
+  const heat = plan.heat.map(h => ({ id: h.id, name: h.name, comps: h.bodies.map(i => ids[i]).filter((x): x is string => !!x), p: h.p, ...(h.limit !== undefined ? { limit: h.limit } : {}) }));
+  sim.boardStudy({ ambient: plan.ambient, emissivity: plan.emissivity, heat });
+  selectCmTab("simulation");
+  showLeftTab("sim");
+  const lost = heat.filter(h => !h.comps.length && h.p >= 0.01).length;
+  toast(lost ? t("Assembly and thermal study made from the package; {n} part was not found in the model and makes no heat.|Assembly and thermal study made from the package; {n} parts were not found in the model and make no heat.", { n: lost })
+    : t("Assembly and thermal study made from the package. Add a heatsink or change the cooling, then press Solve."), lost ? "warn" : undefined);
+}
 /** The Thermal side tab is offered while the model on screen has a map; its badge counts the problems. */
 function syncThermalTab() {
   const on = thermal.has(), tab = $("#t-thermal"), n = on ? thermal.problemCount() : 0;

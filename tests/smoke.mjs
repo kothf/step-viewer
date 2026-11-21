@@ -17296,6 +17296,59 @@ try {
     await ctx.close();
   }
 
+  // --- thermal 1.655 (FRS-thermal J5, FR-TSTU-004, FR-TBRD-001): a study straight from a board's STEP and its package ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const bp = await ctx.newPage();
+    bp.on("pageerror", e => errors.push(e.message));
+    bp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal");
+    await bp.goto(`${origin}/index.html?debug`);
+    await bp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await bp.goto(`${origin}/index.html?debug`);
+    await bp.waitForFunction(() => window.__sv);
+    await bp.setInputFiles("#file-input", [join(thx, "amp.step"), join(thx, "amp-thermal.zip")]);
+    await bp.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    await bp.waitForTimeout(700);
+    await bp.click('#th-tools [data-th="simulate"]');
+    await bp.waitForFunction(() => window.__sv.asm.doc?.components.length === 7 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 7, null, { timeout: 180000 });
+    await bp.waitForTimeout(800);
+    const made = await bp.evaluate(() => {
+      const d = window.__sv.asm.doc, st = d.studies?.[0];
+      return { comps: d.components.map(c => [c.name, d.parts[c.part].doc.material?.name, d.parts[c.part].doc.material?.k, !!c.fixed]), kind: st?.kind, ambient: st?.settings.ambient,
+        heat: st?.loads.map(l => [l.type, l.parts?.length, l.parts?.every(x => x.comps.length === 1)]), cool: st?.supports.map(x => [x.type, !!x.all]),
+        cm: document.querySelector("#cm-tabs .on")?.dataset.cm, mode: window.__sv.sim.state().barMode, tabs: [...document.querySelectorAll("#doc-tabs [data-dt]")].length,
+        rows: [...document.querySelectorAll("#sim-tree .sim-row")].map(r => r.innerText.replace(/\s+/g, " ").trim()) };
+    });
+    const pcb = made.comps.find(c => c[0] === "PCB<1>"), q2 = made.comps.find(c => c[0] === "Q2<1>");
+    check(made.comps.length === 7 && pcb?.[1] === "PCB (effective)" && Math.abs(pcb[2] - 7.12) < 0.01 && q2?.[1] === "Copper" && made.comps.every(c => c[2] > 0 && c[3]) && made.kind === "thermal" && made.ambient === 40
+      && JSON.stringify(made.heat) === '[["pkgheat",6,true]]' && JSON.stringify(made.cool) === '[["conv",true],["rad",true]]' && made.cm === "simulation" && made.mode === "thermal" && made.tabs === 2
+      && made.rows.some(r => /Heat from package 1.*6 parts.*29\.2 W/.test(r)) && made.rows.some(r => /Convection 1.*all open surfaces/.test(r)),
+      `thermal 1.655: Simulate on a board's thermal map makes an assembly of its bodies, named after the package's parts and with guessed materials, and a thermal study with the package's heat, its ambient and cooling of every open surface (${JSON.stringify(made)})`);
+    await bp.selectOption('#sim-tree select[data-k="passes"]', "1");
+    await bp.click('#sim-tools [data-s="solve"]');
+    await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 400000 });
+    await bp.waitForTimeout(500);
+    const b1 = await bp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, applied: s.thermal?.applied, out: s.thermal?.out, max: s.thermal?.max, comps: s.thermal?.comps?.map(c => [c.name, Math.round(c.max)]),
+      over: document.querySelector('#sim-tree [data-v="tover"]')?.textContent, bad: [...document.querySelectorAll("#sim-tree .sim-tcomps tr.bad td:first-child")].map(e => e.textContent), limits: [...document.querySelectorAll('#sim-tree [data-v="tclimit"]')].map(e => e.textContent),
+      wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }; });
+    const outSum = (b1.out ?? []).reduce((a, x) => a + x, 0);
+    check(!b1.error && Math.abs(b1.applied - 29.17) < 1e-6 && Math.abs(outSum - 29.17) < 0.05 && b1.out.every(x => x > 1) && b1.comps.length === 7 && b1.bad.length >= 1 && b1.bad.every(n => /^(R14|R20|V3|Q2)</.test(n)) && /over/.test(b1.over ?? "")
+      && b1.limits.filter(Boolean).length === 6 && b1.wide <= 0,
+      `thermal 1.655: the board study solves: the 29.17 W of the package leave by convection and radiation, every part has its temperature beside its limit and the ones over are marked (${JSON.stringify(b1)})`);
+    // the heat table: a part left out makes no heat; a heatsink by its thermal resistance on the transistor
+    await bp.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
+    await bp.waitForSelector("#sim-pm .sim-pkparts tr[data-pk]");
+    const tbl = await bp.evaluate(() => [...document.querySelectorAll("#sim-pm .sim-pkparts tr[data-pk]")].map(r => [r.children[1].textContent, r.querySelector('input[data-q="pkp"]').value, r.querySelector('input[data-k="pkon"]').checked]));
+    await bp.click('#sim-pm .sim-pkparts tr[data-pk="1"] input[data-k="pkon"]');
+    await bp.click("#sim-pm .pm-ok");
+    await bp.waitForTimeout(300);
+    const less = await bp.evaluate(() => ({ row: document.querySelector('#sim-tree .sim-row[data-id="l1"]').innerText.replace(/\s+/g, " ").trim(), stale: window.__sv.sim.state().stale }));
+    check(tbl.length === 6 && tbl[0][0] === "V3" && tbl[0][1] === "18.2" && tbl.every(r => r[2]) && /5 parts.*10\.97 W|5 parts.*11 W/.test(less.row) && less.stale,
+      `thermal 1.655: the Heat from package panel lists every part with its power; unticking the valve leaves 5 parts and the results go stale (${JSON.stringify({ tbl, less })})`);
+    await ctx.close();
+  }
+
   // --- Board thermal maps 1.653 (FRS-thermal TH1): a board's STEP with its thermal package ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

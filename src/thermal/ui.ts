@@ -23,6 +23,8 @@ export interface ThermalHost {
   showTab(): void;
   /** Asks for a package to attach (file picker). */
   addMap(): void;
+  /** Makes an assembly of the model with a thermal study from the package (Simulate in MöbiusCAD). */
+  simulate(pkg: ThermalPackage, match: PartMatch, bodies: ModelBody[]): void;
 }
 
 type V3 = [number, number, number];
@@ -76,6 +78,7 @@ const PALETTE_LABEL: Record<PaletteName, string> = { heat: "Heat colours", rainb
 const PATH_LABEL: Record<string, string> = { board: "board", air: "air", heatsink: "heatsink", chassis: "chassis" };
 const KIND_LABEL: Record<string, string> = { body: "body", case: "case", junction: "junction", bulb: "bulb" };
 const ICON: Record<string, string> = {
+  simulate: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.2v9.6L12.5 8z"/></svg>`,
   map: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.6V3a1.5 1.5 0 0 1 3 0v6.6a3 3 0 1 1-3 0z"/><path d="M8 6v5"/><circle cx="8" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg>`,
   flip: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5.5h11l-2-3h-7zM2.5 10.5h11l-2 3h-7z"/><path d="M8 7v2"/></svg>`,
   labels: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3h8l3 3-3 3h-8z"/><path d="M5 13.5h6"/><circle cx="5" cy="6" r=".8" fill="currentColor" stroke="none"/></svg>`,
@@ -516,6 +519,7 @@ export class ThermalMaps {
       + btn("labels", t("Hot spots"), t("Labels on the hottest point and on every part over its limit"), { on: this.prefs.labels, dis: !a.on })
       + btn("probe", t("Probe"), t("Click the map to read the temperature at a point"), { on: this.probing, dis: !a.on }))
       + sep + group(t("Parts"), btn("parts", t("Parts"), t("The parts of the map with their power, temperature and margin")))
+      + sep + group(t("Study"), btn("simulate", t("Simulate"), a.own ? t("Open the board's STEP to measure it or simulate it.") : t("Simulate in MöbiusCAD: an assembly of the board's parts with a thermal study from this package, where you can add a heatsink or change the cooling"), { dis: a.own }))
       + sep + group(t("Package"), btn("add", t("Replace map"), t("Open another thermal package for this model")) + btn("remove", t("Remove map"), t("Take the thermal map off this model")));
   }
 
@@ -528,6 +532,7 @@ export class ThermalMaps {
     else if (k === "labels") { this.prefs.labels = !this.prefs.labels; this.savePrefs(); this.renderAll(); }
     else if (k === "probe") { this.probing = !this.probing; this.renderAll(); }
     else if (k === "parts") this.host.showTab();
+    else if (k === "simulate") this.host.simulate(a.pkg, a.match, this.bodies());
     else if (k === "add") this.host.addMap();
     else if (k === "remove") this.detach();
   }

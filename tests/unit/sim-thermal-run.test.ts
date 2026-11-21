@@ -158,3 +158,37 @@ test("thermal study of an assembly: components in series, a pad between them, he
   assert.ok(Math.abs(v.thermal!.comps![1].power - 4) < 1e-9 && v.thermal!.comps![0].power === 0);
   assert.ok(Math.abs(v.thermal!.flows[0].out - 4) < 0.02, `out ${v.thermal!.flows[0].out}`);
 });
+
+test("a board study: heat from the package, cooling of every open surface, a heatsink by its resistance (FR-TLOAD-004, FR-TBC-008)", () => {
+  const st = newStudy([], "thermal");
+  st.settings.ambient = 30;
+  st.loads.push({ id: "l1", type: "pkgheat", faces: [], parts: [
+    { id: 1, name: "R1", comps: ["c2"], p: 2 }, { id: 2, name: "C1", comps: ["c1"], p: 0.005 }, { id: 3, name: "R2", comps: ["c1"], p: 1, off: true }, { id: 4, name: "Q9", comps: [], p: 5 }] });
+  st.supports.push({ id: "s1", type: "conv", faces: [], all: true, h: 10 });
+  const set = thermalSetup(st, asmBody, ["c1", "c2"]);
+  // parts under 10 mW, left out or without a body make no heat
+  assert.deepEqual(set.sources, [{ power: 2, doms: [1] }]);
+  assert.equal(set.sinks.length, 1);
+  assert.ok(set.sinks[0].free && set.sinks[0].tris.length === asmBody.tris.length && set.problems.length === 0);
+  const r = [...runThermal({ body: asmBody, mat: regions[0].mat, problem: studyProblem(st, asmBody), passes: 2, energyTol: 0, pos, nrm, regions,
+    thermal: { k: K1, setup: set, ks: [K1, K2], gap: 0.1 } })].at(-1)!;
+  const open = 2 * (L * B + L * T + B * T), f = r.thermal!.flows[0];
+  // the faces where the two bars meet are not cooled
+  assert.ok(Math.abs(f.area - open) < 1e-3 * open, `open area ${f.area} for ${open}`);
+  assert.ok(Math.abs(f.out - 2) < 0.01, `out ${f.out}`);
+  assert.ok(Math.abs(f.mean - (30 + 2 / (10e-6 * open))) < 0.2 * (2 / (10e-6 * open)), `mean ${f.mean}`);
+  // a heatsink of 5 K/W on the first bar's end: its face leaves the open surfaces, and takes nearly all the heat
+  st.supports.push({ id: "s2", type: "conv", faces: [{ name: "c1@x0" }], rth: 5 });
+  const two = thermalSetup(st, asmBody, ["c1", "c2"]);
+  assert.equal(two.sinks[0].tris.length, asmBody.tris.length - 18);
+  assert.ok(Math.abs(two.sinks[1].h! - 1 / (5 * B * T)) < 1e-12);
+  const h = [...runThermal({ body: asmBody, mat: regions[0].mat, problem: studyProblem(st, asmBody), passes: 2, energyTol: 0, pos, nrm, regions,
+    thermal: { k: K1, setup: two, ks: [K1, K2], gap: 0.1 } })].at(-1)!;
+  const [air, sink] = h.thermal!.flows;
+  assert.ok(Math.abs(air.out + sink.out - 2) < 0.01 && sink.out > 0.3, `air ${air.out}, heatsink ${sink.out}`);
+  // the heatsink's own face is at ambient + its heat × Rth
+  assert.ok(Math.abs(sink.mean - (30 + sink.out * 5)) < 0.05 * sink.out * 5, `heatsink face ${sink.mean} for ${30 + sink.out * 5}`);
+  assert.ok(h.thermal!.max < r.thermal!.max);
+  st.supports[1].rth = 0;
+  assert.deepEqual(thermalSetup(st, asmBody, ["c1", "c2"]).problems, [{ id: "s2", code: "E-TH-VALUE" }]);
+});
