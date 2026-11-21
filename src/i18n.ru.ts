@@ -5868,4 +5868,5 @@ export const RU: Record<string, string> = {
   "How far the heat taken away is from the heat put in, as a share of it": "Насколько отведённое тепло отличается от подведённого, в долях от него",
   "Empty: the study's ambient temperature": "Пусто: температура среды исследования",
   "Temp. change": "Изм. темп.",
+  "Heat brought in": "Подведено тепла",
 };

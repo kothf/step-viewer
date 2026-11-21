@@ -17104,15 +17104,16 @@ try {
     }, name);
     const sim = () => tp.evaluate(() => window.__sv.sim.state());
     const bar = () => tp.evaluate(() => ({ ids: [...document.querySelectorAll("#sim-tools [data-s]")].map(b => b.dataset.s), on: document.querySelector("#sim-tools .sim-mode-b.on")?.dataset.s ?? "", checked: [...document.querySelectorAll('#sim-tools [role="radio"][aria-checked="true"]')].length,
-      wide: document.querySelector("#sim-tools").scrollWidth > document.querySelector("#cm-body").clientWidth + 1 }));
+      wide: document.querySelector("#cm-body").scrollWidth > document.querySelector("#cm-body").clientWidth + 1, words: [...document.querySelectorAll("#sim-tools .sim-mode-b .mc-l")].filter(e => e.getBoundingClientRect().width > 0).length }));
     const solved = async () => { await tp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 240000 }); await tp.waitForTimeout(300); };
     await tp.click("#cm-t-simulation");
+    await tp.waitForTimeout(300);
     const b0 = await bar();
     await tp.click('#sim-tools [data-s="mode-thermal"]');
     await tp.waitForTimeout(150);
     const b1 = await bar();
     const empty = await tp.evaluate(() => !!document.querySelector('#sim-tree .sim-empty [data-a="newthermal"]'));
-    check(b0.on === "mode-structural" && b0.ids.includes("force") && b0.ids.includes("fixed") && !b0.ids.includes("heat") && b0.checked === 1 && !b0.wide
+    check(b0.on === "mode-structural" && b0.ids.includes("force") && b0.ids.includes("fixed") && !b0.ids.includes("heat") && b0.checked === 1 && !b0.wide && b0.words === 2
       && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "heat", "hflux", "temp", "conv", "rad", "solve", "results", "report"]) && empty,
       `thermal 1.651: the Simulation bar has a Structural | Thermal switch; Thermal shows the thermal study's commands in place of supports and loads (${JSON.stringify({ b0, b1, empty })})`);
     // 8 W made in the whole bar (a thermal study is made on the way), the top face held at 30 °C

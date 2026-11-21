@@ -101,3 +101,16 @@ test("thermal values: watts and watts per area with units", () => {
   assert.equal(typedValue("1 W/cm²", "hflux", {}).v, 10000);
   assert.equal(shownValue({ v: 10 }, "heat"), "10");
 });
+
+test("thermal exports: CSV headings name temperatures and heat flux in W/m²", async () => {
+  const { pathCsv, pathRows } = await import("../../src/sim/path");
+  const { probeCsv } = await import("../../src/sim/probes");
+  const rows = pathRows([0, 0, 0, 3, 4, 0], [40, 41], [0.001, 0, 0, 0, 0.002, 0], [1, 1]);
+  const csv = pathCsv(rows, true).split("\r\n");
+  assert.match(csv[0], /Temperature \(°C\).*Heat flux \(W\/m²\)/);
+  assert.equal(csv[2], "5,3,4,0,41,0,2000,0,2000");
+  assert.match(pathCsv(rows).split("\r\n")[0], /von Mises/);
+  const pc = probeCsv([{ at: [1, 2, 3], vm: 55.5, u: [0.001, 0, 0], sf: 2 }], true).split("\r\n");
+  assert.equal(pc[0].split(",").length, 9);
+  assert.equal(pc[1], "1,1,2,3,55.5,1000,1000,0,0");
+});

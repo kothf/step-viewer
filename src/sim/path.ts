@@ -32,9 +32,11 @@ export function pathRows(pos: ArrayLike<number>, vm: ArrayLike<number>, u: Array
 const num = (v: number) => String(Number(v.toPrecision(7)));
 
 /** Distance and place in mm, stress in MPa, displacement in mm; points outside the part have no values. */
-export function pathCsv(rows: PathRow[]): string {
-  const head = "Distance (mm),X (mm),Y (mm),Z (mm),von Mises stress (MPa),UX (mm),UY (mm),UZ (mm),Displacement (mm)";
-  return [head, ...rows.map(r => [num(r.d), ...r.at.map(num), ...(r.ok ? [num(r.vm), ...r.u.map(num), num(Math.hypot(...r.u))] : ["", "", "", "", ""])].join(","))].join("\r\n") + "\r\n";
+export function pathCsv(rows: PathRow[], thermal = false): string {
+  // a thermal result keeps the temperature in `vm` and the heat flux, W/mm², in `u`
+  const head = thermal ? "Distance (mm),X (mm),Y (mm),Z (mm),Temperature (°C),QX (W/m²),QY (W/m²),QZ (W/m²),Heat flux (W/m²)" : "Distance (mm),X (mm),Y (mm),Z (mm),von Mises stress (MPa),UX (mm),UY (mm),UZ (mm),Displacement (mm)";
+  const f = thermal ? 1e6 : 1;
+  return [head, ...rows.map(r => [num(r.d), ...r.at.map(num), ...(r.ok ? [num(r.vm), ...r.u.map(x => num(x * f)), num(Math.hypot(...r.u) * f)] : ["", "", "", "", ""])].join(","))].join("\r\n") + "\r\n";
 }
 
 export interface PathChart {

@@ -520,7 +520,7 @@ export class SimController {
       cases: (this.study()?.cases ?? []).map(c => ({ name: c.name, off: c.off })), caseSel: this.caseSel, enveloped: this.enveloped,
       caseResults: (this.res?.cases ?? []).map(c => ({ name: this.caseName(c), maxVm: c.passes.at(-1)?.maxVm ?? null, maxU: c.passes.at(-1)?.maxU ?? null, passes: c.passes.length })),
       path: (() => { const pv = this.pathValues(); let lo = Infinity, hi = -Infinity, inside = 0; if (pv) for (let i = 0; i < pv.v.length; i++) if (pv.ok[i]) { inside++; lo = Math.min(lo, pv.v[i]); hi = Math.max(hi, pv.v[i]); }
-        return { at: this.study()?.path ?? null, picking: this.pathing, first: !!this.pathFirst, points: pv?.v.length ?? 0, inside, min: inside ? lo : null, max: inside ? hi : null, source: this.pathData?.source ?? null, csv: this.pathData ? pathCsv(this.pathData.rows) : null, drawn: this.pathMark?.userData.simPath ?? 0 }; })(),
+        return { at: this.study()?.path ?? null, picking: this.pathing, first: !!this.pathFirst, points: pv?.v.length ?? 0, inside, min: inside ? lo : null, max: inside ? hi : null, source: this.pathData?.source ?? null, csv: this.pathData ? pathCsv(this.pathData.rows, !!this.res?.passes.at(-1)?.thermal) : null, drawn: this.pathMark?.userData.simPath ?? 0 }; })(),
       hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
     };
   }
@@ -1744,7 +1744,7 @@ export class SimController {
   private exportPath() {
     const doc = this.host.doc(), st = this.study(), rows = this.pathData?.rows;
     if (!doc || !st || !rows) return;
-    download(new Blob([pathCsv(rows)], { type: "text/csv" }), `${`${doc.name}-${st.name}`.replace(/[\\/:*?"<>|]+/g, "_")}-path.csv`);
+    download(new Blob([pathCsv(rows, !!this.res?.passes.at(-1)?.thermal)], { type: "text/csv" }), `${`${doc.name}-${st.name}`.replace(/[\\/:*?"<>|]+/g, "_")}-path.csv`);
   }
 
   /** Changes the study's probes (one undo step) and shows them. */
@@ -1783,7 +1783,7 @@ export class SimController {
     return probeCsv(this.probes.map(p => {
       const vm = valueAt(r.vm, p), sy = this.yieldAt(r, p.i[0]);
       return { at: [0, 1, 2].map(c => valueAt(pm.pos, p, 3, c)), vm, u: [valueAt(r.u, p, 3, 0), valueAt(r.u, p, 3, 1), valueAt(r.u, p, 3, 2)], sf: sy > 0 ? sy / Math.max(vm, 1e-9) : null };
-    }));
+    }), !!r.thermal);
   }
 
   /** The probes as a table in the Study tab: place, stress, displacement, safety factor. */
@@ -1793,10 +1793,10 @@ export class SimController {
     const uf = UNITS[units.current].f;
     const place = (x: number) => String(Number((x * uf).toFixed(3)));
     // the safety factor is in the CSV; the side panel is too narrow for one more column
-    return `<h5 class="sim-sub">${esc(t("Probes"))}</h5><div class="sim-wide"><table class="sim-ptable"><thead><tr><th>#</th><th>X, Y, Z, ${esc(units.current)}</th><th>${esc(t("von Mises stress"))}, MPa</th><th>${esc(t("Displacement"))}, ${esc(units.current)}</th><th></th></tr></thead><tbody>`
+    return `<h5 class="sim-sub">${esc(t("Probes"))}</h5><div class="sim-wide"><table class="sim-ptable"><thead><tr><th>#</th><th>X, Y, Z, ${esc(units.current)}</th><th>${r.thermal ? `${esc(t("Temperature"))}, °C` : `${esc(t("von Mises stress"))}, MPa`}</th><th>${r.thermal ? `${esc(t("Heat flux"))}, W/m²` : `${esc(t("Displacement"))}, ${esc(units.current)}`}</th><th></th></tr></thead><tbody>`
       + this.probes.map((p, i) => {
         const vm = valueAt(r.vm, p), u = Math.hypot(valueAt(r.u, p, 3, 0), valueAt(r.u, p, 3, 1), valueAt(r.u, p, 3, 2));
-        return `<tr data-probe-row="${i}"><td>${i + 1}</td><td>${[0, 1, 2].map(c => place(valueAt(pm.pos, p, 3, c))).join(", ")}</td><td>${sig(vm)}</td><td>${sig(u * uf)}</td>`
+        return `<tr data-probe-row="${i}"><td>${i + 1}</td><td>${[0, 1, 2].map(c => place(valueAt(pm.pos, p, 3, c))).join(", ")}</td><td>${sig(vm)}</td><td>${sig(u * (r.thermal ? 1e6 : uf))}</td>`
           + `<td><button class="sim-x" data-a="rmprobe" data-i="${i}" title="${esc(t("Remove probe"))}" aria-label="${esc(t("Remove probe"))}">×</button></td></tr>`;
       }).join("") + `</tbody></table></div><button class="btn small" data-a="probecsv" title="${esc(t("Save the probes' places and values as a CSV file"))}">${esc(t("Export CSV"))}</button>`;
   }
@@ -2549,7 +2549,7 @@ export class SimController {
     blocks.push({ kind: "h", text: t("Results") });
     const out = T.flows.reduce((a, f) => a + f.out, 0);
     kv([[t("Highest temperature"), `${sig(T.max)} °C`], [t("Lowest temperature"), `${sig(T.min)} °C`], [t("Heat put in"), `${sig(T.applied)} W`],
-      ...T.flows.map((f, i) => [`${t("Heat taken away")}: ${this.nameOf(res.ids[i] ?? "")}`, `${sig(f.out)} W (${t("mean")} ${sig(f.mean)} °C)`]), [t("Heat taken away in total"), `${sig(out)} W`]]);
+      ...T.flows.map((f, i) => [`${f.out < 0 ? t("Heat brought in") : t("Heat taken away")}: ${this.nameOf(res.ids[i] ?? "")}`, `${sig(Math.abs(f.out))} W (${t("mean")} ${sig(f.mean)} °C)`]), [t("Heat taken away in total"), `${sig(out)} W`]]);
     const was = { ...this.plot };
     for (const k of ["temp", "flux"] as PlotKind[]) { const im = this.capture(k); if (im) blocks.push({ kind: "image", ...im }); }
     this.plot = was;
@@ -2873,7 +2873,7 @@ export class SimController {
     if (eLast != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">${pct(eLast).startsWith("<") ? "" : "≈ "}${pct(eLast).replace("<", "&lt;")} %</dd>`;
     else if (eBefore != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">&lt; ${pct(eBefore).replace("< ", "")} %</dd>`;
     html += `<dt>${esc(t("Heat put in"))}</dt><dd data-v="heatin">${sig(T.applied)} W</dd>`;
-    T.flows.forEach((f, i) => { html += `<dt>${esc(t("Heat taken away"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd data-v="flow" title="${esc(t("Mean temperature of the faces"))}: ${sig(f.mean)} °C">${sig(f.out)} W</dd>`; });
+    T.flows.forEach((f, i) => { html += `<dt>${esc(f.out < 0 ? t("Heat brought in") : t("Heat taken away"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd data-v="flow" title="${esc(t("Mean temperature of the faces"))}: ${sig(f.mean)} °C">${sig(Math.abs(f.out))} W</dd>`; });
     if (T.flows.length > 1) html += `<dt>${esc(t("Heat taken away in total"))}</dt><dd data-v="heatout">${sig(out)} W</dd>`;
     if (off != null) html += `<dt title="${esc(t("How far the heat taken away is from the heat put in, as a share of it"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${off > 1 ? ' class="sim-low"' : ""}>${pct(off).replace("<", "&lt;")} %</dd>`;
     html += `</dl>`;
