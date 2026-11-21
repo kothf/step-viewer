@@ -98,3 +98,51 @@ export async function makeBlock(pg, w = 100, h = 60, depth = 20) {
   if (await pg.isVisible("#mc-ok")) await pg.click("#mc-ok");
   await idle(pg);
 }
+/** Opens files with File ▸ Open, as a person does (the file chooser gets the paths). */
+export async function openFiles(pg, paths) {
+  await pg.click("#file-btn");
+  const [fc] = await Promise.all([pg.waitForEvent("filechooser"), pg.click('#file-menu [data-f="open"]')]);
+  await fc.setFiles(paths);
+  await idle(pg);
+  await pg.waitForTimeout(800);
+  await idle(pg);
+}
+/** Saves the live document with Ctrl+S into `dir` (a first save asks for the name) and returns the file's path. */
+export async function saveModel(pg, dir, name) {
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(dir, { recursive: true });
+  // headless Chromium has no native save dialog: the app then asks for the name itself and downloads the file
+  await pg.evaluate(() => { window.showSaveFilePicker = undefined; });
+  const dl = pg.waitForEvent("download", { timeout: 60000 });
+  await pg.keyboard.press("Control+s");
+  await pg.waitForTimeout(500);
+  if (await pg.isVisible("#name-dlg[open]")) {
+    if (name) await pg.fill("#name-dlg-in", name);
+    await pg.keyboard.press("Enter");
+  }
+  const d = await dl;
+  const path = `${dir}/${d.suggestedFilename()}`;
+  await d.saveAs(path);
+  return path;
+}
+/** The direction from the model to the eye. */
+export const eyeDir = pg => pg.evaluate(() => {
+  const c = window.__sv.viewer.camera, d = c.getWorldDirection(new (c.position.constructor)());
+  return [-d.x, -d.y, -d.z];
+});
+/**
+ * A point the eye sees on the wall of a round hole: centre `c`, unit `axis`, radius `r`, the wall running
+ * from `a0` to `a1` along the axis (measured from `c`). The point is a little inside the end nearer the eye,
+ * on the side of the wall away from the eye.
+ */
+export async function boreSpot(pg, c, axis, r, a0, a1, depth = 0.3, turn = 0) {
+  const d = await eyeDir(pg);
+  const along = d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2];
+  const s = along >= 0 ? 1 : -1;
+  const across = d.map((v, k) => v - along * axis[k]);
+  const n = Math.hypot(...across) || 1;
+  const t = (s > 0 ? a1 : a0) - s * depth * (a1 - a0);
+  // `turn` (radians) moves the point round the wall, clear of a shaft standing in the hole
+  const u = across.map(v => v / n), w = [axis[1] * u[2] - axis[2] * u[1], axis[2] * u[0] - axis[0] * u[2], axis[0] * u[1] - axis[1] * u[0]];
+  return c.map((v, k) => v + axis[k] * t - r * (Math.cos(turn) * u[k] + Math.sin(turn) * w[k]));
+}

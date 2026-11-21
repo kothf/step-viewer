@@ -5,6 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.645.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **validation against CalculiX** on three real parts (FRS-structural NFR-SIM-022). Largest displacements agree within 1.8 %, peak stresses away from singular corners within 1.5 %; the comparison and how to run it again are in `docs/structural-validation.md`.
+- A **structural test set**: hands-on scenarios on real parts and a real assembly (`tests/human/set-engine.mjs`, `set-shaft.mjs`), and `node tests/human/run.mjs sim-all` runs every structural scenario and writes one report.
+
+### Fixed
+
+- Structural analysis: the bodies of a multibody part that stand a hair apart (up to 0.001 mm) are joined; such a part was refused as "a body touches nothing".
+- Structural analysis: a face that a slot cuts in two (the bore of a fork) was shown picked on both walls but supported or loaded on the first wall only. Every wall of a picked face is now used.
+- Structural analysis: on parts with thin leftovers of cells the higher passes could overshoot (strain energy several per cent too high) or stop with "the stiffness matrix is singular". The penalty that joins a cut element to its neighbours is now measured for that element instead of taken from a formula.
+- Structural analysis of assemblies: a component much thinner than the others (a plate between thick parts) made the solver stop with "the stiffness matrix is singular" in the first or second pass. The scraps of cells at the rim of such a component are now joined to their neighbours.
+
 ## [1.644.0] - 2026-11-21
 
 ### Added
@@ -4197,7 +4211,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.644.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.645.0...HEAD
+[1.645.0]: https://github.com/kothf/step-viewer/compare/v1.644.0...v1.645.0
 [1.644.0]: https://github.com/kothf/step-viewer/compare/v1.643.0...v1.644.0
 [1.643.0]: https://github.com/kothf/step-viewer/compare/v1.642.0...v1.643.0
 [1.642.0]: https://github.com/kothf/step-viewer/compare/v1.641.0...v1.642.0

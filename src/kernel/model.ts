@@ -101,6 +101,9 @@ function frameFrom(o: V3, x: V3, n: V3): Frame {
   return { o, x, y: cross(n, x), n };
 }
 
+/** Bodies of a part this near to each other are analysed as touching, mm. */
+export const BOND_GAP = 1e-3;
+
 export class Modeller {
   private cache: CacheEntry[] = [];
   /** Tools of the features evaluated so far in this evaluation (by feature id). */
@@ -4301,8 +4304,17 @@ export class Modeller {
   bonded(body: Named): { body: Named; parts: number; solids: number } {
     const list = this.bodyList(body);
     if (list.length < 2) return { body, parts: list.length, solids: list.length };
-    const fused = this.fuseAll(list, "bond");
-    return { body: fused, parts: list.length, solids: this.bodyList(fused).length };
+    let fused = this.fuseAll(list, "bond");
+    let solids = this.bodyList(fused).length;
+    if (solids > 1) {
+      // bodies a hair apart (a sketch that ends 2e-5 mm short of the other body) are touching for an analysis
+      try {
+        const near = this.fuseAll(list, "bond", BOND_GAP);
+        const n = this.bodyList(near).length;
+        if (n < solids) { fused = near; solids = n; }
+      } catch { /* as joined without the gap */ }
+    }
+    return { body: fused, parts: list.length, solids };
   }
 
   private bodyList(body: Named): Named[] {

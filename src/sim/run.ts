@@ -59,11 +59,26 @@ export interface StudyProblem {
   masses?: FaceMass[];
 }
 
+const oneName = new WeakMap<SimBody, Int32Array>();
+/**
+ * Each triangle's face, with the faces of one name counted as one (the first of them): a hole that a slot cuts
+ * in two keeps one name for both walls, and is picked, shown and counted as one face.
+ */
+function faceOf(b: SimBody): Int32Array {
+  let f = oneName.get(b);
+  if (!f) {
+    const first = b.names.map(n => (n ? b.names.indexOf(n) : -1));
+    f = first.every((v, i) => v < 0 || v === i) ? b.face : Int32Array.from(b.face, v => (first[v] >= 0 ? first[v] : v));
+    oneName.set(b, f);
+  }
+  return f;
+}
+
 function trisOf(b: SimBody, names: string[]): Float64Array | null {
-  const want = new Set<number>();
+  const want = new Set<number>(), face = faceOf(b);
   for (const n of names) { const i = b.names.indexOf(n); if (i < 0) return null; want.add(i); }
   const out: number[] = [];
-  for (let t = 0; t < b.face.length; t++) if (want.has(b.face[t])) for (let k = 0; k < 9; k++) out.push(b.tris[9 * t + k]);
+  for (let t = 0; t < face.length; t++) if (want.has(face[t])) for (let k = 0; k < 9; k++) out.push(b.tris[9 * t + k]);
   return Float64Array.from(out);
 }
 
@@ -75,13 +90,13 @@ const quantum = (b: SimBody) => 1e-7 * Math.max(b.hi[0] - b.lo[0], b.hi[1] - b.l
  * it is on (against the normal of that face's nearest triangle). Null when a face is gone.
  */
 export function spotPoints(b: SimBody, pts: { faces: string[]; at: number[] }[]): Float64Array | null {
-  const T = b.tris, out: number[] = [];
+  const T = b.tris, out: number[] = [], face = faceOf(b);
   for (const p of pts) {
     const f = b.names.indexOf(p.faces[0]);
     if (f < 0) return null;
     let best = Infinity, bt = -1;
-    for (let t = 0; t < b.face.length; t++) {
-      if (b.face[t] !== f) continue;
+    for (let t = 0; t < face.length; t++) {
+      if (face[t] !== f) continue;
       const o = 9 * t;
       const d = Math.hypot((T[o] + T[o + 3] + T[o + 6]) / 3 - p.at[0], (T[o + 1] + T[o + 4] + T[o + 7]) / 3 - p.at[1], (T[o + 2] + T[o + 5] + T[o + 8]) / 3 - p.at[2]);
       if (d < best) { best = d; bt = t; }
@@ -102,11 +117,11 @@ export function edgeLines(b: SimBody, fa: string, fb: string): Float64Array | nu
   const ia = b.names.indexOf(fa), ib = b.names.indexOf(fb);
   if (ia < 0 || ib < 0) return null;
   if (ia === ib) return new Float64Array(0);
-  const q = quantum(b), T = b.tris, nrm = triNormals(T);
+  const q = quantum(b), T = b.tris, nrm = triNormals(T), face = faceOf(b);
   const sides = new Map<string, number>();
   const each = (f: number, fn: (key: string, t: number, o0: number, o1: number) => void) => {
-    for (let t = 0; t < b.face.length; t++) {
-      if (b.face[t] !== f) continue;
+    for (let t = 0; t < face.length; t++) {
+      if (face[t] !== f) continue;
       const k = [0, 1, 2].map(v => vkey(T, 9 * t + 3 * v, q));
       for (let e = 0; e < 3; e++) {
         const i = e, j = (e + 1) % 3;
@@ -133,15 +148,15 @@ export function edgeLines(b: SimBody, fa: string, fb: string): Float64Array | nu
 export function cornerPoint(b: SimBody, faces: string[], at: ArrayLike<number>): number[] | null {
   const ids = faces.map(n => b.names.indexOf(n));
   if (!ids.length || ids.some(i => i < 0)) return null;
-  const q = quantum(b), T = b.tris;
+  const q = quantum(b), T = b.tris, face = faceOf(b);
   const seen = new Map<string, { mask: Set<number>; o: number }>();
-  for (let t = 0; t < b.face.length; t++) {
-    if (!ids.includes(b.face[t])) continue;
+  for (let t = 0; t < face.length; t++) {
+    if (!ids.includes(face[t])) continue;
     for (let v = 0; v < 3; v++) {
       const k = vkey(T, 9 * t + 3 * v, q);
       let r = seen.get(k);
       if (!r) seen.set(k, r = { mask: new Set(), o: 9 * t + 3 * v });
-      r.mask.add(b.face[t]);
+      r.mask.add(face[t]);
     }
   }
   const want = new Set(ids).size;

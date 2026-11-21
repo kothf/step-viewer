@@ -165,7 +165,11 @@ export function refit(g: Grid, q: number, fit: number, degree?: (c: Cell) => num
 }
 
 function aggregate(g: Grid, minFrac: number, rigid?: boolean[]) {
-  const big = (c: number) => g.cells[c].frac >= minFrac;
+  // a body thinner than a cell has no cell that full: its roots are then the cells at least half as full as its
+  // fullest one, so its slivers (the rim of a thin plate) still join a neighbour instead of standing alone
+  const most: number[] = [];
+  for (const cl of g.cells) most[cl.dom] = Math.max(most[cl.dom] ?? 0, cl.frac);
+  const big = (c: number) => g.cells[c].frac >= Math.min(minFrac, 0.5 * most[g.cells[c].dom]);
   // a rigid domain: one element over its box
   if (rigid) for (let d = 0; d < rigid.length; d++) {
     if (!rigid[d]) continue;
