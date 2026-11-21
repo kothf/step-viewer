@@ -50,7 +50,8 @@ test("moment fitting keeps the integrals of degree-2p polynomials", () => {
   const fine = volumePoints([0, 0, 0], [1, 1, 1], 4, inside, 4);
   const fit = fitPoints(fine, [0, 0, 0], [1, 1, 1], 5);
   assert.equal(fit.n <= 125, true);
-  const f = (x: number, y: number, z: number) => x ** 4 * y ** 2 - 3 * x * y ** 3 * z ** 4 + z ** 3 + 1;
+  // total degree 4 = q − 1: what a degree-2 cell basis integrates (only those moments are fitted)
+  const f = (x: number, y: number, z: number) => x ** 2 * y * z - 3 * x * y ** 3 + x ** 4 + z ** 3 + y * z ** 3 + 1;
   const sum = (P: typeof fine) => { let s = 0; for (let i = 0; i < P.n; i++) s += P.a[4 * i + 3] * f(P.a[4 * i], P.a[4 * i + 1], P.a[4 * i + 2]); return s; };
   assert.ok(Math.abs(sum(fit) - sum(fine)) < 1e-12 * fine.n);
 });

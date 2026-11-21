@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.652.0] - 2026-11-21
+
+### Changed
+
+- Structural analysis: **much faster solves**, modal studies most of all. A 12 000-unknown shaft's modal study went from 5 min 28 s to 25 s in the same browser, with the same frequencies.
+  - Slender parts (shafts, strips, plates) stay on the direct solver whatever their size, as long as its factorisation is cheap; the iterative solver suited them badly (the third pass took 163 s with it, 17 s without).
+  - The stiffness and mass loops no longer run unoptimised in Chrome (37 s of a 49 s pass), and are summed for half the symmetric matrix only, as are the terms between neighbouring cells.
+  - Fitting the quadrature of cut cells takes a quarter of the moments (only those the cell's polynomials need) and evaluates them one direction at a time.
+  - The factorisation and its solves run on plain row views with integer offsets (about 1.6 × faster), and a modal pass no longer multiplies the stiffness matrix out for every vector.
+
 ## [1.651.0] - 2026-11-21
 
 ### Added
@@ -4252,7 +4262,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.650.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.652.0...HEAD
+[1.652.0]: https://github.com/kothf/step-viewer/compare/v1.651.0...v1.652.0
 [1.651.0]: https://github.com/kothf/step-viewer/compare/v1.650.0...v1.651.0
 [1.650.0]: https://github.com/kothf/step-viewer/compare/v1.649.0...v1.650.0
 [1.649.0]: https://github.com/kothf/step-viewer/compare/v1.648.0...v1.649.0

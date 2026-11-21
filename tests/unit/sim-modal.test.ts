@@ -115,3 +115,43 @@ test("modes in a frequency range: found from the lowest up until one lies above 
   assert.equal(none.modes!.length, 0);
   assert.ok(!none.more && none.maxU === 0);
 });
+
+test("a slender part stays on the direct solver above the size limit: its factorisation is cheap", async () => {
+  const { MODAL_DIRECT, DIRECT_LIMIT } = await import("../../src/sim/static");
+  const { BlockMatrix, Envelope, envelopeCost } = await import("../../src/sim/sparse");
+  // the cost is told without factoring: a chain of 40 elements of 6 unknowns, each joined to the next
+  const A = new BlockMatrix(40, 6);
+  for (let e = 0; e < 40; e++) {
+    const D = A.block(e, e);
+    for (let i = 0; i < 6; i++) D[i * 6 + i] = 4;
+    if (e) { const U = A.block(e - 1, e), L = A.block(e, e - 1); for (let i = 0; i < 6; i++) U[i * 6 + i] = L[i * 6 + i] = -1; }
+  }
+  const c = envelopeCost(A), F = new Envelope(A, c.order);
+  assert.equal(c.values, F.values);
+  assert.ok(c.values < 40 * 6 * 12 && c.flops < 40 * 6 * 144);
+  const b = new Float64Array(240).fill(1), x = F.solve(b), y = new Float64Array(240);
+  A.mul(x, y);
+  assert.ok(y.every(v => Math.abs(v - 1) < 1e-12));
+  // the cantilever at degree 4: 10 500 unknowns, modal and static both solved directly, same answers
+  let start: Float64Array[] | undefined, grid, f3 = 0;
+  for (const p of [3, 4]) {
+    const t0 = Date.now();
+    const r = solveStatic({
+      lo, hi, inside: inBox, h: 10, p, grid, mat: { E, nu: 0.3, rho },
+      fixed: [{ tris: rectFace(0, 0, lo, hi, false) }], loads: [], modal: { count: 6, start },
+    });
+    grid = r.grid; start = r.space;
+    console.log(`p ${p} dofs ${r.dofs} ${Date.now() - t0} ms, iterations ${r.iterations}`, r.modes!.map(v => v.hz.toFixed(2)).join(" "));
+    assert.equal(r.iterations, 0);
+    if (p === 3) f3 = r.modes![0].hz;
+    else {
+      assert.ok(r.dofs > MODAL_DIRECT && r.dofs > DIRECT_LIMIT);
+      assert.ok(Math.abs(r.modes![0].hz - f3) / f3 < 0.01 && r.modes![0].hz <= f3 * (1 + 1e-9), `${r.modes![0].hz} vs ${f3}`);
+      assert.ok(Math.abs(r.modes![0].hz - beam(1.8751, T)) / beam(1.8751, T) < 0.02);
+    }
+  }
+  const s = solveStatic({ lo, hi, inside: inBox, h: 10, p: 4, grid, mat: { E, nu: 0.3 }, fixed: [{ tris: rectFace(0, 0, lo, hi, false) }], loads: [{ tris: rectFace(0, L, lo, hi, true), force: [0, 0, -100] }] });
+  const tip = (100 * L ** 3) / (3 * E * (B * T ** 3 / 12));
+  assert.equal(s.iterations, 0);
+  assert.ok(Math.abs(-s.disp(L - 1e-6, 0, 0)[2] - tip) / tip < 0.02, `${s.disp(L - 1e-6, 0, 0)[2]} vs ${tip}`);
+});
