@@ -16718,6 +16718,41 @@ try {
     check(capOn.shown && capOn.caps.n === 1 && capOn.caps.painted === 1 && capOn.caps.hit > 100 && capOn.caps.max > 0 && capOn.caps.max < 2 * capOn.range[1] && capOn.caps.min >= 0
       && capOn.meshes.length === 1 && capOn.meshes[0].sim && capOn.meshes[0].colors && capOn.meshes[0].pts > 10000 && capOff.n === 0 && capOff.painted === 0,
       `sim 1.625: a section plane's cut face is coloured by the shown result inside the part (${JSON.stringify({ capOn, capOff })})`);
+    // 1.626: Path in the legend, two clicks on the plot: the Study tab charts the shown result along the line between them.
+    const scr = q => mp.evaluate(q => {
+      const v = window.__sv.viewer, s = v.toWorld(v.parts[0], q).clone().project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, q);
+    const pthDef = await mp.isChecked('#sim-legend [data-k="deformed"]');
+    if (pthDef) await mp.uncheck('#sim-legend [data-k="deformed"]');
+    await mp.waitForTimeout(200);
+    await mp.click('#sim-legend [data-a="path"]');
+    p = await scr([0, 50, 20]);
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    const pthMid = await mp.evaluate(() => ({ first: window.__sv.sim.state().path.first, hint: document.querySelector('#sim-legend [data-v="pathhint"]')?.textContent ?? "" }));
+    p = await scr([0, 100, 20]);
+    await mp.mouse.click(p.x, p.y);
+    await settle();
+    await mp.waitForFunction(() => window.__sv.sim.state().path.source === "solution", null, { timeout: 30000 }).catch(() => {});
+    await mp.waitForTimeout(200);
+    const pth = await mp.evaluate(() => {
+      const s = window.__sv.sim.state(), q = s.path;
+      return { at: q.at, picking: q.picking, points: q.points, inside: q.inside, min: q.min, max: q.max, source: q.source, drawn: q.drawn, rows: q.csv ? q.csv.trim().split("\r\n").length : 0, range: s.plot.range,
+        chart: !!document.querySelector("#sim-tree svg.sim-pathchart polyline"), info: document.querySelector('#sim-tree [data-v="pathinfo"]')?.textContent ?? "",
+        wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth };
+    });
+    await mp.click("#lang-btn");
+    const pthRu = await mp.evaluate(() => [...document.querySelectorAll('#sim-tree .sim-sub, #sim-tree [data-a="rmpath"], #sim-tree [data-a="pathcsv"], #sim-legend [data-a="path"]')].map(e => e.textContent.trim()).filter(x => /^(Path|Results along|Remove path|Export CSV|Probes|Hot spots)/.test(x)));
+    await mp.click("#lang-btn");
+    if (pth.at) await mp.click('#sim-tree [data-a="rmpath"]');
+    await settle();
+    if (pthDef) await mp.check('#sim-legend [data-k="deformed"]');
+    const pthOff = await mp.evaluate(() => ({ at: window.__sv.sim.state().path.at, drawn: window.__sv.sim.state().path.drawn, chart: !!document.querySelector("#sim-tree svg.sim-pathchart") }));
+    const pthLen = pth.at ? Math.hypot(pth.at[0][0] - pth.at[1][0], pth.at[0][1] - pth.at[1][1], pth.at[0][2] - pth.at[1][2]) : 0;
+    check(pthMid.first && /end point/.test(pthMid.hint) && !pth.picking && pthLen > 30 && pthLen < 70 && pth.points === 101 && pth.inside >= 95 && pth.source === "solution" && pth.drawn === 2 && pth.rows === 102
+      && pth.max > 0 && pth.max <= 1.05 * pth.range[1] && pth.min < pth.max && pth.chart && pth.info.length > 5 && pth.wide <= 0 && pthRu.length === 0 && !pthOff.at && pthOff.drawn === 0 && !pthOff.chart,
+      `sim 1.626: two clicks on the plot make a path; the result is charted along it and listed as CSV; Remove path takes it away; translated (${JSON.stringify({ pthMid, pth, pthLen, pthRu, pthOff })})`);
     await mp.selectOption('#sim-tree [data-k="study"]', "st2");
     await settle();
     // 1.620: a second body on the end of the bar is analysed bonded to it (one bar 260 long: 421 × (200 / 260)² = 249 Hz);

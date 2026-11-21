@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.626.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **results along a path**. Path in the plot's legend takes two clicks on the plot; the Study tab then charts the shown result along the straight line between the points, inside the part too, and saves the places and values as CSV. The path is kept with the study.
+
 ## [1.625.0] - 2026-11-21
 
 ### Added
@@ -4033,7 +4039,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.625.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.626.0...HEAD
+[1.626.0]: https://github.com/kothf/step-viewer/compare/v1.625.0...v1.626.0
 [1.625.0]: https://github.com/kothf/step-viewer/compare/v1.624.0...v1.625.0
 [1.624.0]: https://github.com/kothf/step-viewer/compare/v1.623.0...v1.624.0
 [1.623.0]: https://github.com/kothf/step-viewer/compare/v1.622.0...v1.623.0

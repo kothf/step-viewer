@@ -24,6 +24,7 @@ import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
 import type { SectionManager } from "../viewer/Section";
 import { nearExcitation, parseExcitation } from "./excite";
+import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, type PathRow } from "./path";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, positiveAxis, studyProblem, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
@@ -85,6 +86,7 @@ const MODE_PLOTS: PlotKind[] = ["u", "ux", "uy", "uz"];
 const MODE_PERIOD = 1600;
 /** Section caps are painted on a grid of this many steps each way. */
 const CAP_GRID = 160;
+const PATH_COLOR = 0x111827;
 /** Frames of a recorded mode shape: one swing. */
 const GIF_FRAMES = 24;
 const SUPPORT_COLOR = 0x2f9e44, LOAD_COLOR = 0xd6336c, REFINE_COLOR = 0x1c7ed6;
@@ -150,6 +152,12 @@ export class SimController {
   private usedScale = 0;
   /** Probe mode: a click on the plot pins the value there. */
   private probing = false;
+  // results along a path (FR-RES-031): picking its two points, and the values along it
+  private pathing = false;
+  private pathFirst: [number, number, number] | null = null;
+  private pathKey = "";
+  private pathData: { rows: PathRow[]; source: "solution" | "surface" } | null = null;
+  private pathMark: THREE.Group | null = null;
   /** Remote load panel: the next click in the view sets the point. */
   private pickingAt = false;
   /** The study's probes found on the plot mesh: a triangle (three vertices) and the weights of the point in it. */
@@ -190,7 +198,8 @@ export class SimController {
     lg.addEventListener("click", e => {
       const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
       if (a === "close") { this.plot.on = false; this.probing = false; this.showPlot(); this.renderAll(); }
-      else if (a === "probe") { this.probing = !this.probing; this.renderLegend(); }
+      else if (a === "probe") { this.probing = !this.probing; this.pathing = false; this.pathFirst = null; this.drawPath(); this.renderLegend(); }
+      else if (a === "path") { this.pathing = !this.pathing; this.pathFirst = null; this.probing = false; this.drawPath(); this.renderLegend(); }
       else if (a === "noprobes") this.setProbes(t("Clear probes"), () => []);
       else if (a === "probecsv") this.exportProbes();
     else if (a === "gif") void this.recordGif().then(b => { if (b) toast(t("GIF saved"), "success"); });
@@ -220,7 +229,7 @@ export class SimController {
     return !!this.res && (!doc || !st || st.id !== this.res.study || this.keyOf(doc, st) !== this.res.key);
   }
 
-  get active() { return !!this.edit || (this.probing && !!this.saved); }
+  get active() { return !!this.edit || ((this.probing || this.pathing) && !!this.saved); }
 
   /** The mode shown of modal results: the picked one, else the first that is not a rigid-body motion. */
   private modeIndex(r: PassResult | undefined): number {
@@ -243,6 +252,8 @@ export class SimController {
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
+      path: (() => { const pv = this.pathValues(); let lo = Infinity, hi = -Infinity, inside = 0; if (pv) for (let i = 0; i < pv.v.length; i++) if (pv.ok[i]) { inside++; lo = Math.min(lo, pv.v[i]); hi = Math.max(hi, pv.v[i]); }
+        return { at: this.study()?.path ?? null, picking: this.pathing, first: !!this.pathFirst, points: pv?.v.length ?? 0, inside, min: inside ? lo : null, max: inside ? hi : null, source: this.pathData?.source ?? null, csv: this.pathData ? pathCsv(this.pathData.rows) : null, drawn: this.pathMark?.userData.simPath ?? 0 }; })(),
       hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
     };
   }
@@ -260,6 +271,7 @@ export class SimController {
     if (this.edit && !this.study()) this.edit = null;
     if (this.stale() && this.saved) this.clearPlot();
     if (this.saved) { this.syncProbes(); this.drawProbes(); }
+    this.syncPath();
     this.renderAll();
     this.drawMarks();
     void this.restore();
@@ -279,6 +291,7 @@ export class SimController {
     this.cacheHits++;
     this.plot.on = false;
     this.syncProbes();
+    this.syncPath();
     this.renderAll();
   }
 
@@ -404,6 +417,7 @@ export class SimController {
   /** A click in the view while a panel is open: the face under it joins or leaves the item. */
   click(e: PointerEvent): boolean {
     const ed = this.edit;
+    if (!ed && this.pathing && this.saved) { this.pathClick(e.clientX, e.clientY); return true; }
     if (!ed && this.probing && this.saved) { this.probeAt(e.clientX, e.clientY); return true; }
     if (!ed) return false;
     if (ed.draft.type === "gravity") return true;
@@ -466,6 +480,7 @@ export class SimController {
   }
 
   key(e: KeyboardEvent): boolean {
+    if (!this.edit && this.pathing && this.saved && e.key === "Escape") { this.pathing = false; this.pathFirst = null; this.drawPath(); this.renderLegend(); return true; }
     if (!this.edit && this.probing && this.saved && e.key === "Escape") { this.probing = false; this.renderLegend(); return true; }
     if (!this.edit) return false;
     if (e.key === "Escape") { this.cancel(); return true; }
@@ -539,7 +554,7 @@ export class SimController {
         this.drawMarks();
       });
       // the worker keeps the last solution: the section planes can show it
-      if (res.passes.length && this.res === res) { this.solved = res; this.running = false; this.capsSoon(); }
+      if (res.passes.length && this.res === res) { this.solved = res; this.running = false; this.capsSoon(); this.syncPath(); }
       // a finished solve is kept for the next time this document is opened
       if (res.passes.length) void cacheKey("sim", key).then(k => cachePut(k, { passes: res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts } satisfies Kept));
     } catch (e) {
@@ -734,8 +749,14 @@ export class SimController {
 
   /** Pins the plotted value at the point of the plot under the pointer. */
   private probeAt(x: number, y: number) {
+    const at = this.plotPointAt(x, y);
+    if (at) this.setProbes(t("Probe"), list => [...list, at]);
+  }
+
+  /** The point of the undeformed model under the pointer, on the plot. */
+  private plotPointAt(x: number, y: number): [number, number, number] | null {
     const ov = this.overlay, v = this.host.viewer;
-    if (!ov) return;
+    if (!ov) return null;
     const r = v.renderer.domElement.getBoundingClientRect();
     const rc = new THREE.Raycaster();
     rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, 1 - ((y - r.top) / r.height) * 2), v.camera);
@@ -743,15 +764,118 @@ export class SimController {
     THREE.Mesh.prototype.raycast.call(ov, rc, hits);
     hits.sort((a, b) => a.distance - b.distance);
     const h = hits.find(q => !v.clipPlanes.some(pl => pl.distanceToPoint(q.point) < 0)), f = h?.face;
-    if (!h || !f) return;
+    if (!h || !f) return null;
     const pa = ov.geometry.getAttribute("position"), P = (i: number) => new THREE.Vector3().fromBufferAttribute(pa, i);
     const w = THREE.Triangle.getBarycoord(ov.worldToLocal(h.point.clone()), P(f.a), P(f.b), P(f.c), new THREE.Vector3());
-    if (!w) return;
+    if (!w) return null;
     // kept as a point of the undeformed model, so it is read again after every solve
     const p0 = this.res?.mesh.pos;
-    if (!p0) return;
-    const at = [0, 1, 2].map(c => w.x * p0[3 * f.a + c] + w.y * p0[3 * f.b + c] + w.z * p0[3 * f.c + c]) as [number, number, number];
-    this.setProbes(t("Probe"), list => [...list, at]);
+    if (!p0) return null;
+    return [0, 1, 2].map(c => w.x * p0[3 * f.a + c] + w.y * p0[3 * f.b + c] + w.z * p0[3 * f.c + c]) as [number, number, number];
+  }
+
+  // ---------- results along a path (FR-RES-031) ----------
+
+  private pathClick(x: number, y: number) {
+    const p = this.plotPointAt(x, y);
+    if (!p) return;
+    if (!this.pathFirst) { this.pathFirst = p; this.drawPath(); this.renderLegend(); return; }
+    const a = this.pathFirst;
+    if (pathLength(a, p) < 1e-6 * this.host.viewer.modelSize) return;
+    this.pathing = false; this.pathFirst = null;
+    this.setPath(t("Path"), [a, p]);
+  }
+
+  private setPath(label: string, path: [[number, number, number], [number, number, number]] | null) {
+    const sid = this.study()?.id;
+    if (!sid) return;
+    this.host.change(label, d => {
+      const s = d.studies?.find(x => x.id === sid);
+      if (!s) return;
+      if (path) s.path = path; else delete s.path;
+    });
+    this.syncPath();
+    this.renderAll();
+  }
+
+  /**
+   * Reads the results along the study's path: at once from the plot's surface (right for a path on the surface),
+   * then from the solver's kept solution when there is one, which also holds inside the part.
+   */
+  private syncPath() {
+    const st = this.study(), res = this.res, r = res?.passes.at(-1), path = st?.path;
+    const usable = !!path && !!res && !!r && !r.modes && !this.stale();
+    const sol = usable && this.solved === res && !this.running ? this.client.solution : 0;
+    const key = usable ? `${res!.key}|${r!.pass}|${JSON.stringify(path)}|${sol}` : "";
+    if (key === this.pathKey) { this.drawPath(); return; }
+    this.pathKey = key;
+    if (!usable || !path || !res || !r) { this.pathData = null; this.drawPath(); return; }
+    const pos = pathPoints(path[0], path[1]), n = pos.length / 3, pm = res.mesh, tol = 1e-3 * this.host.viewer.modelSize;
+    const vm = new Float32Array(n), u = new Float32Array(3 * n), near = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const at = locate(pm.pos, pm.index, [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]]);
+      if (!at) continue;
+      near[i] = at.d <= tol ? 1 : 0;
+      vm[i] = valueAt(r.vm, at);
+      for (let c = 0; c < 3; c++) u[3 * i + c] = valueAt(r.u, at, 3, c);
+    }
+    this.pathData = { rows: pathRows(pos, vm, u, near), source: "surface" };
+    this.drawPath();
+    if (!sol) return;
+    void this.client.sample(Float32Array.from(pos), 0, true).then(s => {
+      if (!s || this.pathKey !== key) return;
+      const ok = Uint8Array.from(near, (v, i) => (v || s.solid?.[i] ? 1 : 0));
+      this.pathData = { rows: pathRows(pos, s.vm, s.u, ok), source: "solution" };
+      this.drawPath();
+      this.renderAll();
+    });
+  }
+
+  /** The path (or its first picked point) on the model, while a plot is shown. */
+  private drawPath() {
+    if (this.pathMark) { this.pathMark.removeFromParent(); this.pathMark.traverse(o => { const m = o as THREE.Line; m.geometry?.dispose(); (m.material as THREE.Material | undefined)?.dispose(); }); this.pathMark = null; }
+    const part = this.host.viewer.parts[0], path = this.study()?.path, pts = this.pathFirst ? [this.pathFirst] : path && !this.pathing ? path : [];
+    if (!part || !this.saved || !pts.length) { this.host.viewer.invalidate(); return; }
+    // on a plot drawn deformed the path moves with the part
+    const rows = pts.length > 1 && this.usedScale > 0 ? this.pathData?.rows : undefined, k = this.usedScale;
+    const line = rows ? rows.flatMap(r => [r.at[0] + k * r.u[0], r.at[1] + k * r.u[1], r.at[2] + k * r.u[2]]) : pts.flat(), ends = pts.length > 1 ? [...line.slice(0, 3), ...line.slice(-3)] : line;
+    const g = new THREE.Group(), geo = new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(new Float32Array(line), 3));
+    if (pts.length > 1) g.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: PATH_COLOR, depthTest: false, transparent: true })));
+    g.add(new THREE.Points(new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(new Float32Array(ends), 3)), new THREE.PointsMaterial({ color: PATH_COLOR, size: 9, sizeAttenuation: false, depthTest: false, transparent: true })));
+    g.traverse(o => { o.renderOrder = 3200; o.raycast = () => {}; });
+    g.userData.simPath = pts.length;
+    part.group.add(g);
+    this.pathMark = g;
+    this.host.viewer.invalidate();
+  }
+
+  /** The values of the shown result along the path, in the solver's units. */
+  private pathValues(): { d: Float32Array; v: Float32Array; ok: Uint8Array } | null {
+    const rows = this.pathData?.rows;
+    if (!rows?.length) return null;
+    const n = rows.length, vm = new Float32Array(n), u = new Float32Array(3 * n), err = new Float32Array(n);
+    rows.forEach((r, i) => { vm[i] = r.vm; u.set(r.u, 3 * i); });
+    const kind = this.plot.kind === "err" ? "vm" : this.plot.kind;
+    return { d: Float32Array.from(rows, r => r.d), v: this.values({ u, vm, err } as PassResult, kind), ok: Uint8Array.from(rows, r => (r.ok ? 1 : 0)) };
+  }
+
+  private pathHtml(): string {
+    const pv = this.pathValues(), st = this.study();
+    if (!pv || !st?.path || !this.pathData) return "";
+    const kind = this.plot.kind === "err" ? "vm" : this.plot.kind, uf = UNITS[units.current].f;
+    const [unit, f] = kind === "vm" ? ["MPa", 1] : kind === "sf" ? ["", 1] : [units.current, uf];
+    const c = pathChart(pv.d, pv.v, pv.ok), label = t(PLOTS.find(p => p[0] === kind)?.[1] ?? "");
+    return `<h5 class="sim-sub">${esc(t("Results along the path"))}</h5>`
+      + (c ? pathChartSvg(c, label, v => sig(v * f), `${sig(c.length * uf)} ${units.current}`) : `<p class="sim-note muted">${esc(t("The path does not pass through the part."))}</p>`)
+      + (c ? `<p class="sim-note muted" data-v="pathinfo">${esc(label)}${unit ? `, ${esc(unit)}` : ""}: ${sig(c.lo * f)} … ${sig(c.hi * f)}</p>` : "")
+      + (this.pathData.source === "surface" ? `<p class="sim-note muted" data-v="pathsurface">${esc(t("Values at the nearest point of the surface. Solve again for the values inside the part."))}</p>` : "")
+      + `<div class="sim-probebar"><button class="btn small" data-a="pathcsv" title="${esc(t("Save the places and values along the path as a CSV file"))}">${esc(t("Export CSV"))}</button><button class="btn small" data-a="rmpath">${esc(t("Remove path"))}</button></div>`;
+  }
+
+  private exportPath() {
+    const doc = this.host.doc(), st = this.study(), rows = this.pathData?.rows;
+    if (!doc || !st || !rows) return;
+    download(new Blob([pathCsv(rows)], { type: "text/csv" }), `${`${doc.name}-${st.name}`.replace(/[\\/:*?"<>|]+/g, "_")}-path.csv`);
   }
 
   /** Changes the study's probes (one undo step) and shows them. */
@@ -995,7 +1119,7 @@ export class SimController {
     }
     this.disposePlot();
     this.drawProbes();
-    if (was) { this.host.redraw(); this.capsSoon(); }
+    if (was) { this.host.redraw(); this.capsSoon(); this.drawPath(); }
     this.host.viewer.invalidate();
   }
 
@@ -1057,6 +1181,7 @@ export class SimController {
     this.overlay.updateMatrixWorld(true);
     if (shape && this.plot.deformed && this.animate) this.startAnim(pm.pos, shape, scale);
     this.capsSoon();
+    this.syncPath();
     this.syncProbes();
     this.drawProbes();
     this.host.viewer.invalidate();
@@ -1433,6 +1558,7 @@ export class SimController {
       if (singular) html += `<p class="sim-note sim-sing">⚠ ${esc(t("Stress singularity: value depends on refinement"))}. ${esc(real ? t("The safety factor uses the highest stress away from singularities.") : "")}</p>`;
     }
     html += this.probesHtml();
+    html += this.pathHtml();
     if (!this.running) {
       if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
       html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
@@ -1575,9 +1701,11 @@ export class SimController {
       + (modes ? (this.plot.deformed ? `<label class="chk"><input type="checkbox" data-k="animate"${this.animate ? " checked" : ""} />${esc(t("Animate"))}</label><label class="ana-row"><span>${esc(t("Speed"))}</span><select data-k="speed">${[0.25, 0.5, 1, 2, 4].map(x => `<option value="${x}"${x === this.speed ? " selected" : ""}>×${x}</option>`).join("")}</select></label><button class="btn small" data-a="gif" title="${esc(t("Save one swing of this mode shape as an animated GIF of the current view"))}">${esc(t("Record GIF"))}</button>` : "") + `<p class="ana-note">${esc(t("Mode shapes have no scale: only the pattern of the motion is meaningful."))}</p>` : "")
       + (modes ? "" : `<label class="chk"><input type="checkbox" data-k="marks"${this.plot.marks ? " checked" : ""} />${esc(t("Highest and lowest values"))}</label>`)
       + (modes ? "" : `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the plot to read the value at a point"))}">${esc(t("Probe"))}</button>`
+      + `<button class="btn small${this.pathing ? " on" : ""}" data-a="path" aria-pressed="${this.pathing}" title="${esc(t("Click two points on the plot: the result is charted along the line between them"))}">${esc(t("Path"))}</button>`
       + (this.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button><button class="btn small" data-a="probecsv" title="${esc(t("Save the probes' places and values as a CSV file"))}">${esc(t("Export CSV"))}</button>` : "") + `</div>`);
-    if (modes && this.probing) this.probing = false;
-    $("#viewport").classList.toggle("sim-probing", this.probing);
+    if (this.pathing) el.insertAdjacentHTML("beforeend", `<p class="ana-note" data-v="pathhint">${esc(t(this.pathFirst ? "Click the end point of the path." : "Click the start point of the path."))}</p>`);
+    if (modes && (this.probing || this.pathing)) { this.probing = false; this.pathing = false; }
+    $("#viewport").classList.toggle("sim-probing", this.probing || this.pathing);
   }
 
   // ---------- events ----------
@@ -1600,6 +1728,8 @@ export class SimController {
     else if (a === "report") void this.report();
     else if (a === "probecsv") this.exportProbes();
     else if (a === "gif") void this.recordGif().then(b => { if (b) toast(t("GIF saved"), "success"); });
+    else if (a === "pathcsv") this.exportPath();
+    else if (a === "rmpath") this.setPath(t("Remove path"), null);
     else if (a === "rmprobe") { const i = Number(b.dataset.i); this.setProbes(t("Remove probe"), l => l.filter((_p, k) => k !== i)); this.renderAll(); }
     else if (a === "hot") {
       const i = Number(b.dataset.hot);
@@ -1750,6 +1880,7 @@ export class SimController {
     else if (k === "scale") { const v = num(el.value); this.plot.scale = el.value.trim() && v != null && v > 0 ? v : 0; }
     else return;
     this.showPlot();
+    if (k === "kind" && this.pathData) this.renderTree();
     this.renderLegend();
   }
 
