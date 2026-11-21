@@ -37,7 +37,7 @@ import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } fro
 import { MEMORY_LIMIT } from "./static";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
-import { NUT_FACTOR, boltPreload, DEFAULT_AMBIENT, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
+import { NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
 import { DEFAULT_GAP, DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 /** What a study needs of its document: a part's, or an assembly's (which has no material or bodies of its own). */
@@ -57,7 +57,7 @@ export interface SimHost {
   /** The model is an assembly: every component is solved as its own body, joined to the others where they touch. */
   asm(): boolean;
   /** An assembly's shown components with their parts' material names ("" = none). */
-  comps(): { id: string; name: string; material: string; fastener?: { role: "screw" | "nut" | "washer"; d: number; pitch: number; o: number[]; z: number[] } }[];
+  comps(): { id: string; name: string; material: string; /** Its material's thermal conductivity, W/(m·K), when it has one. */ k?: number | null; fastener?: { role: "screw" | "nut" | "washer"; d: number; pitch: number; o: number[]; z: number[] } }[];
   /** An assembly's hinge and concentric mates, by component id (FR-CON-008). */
   mates(): { a: string; b: string; type: string; name: string }[];
   /** A part's solid bodies, by Bodies folder key (none for an assembly). */
@@ -85,7 +85,7 @@ interface CaseResult { id: string; name: string; passes: PassResult[]; job: numb
 type BoltKept = { id: string; name: string; members: string[]; d: number; pitch: number; tapped: boolean };
 /** A bolt found among the fasteners, with the patches it joins. */
 interface BoltUse extends BoltKept { a: Float64Array; b: Float64Array; E: number }
-interface Results { /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean }[] }
+interface Results { /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K). */ k?: number }[] }
 const BOLT_NOTE = "Tension, shear and bending of each bolt as a beam. The safety factor compares their combined stress on the thread's stress area with the proof stress of the property class.";
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 /** Solve on change: how long after the last change the solve starts, ms. */
@@ -97,7 +97,7 @@ const RELIEF_NOTE = "The part is held by nothing: its supports are left out and 
 /** The most load cases a study has. */
 export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
+interface Kept { welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K). */ k?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
@@ -378,7 +378,7 @@ export class SimController {
     return JSON.stringify(parts);
   }
 
-  private foundKey(st: Study) { const off = [...offComps(st), ...this.solidScrews(st).map(id => `-${id}`)].sort(); return JSON.stringify(off.length ? [this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP, off] : [this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP]); }
+  private foundKey(st: Study) { const off = [...offComps(st), ...(st.kind === "thermal" ? ["*thermal"] : this.solidScrews(st).map(id => `-${id}`))].sort(); return JSON.stringify(off.length ? [this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP, off] : [this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP]); }
   /** What of the bolts' settings a solve depends on (the property class only rates the result). */
   private boltSettings(st: Study) {
     return Object.entries(st.bolts ?? {}).filter(([, b]) => b.off || (b.preload ?? 0) > 0).sort(([a], [b]) => (a < b ? -1 : 1)).map(([id, b]) => [id, b.off ? 1 : 0, b.off ? 0 : b.preload ?? 0, b.torque ? b.k ?? NUT_FACTOR : 0]);
@@ -424,7 +424,8 @@ export class SimController {
       const size = this.host.viewer.modelSize, key = this.foundKey(st);
       const { regions } = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
       const off = offComps(st);
-      for (const b of await this.boltsOf(st, regions ?? [])) for (const m of b.members) off.add(m);
+      // a thermal study keeps the fasteners as solids: heat passes through them
+      if (st.kind !== "thermal") for (const b of await this.boltsOf(st, regions ?? [])) for (const m of b.members) off.add(m);
       await this.findFrom((regions ?? []).filter(b => !off.has(compOf(b.key))), st.settings.gap ?? DEFAULT_GAP, key);
       const n = this.found?.key === key ? this.found.list.length : 0;
       toast(n ? t("Connections found: {n}", { n }) : t("No components touch within the gap tolerance."), n ? "success" : "warn");
@@ -503,7 +504,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, thermal: last?.thermal ? { min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -717,7 +718,6 @@ export class SimController {
   private newStudy(kind: StudyKind = "static") {
     const doc = this.host.doc();
     if (!doc) return;
-    if (kind === "thermal" && this.host.asm()) { toast(t("Thermal studies work on parts for now. Assemblies come next.")); return; }
     const st = newStudy(doc.studies ?? [], kind);
     this.setActive(st.id);
     this.edit = null;
@@ -759,7 +759,7 @@ export class SimController {
     const e = this.edit, st = this.study();
     if (!e || !st) return;
     const d = e.draft;
-    if (d.type !== "gravity" && d.type !== "centrifugal" && !(d.type === "heat" && d.body) && !pickCount(d)) {
+    if (d.type !== "gravity" && d.type !== "centrifugal" && !(d.type === "heat" && d.body && !this.host.asm()) && !pickCount(d)) {
       const on = (d as StudyLoad).on;
       toast(on === "edges" ? t("Click the edges on the model first.") : on === "points" ? t("Click the corner points on the model first.") : t("Click the faces on the model first."), "warn");
       return;
@@ -795,7 +795,7 @@ export class SimController {
     if (!ed && this.pathing && this.saved) { this.pathClick(e.clientX, e.clientY); return true; }
     if (!ed && this.probing && this.saved) { this.probeAt(e.clientX, e.clientY); return true; }
     if (!ed) return false;
-    if (ed.draft.type === "gravity" || (ed.draft.type === "heat" && ed.draft.body)) return true;
+    if (ed.draft.type === "gravity" || (ed.draft.type === "heat" && ed.draft.body && !this.host.asm())) return true;
     if (ed.draft.type === "remote" && this.pickingAt) {
       // the point the load acts at: a snapped point of the model, else the place on the face under the pointer
       const s = this.host.snapAt(e.clientX, e.clientY), q = s?.point ?? this.host.faceAt(e.clientX, e.clientY)?.point;
@@ -963,7 +963,7 @@ export class SimController {
         const at = new Map(bodies.map((b, i) => [b.key, i]));
         // the pairs with their gaps and patches are found beside the solve, for the Connections table
         if (!this.freshFound(st)) void this.findFrom(bodies, st.settings.gap ?? DEFAULT_GAP, this.foundKey(st)).then(() => { this.renderAll(); this.drawMarks(); }).catch(() => {});
-        joined = { gap: st.settings.gap ?? DEFAULT_GAP, links: (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) ? [{ a: at.get(l.a)!, b: at.get(l.b)!, type: l.type, ...(l.type === "adhesive" ? { kn: glueStiffness(l)[0], kt: glueStiffness(l)[1] } : {}) }] : [])) };
+        joined = { gap: st.settings.gap ?? DEFAULT_GAP, links: (st.links ?? []).flatMap(l => (l.type !== "resist" && l.type !== "pad" && at.has(l.a) && at.has(l.b) ? [{ a: at.get(l.a)!, b: at.get(l.b)!, type: l.type, ...(l.type === "adhesive" ? { kn: glueStiffness(l)[0], kt: glueStiffness(l)[1] } : {}) }] : [])) };
       } else if (m && bodies && bodies.length > 1 && bodies.some(b => this.bodyMatOf(doc, b.key))) {
         regions = bodies.map(b => {
           const q = this.bodyMatOf(doc, b.key) ?? m;
@@ -1058,11 +1058,11 @@ export class SimController {
 
   /** A thermal study's solve (FRS-thermal TH2): the part's temperatures from its heat sources and cooling. */
   private async solveThermal(doc: SimDoc, st: Study) {
-    if (this.host.asm()) { toast(t("Thermal studies work on parts for now. Assemblies come next."), "warn"); return; }
+    const asm = this.host.asm();
     const m = this.matOf(doc);
-    if (!m?.k) { toast(t("Pick a material with a thermal conductivity first."), "warn"); void this.pickMat(); return; }
+    if (!asm && !m?.k) { toast(t("Pick a material with a thermal conductivity first."), "warn"); void this.pickMat(); return; }
     const part = this.host.model();
-    if (!part) { toast(t("The part has no body yet."), "warn"); return; }
+    if (!part) { toast(asm ? t("The assembly has no components to analyse yet.") : t("The part has no body yet."), "warn"); return; }
     this.running = true; this.error = null; this.errorIn = ""; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.compSel = -1; this.modeSel = -1;
     this.plot.kind = "temp";
     this.clearPlot();
@@ -1073,8 +1073,22 @@ export class SimController {
     try {
       const size = this.host.viewer.modelSize;
       const got = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
-      if (got.solids !== 1) throw new Error("E-SIM-BODIES");
-      const setup = thermalSetup(st, got.geo);
+      if (!asm && got.solids !== 1) throw new Error("E-SIM-BODIES");
+      // an assembly: every component is its own body with its material's conductivity, joined where they touch
+      const off = asm ? offComps(st) : new Set<string>();
+      const geo = off.size ? withoutFaces(got.geo, n => off.has(compOf(n))) : got.geo;
+      const bodies = asm ? (off.size ? got.regions?.filter(b => !off.has(compOf(b.key))) : got.regions) ?? [] : [];
+      if (asm && !bodies.length) throw new Error("E-SIM-NOBODY");
+      const mats = bodies.map(b => st.comps?.[compOf(b.key)]?.material ?? b.mat ?? null);
+      mats.forEach((q, i) => { if (!q?.k) throw new Error(`E-TH-COMPMAT: ${bodies[i].name ?? bodies[i].key}`); });
+      const at = new Map(bodies.map((b, i) => [b.key, i]));
+      const links = (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) && (l.type === "none" || l.type === "resist" || l.type === "pad")
+        ? [l.type === "none" ? { a: at.get(l.a)!, b: at.get(l.b)!, type: "none" as const } : { a: at.get(l.a)!, b: at.get(l.b)!, type: "resistance" as const, h: linkConductance(l) }] : []));
+      if (asm) {
+        this.comps = bodies.map(b => ({ key: b.key, name: b.name ?? b.key }));
+        if (!this.freshFound(st)) void this.findFrom(bodies, st.settings.gap ?? DEFAULT_GAP, this.foundKey(st)).then(() => { this.renderAll(); this.drawMarks(); }).catch(() => {});
+      }
+      const setup = thermalSetup(st, geo, asm ? bodies.map(b => b.key) : undefined);
       if (setup.problems.length) {
         for (const p of setup.problems) this.problems.set(p.id, p.code);
         throw new Error(`${setup.problems[0].code}: ${setup.problems[0].id}`);
@@ -1085,15 +1099,26 @@ export class SimController {
         p0[3 * i] = pa.getX(i); p0[3 * i + 1] = pa.getY(i); p0[3 * i + 2] = pa.getZ(i);
         if (na) { n0[3 * i] = na.getX(i); n0[3 * i + 1] = na.getY(i); n0[3 * i + 2] = na.getZ(i); }
       }
-      const idx: ArrayLike<number> | null = g.getIndex()?.array ?? null;
+      let idx: ArrayLike<number> | null = g.getIndex()?.array ?? null;
+      if (off.size) {
+        // the plot covers only the analysed components
+        const am = part as AsmModel, keep: number[] = [];
+        am.faces.forEach((f, i) => {
+          if (off.has(compOf(am.names[i] ?? ""))) return;
+          for (let q = 3 * f.triStart; q < 3 * (f.triStart + f.triCount); q++) keep.push(idx ? idx[q] : q);
+        });
+        idx = Uint32Array.from(keep);
+      }
       const mesh = refineMesh(p0, n0, idx, plotTarget(meshArea(p0, idx), size / 70));
       const total = Math.max(1, Math.min(THERMAL_PASSES, Math.round(st.settings.passes)));
-      const res: Results = { study: st.id, key, passes: [], ids: setup.sinkIds, ms: 0, mesh };
+      const res: Results = { study: st.id, key, passes: [], ids: setup.sinkIds, ms: 0, mesh, ...(asm ? { comps: this.comps, bodyMats: mats.map(q => ({ name: q!.name, sy: 0, k: q!.k! })) } : {}), ...(off.size ? { off: [...off] } : {}) };
       this.progress = t("Pass {n} of {m}…", { n: 1, m: total });
       this.renderAll();
       await this.client.solve({
-        body: got.geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] }, passes: total, energyTol: st.settings.energyTol, pos: mesh.pos, nrm: mesh.nrm, ...(memLimit() ? { memory: memLimit() } : {}),
-        mat: { name: m.name, E: 0, nu: 0, rho: 0 }, thermal: { k: m.k * 1e-3, setup },
+        body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] }, passes: total, energyTol: st.settings.energyTol, pos: mesh.pos, nrm: mesh.nrm, ...(memLimit() ? { memory: memLimit() } : {}),
+        mat: { name: asm ? mats[0]!.name : m!.name, E: 0, nu: 0, rho: 0 },
+        ...(asm ? { regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: mats[i]!.name, E: 0, nu: 0, rho: 0 } })) } : {}),
+        thermal: asm ? { k: mats[0]!.k! * 1e-3, setup, ks: mats.map(q => q!.k! * 1e-3), gap: st.settings.gap ?? DEFAULT_GAP, links } : { k: m!.k! * 1e-3, setup },
       }, p => {
         res.passes.push(p);
         res.ms = performance.now() - t0;
@@ -1108,7 +1133,7 @@ export class SimController {
       res.job = this.client.solution;
       done = true;
       if ((this.res as Results | null) === res) { this.solved = res; this.running = false; this.capsSoon(); this.syncPath(); }
-      const keep: Kept = { passes: res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh };
+      const keep: Kept = { passes: res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}) };
       void cacheKey("sim", key).then(k => cachePut(k, keep));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1125,7 +1150,15 @@ export class SimController {
   private compsHtml(st: Study): string {
     const list = this.host.comps();
     if (!list.length) return "";
-    const dis = this.running ? " disabled" : "";
+    const dis = this.running ? " disabled" : "", thermal = st.kind === "thermal";
+    if (thermal) return `<div class="sim-sec sim-comps"><h4>${esc(t("Components"))}</h4>`
+      + `<p class="sim-note muted">${esc(t("A component is analysed with its part's material unless another is picked here: the analysis needs each one's thermal conductivity. Untick a component to leave it out of the study."))}</p>`
+      + `<ul class="sim-complist">` + list.map(c => {
+        const o = st.comps?.[c.id], own = o?.material, name = own?.name ?? c.material, k = own ? own.k : c.k;
+        return `<li data-comp="${esc(c.id)}" class="${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
+          + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Thermal conductivity"))}">${k ? `${sig(k)} W/(m·K)` : ""}</span>`
+          + `<button class="btn small${own ? " own" : ""}${name && k ? "" : " sim-warn"}" data-a="compmat" data-c="${esc(c.id)}" title="${esc(!name ? t("Pick a material") : !k ? t("This material has no thermal conductivity") : own ? t("Material picked for this study") : t("The part's material"))}"${dis}>${name ? `<span translate="no">${esc(name)}</span>` : esc(t("No material"))}</button></li>`;
+      }).join("") + `</ul></div>`;
     return `<div class="sim-sec sim-comps"><h4>${esc(t("Components"))}</h4>`
       + `<p class="sim-note muted">${esc(t("A component is analysed with its part's material unless another is picked here. Untick a component to leave it out of the study. A rigid component moves as a body: it does not deform, and its mass still counts."))}</p>`
       + `<ul class="sim-complist">` + list.map(c => {
@@ -1337,6 +1370,59 @@ export class SimController {
     return html + `</div>`;
   }
 
+  /**
+   * A thermal study of an assembly: how heat passes where the components touch (FR-TCON-001..004), and after a
+   * solve the heat through each contact with the temperature step across it.
+   */
+  private thermalLinksHtml(st: Study): string {
+    const res = this.res && !this.stale() ? this.res : null, comps = res?.comps ?? [], found = res?.passes.at(-1)?.thermal?.contacts ?? [];
+    const pre = this.freshFound(st), key = pairKey;
+    const typed = new Map((st.links ?? []).filter(l => l.type === "none" || l.type === "resist" || l.type === "pad").map(l => [key(l.a, l.b), l]));
+    const names = new Map([...(pre?.comps ?? []), ...comps].map(c => [c.key, c.name]));
+    type Row = { a: string; b: string; area: number | null; heat?: number; drop?: number };
+    const rows: Row[] = (pre?.list ?? []).map(c => ({ a: pre!.comps[c.a]?.key ?? "", b: pre!.comps[c.b]?.key ?? "", area: c.area })).filter(r => r.a && r.b);
+    const at = new Map(rows.map(r => [key(r.a, r.b), r]));
+    for (const c of found) {
+      const a = comps[c.a]?.key ?? "", b = comps[c.b]?.key ?? "";
+      if (!a || !b) continue;
+      const r = at.get(key(a, b));
+      if (r) { r.a = a; r.b = b; r.area = c.area; r.heat = c.heat; r.drop = c.ta - c.tb; }
+      else { const n: Row = { a, b, area: c.area, heat: c.heat, drop: c.ta - c.tb }; rows.push(n); at.set(key(a, b), n); }
+    }
+    for (const l of typed.values()) if (!at.has(key(l.a, l.b))) rows.push({ a: l.a, b: l.b, area: null });
+    const heats = rows.some(r => r.heat != null), f = UNITS[units.current].f, dis = this.running ? " disabled" : "";
+    const opt = (v: string, label: string, cur: string) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(t(label))}</option>`;
+    let html = `<div class="sim-sec sim-links sim-tlinks"><h4>${esc(t("Connections"))}</h4>`
+      + `<p class="sim-note muted">${esc(t("Components that touch, or come within the gap, pass heat to each other. A contact is perfect unless a pad, a contact resistance or no contact is set for it."))}</p>`
+      + `<label class="sim-kv2">${esc(t("Gap tolerance"))} <input type="number" data-k="gap" min="0" step="0.05" value="${sig((st.settings.gap ?? DEFAULT_GAP) * f)}" aria-label="${esc(t("Gap tolerance"))}" /> ${esc(units.current)}</label>`
+      + `<button class="btn small sim-find" data-a="findlinks"${this.finding || this.running ? " disabled" : ""}>${esc(this.finding ? t("Finding the connections…") : t("Find connections"))}</button>`;
+    if (!rows.length) return html + `<p class="sim-note muted" data-v="nolinks">${esc(res || pre ? t("No components touch.") : t("Find connections lists the pairs that touch; a solve lists them too."))}</p></div>`;
+    html += `<table class="sim-contacts"><thead><tr><th>${esc(t("Components"))}<br />${esc(t("Area"))}, ${esc(units.current)}²</th>${heats ? `<th>${esc(t("Heat"))}, W<br />ΔT, °C</th>` : ""}<th>${esc(t("Contact"))}</th></tr></thead><tbody>`
+      + rows.map(r => {
+        const k = key(r.a, r.b), l = typed.get(k), cur = l?.type ?? "perfect";
+        const patch = !!pre?.list.some(c => key(pre.comps[c.a]?.key ?? "", pre.comps[c.b]?.key ?? "") === k);
+        const ab = `data-a="${esc(r.a)}" data-b="${esc(r.b)}"`;
+        return `<tr data-link="${esc(k)}"${patch ? ` data-a="link" tabindex="0"` : ""} class="${k === this.linkSel ? "sel" : ""}"><td><span translate="no">${esc(names.get(r.a) ?? r.a)} – ${esc(names.get(r.b) ?? r.b)}</span><br /><span class="muted" data-v="carea">${r.area == null ? "" : sig(r.area * f * f)}</span></td>`
+          + (heats ? `<td><span data-v="cheat">${r.heat == null ? "" : sig(Math.abs(r.heat))}</span><br /><span data-v="cdrop">${r.drop == null ? "" : pct(Math.abs(r.drop))}</span></td>` : "")
+          + `<td><select data-k="tlink" ${ab} aria-label="${esc(t("Contact"))}"${dis}>${opt("perfect", "Perfect", cur)}${opt("pad", "Pad or paste", cur)}${opt("resist", "Contact resistance", cur)}${opt("none", "No contact", cur)}</select></td></tr>`
+          + (cur === "pad" ? `<tr class="sim-glue" data-tpad="${esc(k)}"><td colspan="${heats ? 3 : 2}"><label title="${esc(t("Thickness of the pad or paste layer"))}">${esc(t("Thickness"))} <input type="number" data-k="padt" ${ab} min="0" step="0.05" value="${trim(l?.t ?? DEFAULT_PAD.t)}"${dis} /> mm</label> <label title="${esc(t("Thermal conductivity of the pad or paste"))}">k <input type="number" data-k="padk" ${ab} min="0" step="0.5" value="${trim(l?.k ?? DEFAULT_PAD.k)}"${dis} /> W/(m·K)</label></td></tr>` : "")
+          + (cur === "resist" ? `<tr class="sim-glue" data-tres="${esc(k)}"><td colspan="${heats ? 3 : 2}"><label title="${esc(t("Heat passed per area and per degree of difference between the two surfaces"))}">${esc(t("Contact conductance"))} <input type="number" data-k="tcch" ${ab} min="0" step="500" value="${trim(l?.h ?? DEFAULT_TCC)}"${dis} /> W/(m²·K)</label></td></tr>` : "");
+      }).join("") + `</tbody></table>`;
+    if (heats) html += `<p class="sim-note muted" data-v="cheatnote">${esc(t("Heat: what passes through the contact. ΔT: the temperature difference between its two sides."))}</p>`;
+    if (pre?.list.length) html += `<p class="sim-note muted" data-v="cpatchnote">${esc(t("Click a row to show the contact: orange on the first component, blue on the second."))}</p>`;
+    return html + `</div>`;
+  }
+
+  /** A thermal study's results by component: its temperatures and the heat made in it. */
+  private thermalCompsHtml(r: Results, last: PassResult): string {
+    const rows = last.thermal?.comps;
+    if (!r.comps || !rows || rows.length < 2) return "";
+    const alone = this.aloneDom(), power = rows.some(x => x.power);
+    return `<h5 class="sim-sub">${esc(t("By component"))}</h5><table class="sim-comptable sim-tcomps"><thead><tr><th>${esc(t("Component"))}</th><th title="${esc(t("Highest temperature"))}">${esc(t("Max"))}, °C</th><th title="${esc(t("Mean temperature of its surface"))}">${esc(t("Mean"))}, °C</th>${power ? `<th title="${esc(t("Heat made in the component"))}">${esc(t("Heat"))}, W</th>` : ""}</tr></thead><tbody>`
+      + rows.map((x, d) => `<tr data-a="rcomp" data-rcomp="${d}" tabindex="0" class="${d === alone ? "sel" : ""}"><td translate="no" title="${esc(r.comps![d].name)}">${esc(r.comps![d].name)}</td><td data-v="tcmax">${sig(x.max)}</td><td>${sig(x.mean)}</td>${power ? `<td data-v="tcpower">${x.power ? sig(x.power) : ""}</td>` : ""}</tr>`).join("") + `</tbody></table>`
+      + `<p class="sim-note muted" data-v="compnote">${alone >= 0 ? `${esc(t("Showing {name} alone, on its own colour scale.", { name: r.comps[alone].name }))} <button class="btn small" data-a="rcompall">${esc(t("Show all"))}</button>` : esc(t("Click a row to show that component alone."))}</p>`;
+  }
+
   /** The part's material as the active study takes it: the study's own when it has one (FR-SMAT-003). */
   private matOf(doc: SimDoc | null | undefined) {
     return (!this.host.asm() && this.study()?.mats?.[""]) || doc?.material || null;
@@ -1378,6 +1464,9 @@ export class SimController {
       case "E-TH-NOSINK": return t("Nothing takes the heat away. Add convection, radiation or a fixed temperature: without one the part would heat up for ever.");
       case "E-TH-NOHEAT": return t("Nothing heats or cools the part. Add a heat source, or surface conditions at different temperatures.");
       case "E-TH-NOK": return t("The material has no thermal conductivity. Pick another material or add the value to it.");
+      case "E-TH-COMPMAT": return t("{name} has no material with a thermal conductivity. Pick one for it under Components, or leave the component out.", { name: rest });
+      case "E-TH-LOOSE": return t("Nothing takes the heat away from {names}: they touch no cooled component and have no cooling of their own. Add cooling, move them into contact or raise the gap tolerance.", { names: rest.split(",").map(i => this.comps[Number(i)]?.name ?? i).join(", ") });
+      case "E-TH-CONTACT": return t("A contact needs a conductance above 0.");
       case "E-TH-VALUE": return t("{name}: give a value above 0 (an emissivity is between 0 and 1).", { name });
       case "E-SIM-FREE": return rest.trim() === "6" && !this.study()?.supports.length ? t("Add a support first, or turn on Inertia relief for a part that nothing holds.") : t("The supports leave the part free to move ({n} free motions). Add or change the supports.", { n: rest.trim() });
       case "E-SIM-BODIES": return t("Some bodies of the part touch no other body. A study needs one connected piece: join the bodies or delete the loose ones.");
@@ -2538,9 +2627,13 @@ export class SimController {
     const blocks: ReportBlock[] = [{ kind: "h", text: t("Study") }];
     const kv = (rows: string[][]) => blocks.push({ kind: "table", rows: [[t("Property"), t("Value")], ...rows], widths: [2, 3] });
     const name = (it: StudySupport | StudyLoad) => (it.name ?? it.id) + (off.has(it.id) ? ` (${t("left out")})` : "");
-    const on = (it: StudySupport | StudyLoad) => (it.type === "heat" && it.body ? t("whole body") : this.pickText(it));
+    const on = (it: StudySupport | StudyLoad) => (it.type === "heat" && it.body ? (res.comps ? t("whole component") : t("whole body")) : this.pickText(it));
     kv([[t("Document"), doc.name], [t("Study"), st.name], [t("Kind"), t("Thermal")], [t("Ambient temperature"), `${sig(st.settings.ambient ?? DEFAULT_AMBIENT)} °C`], [t("Passes"), `${res.passes.length} / ${Math.min(THERMAL_PASSES, st.settings.passes)}`],
-      [t("Material"), m?.name ?? "–"], [t("Thermal conductivity"), `${sig(m?.k ?? 0)} W/(m·K)`]]);
+      ...(res.comps ? [] : [[t("Material"), m?.name ?? "–"], [t("Thermal conductivity"), `${sig(m?.k ?? 0)} W/(m·K)`]])]);
+    if (res.comps && res.bodyMats) {
+      blocks.push({ kind: "h", text: t("Components") });
+      blocks.push({ kind: "table", widths: [3, 3, 2], rows: [[t("Component"), t("Material"), `${t("Thermal conductivity")}, W/(m·K)`], ...res.comps.map((c, i) => [c.name, res.bodyMats![i]?.name ?? "–", sig(res.bodyMats![i]?.k ?? 0)])] });
+    }
     blocks.push({ kind: "h", text: t("Heat sources") });
     if (!st.loads.length) blocks.push({ kind: "p", text: t("None.") });
     else blocks.push({ kind: "table", widths: [3, 3, 2, 3], rows: [[t("Name"), t("Type"), t("Applied to"), t("Details")], ...st.loads.map(l => [name(l), t(LOAD_LABEL[l.type]), on(l), this.thermalText(l, st)])] });
@@ -2550,6 +2643,12 @@ export class SimController {
     const out = T.flows.reduce((a, f) => a + f.out, 0);
     kv([[t("Highest temperature"), `${sig(T.max)} °C`], [t("Lowest temperature"), `${sig(T.min)} °C`], [t("Heat put in"), `${sig(T.applied)} W`],
       ...T.flows.map((f, i) => [`${f.out < 0 ? t("Heat brought in") : t("Heat taken away")}: ${this.nameOf(res.ids[i] ?? "")}`, `${sig(Math.abs(f.out))} W (${t("mean")} ${sig(f.mean)} °C)`]), [t("Heat taken away in total"), `${sig(out)} W`]]);
+    if (res.comps && T.comps) blocks.push({ kind: "table", widths: [3, 2, 2, 2], rows: [[t("Component"), `${t("Max")}, °C`, `${t("Mean")}, °C`, `${t("Heat")}, W`], ...T.comps.map((c, i) => [res.comps![i]?.name ?? "", sig(c.max), sig(c.mean), c.power ? sig(c.power) : "–"])] });
+    if (res.comps && T.contacts?.length) {
+      blocks.push({ kind: "h", text: t("Connections") });
+      blocks.push({ kind: "table", widths: [4, 2, 2, 2, 2], rows: [[t("Components"), t("Contact"), `${t("Area")}, mm²`, `${t("Heat")}, W`, "ΔT, °C"],
+        ...T.contacts.map(c => [`${res.comps![c.a]?.name ?? ""} – ${res.comps![c.b]?.name ?? ""}`, t(c.type === "perfect" ? "Perfect" : "Pad or contact resistance"), sig(c.area), sig(Math.abs(c.heat)), pct(Math.abs(c.ta - c.tb))])] });
+    }
     const was = { ...this.plot };
     for (const k of ["temp", "flux"] as PlotKind[]) { const im = this.capture(k); if (im) blocks.push({ kind: "image", ...im }); }
     this.plot = was;
@@ -2612,18 +2711,17 @@ export class SimController {
     if (!st) this.modeFor = null;
     else if (st.id !== this.modeFor) { this.modeFor = st.id; this.mode = st.kind === "thermal" ? "thermal" : "structural"; }
     const asm = this.host.asm();
-    if (asm) this.mode = "structural";
     const thermal = this.mode === "thermal";
     const mode = (id: "mode-structural" | "mode-thermal", label: string, title: string, on: boolean, why = "") =>
       `<button class="mc-b sim-mode-b${on ? " on" : ""}" data-s="${id}" role="radio" aria-checked="${on}" title="${esc(title)}"${why ? ` disabled data-why="${esc(why)}"` : busy && !on ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${ICON[id]}</span><span class="mc-l">${esc(label)}</span></button>`;
     const pick = `<div class="mc-g sim-mode" role="radiogroup" aria-label="${esc(t("Analysis"))}">`
       + mode("mode-structural", t("Structural"), t("Structural analysis: stress, displacement and natural frequencies"), !thermal)
-      + mode("mode-thermal", t("Thermal"), t("Thermal analysis: temperatures and heat flow"), thermal, asm ? t("Thermal studies work on parts for now. Assemblies come next.") : "") + `</div>`;
+      + mode("mode-thermal", t("Thermal"), t("Thermal analysis: temperatures and heat flow"), thermal) + `</div>`;
     const solve = (busy ? btn("stop", t("Stop"), t("Stop the analysis")) : btn("solve", t("Solve"), t("Run the analysis"), { dis: !st }))
       + btn("results", t("Results"), t("Show or hide the result plot on the model"), { on: this.plot.on && !!this.res && !this.stale(), dis: !this.res || this.stale() })
       + btn("report", t("Report"), t("Save the study and its results as a report"), { dis: busy || !this.res || this.stale() });
     if (thermal) {
-      el.innerHTML = pick + sep + group(t("Study"), btn("newthermal", t("Thermal study"), t(TIP.newthermal), { dis: busy }) + btn("mat", t("Material"), t("The part's material: thermal conductivity"), { dis: busy }) + btn("ambient", t("Ambient"), t(TIP.ambient), { dis: busy }))
+      el.innerHTML = pick + sep + group(t("Study"), btn("newthermal", t("Thermal study"), t(asm ? "New thermal study: the temperatures of this assembly and where its heat goes" : TIP.newthermal), { dis: busy }) + (asm ? "" : btn("mat", t("Material"), t("The part's material: thermal conductivity"), { dis: busy })) + btn("ambient", t("Ambient"), t(TIP.ambient), { dis: busy }))
         + sep + group(t("Heat sources"), THERMAL_LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
         + sep + group(t("Cooling"), THERMAL_SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
         + sep + group(t("Solve"), solve);
@@ -2643,7 +2741,7 @@ export class SimController {
     if (!doc) { el.innerHTML = ""; return; }
     const st = this.study();
     if (!st) {
-      el.innerHTML = `<div class="sim-empty"><p>${esc(this.host.asm() ? t("A study holds the supports and loads of one analysis. The assembly is solved as it is, without a mesh: every component with its part's material, joined where they touch.") : t("A study holds the supports and loads of one analysis. The part is solved as it is, without a mesh."))}</p><button class="btn" data-a="new">${esc(t("New study"))}</button> <button class="btn" data-a="newmodal">${esc(t("Modal study"))}</button>${this.host.asm() ? "" : ` <button class="btn" data-a="newthermal">${esc(t("Thermal study"))}</button>`}</div>`;
+      el.innerHTML = `<div class="sim-empty"><p>${esc(this.host.asm() ? t("A study holds the supports and loads of one analysis. The assembly is solved as it is, without a mesh: every component with its part's material, joined where they touch.") : t("A study holds the supports and loads of one analysis. The part is solved as it is, without a mesh."))}</p><button class="btn" data-a="new">${esc(t("New study"))}</button> <button class="btn" data-a="newmodal">${esc(t("Modal study"))}</button> <button class="btn" data-a="newthermal">${esc(t("Thermal study"))}</button></div>`;
       return;
     }
     const list = doc.studies ?? [];
@@ -2658,7 +2756,7 @@ export class SimController {
       const isOff = off.has(it.id);
       return `<li class="sim-row${isOff ? " off" : ""}${bad ? " bad" : ""}${this.edit?.draft.id === it.id ? " cur" : ""}" data-id="${it.id}">`
         + `<button class="sim-name" data-a="edit" translate="no" title="${esc(t("Edit"))}"><i class="sim-dot ${it.type === "refine" ? "ref" : it.type === "connector" ? "conn" : it.type === "mass" ? "mass" : it.type === "weld" ? "weld" : load ? "load" : "sup"}" aria-hidden="true"></i>${esc(it.name ?? it.id)}</button>`
-        + `<span class="sim-meta">${isThermalType(it.type) ? esc(`${it.type === "heat" && (it as StudyLoad).body ? t("whole body") : this.pickText(it)} · ${this.thermalText(it as StudyLoad, st)}`) : it.type === "gravity" ? "" : it.type === "centrifugal" && !it.faces.length ? esc(this.axisText(it as StudyLoad)) : esc(it.type === "connector" ? t(it.kind === "spring" ? "spring" : "rigid") : this.pickText(it))}${it.type === "mass" ? ` · ${trim(it.mass)} kg` : it.type === "refine" ? ` · ${esc(t("level {n}", { n: it.level }))}` : it.type === "weld" ? (it.on === "points" ? ` · ⌀ ${trim(it.dia ?? DEFAULT_SPOT)} mm` : ` · a ${trim(it.throat)} mm`) : ""}</span>`
+        + `<span class="sim-meta">${isThermalType(it.type) ? esc(`${it.type === "heat" && (it as StudyLoad).body ? (this.host.asm() ? t("whole component") : t("whole body")) : this.pickText(it)} · ${this.thermalText(it as StudyLoad, st)}`) : it.type === "gravity" ? "" : it.type === "centrifugal" && !it.faces.length ? esc(this.axisText(it as StudyLoad)) : esc(it.type === "connector" ? t(it.kind === "spring" ? "spring" : "rigid") : this.pickText(it))}${it.type === "mass" ? ` · ${trim(it.mass)} kg` : it.type === "refine" ? ` · ${esc(t("level {n}", { n: it.level }))}` : it.type === "weld" ? (it.on === "points" ? ` · ⌀ ${trim(it.dia ?? DEFAULT_SPOT)} mm` : ` · a ${trim(it.throat)} mm`) : ""}</span>`
         + `<button class="sim-ib" data-a="toggle" aria-pressed="${isOff}" title="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}" aria-label="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}">${isOff ? "○" : "●"}</button>`
         + `<button class="sim-ib" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">×</button>`
         + (bad ? `<p class="sim-prob">${esc(this.errorText(`${bad}: ${it.id}`))}</p>` : "")
@@ -2669,7 +2767,8 @@ export class SimController {
       + (this.renaming ? `<input type="text" data-k="sname" value="${esc(st.name)}" aria-label="${esc(t("Study name"))}" translate="no" />` : list.length > 1 ? `<select data-k="study" aria-label="${esc(t("Study"))}" translate="no">${list.map(s => `<option value="${s.id}"${s.id === st.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`
         : `<b translate="no">${esc(st.name)}</b>`)
       + `<span class="muted" data-v="kind">${esc(st.kind === "modal" ? t("Modal") : thermal ? t("Thermal") : t("Static"))}</span><button class="sim-ib" data-a="renstudy" aria-pressed="${this.renaming}" title="${esc(t("Rename study"))}" aria-label="${esc(t("Rename study"))}">✎</button><button class="sim-ib" data-a="dupstudy" title="${esc(t("Duplicate study"))}" aria-label="${esc(t("Duplicate study"))}">⧉</button><button class="sim-ib" data-a="delstudy" title="${esc(t("Delete study"))}" aria-label="${esc(t("Delete study"))}">×</button></div>`;
-    if (this.host.asm()) html += this.compsHtml(st) + this.boltsHtml(st)
+    if (this.host.asm() && thermal) html += this.compsHtml(st) + this.thermalLinksHtml(st);
+    else if (this.host.asm()) html += this.compsHtml(st) + this.boltsHtml(st)
       + (st.welds?.length ? `<div class="sim-sec sim-welds"><h4>${esc(t("Welds"))}</h4><p class="sim-note muted">${esc(t(WELD_NOTE))}</p><ul class="sim-list">${st.welds.map(w => row(w, false)).join("")}</ul></div>` : "")
       + this.linksHtml(st);
     else html += `<div class="sim-sec sim-mat"><h4>${esc(t("Material"))}</h4><button class="pm-box${matOk ? "" : " sim-warn"}" data-a="mat">${doc.material ? `<span translate="no">${esc(doc.material.name)}</span>` : esc(t("No material"))}</button>` + studyMat
@@ -2876,7 +2975,7 @@ export class SimController {
     T.flows.forEach((f, i) => { html += `<dt>${esc(f.out < 0 ? t("Heat brought in") : t("Heat taken away"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd data-v="flow" title="${esc(t("Mean temperature of the faces"))}: ${sig(f.mean)} °C">${sig(Math.abs(f.out))} W</dd>`; });
     if (T.flows.length > 1) html += `<dt>${esc(t("Heat taken away in total"))}</dt><dd data-v="heatout">${sig(out)} W</dd>`;
     if (off != null) html += `<dt title="${esc(t("How far the heat taken away is from the heat put in, as a share of it"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${off > 1 ? ' class="sim-low"' : ""}>${pct(off).replace("<", "&lt;")} %</dd>`;
-    html += `</dl>`;
+    html += `</dl>` + this.thermalCompsHtml(r, last);
     html += `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th title="${esc(t("Temperature change"))}">${esc(t("Temp. change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
       + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td${p.memory ? ` title="${esc(t("Memory: about {n} MB", { n: Math.max(1, Math.round(p.memory / 2 ** 20)) }))}"` : ""}>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${pct(p.change).replace("<", "&lt;")} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 && !pct(errs[i]!).startsWith("<") ? "≈ " : ""}${pct(errs[i]!).replace("<", "&lt;")} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
       + chartSvg(errs, t("Estimated error per pass"));
@@ -2949,7 +3048,7 @@ export class SimController {
         + group(t("Type"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="ckind"><option value="rigid"${c.kind === "rigid" ? " selected" : ""}>${esc(t("Rigid"))}</option><option value="spring"${c.kind === "spring" ? " selected" : ""}>${esc(t("Spring"))}</option></select></label>`
           + (c.kind === "spring" ? kf("k0", t("Stiffness along X"), c.k[0], "N/mm") + kf("k1", t("Stiffness along Y"), c.k[1], "N/mm") + kf("k2", t("Stiffness along Z"), c.k[2], "N/mm") + kf("kr", t("Against turning"), c.kr === undefined ? undefined : c.kr * 1e-3, "N·m/rad", t("rigid")) : "")
           + `<p class="pm-help muted">${esc(c.kind === "spring" ? t("Each side moves as a whole. The spring acts between the two sides; leave Against turning empty to keep them from turning against each other.") : t("Each side moves as a whole, and the two sides move together as one rigid piece."))}</p>`);
-    } else if (d.type !== "gravity" && !(d.type === "heat" && (d as StudyLoad).body)) {
+    } else if (d.type !== "gravity" && !(d.type === "heat" && (d as StudyLoad).body && !this.host.asm())) {
       const on = (d as StudyLoad).on, n = pickCount(d);
       const ask = on === "edges" ? t("Click edges on the model") : on === "points" ? (e.kind === "weld" ? t("Click points on a face of the model") : t("Click corner points on the model")) : d.type === "hinge" || d.type === "torque" || d.type === "bearing" ? t("Click cylindrical faces on the model") : d.type === "centrifugal" ? t("Click a cylindrical face for the axis, or leave it empty and choose an axis below") : t("Click faces on the model");
       const sel = ON_TYPES.includes(d.type) ? `<label class="pm-field"><span>${esc(e.kind === "load" ? t("Acts on") : t("Holds"))}</span><select data-k="on">${[["", "Faces"], ["edges", "Edges"], ["points", "Points"]].map(([v, l]) => `<option value="${v}"${(on ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : "";
@@ -3014,8 +3113,8 @@ export class SimController {
         + `<label class="pm-field"><span>${esc(t("Up"))}</span><select data-k="up">${["x", "y", "z", "-x", "-y", "-z"].map(a => `<option value="${a}"${(l.flip ? "-" : "") + (l.axis ?? "z") === a ? " selected" : ""}>${a.length > 1 ? "−" : "+"}${a.slice(-1).toUpperCase()}</option>`).join("")}</select></label>`
         + `<label class="pm-field"><span>${esc(t("Surface at"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="level" value="${trim(l.level ?? 0)}" spellcheck="false" /><span class="muted">${(l.axis ?? "z").toUpperCase()}, mm</span></span></label>`
         + `<p class="pm-help muted">${esc(t("The pressure grows with the depth below the fluid's surface; faces above it carry none."))}</p>`);
-      else if (l.type === "heat") body += group(t("Heat"), chk("body", l.body, t("Throughout the whole body")) + nf("value", t("Power"), l.value, "W")
-        + `<p class="pm-help muted">${esc(l.body ? t("The total power, made evenly throughout the part's volume.") : t("The total power, spread evenly over the picked faces."))}</p>`);
+      else if (l.type === "heat") body += group(t("Heat"), chk("body", l.body, this.host.asm() ? t("Throughout the whole component") : t("Throughout the whole body")) + nf("value", t("Power"), l.value, "W")
+        + `<p class="pm-help muted">${esc(l.body ? (this.host.asm() ? t("The total power, made evenly throughout the components the picked faces are on.") : t("The total power, made evenly throughout the part's volume.")) : t("The total power, spread evenly over the picked faces."))}</p>`);
       else if (l.type === "hflux") body += group(t("Heat flux"), nf("value", t("Heat flux"), l.value, "W/m²")
         + `<p class="pm-help muted">${esc(t("Power per area going into the picked faces."))}</p>`);
       else if (l.type === "remote") {
@@ -3255,6 +3354,25 @@ export class SimController {
         else if (v === "adhesive") rest.push({ a, b, type: v, ...DEFAULT_GLUE });
         if (rest.length) s2.links = rest; else delete s2.links;
       });
+    } else if (el.dataset.k === "tlink") {
+      const a = el.dataset.a!, b = el.dataset.b!, v = el.value;
+      this.host.change(t("Contact type"), d => {
+        const s2 = d.studies?.find(x => x.id === st.id);
+        if (!s2) return;
+        const rest = (s2.links ?? []).filter(l => !((l.a === a && l.b === b) || (l.a === b && l.b === a)));
+        if (v === "none") rest.push({ a, b, type: v });
+        else if (v === "pad") rest.push({ a, b, type: v, ...DEFAULT_PAD });
+        else if (v === "resist") rest.push({ a, b, type: v, h: DEFAULT_TCC });
+        if (rest.length) s2.links = rest; else delete s2.links;
+      });
+    } else if (el.dataset.k === "padt" || el.dataset.k === "padk" || el.dataset.k === "tcch") {
+      const a = el.dataset.a!, b = el.dataset.b!, v = Number(el.value), k = el.dataset.k;
+      el.setAttribute("aria-invalid", String(!(v > 0)));
+      if (!(v > 0)) return;
+      this.host.change(t(k === "padt" ? "Pad thickness" : k === "padk" ? "Pad conductivity" : "Contact conductance"), d => {
+        const l = d.studies?.find(x => x.id === st.id)?.links?.find(l => (l.type === "pad" || l.type === "resist") && ((l.a === a && l.b === b) || (l.a === b && l.b === a)));
+        if (l) { if (k === "padt") l.t = v; else if (k === "padk") l.k = v; else l.h = v; }
+      });
     } else if (el.dataset.k === "gluet" || el.dataset.k === "gluee") {
       const a = el.dataset.a!, b = el.dataset.b!, v = Number(el.value), thick = el.dataset.k === "gluet";
       el.setAttribute("aria-invalid", String(!(v > 0)));
@@ -3332,7 +3450,7 @@ export class SimController {
       if (v) { l.on = v; if (e.kind === "load") l.normal = false; if (v === "edges") l.edges = []; else l.points = []; } else delete l.on;
     }
     else if (k === "flip") d.flip = el.checked || undefined;
-    else if (k === "body") { const l = e.draft as StudyLoad; l.body = el.checked || undefined; if (l.body) l.faces = []; }
+    else if (k === "body") { const l = e.draft as StudyLoad; l.body = el.checked || undefined; if (l.body && !this.host.asm()) l.faces = []; }
     else if (k === "film") { if (!el.value) return; (e.draft as StudySupport).h = Number(el.value); }
     else if (k === "axis") (e.draft as StudyLoad).axis = el.value as "x" | "y" | "z";
     else if (k === "ckind" && e.kind === "connector") e.draft.kind = el.value === "spring" ? "spring" : "rigid";

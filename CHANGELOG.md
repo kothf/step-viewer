@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.654.0] - 2026-11-21
+
+### Added
+
+- **Thermal studies of assemblies** (FRS-thermal TH3, FR-TCON-001..004): the Thermal button of the Simulation tab now works over an assembly. Every component is analysed as its own body with its material's thermal conductivity, and the components pass heat to each other where they touch or come within the gap tolerance. The Study tab lists the components (untick one to leave it out, or pick another material for the study only) and the connections. A contact is perfect unless you set it to **Pad or paste** (thickness and conductivity of the layer), **Contact resistance** (a contact conductance in W/(m²·K)) or **No contact** (insulated). Fasteners stay in the study as solids, since heat passes through them.
+- Heat power has **Throughout the whole component**: click any face of a component and the power is made evenly inside it.
+- Results of an assembly: a table by component with its highest and mean temperature and the heat made in it (click a row to show that component alone), and for every connection the heat passing through it and the temperature step across it. Both tables are in the report too.
+- A component with no cooling of its own that touches nothing cooled is named instead of being solved.
+
 ## [1.653.0] - 2026-11-21
 
 ### Added
@@ -4268,7 +4277,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.653.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.654.0...HEAD
+[1.654.0]: https://github.com/kothf/step-viewer/compare/v1.653.0...v1.654.0
 [1.653.0]: https://github.com/kothf/step-viewer/compare/v1.652.0...v1.653.0
 [1.652.0]: https://github.com/kothf/step-viewer/compare/v1.651.0...v1.652.0
 [1.651.0]: https://github.com/kothf/step-viewer/compare/v1.650.0...v1.651.0

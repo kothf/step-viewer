@@ -5,8 +5,8 @@ import { MeshBody, insideOf } from "./body";
 import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
-import { DEFAULT_AMBIENT, GRAVITY, MAX_REFINE, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
-import { solveThermal, thermalMemory, type SinkFlow, type ThermalSink, type ThermalSource } from "./thermal";
+import { DEFAULT_AMBIENT, GRAVITY, MAX_REFINE, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { solveThermal, thermalMemory, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource } from "./thermal";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
 export interface SimBody {
@@ -452,7 +452,12 @@ export interface PassResult {
    * highest temperature, the heat the sources put in and what each surface condition takes away (W, in the order of
    * `ThermalSetup.sinkIds`), and how many solves the pass took (radiation is solved step by step).
    */
-  thermal?: { min: number; max: number; applied: number; flows: SinkFlow[]; solves: number };
+  thermal?: {
+    min: number; max: number; applied: number; flows: SinkFlow[]; solves: number;
+    /** Assemblies: where the components touch and the heat passing there; each one's temperatures and the heat made in it. */
+    contacts?: ThermalContact[];
+    comps?: { min: number; max: number; mean: number; power: number }[];
+  };
 }
 
 /** A thermal study on the body's triangles. */
@@ -464,7 +469,7 @@ export interface ThermalSetup {
 }
 
 /** The surface conditions and heat sources of a thermal study (FR-TLOAD, FR-TBC): W/m² and W/(m²·K) become per mm². */
-export function thermalSetup(st: Study, b: SimBody): ThermalSetup {
+export function thermalSetup(st: Study, b: SimBody, regions?: string[]): ThermalSetup {
   const off = new Set(st.suppressed ?? []), amb = st.settings.ambient ?? DEFAULT_AMBIENT;
   const out: ThermalSetup = { sinks: [], sources: [], sinkIds: [], problems: [] };
   const facesOf = (it: { id: string; faces: { name: string }[] }) => {
@@ -490,6 +495,15 @@ export function thermalSetup(st: Study, b: SimBody): ThermalSetup {
   for (const l of st.loads) {
     if (off.has(l.id) || !isThermalType(l.type)) continue;
     const v = l.value?.v ?? 0;
+    if (l.type === "heat" && l.body && regions) {
+      // an assembly: the heat is made throughout the components the picked faces are on
+      if (!l.faces.length) { out.problems.push({ id: l.id, code: "E-SIM-EMPTY" }); continue; }
+      const comps = new Set(l.faces.map(f => compOf(f.name))), doms: number[] = [];
+      regions.forEach((k, i) => { if (comps.has(compOf(k))) doms.push(i); });
+      if (!doms.length) { out.problems.push({ id: l.id, code: "E-SIM-REF" }); continue; }
+      out.sources.push({ power: v, doms });
+      continue;
+    }
     if (l.type === "heat" && l.body) { out.sources.push({ power: v }); continue; }
     const tris = facesOf(l);
     if (!tris) continue;
@@ -536,7 +550,11 @@ export interface RunInput {
   /** Cells aimed for (default 150). */
   cells?: number;
   /** A thermal study: conductivity W/(mm·K) and its set-up. `mat`, `problem` and the structural parts are not used. */
-  thermal?: { k: number; setup: ThermalSetup };
+  /**
+   * Assemblies: `ks` = each region's conductivity (the regions are then solved as bodies joined where they
+   * touch, within `gap`, as `links` say).
+   */
+  thermal?: { k: number; setup: ThermalSetup; ks?: number[]; gap?: number; links?: ThermalLink[] };
   /** A modal study: this many modes; loads are not used. */
   modal?: {
     count: number;
@@ -830,8 +848,10 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
 export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: number, y: number, z: number) => boolean) => void): Generator<PassResult> {
   const T = inp.thermal!, set = T.setup;
   if (set.problems.length) throw new Error(`${set.problems[0].code}: ${set.problems[0].id}`);
-  if (!(T.k > 0)) throw new Error("E-TH-NOK");
+  const R = T.ks && inp.regions && inp.regions.length > 1 ? inp.regions : null;
+  if (R ? T.ks!.some(v => !(v > 0)) : !((T.ks?.[0] ?? T.k) > 0)) throw new Error("E-TH-NOK");
   if (!set.sinks.length) throw new Error("E-TH-NOSINK");
+  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], tris: r.tris }));
   // nothing brings heat and nothing differs: every point would just sit at the one temperature
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
@@ -842,10 +862,10 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now(), p = k + 2;
-    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.k, grid, prev, sinks: set.sinks, sources: set.sources, memory: inp.memory });
+    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, grid, prev, sinks: set.sinks, sources: set.sources, memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) });
     grid = r.grid; prev = r.x;
     if (r.prevError != null) known.push(r.prevError);
-    const sampler: Sampler = (pos, nrm, hits) => { const s = r.sample(pos, nrm, hits); return { u: s.flux, vm: s.temp, err: s.err, ...(s.hit ? { hit: s.hit } : {}) }; };
+    const sampler: Sampler = (pos, nrm, hits) => { const s = r.sample(pos, nrm, hits); return { u: s.flux, vm: s.temp, err: s.err, ...(s.hit ? { hit: s.hit } : {}), ...(s.dom ? { dom: s.dom } : {}) }; };
     keep?.(sampler, inside);
     const s = r.sample(inp.pos, inp.nrm);
     let min = Infinity, max = -Infinity, maxU = 0, moved = 0;
@@ -857,6 +877,21 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       if (before) moved = Math.max(moved, Math.abs(v - before[i]));
     }
     if (!s.temp.length) { min = 0; max = 0; }
+    // by component: the temperatures on its surface and the heat made in it
+    let comps: { min: number; max: number; mean: number; power: number }[] | undefined;
+    if (domains && s.dom) {
+      comps = domains.map(() => ({ min: Infinity, max: -Infinity, mean: 0, power: 0 }));
+      const cnt = new Float64Array(domains.length);
+      for (let i = 0; i < s.temp.length; i++) { const c = comps[s.dom[i]], v = s.temp[i]; if (v < c.min) c.min = v; if (v > c.max) c.max = v; c.mean += v; cnt[s.dom[i]]++; }
+      comps.forEach((c, i) => { if (cnt[i]) c.mean /= cnt[i]; else { c.min = 0; c.max = 0; } });
+      for (const q of set.sources) {
+        if (q.tris || !q.power) continue;
+        const ds = q.doms ?? domains.map((_d, i) => i);
+        let vol = 0;
+        for (const d of ds) vol += r.volumes[d] ?? 0;
+        if (vol > 0) for (const d of ds) comps[d].power += (q.power * (r.volumes[d] ?? 0)) / vol;
+      }
+    }
     // the range the change is measured against takes in the surroundings, so a nearly even part still converges
     let lo = min, hi = max;
     for (const q of set.sinks) { const v = q.temp ?? q.ambient ?? min; lo = Math.min(lo, v); hi = Math.max(hi, v); }
@@ -868,7 +903,8 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
     yield {
       pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, ...(capped ? { capped } : {}), energy: r.energy, change, ms: Date.now() - t0, reactions: [], applied: none,
       u: s.flux, vm: s.temp, err: s.err, errors: [...known, passError(known)], maxU, maxVm: max, converged, done: converged || capped > 0 || k === passes - 1,
-      thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations },
+      ...(s.dom ? { dom: s.dom } : {}),
+      thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations, ...(domains ? { contacts: r.contacts, comps } : {}) },
     };
     if (converged || capped) return;
   }

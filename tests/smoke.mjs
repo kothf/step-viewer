@@ -17190,6 +17190,112 @@ try {
     await ctx.close();
   }
 
+  // --- Thermal studies of assemblies 1.654 (FRS-thermal TH3): components joined at their contacts ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const ap = await ctx.newPage();
+    ap.on("pageerror", e => errors.push(e.message));
+    ap.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await ap.goto(`${origin}/index.html?debug`);
+    await ap.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await ap.goto(`${origin}/index.html?debug`);
+    await ap.waitForFunction(() => window.__sv);
+    await ap.click("#new-part");
+    await ap.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // A 20 × 20 bar, 100 long along Y, with a conductivity of 50 W/(m·K).
+    await ap.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50 };
+    }));
+    await ap.waitForTimeout(150);
+    await ap.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await ap.click("#new-more");
+    await ap.click("#new-asm-part");
+    const built = n => ap.waitForFunction(k => window.__sv.asm.doc?.components.length === k && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await built(1);
+    // a second bar end to end with the first, 0.05 mm away
+    await ap.evaluate(() => window.__sv.asm.change(d => { const c = d.components[0], tf = [...c.tf]; tf[7] += 100.05; d.components.push({ ...c, id: "c2", name: "Bar<2>", tf, fixed: true }); }));
+    await ap.waitForTimeout(300);
+    await built(2);
+    await ap.waitForTimeout(600);
+    { const r = await ap.$eval("#viewport", e => { const b = e.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; }); await ap.mouse.move(r[0], r[1]); }
+    await ap.keyboard.press("f");
+    await ap.waitForTimeout(900);
+    const sim = () => ap.evaluate(() => window.__sv.sim.state());
+    const solved = async () => { await ap.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await ap.waitForTimeout(400); };
+    const at = (i, axis, sign) => ap.evaluate(([i, axis, sign]) => {
+      const v = window.__sv.viewer, part = v.parts[i];
+      let best = null, top = -Infinity;
+      for (const f of part.data.faces) { const w = v.toWorld(part, f.center), q = sign * w.getComponent(axis); if (q > top) { top = q; best = w.clone(); } }
+      const s = best.project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, [i, axis, sign]);
+    await ap.click("#cm-t-simulation");
+    await ap.waitForTimeout(300);
+    await ap.click('#sim-tools [data-s="mode-thermal"]');
+    await ap.waitForTimeout(200);
+    const tb = await ap.evaluate(() => ({ on: document.querySelector("#sim-tools .sim-mode-b.on")?.dataset.s ?? "", ids: [...document.querySelectorAll("#sim-tools [data-s]")].map(b => b.dataset.s), dis: document.querySelector('#sim-tools [data-s="mode-thermal"]').disabled }));
+    // the far end of the first bar is held at 20 °C (a thermal study is made on the way)
+    await ap.click('#sim-tools [data-s="temp"]');
+    let p = await at(0, 1, -1);
+    await ap.mouse.click(p.x, p.y);
+    await ap.fill('#sim-pm [data-q="temp"]', "20");
+    await ap.keyboard.press("Tab");
+    await ap.click("#sim-pm .pm-ok");
+    await ap.waitForTimeout(400);
+    // 4 W made throughout the second bar: a face of it is picked, then "whole component"
+    await ap.click('#sim-tools [data-s="heat"]');
+    p = await at(1, 2, 1);
+    await ap.mouse.click(p.x, p.y);
+    await ap.waitForTimeout(200);
+    await ap.check('#sim-pm [data-k="body"]');
+    await ap.waitForTimeout(200);
+    const kept = await ap.evaluate(() => document.querySelector("#sim-pm .sim-faces")?.textContent ?? "");
+    await ap.fill('#sim-pm [data-n="value"]', "4");
+    await ap.keyboard.press("Tab");
+    await ap.click("#sim-pm .pm-ok");
+    await ap.waitForTimeout(400);
+    const tree0 = await ap.evaluate(() => ({ kind: window.__sv.asm.doc.studies?.at(-1)?.kind, comps: [...document.querySelectorAll("#sim-tree .sim-complist li")].map(li => ({ k: li.querySelector("[data-v=compk]")?.textContent ?? "", warn: !!li.querySelector(".sim-warn"), rigid: !!li.querySelector("[data-a=comprigid]") })), bolts: !!document.querySelector("#sim-tree .sim-bolts"), tlinks: !!document.querySelector("#sim-tree .sim-tlinks"), load: window.__sv.asm.doc.studies?.at(-1)?.loads.map(l => ({ body: l.body, faces: l.faces.map(f => f.name) })) }));
+    await ap.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t1 = await sim();
+    const res1 = await ap.evaluate(() => ({ rows: [...document.querySelectorAll("#sim-tree .sim-tcomps tbody tr")].map(tr => [...tr.children].map(td => td.textContent)), heat: parseFloat(document.querySelector("#sim-tree .sim-contacts [data-v=cheat]")?.textContent ?? ""), drop: document.querySelector("#sim-tree .sim-contacts [data-v=cdrop]")?.textContent ?? "", wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await ap.click("#lang-btn");
+    const ru = await ap.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-tlinks *, #tab-sim .sim-comps *, #tab-sim .sim-tcomps *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await ap.click("#lang-btn");
+    await ap.waitForTimeout(300);
+    // the first bar carries 4 W over 100 mm: 20 K; the second makes them along its length: 10 K more at its far end
+    const hot = 20 + (4 * 100) / (0.05 * 400) + (4 * 100) / (2 * 0.05 * 400);
+    check(tb.on === "mode-thermal" && !tb.dis && tb.ids.includes("heat") && !tb.ids.includes("mat") && kept === "1 face"
+      && tree0.kind === "thermal" && tree0.comps.length === 2 && tree0.comps.every(c => /50/.test(c.k) && !c.warn && !c.rigid) && !tree0.bolts && tree0.tlinks && tree0.load?.[0]?.body && /^c2@/.test(tree0.load[0].faces[0])
+      && !t1.error && t1.thermal && Math.abs(t1.thermal.max - hot) < 0.3 && Math.abs(t1.thermal.min - 20) < 0.1 && t1.thermal.contacts.length === 1 && t1.thermal.contacts[0].type === "perfect" && Math.abs(Math.abs(t1.thermal.contacts[0].heat) - 4) < 0.05 && Math.abs(t1.thermal.contacts[0].area / 400 - 1) < 0.02
+      && t1.thermal.comps.length === 2 && Math.abs(t1.thermal.comps[1].power - 4) < 1e-6 && !t1.thermal.comps[0].power && Math.abs(t1.thermal.out[0] - 4) < 0.05
+      && res1.rows.length === 2 && Math.abs(res1.heat - 4) < 0.05 && res1.wide <= 0 && ru.length === 0,
+      `thermal 1.654: a thermal study of an assembly: 4 W made in one bar leave through the other, which is held at 20 °C; components with their conductivity, the contact with the heat through it; translated (${JSON.stringify({ tb, kept, tree0, error: t1.error, thermal: t1.thermal, res1, ru, hot })})`);
+    // a pad between the bars: 0.5 mm of 3 W/(m·K) adds P·t / (k·A)
+    await ap.selectOption('#sim-tree select[data-k="tlink"]', "pad");
+    await ap.waitForTimeout(400);
+    const padRow = await ap.evaluate(() => ({ t: document.querySelector('#sim-tree [data-k="padt"]')?.value, k: document.querySelector('#sim-tree [data-k="padk"]')?.value }));
+    const t2 = await sim();
+    await ap.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t3 = await sim();
+    const step = 4 * 0.5 / (0.003 * 400);
+    // no contact: nothing cools the second bar, and it is named
+    await ap.selectOption('#sim-tree select[data-k="tlink"]', "none");
+    await ap.waitForTimeout(400);
+    await ap.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t4 = await sim();
+    const said = await ap.evaluate(() => [...document.querySelectorAll(".toast")].map(x => x.textContent).join(" | "));
+    check(padRow.t === "0.5" && padRow.k === "3" && t2.stale && !t3.error && t3.thermal.contacts[0].type === "resistance" && Math.abs(t3.thermal.max - t1.thermal.max - step) < 0.05 * step && Math.abs(Math.abs(t3.thermal.contacts[0].ta - t3.thermal.contacts[0].tb) - step) < 0.03 * step
+      && /E-TH-LOOSE/.test(t4.error ?? "") && /Bar<2>/.test(said) && /Nothing takes the heat away from/.test(said),
+      `thermal 1.654: a pad on the contact adds its P·t / (k·A) to the hot bar; with no contact the bar nothing cools is named (${JSON.stringify({ padRow, stale: t2.stale, error: t3.error, max: [t1.thermal.max, t3.thermal?.max], contact: t3.thermal?.contacts, step, loose: t4.error, said })})`);
+    await ctx.close();
+  }
+
   // --- Board thermal maps 1.653 (FRS-thermal TH1): a board's STEP with its thermal package ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

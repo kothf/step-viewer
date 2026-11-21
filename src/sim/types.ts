@@ -232,7 +232,20 @@ export const offComps = (st: Study | null | undefined) => new Set(Object.entries
 
 /** How two components (by id, `a` < `b`) are joined where they touch: sliding along the surface, or not at all. */
 /** `adhesive` (FR-CON-025): bonded through a thin elastic layer `t` mm thick of modulus `E`, MPa. */
-export interface StudyLink { a: string; b: string; type: "sliding" | "none" | "adhesive"; t?: number; E?: number }
+/**
+ * Thermal studies (FR-TCON-002): `resist` = a contact conductance `h`, W/(m²·K), between the two surfaces;
+ * `pad` = an interface material `t` mm thick of conductivity `k`, W/(m·K); `none` = insulated. Without a link
+ * the contact is perfect.
+ */
+export interface StudyLink { a: string; b: string; type: "sliding" | "none" | "adhesive" | "resist" | "pad"; t?: number; E?: number; h?: number; k?: number }
+/** A dry metal-to-metal contact under light pressure, W/(m²·K), and a silicone pad. */
+export const DEFAULT_TCC = 3000;
+export const DEFAULT_PAD = { t: 0.5, k: 3 };
+/** What a thermal link passes per area and kelvin, W/(mm²·K). */
+export function linkConductance(l: { type: string; t?: number; h?: number; k?: number }): number {
+  if (l.type === "pad") return ((l.k && l.k > 0 ? l.k : DEFAULT_PAD.k) * 1e-3) / (l.t && l.t > 0 ? l.t : DEFAULT_PAD.t);
+  return (l.h && l.h > 0 ? l.h : DEFAULT_TCC) * 1e-6;
+}
 export const DEFAULT_GLUE = { t: 0.2, E: 2000 };
 /** Poisson's ratio taken for an adhesive layer. */
 export const GLUE_NU = 0.4;

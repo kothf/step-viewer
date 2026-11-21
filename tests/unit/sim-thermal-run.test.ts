@@ -114,3 +114,47 @@ test("thermal exports: CSV headings name temperatures and heat flux in W/m²", a
   assert.equal(pc[0].split(",").length, 9);
   assert.equal(pc[1], "1,1,2,3,55.5,1000,1000,0,0");
 });
+
+// ---- assemblies (TH3): two bars end to end, each a component with its own conductivity ----
+function barBody(x0: number, x1: number, comp: string) {
+  const l = [x0, 0, 0], h = [x1, B, T], t: number[] = [], f: number[] = [], n: string[] = [];
+  for (let a = 0; a < 3; a++) for (const end of [0, 1]) {
+    const q = rectFace(a, end ? h[a] : l[a], l, h, !!end);
+    n.push(`${comp}@${"xyz"[a]}${end}`);
+    t.push(...q);
+    for (let k = 0; k < q.length / 9; k++) f.push(n.length - 1);
+  }
+  return { tris: t, face: f, names: n };
+}
+const A1 = barBody(0, 60, "c1"), A2 = barBody(60, L, "c2");
+const asmBody = { tris: Float64Array.from([...A1.tris, ...A2.tris]), face: Int32Array.from([...A1.face, ...A2.face.map(i => i + 6)]), names: [...A1.names, ...A2.names], lo, hi };
+const regions = [{ tris: Float64Array.from(A1.tris), mat: { name: "a", E: 0, nu: 0, rho: 0 } }, { tris: Float64Array.from(A2.tris), mat: { name: "b", E: 0, nu: 0, rho: 0 } }];
+const K1 = 0.2, K2 = 0.02;
+
+test("thermal study of an assembly: components in series, a pad between them, heat made in one (AT-TH3-4, AT-TH3-8)", () => {
+  const st = newStudy([], "thermal");
+  st.loads.push({ id: "l1", type: "heat", faces: [{ name: "c2@x1" }], value: { v: 4 } });
+  st.supports.push({ id: "s1", type: "temp", faces: [{ name: "c1@x0" }], temp: 20 });
+  const go = (links?: { a: number; b: number; type: "none" | "resistance"; h?: number }[]) => [...runThermal({ body: asmBody, mat: regions[0].mat, problem: studyProblem(st, asmBody), passes: 2, energyTol: 0, pos, nrm, regions,
+    thermal: { k: K1, setup: thermalSetup(st, asmBody, ["c1", "c2"]), ks: [K1, K2], gap: 0.1, links } })].at(-1)!;
+  const r = go(), area = B * T, hot = 20 + (4 * 60) / (K1 * area) + (4 * 40) / (K2 * area);
+  assert.ok(Math.abs(r.vm[1] - hot) < 2e-3 * hot, `hot end ${r.vm[1]} for ${hot}`);
+  assert.deepEqual([...r.dom!], [0, 1, 0]);
+  const C = r.thermal!.contacts!;
+  assert.equal(C.length, 1);
+  assert.ok(Math.abs(Math.abs(C[0].heat) - 4) < 0.02, `contact heat ${C[0].heat}`);
+  assert.equal(r.thermal!.comps!.length, 2);
+  assert.ok(r.thermal!.comps![1].max > r.thermal!.comps![0].max);
+  // a 0.5 mm pad of 3 W/(m·K)
+  const h = 3e-3 / 0.5, p = go([{ a: 0, b: 1, type: "resistance", h }]), step = 4 / (h * area);
+  assert.ok(Math.abs(p.vm[1] - r.vm[1] - step) < 0.03 * step, `pad adds ${p.vm[1] - r.vm[1]} for ${step}`);
+  // no contact: nothing cools the second bar
+  assert.throws(() => go([{ a: 0, b: 1, type: "none" }]), /E-TH-LOOSE: 1/);
+  // the heat made throughout the component a picked face is on
+  st.loads[0] = { id: "l1", type: "heat", faces: [{ name: "c2@y0" }], value: { v: 4 }, body: true };
+  const set = thermalSetup(st, asmBody, ["c1", "c2"]);
+  assert.deepEqual(set.sources, [{ power: 4, doms: [1] }]);
+  const v = go();
+  assert.ok(Math.abs(v.thermal!.comps![1].power - 4) < 1e-9 && v.thermal!.comps![0].power === 0);
+  assert.ok(Math.abs(v.thermal!.flows[0].out - 4) < 0.02, `out ${v.thermal!.flows[0].out}`);
+});
