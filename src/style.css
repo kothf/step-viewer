@@ -1853,3 +1853,52 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .pm-rel-list li.pm-err .rel-row .rel-ico { color: var(--danger); }
 .mc-menu .mc-i .rel-ico { margin: auto; }
 .sk-rel:not(.sk-fix), .sk-infer { display: flex; align-items: center; justify-content: center; padding: 0 1px; }
+
+/* ---------- board thermal maps (FRS-thermal section 7) ---------- */
+#th-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 4; }
+#th-labels .sim-peak.sel { border-color: var(--accent); }
+.th-legend .ana-row input { width: 64px; }
+.th-legend .ana-head strong { flex: 1; }
+.th-warn { margin: 0; color: var(--warn, #e8590c); font-size: 11px; }
+.th-warn .btn { margin-left: 4px; }
+.th-summary { position: absolute; left: 12px; top: 12px; z-index: 5; max-width: min(300px, calc(100% - 150px)); background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); font-size: 12px; }
+.th-summary[hidden] { display: none; }
+.th-sum-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 7px 10px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; border-radius: 9px; }
+.th-sum-h:hover { background: var(--panel-2); }
+.th-sum-h i { font-style: normal; color: var(--muted); }
+.th-summary ul { list-style: none; margin: 0; padding: 0 4px 6px; }
+.th-summary li { padding: 3px 6px; border-radius: 5px; }
+.th-summary li[data-go] { cursor: pointer; }
+.th-summary li[data-go]:hover, .th-summary li[data-go]:focus-visible { background: var(--panel-2); }
+.th-summary li.bad, .th-card dd.bad, .th-list li.bad, .th-table tr.bad td[data-v] { color: var(--danger, #e03131); font-weight: 600; }
+.th-summary li.warn, .th-card dd.warn, .th-list li.warn, .th-table tr.warn td[data-v] { color: var(--warn, #e8590c); }
+.th-card { position: absolute; z-index: 6; min-width: 170px; max-width: 280px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); font-size: 12px; pointer-events: none; }
+.th-card[hidden] { display: none; }
+.th-card h4 { margin: 0 0 4px; font-size: 13px; }
+.th-card h4 small, .th-table td small { color: var(--muted); font-weight: 400; }
+.th-card dl { display: grid; grid-template-columns: auto auto; gap: 2px 10px; margin: 0; }
+.th-card dt { color: var(--muted); }
+.th-card dd { margin: 0; text-align: right; font-family: var(--mono); }
+.th-side { display: grid; gap: 4px; padding: 8px 10px 14px; min-width: 0; }
+.th-sec { display: grid; gap: 5px; padding: 6px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.th-sec:last-child { border-bottom: 0; }
+.th-sec h4 { margin: 0; font-size: 12px; }
+.th-sec p { margin: 0; font-size: 12px; }
+.th-note { color: var(--warn, #e8590c); }
+.th-pic img { display: block; max-width: 100%; max-height: 120px; border: 1px solid var(--line); border-radius: 6px; }
+.th-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 12px; }
+.th-list li { padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+.th-list li:hover, .th-list li:focus-visible { background: var(--panel-2); }
+.th-list li.miss, .th-list li.chg { color: var(--muted); }
+.th-tablewrap { overflow-x: auto; min-width: 0; }
+.th-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.th-table th { text-align: right; font-weight: 600; color: var(--muted); padding: 3px 3px; font-size: 11px; white-space: nowrap; cursor: pointer; user-select: none; border-bottom: 1px solid var(--line); }
+.th-probes .th-table th { cursor: default; }
+.th-table th:first-child, .th-table td:first-child { text-align: left; }
+.th-table td { text-align: right; padding: 3px 3px; font-size: 11px; font-family: var(--mono); white-space: nowrap; }
+.th-table td:first-child { font-family: inherit; white-space: normal; }
+.th-table tbody tr[data-part] { cursor: pointer; }
+.th-table tbody tr[data-part]:hover { background: var(--panel-2); }
+.th-table tbody tr.sel { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.th-table tr.miss td:first-child { color: var(--muted); font-style: italic; }
+.th-set .ana-row input { width: 72px; }

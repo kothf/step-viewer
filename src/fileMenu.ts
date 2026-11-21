@@ -28,6 +28,8 @@ export interface FileHost {
   dirtyCount(): number;
   open(): void;
   openFiles(files: File[]): void;
+  /** Asks for a thermal package for the model file on screen. */
+  addThermalMap?(): void;
   /** Opens the i-th recent document (through its vault when it came from one). */
   openRecent?(i: number): void;
   newPart(): void;
@@ -108,6 +110,7 @@ export class FileMenu {
       "-",
       { id: "open", label: t("Open…"), key: "Ctrl+O", on: true },
       { id: "open-drawing", label: t("Open drawing"), on: true, hidden: !h.openDrawing, title: t("The drawing of this part or assembly: open, in a tab, in the vault or in the recent documents") },
+      { id: "thermal-map", label: t("Add thermal map…"), on: true, hidden: !h.addThermalMap || k !== "model", title: t("A thermal package of this board: temperatures from the board design app, shown on the model") },
       { id: "close", label: t("Close"), key: "Ctrl+Alt+W", on: h.docCount() > 0 },
       { id: "close-all", label: t("Close all"), on: h.docCount() > 0 },
       "-",
@@ -204,6 +207,7 @@ export class FileMenu {
       case "asm-part": h.asmFromPart?.(); break;
       case "open": h.open(); break;
       case "open-drawing": h.openDrawing?.(); break;
+      case "thermal-map": h.addThermalMap?.(); break;
       case "close": await h.close(); break;
       case "close-all": await h.closeAll(); break;
       case "save": await h.save(false); break;
