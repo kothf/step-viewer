@@ -1715,6 +1715,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-dot.load { background: #d6336c; }
 .sim-dot.ref { background: #1c7ed6; }
 .sim-dot.weld { background: #f08c00; }
+.sim-dot.conn { background: #9c36b5; }
+.sim-dot.mass { background: #0c8599; }
 .sim-refs { margin-top: 6px; }
 .sim-relieved .sim-list { opacity: 0.5; }
 .sim-relief { margin-top: 6px; }

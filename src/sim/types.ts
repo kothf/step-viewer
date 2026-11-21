@@ -82,6 +82,36 @@ export interface StudyWeld {
   edges: StudyEdge[];
   throat: number;
 }
+/**
+ * A connector (FR-CON-023): the faces of side one are tied to those of side two, each side moving as a whole
+ * (mean displacement and rotation). Rigid, or a spring of `k` N/mm along X, Y, Z and `kr` N·mm/rad against turning.
+ */
+export interface StudyConnector {
+  id: string;
+  name?: string;
+  type: "connector";
+  faces: FaceRef[];
+  faces2: FaceRef[];
+  kind: "rigid" | "spring";
+  k: [number, number, number];
+  kr?: number;
+}
+/** A mass spread over faces, kg (FR-CON-023): it weighs under gravity and spinning and counts in a modal study. */
+export interface StudyMass {
+  id: string;
+  name?: string;
+  type: "mass";
+  faces: FaceRef[];
+  mass: number;
+}
+export type StudyExtra = StudyWeld | StudyConnector | StudyMass;
+export const CONNECTOR_LABEL = "Connector";
+export const MASS_LABEL = "Mass";
+export const DEFAULT_SPRING = 1000;
+/** A study's welds, connectors and masses. */
+export function extrasOf(st: Study | null | undefined): StudyExtra[] {
+  return [...(st?.welds ?? []), ...(st?.connectors ?? []), ...(st?.masses ?? [])];
+}
 export const WELD_LABEL = "Weld";
 export const DEFAULT_THROAT = 3;
 
@@ -135,6 +165,8 @@ export interface Study {
   bolts?: Record<string, StudyBolt>;
   /** Assemblies: welds along edges where two components meet (FR-CON-022). */
   welds?: StudyWeld[];
+  connectors?: StudyConnector[];
+  masses?: StudyMass[];
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
   /** Static studies: load cases (FR-LOAD-022), each solved on its own with the same supports. None = one case with every load. */
@@ -203,8 +235,8 @@ export function newStudy(existing: Study[], kind: StudyKind = "static"): Study {
 }
 
 /** The next free id with a prefix among a study's supports and loads. */
-export function nextId(st: Study, prefix: "s" | "l" | "r" | "w"): string {
-  const ids = new Set([...st.supports, ...st.loads, ...(st.refine ?? []), ...(st.welds ?? [])].map(i => i.id));
+export function nextId(st: Study, prefix: "s" | "l" | "r" | "w" | "k" | "m"): string {
+  const ids = new Set([...st.supports, ...st.loads, ...(st.refine ?? []), ...extrasOf(st)].map(i => i.id));
   let n = 1;
   while (ids.has(`${prefix}${n}`)) n++;
   return `${prefix}${n}`;
@@ -216,16 +248,16 @@ export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: 
 export const REFINE_LABEL = "Local accuracy";
 
 /** Default name of a new item: "Fixed 1", "Force 2". */
-export function itemName(st: Study, type: SupportType | LoadType | "refine" | "weld"): string {
-  const label = type === "refine" ? REFINE_LABEL : type === "weld" ? WELD_LABEL : (SUPPORT_LABEL as Record<string, string>)[type] ?? (LOAD_LABEL as Record<string, string>)[type];
-  const names = new Set([...st.supports, ...st.loads, ...(st.refine ?? []), ...(st.welds ?? [])].map(i => i.name));
+export function itemName(st: Study, type: SupportType | LoadType | "refine" | "weld" | "connector" | "mass"): string {
+  const label = type === "refine" ? REFINE_LABEL : type === "weld" ? WELD_LABEL : type === "connector" ? CONNECTOR_LABEL : type === "mass" ? MASS_LABEL : (SUPPORT_LABEL as Record<string, string>)[type] ?? (LOAD_LABEL as Record<string, string>)[type];
+  const names = new Set([...st.supports, ...st.loads, ...(st.refine ?? []), ...extrasOf(st)].map(i => i.name));
   let n = 1;
   while (names.has(`${label} ${n}`)) n++;
   return `${label} ${n}`;
 }
 
 /** How many faces, edges or points an item is on. */
-export function pickCount(it: StudySupport | StudyLoad | StudyRefine | StudyWeld): number {
+export function pickCount(it: StudySupport | StudyLoad | StudyRefine | StudyExtra): number {
   const l = it as { on?: "edges" | "points"; edges?: StudyEdge[]; points?: StudyPoint[] };
   return l.on === "edges" ? l.edges?.length ?? 0 : l.on === "points" ? l.points?.length ?? 0 : it.faces.length;
 }

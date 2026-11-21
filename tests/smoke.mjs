@@ -16542,6 +16542,27 @@ try {
       && rg0.to === "1000" && rg0.range.from === 300 && rg0.range.to === 1000 && !rg0.modes
       && !rg.error && rg.modes.length === 2 && rg.modes.every(m => m.hz > 300 && m.hz < 1000) && !rg.more && rg.plot.shown && rgTab.rows === 2 && rgTab.wide <= 0,
       `sim 1.619: the mode table adds the effective masses up, the swing changes speed, and a frequency range gives only the modes in it (${JSON.stringify({ cu, speed: sp.speed, rg0, error: rg.error, hz: rg.modes.map(m => m.hz), more: rg.more, rgTab })})`);
+    // 1.640: a mass spread over the top face, equal to the bar's own, lowers the frequencies by √2
+    await mp.selectOption('#sim-tree [data-k="find"]', "count");
+    await settle();
+    await mp.click('#sim-tools [data-s="mass"]');
+    await mp.waitForSelector('#sim-pm [data-q="mass"]');
+    p = await at("f1:end");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    await mp.fill('#sim-pm [data-q="mass"]', "0.628");
+    await mp.keyboard.press("Tab");
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    const q0 = await sim();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const q1 = await sim();
+    const qTree = await mp.evaluate(() => ({ text: document.querySelector("#sim-tree .sim-masses .sim-meta")?.textContent ?? "", wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    check(q0.massList?.length === 1 && q0.massList[0].faces === 1 && q0.massList[0].mass === 0.628 && q0.stale && /0\.628 kg/.test(qTree.text) && qTree.wide <= 0
+      && !q1.error && Math.abs(q1.modes[0].hz / (m1.modes[0].hz / Math.SQRT2) - 1) < 0.04 && Math.abs(q1.mass * 1000 - 1.256) < 0.004,
+      `sim 1.640: a mass spread over a face counts in a modal study: as heavy as the bar, it lowers the first frequency by √2 (${JSON.stringify({ list: q0.massList, stale: q0.stale, qTree, error: q1.error, hz: [m1.modes[0].hz, q1.modes?.[0]?.hz], mass: q1.mass })})`);
     await mp.click("#lang-btn");
     await mp.waitForTimeout(300);
     const mLeft = await mp.evaluate(() => {
@@ -17223,6 +17244,51 @@ try {
       && !w1.error && w1.welds?.length === 1 && Math.abs(w1.welds[0].force / 500 - 1) < 0.03 && Math.abs(w1.welds[0].length / 40 - 1) < 0.05 && w1.welds[0].peak >= w1.welds[0].mean && Math.abs(w1.welds[0].stress - w1.welds[0].peak / 5) < 1e-9
       && wTree.rows === 1 && Math.abs(wTree.force / 500 - 1) < 0.03 && wTree.wide <= 0 && wRu.length === 0 && /E-SIM-LOOSE/.test(w2.error ?? "") && !w3.weldList?.length,
       `sim 1.639: a weld along two edges carries the whole load between bars that are not joined; left out, the bar is loose; translated (${JSON.stringify({ list: [w0.weldList, w3.weldList], error: [w1.error, w2.error], welds: w1.welds, wTree, wRu })})`);
+    // 1.640: a rigid connector between the two bars' top faces carries the load instead; as a spring it gives force / stiffness
+    await mp.selectOption("#sim-tree select[data-k=link]", "none");
+    await mp.waitForTimeout(300);
+    await mp.click('#sim-tools [data-s="connector"]');
+    await mp.waitForSelector('#sim-pm [data-side="2"]');
+    p = await at(0, 2, 1);
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(250);
+    await mp.click('#sim-pm [data-side="2"]');
+    await mp.waitForTimeout(200);
+    p = await at(1, 2, 1);
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(250);
+    await mp.click("#sim-pm .pm-ok");
+    await mp.waitForTimeout(400);
+    const kc0 = await sim();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const k1s = await sim();
+    await mp.click('#sim-tree .sim-conns .sim-row [data-a="edit"]');
+    await mp.waitForSelector("#sim-pm select[data-k=ckind]");
+    await mp.selectOption("#sim-pm select[data-k=ckind]", "spring");
+    await mp.waitForSelector('#sim-pm [data-q="k2"]');
+    await mp.fill('#sim-pm [data-q="k2"]', "2500");
+    await mp.keyboard.press("Tab");
+    await mp.click("#sim-pm .pm-ok");
+    await mp.waitForTimeout(400);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const k2s = await sim();
+    const kTree = await mp.evaluate(() => ({ rows: document.querySelectorAll("#sim-tree .sim-conntable tbody tr").length, force: parseFloat(document.querySelector("#sim-tree .sim-conntable [data-v=kforce]")?.textContent ?? ""), wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click("#lang-btn");
+    const kRu = await mp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-conns *, #tab-sim .sim-conntable *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    await mp.click('#sim-tree .sim-conns .sim-row [data-a="del"]');
+    await mp.waitForTimeout(300);
+    await mp.selectOption("#sim-tree select[data-k=link]", wLink);
+    await mp.waitForTimeout(300);
+    const k3s = await sim();
+    check(kc0.connList?.length === 1 && kc0.connList[0].a === 1 && kc0.connList[0].b === 1 && kc0.connList[0].kind === "rigid"
+      && !k1s.error && k1s.conns?.length === 1 && Math.abs(k1s.conns[0].force / 500 - 1) < 0.02 && !k1s.conns[0].spring
+      && !k2s.error && k2s.conns[0].spring && Math.abs(k2s.conns[0].stretch / 0.2 - 1) < 0.03 && k2s.maxU > k1s.maxU + 0.15
+      && kTree.rows === 1 && Math.abs(kTree.force / 500 - 1) < 0.02 && kTree.wide <= 0 && kRu.length === 0 && !k3s.connList?.length,
+      `sim 1.640: a rigid connector carries the whole load between bars that are not joined, and as a spring it gives force over stiffness; translated (${JSON.stringify({ list: kc0.connList, error: [k1s.error, k2s.error], conns: [k1s.conns, k2s.conns], maxU: [k1s.maxU, k2s.maxU], kTree, kRu })})`);
     // left out: the load on it can no longer be solved, and the message says why; the last component cannot be left out
     await mp.uncheck('#sim-tree .sim-complist li[data-comp="c2"] [data-k="compon"]');
     await mp.waitForTimeout(400);
