@@ -317,6 +317,8 @@ details > :last-child { margin-bottom: 12px; }
 .readout .det { font: 11px var(--mono); color: var(--muted); display: grid; gap: 1px; max-height: 30vh; overflow: auto; overflow-wrap: anywhere; }
 .readout .modes { display: flex; margin: 2px 0 5px; font-size: 11px; }
 .readout .modes button { padding: 3px 7px; }
+.readout .amodes { display: flex; gap: 8px; margin: 0 0 5px; font-size: 11px; color: var(--muted); }
+.readout .amodes select { font-size: 11px; }
 .readout .acts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .readout .acts:empty { display: none; }
 .readout button.x { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 13px; line-height: 1; }

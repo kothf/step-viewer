@@ -247,6 +247,8 @@ const state = {
   livePicks: [] as Entity[],
   /** Two round features: centre to centre, nearest or farthest rims. Kept between picks. */
   circleMode: "center" as CircleMode,
+  /** Custom arc conditions, one per pick; null = `circleMode` for both. */
+  arcModes: null as [CircleMode, CircleMode] | null,
   /** Readout card beside the measurement (true) or docked in the bottom-left corner (default). */
   readoutFloat: storage.get("sv:readout") === "float",
   /** Last value copied from the readout. */
@@ -1768,19 +1770,35 @@ function remeasure() {
   let lost = 0;
   for (const m of state.measurements) {
     if (!m.src) continue;
-    const ents = entitiesOf(m.src);
-    try {
-      if (!ents) throw new Error("gone");
-      const n = m.src.type === "smart" ? smartMeasure(viewer, ents, m.color, { circleMode: m.src.mode }) : measure(viewer, m.src.type, ents, m.color);
-      const keep = { id: m.id, color: m.color, visible: m.visible, src: m.src };
-      for (const k of Object.keys(m)) delete (m as unknown as Record<string, unknown>)[k];
-      Object.assign(m, tagParts(n, ents.map(e => e.part)), keep);
-    } catch {
+    if (!measureAgain(m)) {
       if (!m.stale) lost++;
       m.stale = true;
     }
   }
   if (lost) toast(t("{n} measurement lost its geometry and keeps its old value|{n} measurements lost their geometry and keep their old values", { n: lost }), true);
+  refreshMeasurements();
+}
+
+/** Measures a pinned measurement again from its source in place; false when its geometry is gone. */
+function measureAgain(m: Measurement) {
+  const src = m.src!, ents = entitiesOf(src);
+  try {
+    if (!ents) throw new Error("gone");
+    const n = src.type === "smart" ? smartMeasure(viewer, ents, m.color, { circleMode: src.mode, arcModes: src.modes }) : measure(viewer, src.type, ents, m.color);
+    const keep = { id: m.id, color: m.color, visible: m.visible, src };
+    for (const k of Object.keys(m)) delete (m as unknown as Record<string, unknown>)[k];
+    Object.assign(m, tagParts(n, ents.map(e => e.part)), keep);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A pinned measurement's arc condition changed: measure it again and save. */
+function remeasureOne(m: Measurement) {
+  if (!measureAgain(m)) { toast(t("This measurement lost its geometry"), true); return; }
+  m.stale = false;
+  saveMeasurements();
   refreshMeasurements();
 }
 
@@ -1915,7 +1933,7 @@ function sameEntity(a: Entity, b: Entity) {
 /** Measures one entity (its size) or two (the relation between them) and shows it until the next click. */
 function showLive(picks: Entity[]) {
   try {
-    state.live = tagParts(smartMeasure(viewer, picks, $<HTMLInputElement>("#m-color").value, { circleMode: state.circleMode }), picks.map(p => p.part));
+    state.live = tagParts(smartMeasure(viewer, picks, $<HTMLInputElement>("#m-color").value, { circleMode: state.circleMode, arcModes: state.arcModes ?? undefined }), picks.map(p => p.part));
     state.livePicks = picks;
   } catch (err) {
     state.live = null;
@@ -2003,8 +2021,58 @@ function csysFrom(e: Entity): Csys | null {
   return null;
 }
 
-function setCircleMode(mode: CircleMode) {
-  state.circleMode = mode;
+/** Pinned measurements with no names to follow (a STEP file, not a modelled part) keep their picks here, so their arc condition can still change. */
+const pinPicks = new WeakMap<Measurement, { ents: Entity[]; mode?: CircleMode; modes?: [CircleMode, CircleMode] }>();
+/** The arc condition a pinned measurement keeps: its source, or its kept picks. */
+const condOf = (m: Measurement): { mode?: CircleMode; modes?: [CircleMode, CircleMode] } | null => m.src?.type === "smart" ? m.src : pinPicks.get(m) ?? null;
+/** The selected pinned measurement whose arc condition can change, while nothing live is shown. */
+function selectedCond() {
+  if (state.live) return null;
+  const m = state.measurements.find(x => x.id === state.selectedMeasurement);
+  return m && m.data.modes && condOf(m) ? m : null;
+}
+/** A pinned measurement's arc condition changed: measure it again and save. */
+function applyCond(m: Measurement) {
+  const kept = pinPicks.get(m);
+  if (!kept) { remeasureOne(m); return; }
+  const n = smartMeasure(viewer, kept.ents, m.color, { circleMode: kept.mode, arcModes: kept.modes });
+  const keep = { id: m.id, color: m.color, visible: m.visible };
+  for (const k of Object.keys(m)) delete (m as unknown as Record<string, unknown>)[k];
+  Object.assign(m, tagParts(n, kept.ents.map(e => e.part)), keep);
+  saveMeasurements();
+  refreshMeasurements();
+}
+
+/**
+ * Arc/circle condition of the live result, or of the selected pinned measurement (which keeps its own):
+ * Centre, Minimum, Maximum, or Custom = one condition per pick (`setArcMode`).
+ */
+function setCircleMode(mode: CircleMode | "custom") {
+  const pinned = selectedCond();
+  if (pinned) {
+    const c = condOf(pinned)!;
+    if (mode === "custom") c.modes = [c.modes?.[0] ?? c.mode ?? "center", c.modes?.[1] ?? c.mode ?? "center"];
+    else { c.mode = mode; delete c.modes; }
+    applyCond(pinned);
+    return;
+  }
+  if (mode === "custom") state.arcModes = state.arcModes ?? [state.circleMode, state.circleMode];
+  else { state.circleMode = mode; state.arcModes = null; }
+  if (state.livePicks.length === 2) showLive(state.livePicks);
+}
+
+/** One pick's condition under Custom (0 = the first pick). */
+function setArcMode(i: 0 | 1, mode: CircleMode) {
+  const pinned = selectedCond();
+  if (pinned) {
+    const c = condOf(pinned)!;
+    const m: [CircleMode, CircleMode] = c.modes ? [...c.modes] : [c.mode ?? "center", c.mode ?? "center"];
+    m[i] = mode; c.modes = m;
+    applyCond(pinned);
+    return;
+  }
+  const m: [CircleMode, CircleMode] = state.arcModes ? [...state.arcModes] : [state.circleMode, state.circleMode];
+  m[i] = mode; state.arcModes = m;
   if (state.livePicks.length === 2) showLive(state.livePicks);
 }
 
@@ -2013,7 +2081,9 @@ function pinLive() {
   if (!m) return;
   state.live = null;
   const refs = pickRefs(state.livePicks);
-  if (refs) m.src = { type: "smart", mode: state.circleMode, picks: refs };
+  const cond = { mode: state.circleMode, ...(state.arcModes ? { modes: [...state.arcModes] as [CircleMode, CircleMode] } : {}) };
+  if (refs) m.src = { type: "smart", ...cond, picks: refs };
+  else if (state.livePicks.length === 2 && m.data.modes) pinPicks.set(m, { ents: [...state.livePicks], ...cond });
   nextColor();
   addMeasurement(m);
 }
@@ -2031,6 +2101,17 @@ function copyValue(text: string) {
   navigator.clipboard?.writeText(out).then(() => toast(t("Copied {v}", { v: out })), () => toast(t("Copy failed; value {v}", { v: out }), true));
 }
 
+/** Arc/circle condition buttons (Centre / Minimum / Maximum, Custom with two round picks) and, under Custom, one select per pick. */
+function modesHtml(m: Measurement) {
+  if (!m.data.modes || (m !== state.live && !condOf(m))) return "";
+  const cur = String(m.data.mode), round = String(m.data.round ?? "ab");
+  const list: { mode: CircleMode | "custom"; label: string }[] = [...CIRCLE_MODES, ...(round === "ab" ? [{ mode: "custom" as const, label: "Custom" }] : [])];
+  const btns = list.map(x => `<button data-cmode="${x.mode}" class="${x.mode === cur ? "on" : ""}" aria-pressed="${x.mode === cur}">${esc(t(x.label))}</button>`).join("");
+  const sel = (i: 0 | 1, v: string) => `<label>${esc(t(i ? "Second" : "First"))} <select data-amode="${i}">${CIRCLE_MODES.map(x => `<option value="${x.mode}"${x.mode === v ? " selected" : ""}>${esc(t(x.label))}</option>`).join("")}</select></label>`;
+  const custom = cur === "custom" ? `<div class="amodes">${sel(0, String(m.data.modeA))}${sel(1, String(m.data.modeB))}</div>` : "";
+  return `<div class="modes seg" title="${esc(t("Arc/circle condition"))}">${btns}</div>${custom}`;
+}
+
 function renderReadout() {
   const box = $("#readout");
   const m = state.live ?? state.measurements.find(x => x.id === state.selectedMeasurement);
@@ -2044,7 +2125,7 @@ function renderReadout() {
   const decOpts = ["", "0", "1", "2", "3", "4", "5", "6"].map(d => `<option value="${d}"${String(units.decimals ?? "") === d ? " selected" : ""}>${d === "" ? t("auto") : t("{n} dp", { n: d })}</option>`).join("");
   box.classList.toggle("floating", state.readoutFloat);
   box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><span class="hud-units"><button class="x dock" title="${t(state.readoutFloat ? "Dock in the corner" : "Float next to the measurement")}">${state.readoutFloat ? "⇲" : "⇱"}</button><select data-hud="units" title="${t("Units")}">${unitOpts}</select><select data-hud="decimals" title="${t("Decimal places")}">${decOpts}</select><button class="x close" title="${t("Close (Esc)")}">✕</button></span></div>
-    <div class="val"><b class="cp" translate="no" title="${t("Click to copy, or drag into a box")}">${esc(f.value)}</b></div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${t(x.label)}</button>`).join("")}</div>` : ""}<div class="det">${det.join("")}</div><div class="acts"></div>`;
+    <div class="val"><b class="cp" translate="no" title="${t("Click to copy, or drag into a box")}">${esc(f.value)}</b></div>${modesHtml(m)}<div class="det">${det.join("")}</div><div class="acts"></div>`;
   box.querySelector(".dock")!.addEventListener("click", () => {
     state.readoutFloat = !state.readoutFloat;
     storage.set("sv:readout", state.readoutFloat ? "float" : "dock");
@@ -2057,7 +2138,8 @@ function renderReadout() {
     if (m === state.live) handlePick(null);
     else { state.selectedMeasurement = null; refreshMeasurements(); }
   });
-  box.querySelectorAll<HTMLElement>("[data-cmode]").forEach(b => b.addEventListener("click", () => setCircleMode(b.dataset.cmode as CircleMode)));
+  box.querySelectorAll<HTMLElement>("[data-cmode]").forEach(b => b.addEventListener("click", () => setCircleMode(b.dataset.cmode as CircleMode | "custom")));
+  box.querySelectorAll<HTMLSelectElement>("[data-amode]").forEach(el => el.addEventListener("change", () => setArcMode(Number(el.dataset.amode) as 0 | 1, el.value as CircleMode)));
   const acts = box.querySelector(".acts")!;
   const add = (label: string, fn: () => void) => {
     const b = document.createElement("button");
@@ -3676,4 +3758,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, sim, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, sim, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setArcMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });

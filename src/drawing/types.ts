@@ -106,6 +106,9 @@ export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
  */
 /** `s`: on a circle edge, one outline line (+1/−1) of the cylinder it bounds, seen from the side (a linear dimension's line). */
 /** `rv`: `e` names a cone face and `s` one of its outline lines seen from the side (a chamfer on a turned part); `h` = the middle of its axis. */
+/** Where a linear dimension meets a circle: its centre, nearest or farthest point. */
+export type ArcCond = "center" | "min" | "max";
+
 export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3; s?: 1 | -1; rv?: true } | { pt: V3; com?: true };
 
 /** Tolerance (FR-DRW-021): symmetric ±up, deviations +up/−lo, limits, or an ISO 286 fit code. */
@@ -136,6 +139,8 @@ export interface DimAnnot {
   src?: string;
   /** Inspection dimension (FR-DRW-021): the text sits in an obround frame. */
   insp?: boolean;
+  /** Linear dimensions: arc condition of each reference that is a circle or arc seen end-on: from its centre (absent), its near side ("min") or its far side ("max"). */
+  cond?: [ArcCond?, ArcCond?];
   /** Linear dimensions: arrows between the extension lines ("in") or outside them pointing in ("out"); absent = by the room there is. */
   arrows?: "in" | "out";
   /** Reference dimension (in parentheses) or basic dimension (theoretically exact: boxed, never toleranced). */

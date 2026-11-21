@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.649.0] - 2026-11-21
+
+### Added
+
+- Smart measure: **arc/circle conditions** for every pair with a round pick, as other CAD apps' Measure tool has them. Whenever an arc, circle, round face, cylinder or sphere is measured against a vertex, a line, a face or another round feature, the result card switches between **Centre** (from the centre, or a cylinder's axis), **Minimum** (the nearest point of the rim) and **Maximum** (the farthest point); the details list all three. Arcs are measured on the arc itself, not the whole circle. With two round picks, **Custom** gives each its own condition. A pinned measurement keeps its condition, and selecting it lets you change it from its card.
+- Drawings: **arc conditions on linear dimensions**. A horizontal, vertical or aligned dimension to a circle seen end-on can start at its centre, its near side or its far side (**First / Second arc condition** in the dimension's properties).
+
 ## [1.648.0] - 2026-11-21
 
 ### Added
@@ -4229,7 +4236,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.648.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.649.0...HEAD
+[1.649.0]: https://github.com/kothf/step-viewer/compare/v1.648.0...v1.649.0
 [1.648.0]: https://github.com/kothf/step-viewer/compare/v1.647.0...v1.648.0
 [1.647.0]: https://github.com/kothf/step-viewer/compare/v1.646.0...v1.647.0
 [1.646.0]: https://github.com/kothf/step-viewer/compare/v1.645.0...v1.646.0

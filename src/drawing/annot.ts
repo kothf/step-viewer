@@ -311,9 +311,34 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
     else if (p0 && p1) pts.push(P(p0), P(p1));
     else return null;
   }
+  // Arc conditions: a circle seen end-on is met at its near or far side, along the measuring direction (h, v, or centre to the other point).
+  if (a.cond && a.refs.length === 2) {
+    const dir: P2 | null = kind === "h" ? [1, 0] : kind === "v" ? [0, 1] : d2(pts[0], pts[1]) > 1e-9 ? unit2([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]]) : null;
+    if (dir) {
+      const moved = pts.map(p => [...p] as P2);
+      for (const i of [0, 1] as const) {
+        const c = a.cond[i];
+        const r = c && c !== "center" ? endOnRadius(a.refs[i], P, topo) : 0;
+        if (!r) continue;
+        const o = pts[1 - i], toward = Math.sign((o[0] - pts[i][0]) * dir[0] + (o[1] - pts[i][1]) * dir[1]) || 1;
+        const s = (c === "min" ? 1 : -1) * toward * r;
+        moved[i] = [pts[i][0] + dir[0] * s, pts[i][1] + dir[1] * s];
+      }
+      pts.splice(0, 2, moved[0], moved[1]);
+    }
+  }
   const [s, t] = pts;
   const value = kind === "h" ? Math.abs(t[0] - s[0]) : kind === "v" ? Math.abs(t[1] - s[1]) : d2(s, t);
   return { k: kind, pts, value, segs };
+}
+
+/** Radius of a circle reference seen end-on (its centre is the point a linear dimension uses), else 0. */
+export function endOnRadius(r: GeoRef, P: (p: V3) => P2, topo: Topo | null): number {
+  if ("pt" in r || (r.p !== "c" && r.p !== "e")) return 0;
+  const e = refEdge(r, topo);
+  if (!e || e.t !== "c" || !e.c || !e.r) return 0;
+  if (e.ax) { const o = P([0, 0, 0]), q = P(e.ax); if (Math.hypot(q[0] - o[0], q[1] - o[1]) > 1e-6) return 0; }
+  return e.r;
 }
 
 /** The sector of two lines that holds `t`: intersection, start angle and sweep (radians), or null for parallel lines. */
