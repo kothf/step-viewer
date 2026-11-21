@@ -5,10 +5,10 @@
 // on `onCmTab`. Entering a sketch selects the Sketch tab; leaving it goes back to Features.
 import { t } from "./i18n";
 
-export type CmTabId = "features" | "sketch" | "surfaces" | "sheetmetal" | "weldments" | "simulation" | "assembly" | "evaluate";
+export type CmTabId = "features" | "sketch" | "surfaces" | "sheetmetal" | "weldments" | "simulation" | "assembly" | "thermal" | "evaluate";
 
 const LABELS: Record<CmTabId, string> = {
-  features: "Features", sketch: "Sketch", surfaces: "Surfaces", sheetmetal: "Sheet Metal", weldments: "Weldments", simulation: "Simulation", assembly: "Assembly", evaluate: "Evaluate",
+  features: "Features", sketch: "Sketch", surfaces: "Surfaces", sheetmetal: "Sheet Metal", weldments: "Weldments", simulation: "Simulation", assembly: "Assembly", thermal: "Thermal", evaluate: "Evaluate",
 };
 
 let tabs: CmTabId[] = [];

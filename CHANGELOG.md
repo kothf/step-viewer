@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.652.0] - 2026-11-21
+
+### Added
+
+- **Board thermal maps**: open a board's STEP file together with the thermal package its design app writes (the `…-thermal.json` manifest with its `.vtu` temperatures and heat-source table, loose or as one zip, or a zip that holds the STEP too) and the temperatures are drawn on the 3D board and its parts. File ▸ Add thermal map… puts a package on the model already open, and a package alone opens on its own surface. Parts are matched to the model's bodies by name, then by size and place, and a package made for another version of the board says so. A **Thermal** tab in the command bar (Map on and off, Top and Bottom, Labels, Probe, Parts, Add map, Remove map) and a Thermal side page: where the result came from and how accurate it is, the problems (parts over their limit, short-lived capacitors, a hot board), the parts list sorted by margin with a filter and sortable columns, the power budget, probes with a CSV, and the life and board limits to check against. The legend sets the colours (heat, rainbow, grey), an automatic or fixed range and Rise above ambient; a summary card names the hottest parts; pointing at a part shows its power, temperature, limit and margin. The model stays measurable under the map.
+
 ## [1.651.0] - 2026-11-21
 
 ### Added
@@ -4252,7 +4258,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.650.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.652.0...HEAD
+[1.652.0]: https://github.com/kothf/step-viewer/compare/v1.651.0...v1.652.0
 [1.651.0]: https://github.com/kothf/step-viewer/compare/v1.650.0...v1.651.0
 [1.650.0]: https://github.com/kothf/step-viewer/compare/v1.649.0...v1.650.0
 [1.649.0]: https://github.com/kothf/step-viewer/compare/v1.648.0...v1.649.0

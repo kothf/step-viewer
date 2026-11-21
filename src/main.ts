@@ -50,9 +50,12 @@ import ImportWorker from "./worker/import.worker?worker";
 import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
+import { packageMeshes, readPackageInWorker, thermalErrorText, ThermalMaps } from "./thermal/ui";
+import { findManifest } from "./thermal/package";
+import { unzipLimited, zip as zipFiles } from "./model/zip";
 import { bindModal, bindTabs, busy, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast, trapFocus } from "./ui";
 import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
-import { bindCommandBar, onCmTab, relabelCmTabs, setCmTabs, type CmTabId } from "./commandBar";
+import { bindCommandBar, onCmTab, relabelCmTabs, selectCmTab, setCmTabs, type CmTabId } from "./commandBar";
 import { renderHelp } from "./help";
 import { hint, relocalizeHint, setTips, tipsOn } from "./hints";
 import { initTutorial } from "./tutorialUi";
@@ -91,6 +94,22 @@ startI18n();
 
 const vpEl = $("#viewport");
 const viewer = new Viewer(vpEl);
+/** Board thermal maps: a thermal package shown on the model file it belongs to. */
+const thermal = new ThermalMaps({
+  viewer,
+  key: () => (state.fileKey.startsWith("sv:m:") && !$("#app").classList.contains("gerber") && !$("#app").classList.contains("model") && !$("#app").classList.contains("asm") ? state.fileKey : ""),
+  changed: () => { syncThermalTab(); syncCmTabs(); },
+  showTab: () => { if (!$("#t-thermal").hidden) showLeftTab("thermal"); },
+  addMap: () => openPicker(),
+});
+/** The Thermal side tab is offered while the model on screen has a map; its badge counts the problems. */
+function syncThermalTab() {
+  const on = thermal.has(), tab = $("#t-thermal"), n = on ? thermal.problemCount() : 0;
+  if (tab.hidden === on) { tab.hidden = !on; if (!on && tab.classList.contains("on")) showLeftTab("tree"); }
+  const c = $("#th-count");
+  c.hidden = !n;
+  c.textContent = String(n);
+}
 const section = new SectionManager(viewer);
 /** The plane of the sketch Section toggle (FR-SK-006), removed when the sketch closes. */
 let skSection: SectionPlane | null = null;
@@ -768,6 +787,14 @@ const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf|sldpr
 /** Opens dropped or chosen files: one 3D model, an SLDASM assembly with its parts, or any number of PCB layers / zips. */
 async function openFiles(files: File[]) {
   if (!files.length) return;
+  // A thermal package (a ZIP with a manifest, or its loose files), alone or with the board's STEP.
+  {
+    const th = await thermalFilesOf(files);
+    if (th) {
+      void recentAdd(files.map(f => ({ name: f.name, data: f })));
+      return openThermal(th.files, th.name, th.rest.find(f => /\.(step|stp)$/i.test(f.name)), th.zip);
+    }
+  }
   // File ▸ recent documents: the main file first (a drawing, part or assembly, else the biggest 3D model).
   {
     const main = files.find(f => isDrawingName(f.name) || modeller.isPartName(f.name) || asm.isAsmName(f.name)) ?? files.filter(f => is3dName(f.name)).sort((a, b) => b.size - a.size)[0] ?? files[0];
@@ -964,8 +991,73 @@ async function openMesh(buffer: ArrayBuffer, name: string) {
   toast(t("Mesh file: faces are found from the triangles, sizes in millimetres. Exact geometry and STEP export need a STEP, IGES or BREP file."));
 }
 
+// ---------- board thermal maps (FRS-thermal section 7) ----------
+/** The files of a thermal package inside a ZIP, or null when the ZIP is something else (a Gerber set, say). */
+async function thermalZip(buffer: ArrayBuffer): Promise<Map<string, Uint8Array> | null> {
+  try {
+    const files = await unzipLimited(buffer, 1024 ** 3);
+    return findManifest(files) ? files : null;
+  } catch { return null; }
+}
+/** A thermal package among opened files: a ZIP holding a manifest, or the manifest (or a lone .vtu) with its files. */
+async function thermalFilesOf(files: File[]): Promise<{ files: Map<string, Uint8Array>; name: string; rest: File[]; zip?: ArrayBuffer } | null> {
+  for (const f of files) {
+    if (!/\.zip$/i.test(f.name)) continue;
+    const buf = await f.arrayBuffer();
+    const th = await thermalZip(buf);
+    if (th) return { files: th, name: f.name.replace(/\.zip$/i, ""), rest: files.filter(x => x !== f), zip: buf };
+  }
+  const manifest = files.find(f => /-thermal\.json$/i.test(f.name)), vtu = files.filter(f => /\.vtu$/i.test(f.name));
+  if (!manifest && vtu.length !== 1) return null;
+  const own = files.filter(f => /\.(vtu|json|csv|png|txt)$/i.test(f.name));
+  const map = new Map<string, Uint8Array>();
+  for (const f of own) map.set(f.name, new Uint8Array(await f.arrayBuffer()));
+  return { files: map, name: (manifest ?? vtu[0]).name.replace(/(-thermal)?\.(json|vtu)$/i, ""), rest: files.filter(f => !own.includes(f)) };
+}
+/**
+ * Opens a thermal package: with the board's STEP (picked with it, or inside the package) the STEP opens and the map
+ * goes on it; with a model file already on screen the map is attached to that; alone, its own mesh is the model.
+ */
+async function openThermal(files: Map<string, Uint8Array>, name: string, step?: File, src?: ArrayBuffer) {
+  const idle = !$("#empty").hidden;
+  if (idle) setLoading(true, t("Reading the thermal map…"), 5);
+  let pkg: Awaited<ReturnType<typeof readPackageInWorker>>;
+  try { pkg = await readPackageInWorker(files, name); }
+  catch (err) { if (idle) setLoading(false); toast(thermalErrorText(err, name), true); return; }
+  const model = step ? { name: step.name, data: await step.arrayBuffer() } : pkg.step ? { name: pkg.step.name, data: pkg.step.data.slice().buffer as ArrayBuffer } : null;
+  if (model) {
+    const key = `sv:m:${model.name}:${model.data.byteLength || ""}`;
+    await openBuffer(model.data, model.name);
+    if (state.fileKey !== key) return;
+    thermal.attach(pkg);
+  } else if (thermal.host.key() && viewer.parts.length && !thermal.cur()?.own) {
+    if (idle) setLoading(false);
+    thermal.attach(pkg);
+  } else {
+    // No STEP: the package's own surfaces are the model.
+    const data = src ?? (await zipFiles([...files].map(([n, d]) => ({ name: n, data: d })))).slice().buffer as ArrayBuffer;
+    const file = `${pkg.name}-thermal.zip`;
+    pendingSrc = { name: file, data };
+    const token = ++loadToken;
+    kernel.clear();
+    setDoc(file, "loading");
+    setLoading(true, t("Reading the thermal map…"), 60);
+    state.meta = null;
+    const t0 = performance.now();
+    const meshes = packageMeshes(pkg);
+    const result = await runImport(file, { kind: "mesh", name: file, meshes, cacheKey: null }, meshes.map(m => m.pos.buffer));
+    if (!result || token !== loadToken) return;
+    showModel(result.parts, result.tree, file, `sv:m:${file}:${data.byteLength}`, t0);
+    showKernelStatus();
+    thermal.attach(pkg, true);
+  }
+  selectCmTab("thermal");
+  showLeftTab("thermal");
+}
+
 async function openBuffer(buffer: ArrayBuffer, name: string) {
   if (isMeshName(name)) return openMesh(buffer, name);
+  if (/\.zip$/i.test(name)) { const th = await thermalZip(buffer); if (th) return openThermal(th, name.replace(/\.zip$/i, ""), undefined, buffer); }
   if (!is3dName(name) && sniff(new Uint8Array(buffer, 0, Math.min(8192, buffer.byteLength)))) return openPcb([{ name, data: buffer }]);
   pendingSrc = { name, data: buffer.slice(0) };
   const token = ++loadToken;
@@ -1107,6 +1199,7 @@ function showModel(parts: PartData[], tree: TreeNode, name: string, key: string,
   modelSrc = pcbBody ? null : pendingSrc;
   pendingSrc = null;
   if (modelSrc) docs?.opened("model", name);
+  thermal.modelShown();
   hint("model");
   warmDrawing();
 }
@@ -1165,6 +1258,7 @@ function showModelled(parts: PartData[], tree: TreeNode, name: string, first: bo
   // A document coming back from a parked tab is shown as it was left.
   if (first && parts.length && tabView) { viewer.setView(tabView, false); tabView = null; }
   if (lastMassRun || mp.open) runMass();
+  thermal.modelShown();
   for (const f of partListeners) f();
 }
 
@@ -1175,6 +1269,7 @@ function showModelStats() {
 }
 
 function resetForNewModel() {
+  thermal.modelGone();
   setTool("select");
   section.clear();
   syncSectionHud();
@@ -1671,7 +1766,7 @@ function syncCmTabs() {
   const list: CmTabId[] = app.classList.contains("gerber") ? []
     : app.classList.contains("model") ? ["features", "sketch", "surfaces", "sheetmetal", "weldments", "simulation", "evaluate"]
     : app.classList.contains("asm") ? ["assembly", "simulation", "evaluate"]
-    : $("#empty").hidden ? ["evaluate"] : [];
+    : $("#empty").hidden ? (thermal.has() ? ["thermal", "evaluate"] : ["evaluate"]) : [];
   setCmTabs(list);
   fitCm();
 }
@@ -3605,6 +3700,7 @@ const fileMenu = new FileMenu({
   newAsm: () => $("#new-asm").click(),
   newDrawing: () => $("#new-drawing").click(),
   get openDrawing() { return liveModelKey() ? () => void openDrawingOf() : null; },
+  addThermalMap: () => openPicker(),
   get asmFromPart() { return modeller.active && !drawing.open ? () => $("#new-asm-part").click() : null; },
   async close() { const a = docs?.active; if (a) await docs!.close(a.id); },
   async closeAll() {
@@ -3758,4 +3854,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, sim, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setArcMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, sim, thermal, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setArcMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });

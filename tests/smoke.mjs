@@ -17189,6 +17189,97 @@ try {
     await ctx.close();
   }
 
+  // --- Board thermal maps 1.652 (FRS-thermal TH1): a board's STEP with its thermal package ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const hp = await ctx.newPage();
+    hp.on("pageerror", e => errors.push(e.message));
+    hp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal");
+    await hp.goto(`${origin}/index.html?debug&nokernel`);
+    await hp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await hp.goto(`${origin}/index.html?debug&nokernel`);
+    await hp.waitForFunction(() => window.__sv);
+    const th = () => hp.evaluate(() => window.__sv.thermal.state());
+    const mapped = async () => { await hp.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 }); await hp.waitForTimeout(700); };
+    const rows = () => hp.evaluate(() => [...document.querySelectorAll("#th-side tr[data-part]")].map(r => r.querySelector("td").innerText.split(/\s/)[0]));
+    await hp.setInputFiles("#file-input", [join(thx, "amp.step"), join(thx, "amp-thermal.zip")]);
+    await mapped();
+    const m1 = await th();
+    const u1 = await hp.evaluate(() => ({ cm: document.querySelector("#cm-tabs .on")?.dataset.cm, min: document.querySelector('#th-legend [data-v="min"]')?.textContent, max: document.querySelector('#th-legend [data-v="max"]')?.textContent,
+      hottest: document.querySelector('#th-summary [data-v="hottest"]')?.textContent, badge: document.querySelector("#th-count")?.textContent, probs: document.querySelectorAll("#th-side .th-list li").length,
+      wide: document.querySelector("#tab-thermal").scrollWidth - document.querySelector("#tab-thermal").clientWidth, bar: document.querySelector("#cm-body").scrollWidth - document.querySelector("#cm-body").clientWidth }));
+    check(m1.drawn && m1.parts === 6 && m1.matched === 7 && !m1.missing.length && m1.hidden === 7 && u1.cm === "thermal" && u1.min === "40" && u1.max === "182" && /V3 182/.test(u1.hottest) && u1.badge === "2" && u1.probs === 2 && u1.wide <= 0 && u1.bar <= 1,
+      `thermal map 1.652: a board's STEP and its thermal package opened together show the map on the model: every part matched, legend 40 to 182 °C, the hottest part, two problems (${JSON.stringify({ parts: m1.parts, matched: m1.matched, hidden: m1.hidden, u1 })})`);
+    const r0 = await rows();
+    await hp.click('#th-side th[data-sort="t"]');
+    const r1 = await rows();
+    await hp.click('#th-side th[data-sort="margin"]');
+    await hp.click('#th-side tr[data-part="2"]');
+    await hp.waitForTimeout(900);
+    const sel = (await th()).sel;
+    check(r0[0] === "R20" && r0[1] === "C13" && r1[0] === "V3" && sel === 2,
+      `thermal map 1.652: the parts list starts with the least margin, a heading sorts it, a row selects the part (${JSON.stringify({ r0, r1, sel })})`);
+    // A probe on the board reads the package's own temperature there.
+    await hp.click('#th-tools [data-th="flip"]');
+    await hp.waitForTimeout(900);
+    await hp.click('#th-tools [data-th="flip"]');
+    await hp.waitForTimeout(900);
+    await hp.click('#th-tools [data-th="probe"]');
+    const spot = await hp.evaluate(() => { const s = window.__sv.thermal.screenOf([20, 20, 1.6]); return [s.x, s.y]; });
+    await hp.mouse.click(spot[0], spot[1]);
+    await hp.waitForTimeout(300);
+    const pr = (await th()).probes;
+    const wantT = 44 + [[45, 62, 0.6], [45, 30, 1.6], [105.2, 6.3, 0.2], [74, 55, 0], [79, 22.5, 1.9], [95, 35, 0]].reduce((s, [cx, cy, pb]) => s + 30 * pb * Math.exp(-((20 - cx) ** 2 + (20 - cy) ** 2) / 260), 0);
+    const labels = await hp.evaluate(() => document.querySelectorAll("#th-labels [data-probe]").length);
+    check(pr.length === 1 && Math.abs(pr[0].t - wantT) < 0.05 && pr[0].part === 0 && labels === 1,
+      `thermal map 1.652: a probe click on the board gives the map's temperature at that point (${JSON.stringify({ got: pr[0]?.t, want: wantT, labels })})`);
+    await hp.click('#th-legend [data-a="noprobes"]');
+    await hp.keyboard.press("Escape");
+    // Fixed range, then the map off and on.
+    await hp.selectOption('#th-legend [data-k="range"]', "fixed");
+    await hp.fill('#th-legend [data-k="rmax"]', "120");
+    await hp.press('#th-legend [data-k="rmax"]', "Tab");
+    await hp.waitForTimeout(200);
+    const fx = { range: (await th()).range, max: await hp.evaluate(() => document.querySelector('#th-legend [data-v="max"]').textContent) };
+    await hp.selectOption('#th-legend [data-k="range"]', "auto");
+    await hp.click('#th-tools [data-th="map"]');
+    await hp.waitForTimeout(300);
+    const off = await th(), offUi = await hp.evaluate(() => document.querySelector("#th-legend").hidden && document.querySelector("#th-summary").hidden);
+    await hp.click('#th-tools [data-th="map"]');
+    await hp.waitForTimeout(300);
+    const on = await th();
+    check(fx.range[1] === 120 && /▲ 120/.test(fx.max) && !off.drawn && off.hidden === 0 && offUi && on.drawn && on.hidden === 7,
+      `thermal map 1.652: a fixed range marks hotter values, and the Map button takes the temperatures off the model and puts them back (${JSON.stringify({ fx, off: [off.drawn, off.hidden], on: [on.drawn, on.hidden] })})`);
+    // Russian: nothing of the Thermal page, legend or summary stays in English.
+    await hp.click("#lang-btn");
+    await hp.waitForTimeout(400);
+    const left = await hp.evaluate(() => {
+      const out = [];
+      for (const root of ["#th-tools", "#th-side", "#th-legend", "#th-summary", "#t-thermal"]) {
+        const w = document.createTreeWalker(document.querySelector(root), NodeFilter.SHOW_TEXT);
+        for (let n = w.nextNode(); n; n = w.nextNode()) {
+          if (n.parentElement.closest('[translate="no"], script, style') || !n.parentElement.getClientRects().length) continue;
+          const t = n.textContent.trim();
+          if (/[A-Za-z]{3,}/.test(t.replace(/°C|\bW\b|\bmm\b|[A-Z]+\d+/g, ""))) out.push(t.slice(0, 40));
+        }
+      }
+      return out;
+    });
+    await hp.click("#lang-btn");
+    check(left.length === 0, `thermal map 1.652: no English left in the Russian thermal map UI${left.length ? ": " + left.slice(0, 8).join(" | ") : ""}`);
+    // Remove map: the model stays; the package alone then opens on its own surface mesh.
+    await hp.click('#th-tools [data-th="remove"]');
+    await hp.waitForTimeout(400);
+    const gone = await hp.evaluate(() => ({ has: !!window.__sv.thermal.state(), tab: document.querySelector("#t-thermal").hidden, parts: window.__sv.viewer.parts.length }));
+    await hp.setInputFiles("#file-input", join(thx, "amp-with-step-thermal.zip"));
+    await mapped();
+    const m2 = await th();
+    check(!gone.has && gone.tab && gone.parts > 0 && m2.drawn && m2.parts === 6 && !m2.missing.length,
+      `thermal map 1.652: Remove map leaves the model; a package with its STEP inside opens the model and the map in one go (${JSON.stringify({ gone, m2: { drawn: m2.drawn, matched: m2.matched, own: m2.own } })})`);
+    await ctx.close();
+  }
+
   // --- Structural analysis 1.637 (FR-CON-020/021): a toolbox screw with its nut is analysed as a bolt ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
