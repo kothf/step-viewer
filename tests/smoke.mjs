@@ -2411,15 +2411,17 @@ try {
     const hot = await mp.evaluate(({ id, l1 }) => {
       const ed = window.__sv.model.editor(), el = document.querySelector(`.sk-rel[data-id="${id}"]`);
       if (!el) return { glyph: false };
+      // 1.645.0: relation glyphs are icons (relIcons.ts), with no text.
+      const icon = !!el.querySelector("svg.rel-ico") && !el.textContent.trim();
       el.dispatchEvent(new PointerEvent("pointerenter"));
       const lit = ed.relHot.has(l1);
       el.dispatchEvent(new PointerEvent("pointerleave"));
       ed.showRels = false; ed.render();
       const hidden = !document.querySelector(`.sk-rel[data-id="${id}"]`);
       ed.showRels = true; ed.render();
-      return { glyph: true, lit, cleared: ed.relHot.size === 0, hidden };
+      return { glyph: true, icon, lit, cleared: ed.relHot.size === 0, hidden };
     }, { id: inf.perpId, l1: inf.l1 });
-    check(glyph === "perpendicular" && inf.n === 4 && inf.perp && inf.dot < 1e-6 && inf.ctrlFree && inf.par && inf.cross < 1e-6 && inf.status === "ok" && hot.lit && hot.cleared && hot.hidden,
+    check(glyph === "perpendicular" && inf.n === 4 && inf.perp && inf.dot < 1e-6 && inf.ctrlFree && inf.par && inf.cross < 1e-6 && inf.status === "ok" && hot.icon && hot.lit && hot.cleared && hot.hidden,
       `model 1.251: automatic perpendicular/parallel relations while drawing, Ctrl suppresses them, relation glyphs light up their entities (${glyph}, ${JSON.stringify(inf)}, ${JSON.stringify(hot)})`);
     // 1.507.0 (FR-SK-011): A while a line chain is open draws a tangent arc from its end; the chain then goes on as lines.
     {

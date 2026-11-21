@@ -67,6 +67,7 @@ import { entBezier } from "../sketch/conic";
 import { bezPts } from "../sketch/spline";
 import { hoverKindOfSketch, type HoverKind } from "../hoverCursor";
 import { SketchEditor, REL_NAME, relName, trimNum, type EntityProps, type SkTool } from "../sketch/editor";
+import { relIcon, type RelIconKind } from "../sketch/relIcons";
 import { SNAP_KINDS, parseSnaps } from "../sketch/snaps";
 import { ORIGIN, isOver, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
@@ -9302,8 +9303,8 @@ export class ModelController {
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Double-click a dimension to change it."))}</p>`
       + `<ul class="pm-legend" aria-label="${esc(t("Sketch colours"))}"><li><i class="sw under"></i>${esc(t("Blue: under defined, can still move"))}</li><li><i class="sw full"></i>${esc(t("Black: fully defined by dimensions and relations"))}</li><li><i class="sw over"></i>${esc(t("Red: over defined, relations or dimensions conflict"))}</li><li><i class="sw cons"></i>${esc(t("Dashed: construction geometry, not in profiles"))}</li><li><i class="sw hot"></i>${esc(t("Thick turquoise: under the cursor, what a click takes"))}</li><li><i class="sw sel"></i>${esc(t("Orange: selected"))}</li><li><i class="sw fill"></i>${esc(t("Light blue fill: a closed region a feature can use"))}</li><li><i class="sw open"></i>${esc(t("Orange dot: an open end, joined to nothing"))}</li></ul>`
       + `<div class="pm-sec"><h4>${esc(t("Selected"))}: ${nSel}</h4>`
-      + (nSel ? `<div class="pm-rels">${rels.map(r => `<button class="btn small" data-rel="${r}">${esc(t(REL_NAME[r]))}</button>`).join("")}</div>`
-        + `<div class="pm-rels"><button class="btn small" data-a="cons">${esc(t("Construction"))}</button>${ed.canMerge() ? `<button class="btn small" data-a="merge" title="${esc(t("Merge the two points into one"))}">${esc(t("Merge points"))}</button>` : ""}<button class="btn small danger" data-a="del">${esc(t("Delete"))}</button></div>`
+      + (nSel ? `<div class="pm-rels">${rels.map(r => `<button class="btn small rel-btn" data-rel="${r}" title="${esc(t(REL_NAME[r]))}">${relIcon(r)}<span>${esc(t(REL_NAME[r]))}</span></button>`).join("")}</div>`
+        + `<div class="pm-rels"><button class="btn small" data-a="cons">${esc(t("Construction"))}</button>${ed.canMerge() ? `<button class="btn small rel-btn" data-a="merge" title="${esc(t("Merge the two points into one"))}">${relIcon("merge")}<span>${esc(t("Merge points"))}</span></button>` : ""}<button class="btn small danger" data-a="del">${esc(t("Delete"))}</button></div>`
         : `<p class="muted">${esc(t("Select sketch items or model edges to add relations (Ctrl+click for more)."))}</p>`)
       + (ed.piercing ? `<p class="muted pm-pierce" role="status">${esc(t("Click a model edge that crosses the sketch plane: the point moves to where it pierces the plane."))}</p>` : "")
       + `</div>`
@@ -9960,7 +9961,7 @@ export class ModelController {
     const segs = f.segs.length ? `<ul class="pm-dims">${f.segs.map(sg => `<li><button class="link${sel.has(sg.id) ? " on" : ""}" data-s3sel="${sg.id}" aria-pressed="${sel.has(sg.id)}">${esc(segName(sg.id))}</button> <span class="muted" translate="no">${sg.pts.map(q => `P${pIdx(q)}`).join("–")}${sg.t === "line" ? ` · ${trimNum(L(sg) * u, 3)} ${units.current}` : ""}</span></li>`).join("")}</ul>` : "";
     // Relations and dimensions that fit the selection.
     const lines = s3.sel.filter(id => f.segs.find(g => g.id === id)?.t === "line"), points = s3.sel.filter(id => f.pts.some(p => p.id === id));
-    const rb = (k: string, label: string) => `<button class="btn small" data-s3r="${k}">${esc(label)}</button>`;
+    const rb = (k: string, label: string) => { const ic = k.split(":")[0]; return `<button class="btn small${ic === "dim" ? "" : " rel-btn"}" data-s3r="${k}">${ic === "dim" ? "" : relIcon(ic as RelIconKind)}<span>${esc(label)}</span></button>`; };
     let add = "";
     if (lines.length === 1 && !points.length) add = rb("alongX", t("Along X")) + rb("alongY", t("Along Y")) + rb("alongZ", t("Along Z")) + (["XY", "YZ", "ZX"] as const).map(p => rb(`parallelPlane:${p}`, t("Parallel to {p}", { p }))).join("") + rb("dim:length", t("Length"));
     if (lines.length === 2 && !points.length) add = rb("parallel", t("Parallel")) + rb("perpendicular", t("Perpendicular")) + rb("equal", t("Equal"));
@@ -9969,7 +9970,7 @@ export class ModelController {
     if (s3.sel.length) add += `<button class="btn small danger" data-s3a="del">${esc(t("Delete"))}</button>`;
     const relLabel = (r: Sk3Rel) => r.t === "alongX" ? t("Along X") : r.t === "alongY" ? t("Along Y") : r.t === "alongZ" ? t("Along Z") : r.t === "parallelPlane" ? t("Parallel to {p}", { p: r.plane ?? "XY" })
       : r.t === "parallel" ? t("Parallel") : r.t === "perpendicular" ? t("Perpendicular") : r.t === "equal" ? t("Equal") : t("Coincident");
-    const rels = f.rels.map(r => `<li>${esc(relLabel(r))} <span class="muted" translate="no">${r.e.map(entName).join(", ")}</span> <button class="icon" data-s3rdel="${r.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></li>`).join("");
+    const rels = f.rels.map(r => `<li><span class="rel-row">${relIcon(r.t)}${esc(relLabel(r))}</span> <span class="muted" translate="no">${r.e.map(entName).join(", ")}</span> <button class="icon" data-s3rdel="${r.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></li>`).join("");
     const dims = f.dims.map((d, i) => `<li><label class="pm-field"><span translate="no">D${i + 1} (${esc(d.e.map(entName).join(", "))})</span><input type="text" inputmode="decimal" class="pm-n" data-s3dim="${d.id}" value="${esc(d.val.expr ?? trimNum(d.val.v * u, 4))}" /></label> <button class="icon" data-s3ddel="${d.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></li>`).join("");
     const st = solve3d(f);
     const status = !st.ok ? t("The relations and dimensions conflict.") : st.dof === 0 ? t("Fully defined") : t("{n} degree of freedom left|{n} degrees of freedom left", { n: st.dof });
@@ -10212,7 +10213,7 @@ export class ModelController {
     const sel = ed.selection;
     const shown = sel.size ? rels.filter(r => sel.has(r.id) || r.e.some(x => sel.has(x))) : rels;
     return (sel.size ? `<p class="muted">${esc(t("Relations of the selection:"))}</p>` : "")
-      + `<ul class="pm-rel-list">${shown.map(r => `<li${bad.has(r.id) ? ' class="pm-err"' : r.dangling ? ' class="pm-dangling"' : ""}><span><button class="link" data-selrel="${r.id}">${esc(t(relName(r)))}</button>${bad.has(r.id) ? ` · ${esc(t("conflicting"))}` : r.dangling ? ` · ${esc(t("dangling"))} <button class="link" data-reattach="${r.id}">${esc(t("Re-attach"))}</button>` : ""}</span><button class="icon" data-delrel="${r.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))} ${esc(t(relName(r)))}">✕</button></li>`).join("")}</ul>`;
+      + `<ul class="pm-rel-list">${shown.map(r => `<li${bad.has(r.id) ? ' class="pm-err"' : r.dangling ? ' class="pm-dangling"' : ""}><span class="rel-row">${relIcon(r.ext ? "edge" : r.t)}<button class="link" data-selrel="${r.id}">${esc(t(relName(r)))}</button>${bad.has(r.id) ? ` · ${esc(t("conflicting"))}` : r.dangling ? ` · ${esc(t("dangling"))} <button class="link" data-reattach="${r.id}">${esc(t("Re-attach"))}</button>` : ""}</span><button class="icon" data-delrel="${r.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))} ${esc(t(relName(r)))}">✕</button></li>`).join("")}</ul>`;
   }
 
   /** Exact body properties from the last rebuild (density 1). */

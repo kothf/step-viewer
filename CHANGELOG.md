@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.645.0] - 2026-11-21
+## [1.646.0] - 2026-11-21
 
 ### Changed
 
 - **Hole positions**: only sketch **points** become hole centres, as in other CAD apps. The ends of lines and arcs in a position sketch (or in an existing sketch picked for a hole) no longer get holes, so lines can be drawn there to dimension the points from.
+
+## [1.645.0] - 2026-11-21
+
+### Changed
+
+- Sketch **relations have icons**, as in other CAD apps: the Add Relations buttons of the sketch panel, the Relations list, the K and right-click relation menus, the glyphs beside sketch entities and the inference beside the cursor while drawing all show the relation's icon (horizontal, vertical, coincident, tangent, parallel, perpendicular, equal, midpoint, symmetric, concentric, collinear and the rest) instead of a letter or a text-only button. The 3D sketch's relation buttons and list have them too.
 
 ## [1.644.0] - 2026-11-21
 
@@ -4203,7 +4209,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.645.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.646.0...HEAD
+[1.646.0]: https://github.com/kothf/step-viewer/compare/v1.645.0...v1.646.0
 [1.645.0]: https://github.com/kothf/step-viewer/compare/v1.644.0...v1.645.0
 [1.644.0]: https://github.com/kothf/step-viewer/compare/v1.643.0...v1.644.0
 [1.643.0]: https://github.com/kothf/step-viewer/compare/v1.642.0...v1.643.0
