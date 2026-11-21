@@ -151,7 +151,7 @@ const EN: Tab[] = [
 <p>Click one point, edge or face to see its size: a hole's diameter, an edge's length, a face's area, a part's volume. Click a second entity to get the relation between the two: distance, pitch, angle, gap or offset. The result stays on screen until the next click; <b>📌 Pin</b> keeps it in the list. <kbd>Esc</kbd> clears.</p>
 <ul>
   <li>The value is on the model; details are in the result card. Click any value in the card to copy it, or drag a length or angle onto a box in a feature panel to put it there.</li>
-  <li>For two holes or circles, the card switches between <b>Centre to centre</b>, <b>Minimum</b> (edge to edge) and <b>Maximum</b> (overall span).</li>
+  <li>When an arc, circle, round face, cylinder or sphere is one of the two picks, the card switches between <b>Centre</b> (from its centre, or a cylinder's axis), <b>Minimum</b> (its nearest point) and <b>Maximum</b> (its farthest point), as other CAD apps' arc/circle conditions do: against a vertex, a line, a face or another round feature. With two round picks <b>Custom</b> gives each its own condition (centre of the first to the far side of the second, say). A pinned measurement keeps its condition; select it to change it from its card.</li>
   <li><b>✂ Section here</b> cuts on a picked planar face; <b>⬚ Whole part</b> shows the part's size and volume; <b>⌖ CSYS here</b> makes the picked face, edge, circle or vertex the coordinate system for all coordinates and ΔX / ΔY / ΔZ.</li>
 </ul>
 <h4>Dedicated tools</h4>
@@ -471,7 +471,7 @@ const RU: Tab[] = [
 <p>Щёлкните точку, ребро или грань, чтобы увидеть размер: диаметр отверстия, длину ребра, площадь грани, объём детали. Щёлкните второй элемент, чтобы получить связь между ними: расстояние, шаг, угол, зазор или смещение. Результат держится до следующего щелчка; <b>📌 Закрепить</b> сохраняет его в списке. <kbd>Esc</kbd> сбрасывает.</p>
 <ul>
   <li>Значение показано на модели, подробности в карточке результата. Щёлкните любое значение в карточке, чтобы скопировать его, или перетащите длину или угол в поле панели элемента, чтобы вставить его туда.</li>
-  <li>Для двух отверстий или окружностей карточка переключает <b>Центр–центр</b>, <b>Минимум</b> (кромка–кромка) и <b>Максимум</b> (общий размер).</li>
+  <li>Когда одна из двух выбранных сущностей — дуга, окружность, круглая грань, цилиндр или сфера, карточка переключает <b>Центр</b> (от её центра или оси цилиндра), <b>Минимум</b> (ближайшая её точка) и <b>Максимум</b> (дальняя точка), как условия дуги/окружности в других CAD-программах: до вершины, прямой, грани или другого круглого элемента. Для двух круглых элементов <b>Свой размер</b> задаёт условие каждому (например, от центра первого до дальней стороны второго). Закреплённый размер сохраняет своё условие; выберите его, чтобы изменить условие в карточке.</li>
   <li><b>✂ Сечение здесь</b> режет по выбранной плоской грани; <b>⬚ Вся деталь</b> показывает размер и объём детали; <b>⌖ СК здесь</b> делает выбранную грань, ребро, окружность или вершину системой координат для всех координат и ΔX / ΔY / ΔZ.</li>
 </ul>
 <h4>Отдельные инструменты</h4>

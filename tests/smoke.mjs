@@ -720,6 +720,9 @@ try {
       const { setCircleMode } = window.__sv;
       setCircleMode("min"); res.min = [state.live.data.title, state.live.value, res.expect - (da + db) / 2];
       setCircleMode("max"); res.max = [state.live.data.title, state.live.value, res.expect + (da + db) / 2];
+      setCircleMode("custom"); res.customUi = [document.querySelectorAll("#readout [data-cmode]").length, document.querySelectorAll("#readout [data-amode]").length];
+      window.__sv.setArcMode(0, "min"); window.__sv.setArcMode(1, "center");
+      res.custom = [state.live.data.title, state.live.value, res.expect - da / 2];
       setCircleMode("center"); res.back = state.live.value;
       res.legs = [...document.querySelectorAll("#labels .m-leg")].filter(el => el.dataset.id === state.live.id).map(el => [el.dataset.axis, parseFloat(el.textContent.slice(3))]);
       const d = b.c.clone().sub(a.c);
@@ -733,8 +736,49 @@ try {
     `smart: coplanar round faces give the pitch (${pitch.rounds} round faces, ${pitch.value} vs ${pitch.expect})`);
   check(pitch.legs?.length === pitch.expectLegs?.length && pitch.legs.every(([k, x], i) => k === pitch.expectLegs[i][0] && near(x, pitch.expectLegs[i][1], 2e-3)),
     `smart: centre to centre draws ΔX/ΔY/ΔZ legs with dimensions (${JSON.stringify(pitch.legs)})`);
-  check(pitch.toggle === 3 && near(pitch.min?.[1], pitch.min?.[2], 1e-3) && near(pitch.max?.[1], pitch.max?.[2], 1e-3) && near(pitch.back, pitch.value, 1e-9),
+  check(pitch.toggle === 4 && near(pitch.min?.[1], pitch.min?.[2], 1e-3) && near(pitch.max?.[1], pitch.max?.[2], 1e-3) && near(pitch.back, pitch.value, 1e-9),
     `smart: round features toggle min ${pitch.min?.[1]} / max ${pitch.max?.[1]} edge distance`);
+  check(pitch.customUi?.[0] === 4 && pitch.customUi?.[1] === 2 && pitch.custom?.[0] === "Custom distance" && near(pitch.custom[1], pitch.custom[2], 1e-3),
+    `smart: Custom arc conditions, one per pick (${JSON.stringify(pitch.custom)}, ui ${pitch.customUi})`);
+
+  // Arc/circle conditions (1.645.0): a round face against a vertex gives centre / nearest / farthest point of its rim;
+  // two round picks take one condition each under Custom; a pinned measurement keeps and changes its own.
+  const arcs = await page.evaluate(() => {
+    const { viewer, state, handlePick, setCircleMode, setArcMode } = window.__sv;
+    const V3 = viewer.camera.position.constructor;
+    for (const p of viewer.parts) for (const f of p.data.faces) {
+      if (f.type !== "plane") continue;
+      const pickF = { kind: "faceCenter", point: viewer.toWorld(p, f.center), part: p, face: f, normal: new V3(...f.normal), px: 0 };
+      handlePick(pickF);
+      const disc = state.live?.data.title === "Circular face" ? JSON.parse(state.live.data.rows).find(r => r[0] === "Radius")?.[2] : null;
+      handlePick(null);
+      if (!disc) continue;
+      const c = viewer.toWorld(p, f.center), n = viewer.dirToWorld(p, f.normal).normalize();
+      // The corner of a straight edge farthest from the disc: well clear of its rim.
+      const ed = p.data.edges.filter(e => e.type === "line").sort((x, y) => viewer.toWorld(p, y.start).distanceTo(c) - viewer.toWorld(p, x.start).distanceTo(c))[0];
+      if (!ed) continue;
+      const pt = viewer.toWorld(p, ed.start);
+      const w = pt.clone().sub(c), h = w.dot(n), rho = w.clone().addScaledVector(n, -h).length();
+      const expect = { center: w.length(), min: Math.hypot(h, rho - disc), max: Math.hypot(h, rho + disc) };
+      const out = { expect, got: {}, buttons: 0, custom: 0 };
+      handlePick(pickF); handlePick({ kind: "vertex", point: pt, part: p, px: 0 });
+      for (const m of ["center", "min", "max"]) { setCircleMode(m); out.got[m] = [state.live.value, state.live.data.title]; }
+      out.buttons = document.querySelectorAll("#readout [data-cmode]").length;
+      // Pin it at "max", then switch the pinned one to "min" from its card.
+      setCircleMode("max");
+      document.querySelector("#readout .acts button")?.click();
+      const pinned = state.measurements[state.measurements.length - 1];
+      out.pinnedMax = pinned?.value;
+      handlePick(null); state.selectedMeasurement = pinned?.id;
+      setCircleMode("min");
+      out.pinnedMin = pinned?.value;
+      setCircleMode("center");
+      return out;
+    }
+    return null;
+  });
+  check(arcs && ["center", "min", "max"].every(k => near(arcs.got[k][0], arcs.expect[k], 2e-3)) && arcs.buttons === 3 && near(arcs.pinnedMax, arcs.expect.max, 2e-3) && near(arcs.pinnedMin, arcs.expect.min, 2e-3),
+    `smart: arc conditions on a circle against a vertex (centre / min / max ${JSON.stringify(arcs)})`);
 
   // explode moves parts apart
   await page.$eval("#explode", el => { el.value = "1"; el.dispatchEvent(new Event("input")); });

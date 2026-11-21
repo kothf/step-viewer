@@ -8,7 +8,7 @@ import { alignDim, rapidRow, rapidSlots, spaceDims } from "./dimAlign";
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, canHold, isGtolHost, arrowOutside, withCut, ringTopo, coneMid, coneOutline, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, endOnRadius, canHold, isGtolHost, arrowOutside, withCut, ringTopo, coneMid, coneOutline, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
@@ -26,7 +26,7 @@ import { editTitleBlock } from "./tbEditor";
 import { editGtol, editHole, editWeld, gtolPicture, surfIcon, weldIcon } from "./annotDlg";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, BalloonAnnot, CLineAnnot, GtolAnnot, HoleAnnot, NoteAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
+import type { Annot, ArcCond, BalloonAnnot, CLineAnnot, GtolAnnot, HoleAnnot, NoteAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
 import { SURF_LAYS, cellLabel } from "./gdt";
 import { WELD_SYM_NAMES, beadWeld } from "./weld";
 import { SK_PENS, SK_PEN_NAMES, orthoSnap, skPoints, skPrims } from "./sheetSketch";
@@ -2564,6 +2564,16 @@ export class DrawingWorkspace {
     });
   }
 
+  /** Linear dimension to a circle seen end-on: from its centre, nearest or farthest side (first / second arc condition). */
+  private condFields(a: DimAnnot): string {
+    const sh = this.sheet, v = findView(sh, a.view);
+    if (!v || a.refs.length !== 2) return "";
+    const P = projector(viewDir(sh, v)).P, topo = this.factsOf(a.view)?.topo ?? null;
+    return ([0, 1] as const).map(i => endOnRadius(a.refs[i], P, topo) > 0
+      ? `<label class="drw-f">${esc(t(i ? "Second arc condition" : "First arc condition"))}<select data-d="cond${i}">${([["center", "Centre"], ["min", "Minimum"], ["max", "Maximum"]] as const).map(([k, l]) => `<option value="${k}"${(a.cond?.[i] ?? "center") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
+      : "").join("");
+  }
+
   /** Properties of the selected annotation. */
   private annotProps(a: Annot): string {
     const sh = this.sheet;
@@ -2583,6 +2593,7 @@ export class DrawingWorkspace {
         ${val != null ? `<p class="drw-note">${esc(t("Value"))}: <b translate="no">${esc(val)}</b>${a.src ? ` · ${esc(t("model item"))}` : ""}</p>` : ""}
         ${kinds ? `<label class="drw-f">${esc(t("Type"))}<select data-d="k">${kinds.map(([k, l]) => `<option value="${k}"${a.k === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         ${lin ? `<label class="drw-f">${esc(t("Direction"))}<select data-d="k">${(["h", "v", "al"] as const).map(k => `<option value="${k}"${a.k === k ? " selected" : ""}>${esc(t(k === "h" ? "Horizontal" : k === "v" ? "Vertical" : "Aligned"))}</option>`).join("")}</select></label>` : ""}
+        ${lin ? this.condFields(a) : ""}
         ${lin || a.k === "ang" ? `<label class="drw-f">${esc(t("Arrows"))}<select data-d="arrows">${([["", "Auto"], ["in", "Inside"], ["out", "Outside"]] as const).map(([k, l]) => `<option value="${k}"${(a.arrows ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         ${lin || a.k === "arc" || a.k === "ang" ? `<label class="drw-f">${esc(t("Extension lines"))}<select data-d="noext">${([["", "Both shown"], ["a", "First hidden"], ["b", "Second hidden"], ["both", "Both hidden"]] as const).map(([k, l]) => `<option value="${k}"${(a.noExt ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         <label class="drw-f">${esc(t("Arrowheads"))}<select data-d="ends"><option value="">${esc(t("Document"))}</option>${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${a.ends === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
@@ -2775,6 +2786,11 @@ export class DrawingWorkspace {
         else if (k === "dlin") { if (val === "h" || val === "v") a.lin = val; else delete a.lin; }
         else if (k === "ends") { if (val === "filled" || val === "open" || val === "dot" || val === "tick") a.ends = val; else delete a.ends; }
         else if (k === "arrows") { if (val === "in" || val === "out") a.arrows = val; else delete a.arrows; }
+        else if (k === "cond0" || k === "cond1") {
+          const c: [ArcCond?, ArcCond?] = [...(a.cond ?? [])] as [ArcCond?, ArcCond?];
+          c[k === "cond0" ? 0 : 1] = val === "min" || val === "max" ? val : undefined;
+          if (c[0] || c[1]) a.cond = [c[0], c[1]]; else delete a.cond;
+        }
         else if (k === "noext") { if (val === "a" || val === "b" || val === "both") a.noExt = val; else delete a.noExt; }
         else if (k === "fore") { if ((el as HTMLInputElement).checked) a.fore = true; else delete a.fore; }
         else if (k === "horiz") { if ((el as HTMLInputElement).checked) a.horiz = true; else delete a.horiz; }

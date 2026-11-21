@@ -40,7 +40,8 @@ export interface Measurement {
 
 /** One pick of an associative measurement: a face or edge by name (point: where on it), or a fixed point. */
 export interface PickRef { kind: Entity["kind"]; ref?: { edge?: { faces: [string, string]; hint?: V3 }; face?: { name: string; hint: V3 } }; at?: "center" | "mid" | "start" | "end" | "near"; point: V3; normal?: V3 }
-export interface MeasureSource { type: MeasureType | "smart"; mode?: CircleMode; picks: PickRef[] }
+/** `mode` = the arc/circle condition for every round pick; `modes` = one per pick (Custom). */
+export interface MeasureSource { type: MeasureType | "smart"; mode?: CircleMode; modes?: [CircleMode, CircleMode]; picks: PickRef[] }
 
 export const TOOL_INFO: Record<MeasureType, { title: string; picks: number; hint: string }> = {
   distance: { title: "Point to point", picks: 2, hint: "Pick two points (vertices, midpoints, centres…)" },
@@ -292,6 +293,75 @@ function closesCircle(part: Part, ed: EdgeInfo) {
     Math.abs(c.radius! - ed.radius!) < 0.02 * Math.max(1, ed.radius!) && V(c.center!).distanceTo(V(ed.center!)) < 0.02 * Math.max(1, ed.radius!)));
 }
 
+// ---------- arc / circle conditions ----------
+
+/** A circle or arc in world space: points c + r (cos t e1 + sin t e2) for t in [0, sweep]. */
+interface RoundCurve { c: THREE.Vector3; n: THREE.Vector3; e1: THREE.Vector3; e2: THREE.Vector3; r: number; sweep: number }
+
+function roundCurve(v: Viewer, e: Entity): RoundCurve | null {
+  let c: THREE.Vector3, n: THREE.Vector3, r: number, start: THREE.Vector3 | null = null, mid: THREE.Vector3 | null = null, sweep = 2 * Math.PI;
+  if (e.kind === "edge") {
+    const ed = e.edge!;
+    if (!ed.center || !ed.radius || !ed.axis || (ed.type !== "circle" && ed.type !== "arc")) return null;
+    c = v.toWorld(e.part, ed.center); n = v.dirToWorld(e.part, ed.axis).normalize(); r = ed.radius;
+    if (ed.type === "arc" && ed.sweep && ed.sweep < 2 * Math.PI - 1e-6 && !closesCircle(e.part, ed)) {
+      start = v.toWorld(e.part, ed.start); mid = v.toWorld(e.part, ed.mid); sweep = ed.sweep;
+    }
+  } else if (e.kind === "face" && e.face!.type === "plane") {
+    const fc = faceCircle(e.part, e.face!);
+    if (!fc) return null;
+    c = v.toWorld(e.part, fc.center!); n = v.dirToWorld(e.part, e.face!.normal!).normalize(); r = fc.radius!;
+  } else return null;
+  const e1 = start ? start.clone().sub(c) : new THREE.Vector3(1, 0, 0).cross(n).lengthSq() > 1e-6 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  e1.addScaledVector(n, -e1.dot(n)).normalize();
+  const e2 = n.clone().cross(e1).normalize();
+  if (mid && mid.clone().sub(c).dot(e2) < 0) e2.negate();
+  return { c, n, e1, e2, r, sweep };
+}
+
+const curveAt = (k: RoundCurve, t: number) => k.c.clone().addScaledVector(k.e1, k.r * Math.cos(t)).addScaledVector(k.e2, k.r * Math.sin(t));
+
+/** Smallest (sign 1) or largest (sign -1) f over [0, span]: sampled, then a golden-section search about the best sample. */
+function extremum(span: number, f: (t: number) => number, sign: 1 | -1, n = 180): { t: number; d: number } {
+  const steps = Math.max(12, Math.ceil(n * span / (2 * Math.PI)));
+  const closed = span >= 2 * Math.PI - 1e-9;
+  let bi = 0, bv = Infinity;
+  for (let i = 0; i <= steps; i++) {
+    const x = sign * f(span * i / steps);
+    if (x < bv) { bv = x; bi = i; }
+  }
+  let lo = span * (bi - 1) / steps, hi = span * (bi + 1) / steps;
+  if (!closed) { lo = Math.max(0, lo); hi = Math.min(span, hi); }
+  const g = (Math.sqrt(5) - 1) / 2;
+  let x1 = hi - g * (hi - lo), x2 = lo + g * (hi - lo), f1 = sign * f(x1), f2 = sign * f(x2);
+  for (let k = 0; k < 60 && hi - lo > 1e-12; k++) {
+    if (f1 < f2) { hi = x2; x2 = x1; f2 = f1; x1 = hi - g * (hi - lo); f1 = sign * f(x1); }
+    else { lo = x1; x1 = x2; f1 = f2; x2 = lo + g * (hi - lo); f2 = sign * f(x2); }
+  }
+  const tm = (lo + hi) / 2, fm = sign * f(tm);
+  return fm < bv ? { t: tm, d: sign * fm } : { t: span * bi / steps, d: sign * bv };
+}
+
+/** Distance from a world point to the other pick: to an infinite line or plane when straight, else to the entity itself. */
+function distanceTo(v: Viewer, O: Entity): (q: THREE.Vector3) => { d: number; foot: THREE.Vector3 } {
+  if (O.kind === "point") return q => ({ d: q.distanceTo(O.point), foot: O.point.clone() });
+  if (O.kind === "edge" && O.edge!.type === "line") {
+    const p0 = v.toWorld(O.part, O.edge!.start), dir = v.dirToWorld(O.part, O.edge!.dir!).normalize();
+    return q => { const foot = p0.clone().addScaledVector(dir, q.clone().sub(p0).dot(dir)); return { d: q.distanceTo(foot), foot }; };
+  }
+  if (O.kind === "face" && O.face!.type === "plane") {
+    const n = v.dirToWorld(O.part, O.face!.normal!).normalize(), p0 = O.point.clone();
+    return q => { const s = q.clone().sub(p0).dot(n); return { d: Math.abs(s), foot: q.clone().addScaledVector(n, -s) }; };
+  }
+  return q => { const c = closestPointEntity(v, q, O); return { d: c.d, foot: c.b }; };
+}
+
+/** Nearest (sign 1) or farthest (sign -1) point of a circle/arc from a point. */
+function curvePoint(k: RoundCurve, q: THREE.Vector3, sign: 1 | -1, n = 72) {
+  const r = extremum(k.sweep, t => curveAt(k, t).distanceTo(q), sign, n);
+  return { p: curveAt(k, r.t), d: r.d };
+}
+
 function directionOf(v: Viewer, e: Entity): { v: THREE.Vector3; kind: "line" | "plane" } | null {
   if (e.kind === "edge") {
     const ed = e.edge!;
@@ -466,9 +536,13 @@ type Row = [string, RowKind, number | number[] | string];
 /** Which distance two round features report: centre to centre, nearest rims or farthest rims. */
 export type CircleMode = "center" | "min" | "max";
 export const CIRCLE_MODES: { mode: CircleMode; label: string }[] = [
-  { mode: "center", label: "Centre to centre" }, { mode: "min", label: "Minimum" }, { mode: "max", label: "Maximum" },
+  { mode: "center", label: "Centre" }, { mode: "min", label: "Minimum" }, { mode: "max", label: "Maximum" },
 ];
-export interface SmartOptions { circleMode?: CircleMode }
+/**
+ * Arc/circle conditions, as a CAD app's Measure tool offers them: `circleMode` for every round pick,
+ * or `arcModes` = one per pick (Custom). Measurements say which picks are round in `data.round` (a, b or ab).
+ */
+export interface SmartOptions { circleMode?: CircleMode; arcModes?: [CircleMode, CircleMode] }
 
 function fmtRow(kind: RowKind, x: unknown, fallback?: V3): string {
   switch (kind) {
@@ -658,25 +732,95 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
     }
     const u = span.clone().divideScalar(L);
     const minD = L - r1 - r2, maxD = L + r1 + r2;
-    const mode: CircleMode = r1 > 0 && r2 > 0 ? opts.circleMode ?? "center" : "center";
+    const both = r1 > 0 && r2 > 0;
+    const mA: CircleMode = both ? opts.arcModes?.[0] ?? opts.circleMode ?? "center" : "center";
+    const mB: CircleMode = both ? opts.arcModes?.[1] ?? opts.circleMode ?? "center" : "center";
+    const mode = mA === mB && !opts.arcModes ? mA : "custom";
     const rows: Row[] = [["Centre distance", "len", w.length()]];
     if (parallel) rows.push(["Pitch", "len", L]);
     if (Math.abs(axial) > tol) rows.push(["Axial offset", "len", Math.abs(axial)]);
     rows.push([minD < 0 ? "Min edge to edge (overlap)" : "Min edge to edge", "len", minD], ["Max outer span", "len", maxD]);
     rows.push(...deltas(ca.center, cb.center), dias, ...relRow, gapRow, names);
     const axialVec = parallel ? ca.axis!.clone().multiplyScalar(axial) : new THREE.Vector3();
-    const s = mode === "max" ? -1 : 1;
-    const a = mode === "center" ? ca.center.clone() : ca.center.clone().addScaledVector(u, s * r1);
-    const b = mode === "center" ? ca.center.clone().add(span) : ca.center.clone().add(span).addScaledVector(u, -s * r2);
-    const pts = [a, b, b.clone().add(axialVec)];
-    const geo = base("smart", 0, color, pts, Math.abs(axial) > tol ? [[0, 1], [1, 2]] : [[0, 1]], mid(a, b));
+    const sgn = (m: CircleMode) => m === "max" ? -1 : m === "min" ? 1 : 0;
+    const sA = sgn(mA), sB = sgn(mB);
+    let a = ca.center.clone().addScaledVector(u, sA * r1);
+    let b = ca.center.clone().add(span).addScaledVector(u, -sB * r2);
+    let value = L - sA * r1 - sB * r2;
+    let pts = [a, b, b.clone().add(axialVec)];
+    let segs: [number, number][] = Math.abs(axial) > tol ? [[0, 1], [1, 2]] : [[0, 1]];
+    // Circles in different planes: the rims' nearest or farthest points found on the curves themselves.
+    const ka = parallel ? null : roundCurve(v, A), kb = parallel ? null : roundCurve(v, B);
+    if (ka && kb && (sA || sB)) {
+      if (!sB) { const q = curvePoint(ka, cb.center, sA as 1 | -1); a = q.p; b = cb.center.clone(); value = q.d; }
+      else if (!sA) { const q = curvePoint(kb, ca.center, sB as 1 | -1); a = ca.center.clone(); b = q.p; value = q.d; }
+      else {
+        // Walk the first curve for its condition, taking the second's nearest or farthest point from each place on it.
+        const outer = extremum(ka.sweep, t => curvePoint(kb, curveAt(ka, t), sB as 1 | -1, 36).d, sA as 1 | -1, 120);
+        a = curveAt(ka, outer.t); const q = curvePoint(kb, a, sB as 1 | -1); b = q.p; value = q.d;
+      }
+      pts = [a, b]; segs = [[0, 1]];
+    }
+    const geo = base("smart", 0, color, pts, segs, mid(a, b));
     const extra: Measurement["data"] = {
-      ...(r1 > 0 && r2 > 0 ? { modes: CIRCLE_MODES.map(m => m.mode).join(","), mode } : {}),
-      ...(mode === "center" ? legs(ca.center, cb.center) : legs(a, pts[2])),
+      ...(both ? { modes: CIRCLE_MODES.map(m => m.mode).join(","), mode, round: "ab", modeA: mA, modeB: mB } : {}),
+      ...(mode === "center" ? legs(ca.center, cb.center) : legs(a, pts[pts.length - 1])),
     };
-    if (mode === "min") return smart(geo, minD < 0 ? "Edge to edge (overlap)" : "Edge to edge (min)", minD, "len", rows, "", extra);
-    if (mode === "max") return smart(geo, "Overall span (max)", maxD, "len", rows, "", extra);
+    if (mode === "min") return smart(geo, value < 0 ? "Edge to edge (overlap)" : "Edge to edge (min)", value, "len", rows, "", extra);
+    if (mode === "max") return smart(geo, "Overall span (max)", value, "len", rows, "", extra);
+    if (mode === "custom") return smart(geo, "Custom distance", value, "len", rows, "", extra);
     return smart(geo, parallel ? "Pitch (axis to axis)" : "Centre to centre", L, "len", rows, "", extra);
+  }
+
+  // One round pick (circle, arc, round face, cylinder, sphere) against anything else: centre, nearest or farthest.
+  const roundPick = ca ? 0 : cb ? 1 : -1;
+  if (roundPick >= 0) {
+    const R = roundPick === 0 ? A : B, O = roundPick === 0 ? B : A, c = (roundPick === 0 ? ca : cb)!;
+    const r = c.radius ?? 0;
+    const k = roundCurve(v, R);
+    const isCyl = R.kind === "face" && R.face!.type === "cylinder", isSphere = R.kind === "face" && R.face!.type === "sphere";
+    const oLine = O.kind === "edge" && O.edge!.type === "line" ? v.dirToWorld(O.part, O.edge!.dir!).normalize() : null;
+    const oPlane = O.kind === "face" && O.face!.type === "plane" ? v.dirToWorld(O.part, O.face!.normal!).normalize() : null;
+    const fits = r > 0 && (k ? true
+      : isSphere ? O.kind === "point" || !!oLine || !!oPlane
+      : isCyl ? O.kind === "point" || (!!oLine && Math.abs(oLine.dot(c.axis!)) > 1 - 1e-6) || (!!oPlane && Math.abs(oPlane.dot(c.axis!)) < 1e-6)
+      : false);
+    if (fits) {
+      const mode: CircleMode = opts.arcModes?.[roundPick as 0 | 1] ?? opts.circleMode ?? "center";
+      const dist = distanceTo(v, O);
+      // Centre: the circle's or sphere's centre, a cylinder's axis (level with the other pick when that is a point).
+      let cen = c.center.clone();
+      if (isCyl && O.kind === "point") cen = c.center.clone().addScaledVector(c.axis!, O.point.clone().sub(c.center).dot(c.axis!));
+      const cf = dist(cen);
+      const ends = (m: CircleMode): [THREE.Vector3, THREE.Vector3, number] => {
+        if (m === "center") return [cen, cf.foot, cf.d];
+        const s = m === "min" ? 1 : -1;
+        if (k) {
+          const e = extremum(k.sweep, t => dist(curveAt(k, t)).d, s);
+          const p = curveAt(k, e.t);
+          return [p, dist(p).foot, e.d];
+        }
+        // Sphere or cylinder: along the line from the centre (axis) to the other pick.
+        const uu = cf.foot.clone().sub(cen);
+        if (uu.lengthSq() < 1e-24) uu.copy(c.axis ? new THREE.Vector3(1, 0, 0).cross(c.axis).lengthSq() > 1e-6 ? new THREE.Vector3(1, 0, 0).cross(c.axis) : new THREE.Vector3(0, 1, 0).cross(c.axis) : new THREE.Vector3(1, 0, 0));
+        uu.normalize();
+        const p = cen.clone().addScaledVector(uu, s * r);
+        return [p, cf.foot, s > 0 ? Math.abs(cf.d - r) : cf.d + r];
+      };
+      const [a, b, d] = ends(mode);
+      const dMin = mode === "min" ? d : ends("min")[2], dMax = mode === "max" ? d : ends("max")[2];
+      const rows: Row[] = [["Centre distance", "len", cf.d], ["Minimum distance", "len", dMin], ["Maximum distance", "len", dMax], [isSphere ? "SØ" : "Ø", "len", 2 * r]];
+      if (Math.abs(sd.d - dMin) > Math.max(2e-3 * r, 1e-6 * (1 + v.modelSize))) rows.push(gapRow);
+      rows.push(...deltas(a, b), names);
+      const centreTitle = O.kind === "point" ? (isCyl ? "Axis to point" : "Centre to point")
+        : oLine ? (isCyl ? "Axis to line" : "Centre to line")
+        : oPlane ? (isCyl ? "Axis to face" : k && Math.abs(k.n.dot(oPlane)) > 1 - 1e-6 ? "Circle to face" : "Centre to face")
+        : "Centre distance";
+      const title = mode === "center" ? centreTitle : mode === "min" ? "Minimum distance" : "Maximum distance";
+      const [a0, b0] = roundPick === 0 ? [a, b] : [b, a];
+      const extra: Measurement["data"] = { modes: CIRCLE_MODES.map(m => m.mode).join(","), mode, round: roundPick === 0 ? "a" : "b", ...legs(a0, b0) };
+      return smart(line(a0, b0), title, d, "len", rows, "", extra);
+    }
   }
 
   // A point against a straight edge or a plane: square to the infinite line or plane, with the foot.
