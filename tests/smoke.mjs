@@ -16972,6 +16972,21 @@ try {
     await mp.click("#lang-btn");
     await mp.waitForTimeout(300);
     const cWide = await mp.evaluate(() => document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth);
+    // results by component: a row shows its component alone, on its own scale
+    const k0 = await sim();
+    const kRows = await mp.evaluate(() => [...document.querySelectorAll("#sim-tree .sim-comptable tbody tr")].map(r => r.textContent));
+    await mp.click('#sim-tree .sim-comptable tbody tr[data-rcomp="0"]');
+    await mp.waitForTimeout(300);
+    const k1 = await sim();
+    const kNote = await mp.evaluate(() => document.querySelector('#sim-tree [data-v="compnote"]')?.textContent ?? "");
+    await mp.click('#sim-tree [data-a="rcompall"]');
+    await mp.waitForTimeout(300);
+    const k2 = await sim();
+    const kTop = Math.max(...(k0.compRows ?? []).map(x => x.vm));
+    check(k0.compRows?.length === 2 && kRows.length === 2 && Math.abs(kTop / k0.maxVm - 1) < 1e-6 && k0.compSel === -1 && k0.drawn > 0
+      && k1.compSel === 0 && k1.drawn > 0 && k1.drawn < k0.drawn && Math.abs(k1.plot.range[1] / k0.compRows[0].vm - 1) < 1e-6 && kNote.includes("alone")
+      && k2.compSel === -1 && k2.drawn === k0.drawn,
+      `sim 1.634: results by component, and a row shows its component alone (${JSON.stringify({ rows: k0.compRows, kRows, drawn: [k0.drawn, k1.drawn, k2.drawn], range: [k0.plot.range, k1.plot.range], kNote })})`);
     // left out: the load on it can no longer be solved, and the message says why; the last component cannot be left out
     await mp.uncheck('#sim-tree .sim-complist li[data-comp="c2"] [data-k="compon"]');
     await mp.waitForTimeout(400);

@@ -1723,6 +1723,12 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-cases > .btn { margin-top: 6px; }
 .sim-casetable tbody tr { cursor: pointer; }
 .sim-casetable tbody tr.sel { font-weight: 600; }
+.sim-comptable { table-layout: fixed; width: 100%; }
+.sim-comptable th:first-child { width: 38%; }
+.sim-comptable th:first-child, .sim-comptable td:first-child { text-align: left; }
+.sim-comptable td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-comptable tbody tr { cursor: pointer; }
+.sim-comptable tbody tr.sel { font-weight: 600; }
 .sim-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .sim-ib { width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; }
 .sim-ib:hover { background: var(--panel-2); color: var(--text); }
