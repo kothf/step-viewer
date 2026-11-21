@@ -8,7 +8,7 @@ import { Basis, basisSize } from "./basis";
 import { gauss, gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
 import { makeGrid, refit, type Grid } from "./grid";
 import { BlockMatrix, Envelope } from "./sparse";
-import { pcg, pcgSolver } from "./pcg";
+import { pcgSolver } from "./pcg";
 import { subspace } from "./eigen";
 
 export interface Material {
@@ -128,6 +128,12 @@ export interface StaticProblem {
    * earlier pass on the same `grid` (any lower degree). Needs `mat.rho`.
    */
   modal?: { count: number; start?: Float64Array[]; tol?: number };
+  /**
+   * Inertia relief (FR-SUP-007): the body is held by nothing; the loads are balanced by the inertia forces
+   * −ρ(a + α × r) of the rigid acceleration they give it. Supports that leave it free are then allowed (the
+   * usual case: none). The result has no rigid motion (mass-weighted). Needs `mat.rho`.
+   */
+  relief?: boolean;
 }
 
 export interface Mode {
@@ -158,6 +164,8 @@ export interface StaticResult {
   reactions: Reaction[];
   /** Sum of the applied loads: force, N, and moment about the origin, N·mm. */
   applied: Reaction;
+  /** Inertia relief: the acceleration the loads give the free body (mm/s², rad/s²), its centre of mass (mm) and mass (t). */
+  accel?: { a: number[]; alpha: number[]; com: number[]; mass: number };
   /**
    * With `prev`: per element, the strain energy (N·mm) of the difference from the pass before, which is the
    * energy-norm error of that pass seen from this one. Zeros without `prev`.
@@ -390,7 +398,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   };
   // Nitsche for P u = 0 (P projects on the held directions): −N_a (P M_b) − N_b (P M_a)ᵀ + 2γ N_a N_b P
   const free = freeModes(pb.fixed, pb.lo, pb.hi);
-  if (free > 0 && !pb.modal) throw new Error(`E-SIM-FREE: ${free}`);
+  if (free > 0 && !pb.modal && !(pb.relief && pb.mat.rho)) throw new Error(`E-SIM-FREE: ${free}`);
   const P = new Float64Array(9), PM = new Float64Array(9 * nb);
   const Pg = [0, 0, 0];
   const springAt = (s: Support, nrm: ArrayLike<number>) => {
@@ -556,6 +564,41 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       }
     }
   }
+  // inertia relief: the rigid acceleration the loads give the free body, and its inertia forces as a body force
+  let accel: { a: number[]; alpha: number[]; com: number[]; mass: number } | undefined;
+  const relief = !!pb.relief && !!pb.mat.rho && free > 0 && !pb.modal;
+  if (relief) {
+    const rho = pb.mat.rho!;
+    let ms = 0;
+    const c = [0, 0, 0], I = new Float64Array(9);
+    const each = (fn: (e: number, x: number, y: number, z: number, w: number) => void) => {
+      for (let e = 0; e < nel; e++) for (const ci of grid.elems[e].cells) {
+        const Q = grid.cells[ci].pts;
+        for (let k = 0; k < Q.n; k++) fn(e, Q.a[4 * k], Q.a[4 * k + 1], Q.a[4 * k + 2], Q.a[4 * k + 3] * rho);
+      }
+    };
+    each((_e, x, y, z, w) => { ms += w; c[0] += w * x; c[1] += w * y; c[2] += w * z; });
+    for (let i = 0; i < 3; i++) c[i] /= ms || 1;
+    each((_e, x, y, z, w) => {
+      const r = [x - c[0], y - c[1], z - c[2]], r2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) I[3 * i + j] += w * ((i === j ? r2 : 0) - r[i] * r[j]);
+    });
+    const F = applied.force, M0 = applied.moment;
+    const Mc = [M0[0] - (c[1] * F[2] - c[2] * F[1]), M0[1] - (c[2] * F[0] - c[0] * F[2]), M0[2] - (c[0] * F[1] - c[1] * F[0])];
+    const a = F.map(v => v / (ms || 1));
+    // α = I⁻¹ M (I is symmetric positive definite for a solid)
+    const det = I[0] * (I[4] * I[8] - I[5] * I[7]) - I[1] * (I[3] * I[8] - I[5] * I[6]) + I[2] * (I[3] * I[7] - I[4] * I[6]);
+    const inv = [I[4] * I[8] - I[5] * I[7], I[2] * I[7] - I[1] * I[8], I[1] * I[5] - I[2] * I[4], I[5] * I[6] - I[3] * I[8], I[0] * I[8] - I[2] * I[6], I[2] * I[3] - I[0] * I[5],
+      I[3] * I[7] - I[4] * I[6], I[1] * I[6] - I[0] * I[7], I[0] * I[4] - I[1] * I[3]].map(v => v / (det || 1));
+    const al = [0, 1, 2].map(i => inv[3 * i] * Mc[0] + inv[3 * i + 1] * Mc[1] + inv[3 * i + 2] * Mc[2]);
+    each((e, x, y, z, w) => {
+      const rx = x - c[0], ry = y - c[1], rz = z - c[2];
+      const bx = -w * (a[0] + al[1] * rz - al[2] * ry), by = -w * (a[1] + al[2] * rx - al[0] * rz), bz = -w * (a[2] + al[0] * ry - al[1] * rx);
+      bas.eval(x, y, z, grid.elems[e].c, grid.elems[e].s);
+      for (let q = 0, o = off[e]; q < nbs[e]; q++) { f[o + 3 * q] += bas.v[q] * bx; f[o + 3 * q + 1] += bas.v[q] * by; f[o + 3 * q + 2] += bas.v[q] * bz; }
+    });
+    accel = { a, alpha: al, com: c, mass: ms };
+  }
   // keep elements nothing reaches solvable (no stiffness at all): pin them
   for (let e = 0; e < nel; e++) {
     const K = A.block(e, e), m = 3 * nbs[e];
@@ -630,6 +673,38 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       return r.vectors[0] ?? new Float64Array(n);
     };
   }
+  // inertia relief: the balanced loads leave the rigid motions without stiffness, so K + σM is solved (σ far under
+  // the first elastic mode) and the answer corrected once with the mass term on the right
+  let reliefM: ((v: Float64Array, y: Float64Array) => void) | null = null;
+  if (relief) {
+    const rho = pb.mat.rho!;
+    const Ld = Math.hypot(pb.hi[0] - pb.lo[0], pb.hi[1] - pb.lo[1], pb.hi[2] - pb.lo[2]) || 1, sigma = 1e-4 * pb.mat.E / rho / (Ld * Ld);
+    const Ms: Float64Array[] = [];
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e], ne = nbs[e], M = new Float64Array(ne * ne);
+      for (const ci of E.cells) {
+        const Q = grid.cells[ci].pts;
+        for (let k = 0; k < Q.n; k++) {
+          const o = 4 * k, w = Q.a[o + 3] * rho * sigma;
+          bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s);
+          for (let a = 0; a < ne; a++) { const va = bas.v[a] * w; for (let b = 0; b < ne; b++) M[a * ne + b] += va * bas.v[b]; }
+        }
+      }
+      Ms.push(M);
+      const K = A.block(e, e), mm = 3 * ne;
+      for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) for (let c = 0; c < 3; c++) K[(3 * a + c) * mm + 3 * b + c] += M[a * ne + b];
+    }
+    reliefM = (v, y) => {
+      for (let e = 0; e < nel; e++) {
+        const M = Ms[e], ne = nbs[e], o = off[e];
+        for (let a = 0; a < ne; a++) for (let c = 0; c < 3; c++) {
+          let s = 0;
+          for (let b = 0; b < ne; b++) s += M[a * ne + b] * v[o + 3 * b + c];
+          y[o + 3 * a + c] = s;
+        }
+      }
+    };
+  }
   const t2 = now();
   let xs: Float64Array, t3: number, iterations = 0;
   const useCg = pb.solver === "pcg" || (pb.solver !== "direct" && p >= 2 && A.size > DIRECT_LIMIT);
@@ -637,14 +712,23 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     t3 = t2;
     xs = modalRun();
   } else if (useCg) {
-    const r = pcg(A, f, { coarse: 3 * basisSize(1), tol: pb.tol ?? 1e-8 });
+    const S = pcgSolver(A, { coarse: 3 * basisSize(1), tol: pb.tol ?? 1e-8 }), r = S.solve(f);
     xs = r.x; iterations = r.iterations;
-    t3 = t2 + r.ms.setup;
+    t3 = t2 + S.setup;
+    if (reliefM) {
+      const y = new Float64Array(f.length);
+      reliefM(xs, y);
+      for (let i = 0; i < y.length; i++) y[i] += f[i];
+      const r2 = S.solve(y, xs);
+      xs = r2.x; iterations += r2.iterations;
+    }
   } else {
     const L = new Envelope(A);
     t3 = now();
     xs = L.solve(f);
+    if (reliefM) { const y = new Float64Array(f.length); reliefM(xs, y); for (let i = 0; i < y.length; i++) y[i] += f[i]; xs = L.solve(y); }
   }
+
   const t4 = now();
   let energy = 0;
   for (let i = 0; i < f.length; i++) energy += f[i] * xs[i];
@@ -746,7 +830,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   return {
     grid, p, dofs: A.size, x, energy, iterations,
     ms: { grid: t1 - t0, assemble: t2 - t1, factor: t3 - t2, solve: t4 - t3 },
-    reactions, applied, eta, prevError,
+    reactions, applied, eta, prevError, accel,
     modes, space, mass: modal ? mass : undefined,
     use(k) { const v = modes?.[k]; if (v) x = v.x; },
     sample(pos, nrm, hits) {
