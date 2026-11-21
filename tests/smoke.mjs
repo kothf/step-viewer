@@ -17048,6 +17048,25 @@ try {
       && x2.pose.off === 1 && x2.drawn > 0 && x2.drawn < x0.drawn && Math.abs(x2.plotBox[5] - x0.plotBox[5]) < 0.5 && x3.pose.off === 1 && x3.drawn === x2.drawn
       && x4.pose.moved === 0 && x4.pose.off === 0 && x4.drawn === x0.drawn && Math.abs(x4.plotBox[5] - x0.plotBox[5]) < 1e-3,
       `sim 1.635: the plot follows an exploded view, and leaves out hidden and see-through components (${JSON.stringify({ stale: x0.stale, pose: [x0.pose, x1.pose, x2.pose, x3.pose, x4.pose], box: [x0.plotBox, x1.plotBox, x2.plotBox, x4.plotBox], drawn: [x0.drawn, x1.drawn, x2.drawn, x3.drawn, x4.drawn] })})`);
+    // 1.636: a rigid component moves as a body: no stress of its own, and the assembly bends less
+    await mp.click('#sim-tree .sim-complist li[data-comp="c2"] [data-a="comprigid"]');
+    await mp.waitForTimeout(400);
+    const g0 = await sim();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const g1 = await sim();
+    const gCell = await mp.evaluate(() => document.querySelector('#sim-tree .sim-comptable [data-v="crigid"]')?.textContent ?? "");
+    const gWide = await mp.evaluate(() => document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth);
+    await mp.click("#lang-btn");
+    const gRu = await mp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-comps *, #tab-sim .sim-comptable *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    await mp.click('#sim-tree .sim-complist li[data-comp="c2"] [data-a="comprigid"]');
+    await mp.waitForTimeout(400);
+    const g2 = await sim();
+    check(g0.stale && g0.compList.find(c => c.id === "c2")?.rigid && !g1.error && g1.compRows?.length === 2 && g1.compRows[1].vm === 0 && g1.compRows[0].vm > 1 && gCell === "rigid"
+      && g1.maxU > 0.05 && g1.maxU < 0.85 * c2.maxU && gWide <= 0 && gRu.length === 0 && g2.stale && !g2.compList.find(c => c.id === "c2")?.rigid,
+      `sim 1.636: a rigid component shows no stress and stiffens the assembly; translated (${JSON.stringify({ stale: [g0.stale, g2.stale], list: g0.compList, error: g1.error, rows: g1.compRows, gCell, maxU: [c2.maxU, g1.maxU], gWide, gRu })})`);
     // left out: the load on it can no longer be solved, and the message says why; the last component cannot be left out
     await mp.uncheck('#sim-tree .sim-complist li[data-comp="c2"] [data-k="compon"]');
     await mp.waitForTimeout(400);

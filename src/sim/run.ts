@@ -396,7 +396,7 @@ export interface RunInput {
    * materials differ: every body then keeps its own stiffness and density, joined to the others where they
    * touch. `body` stays the whole part (its faces are what supports and loads name), `mat` is not used then.
    */
-  regions?: { tris: Float64Array; mat: SimMaterial }[];
+  regions?: { tris: Float64Array; mat: SimMaterial; rigid?: boolean }[];
   /**
    * An assembly: `regions` are its components, each solved as its own body whatever its material and joined to
    * the others where they touch or come within `gap` mm (bonded unless `links` says otherwise, by region index).
@@ -517,7 +517,7 @@ export function domainsOf(inp: RunInput) {
   if (!R || R.length < 2) return undefined;
   const a = R[0].mat;
   if (!inp.asm && R.every(r => r.mat.E === a.E && r.mat.nu === a.nu && r.mat.rho === a.rho)) return undefined;
-  return R.map(r => ({ inside: insideOf(new MeshBody(r.tris)), mat: { E: r.mat.E, nu: r.mat.nu, rho: r.mat.rho }, tris: r.tris }));
+  return R.map(r => ({ inside: insideOf(new MeshBody(r.tris)), mat: { E: r.mat.E, nu: r.mat.nu, rho: r.mat.rho }, tris: r.tris, ...(r.rigid ? { rigid: true } : {}) }));
 }
 /** `solid` (asked for): 1 where the point is inside the body itself, not only in one of its cells. */
 export interface SampleResult { u: Float32Array; vm: Float32Array; err: Float32Array; hit: Uint8Array; solid?: Uint8Array }
@@ -565,7 +565,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
   // local accuracy asked for by the user: those elements run ahead of the others from the first pass on
   let boost: Int8Array | undefined;
   if (inp.problem.refine?.length) {
-    grid = makeGrid(inp.body.lo, inp.body.hi, h, inside, { q: 3, depth: 3, fit: 5, domains: domains?.map(d => d.inside) });
+    grid = makeGrid(inp.body.lo, inp.body.hi, h, inside, { q: 3, depth: 3, fit: 5, domains: domains?.map(d => d.inside), rigid: domains?.map(d => !!d.rigid) });
     boost = boostOf(grid, inp.problem.refine);
     if (!boost.some(v => v > 0)) boost = undefined;
   }

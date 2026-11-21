@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.636.0] - 2026-11-21
+
+### Added
+
+- Structural analysis of assemblies: **rigid components** (FR-CON-001). **Rigid** beside a component in the Study tab makes it move as a body: it does not deform and shows no stress, its mass still counts (weight, spinning), and it passes loads on to the components it touches. Use it for a motor on a bracket or a stiff fixture. A rigid component needs no elastic modulus, only a density when the study has gravity.
+- The results by component and the report say which components were rigid.
+
 ## [1.635.0] - 2026-11-21
 
 ### Added
@@ -4117,7 +4124,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.635.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.636.0...HEAD
+[1.636.0]: https://github.com/kothf/step-viewer/compare/v1.635.0...v1.636.0
 [1.635.0]: https://github.com/kothf/step-viewer/compare/v1.634.0...v1.635.0
 [1.634.0]: https://github.com/kothf/step-viewer/compare/v1.633.0...v1.634.0
 [1.633.0]: https://github.com/kothf/step-viewer/compare/v1.632.0...v1.633.0

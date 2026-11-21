@@ -127,7 +127,8 @@ export interface Study {
 }
 
 /** A component in a study: left out of the analysis (`off`), or analysed with another material than its part's. */
-export interface StudyComp { off?: boolean; material?: MatRef }
+/** `rigid`: the component moves as a body with its mass, without strain (FR-CON-001). */
+export interface StudyComp { off?: boolean; material?: MatRef; rigid?: boolean }
 /** The component a region key (`<comp>` or `<comp>#<solid>`) or a face name (`<comp>@<face>`) belongs to. */
 export const compOf = (key: string) => { const m = /[@#]/.exec(key); return m ? key.slice(0, m.index) : key; };
 /** The ids of the components a study leaves out. */

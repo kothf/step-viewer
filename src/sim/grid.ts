@@ -113,6 +113,8 @@ export interface GridOptions {
   minFrac?: number;
   /** Several bodies with a material each: every one gets its own cells and elements (`inside` = all of them). */
   domains?: Inside[];
+  /** Per domain: a rigid one is a single element over all its cells (its polynomial is then kept linear). */
+  rigid?: boolean[];
 }
 
 /** Gauss points per direction in the large uncut pieces of a cut cell: enough for the highest pass (p = 4). */
@@ -147,7 +149,7 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
     g.cells.push({ ijk: [i, j, k], lo: clo, hi: chi, state: st, pts, fine, frac, el: -1, dom });
   }
   }
-  aggregate(g, o.minFrac ?? 0.25);
+  aggregate(g, o.minFrac ?? 0.25, doms.length > 1 ? o.rigid : undefined);
   return g;
 }
 
@@ -162,11 +164,25 @@ export function refit(g: Grid, q: number, fit: number, degree?: (c: Cell) => num
   }
 }
 
-function aggregate(g: Grid, minFrac: number) {
+function aggregate(g: Grid, minFrac: number, rigid?: boolean[]) {
   const big = (c: number) => g.cells[c].frac >= minFrac;
+  // a rigid domain: one element over its box
+  if (rigid) for (let d = 0; d < rigid.length; d++) {
+    if (!rigid[d]) continue;
+    const cells: number[] = [], lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let c = 0; c < g.cells.length; c++) {
+      const cl = g.cells[c];
+      if (cl.dom !== d) continue;
+      cells.push(c);
+      for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], cl.lo[a]); hi[a] = Math.max(hi[a], cl.hi[a]); }
+    }
+    if (!cells.length) continue;
+    for (const c of cells) g.cells[c].el = g.elems.length;
+    g.elems.push({ c: lo.map((v, a) => (v + hi[a]) / 2), s: Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2, cells });
+  }
   // roots: every cell with enough material
   for (let c = 0; c < g.cells.length; c++) {
-    if (!big(c)) continue;
+    if (!big(c) || g.cells[c].el >= 0) continue;
     const cl = g.cells[c];
     cl.el = g.elems.length;
     g.elems.push({ c: cl.lo.map((v, a) => (v + cl.hi[a]) / 2), s: g.h / 2, cells: [c] });
