@@ -81,6 +81,8 @@ let assembler: Assembler | null = null;
 let shared: WeakMap<object, { quality: number; data: PartData }> | null = null;
 /** The last evaluated body, for STEP export. */
 let lastBody: { shape: unknown; faces: unknown[]; names?: string[] } | null = null;
+/** The solids of `lastBody` with their Bodies-folder keys (structural analysis: a material per body). */
+let lastParts: { key: string; part: { shape: unknown; faces: unknown[] } }[] = [];
 /** What the view last showed of the part (shown solids and surface bodies), for mesh export. */
 let lastShown: { shape: unknown } | null = null;
 let heap: () => number = () => 0;
@@ -120,7 +122,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
     if (!kernel) throw new Error("Kernel not started");
     if (r.type === "ping") { post({ id: r.id, ok: true }); return; }
     if (r.type === "reset") {
-      modeller = null; assembler = null; shared = null; lastBody = null; lastShown = null;
+      modeller = null; assembler = null; shared = null; lastBody = null; lastParts = []; lastShown = null;
       if (occ) memoOf(occ as object).clear();
       kernel = new Kernel(occ as ConstructorParameters<typeof Kernel>[0]);
       post({ id: r.id, ok: true, heap: heap() });
@@ -155,6 +157,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       lastBody = res.body;
       // The Bodies folder (FR-BODY-001): hidden bodies leave the view, coloured ones get their colour.
       const info = res.body ? modeller.bodyInfo(res.body, r.doc) : [];
+      lastParts = info.map(b => ({ key: b.key, part: b.part }));
       const state = r.doc.bodies ?? {};
       const vis = info.filter(b => !state[b.key]?.hidden);
       const looks = !!(r.doc.faceColors && Object.keys(r.doc.faceColors).length) || !!(r.doc.featureColors && Object.keys(r.doc.featureColors).length);
@@ -360,7 +363,9 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       // several bodies are analysed bonded: joined where they touch
       const b = (modeller ?? new Modeller(oc)).bonded({ shape: lastBody.shape, faces: lastBody.faces, names: lastBody.names ?? [] });
       const geo = simGeometry(oc, b.body.shape, b.body.faces, r.lin, r.ang);
-      post({ id: r.id, ok: true, geo: { ...geo, names: b.body.names }, solids: b.solids, parts: b.parts }, [geo.tris.buffer, geo.face.buffer]);
+      // each body's own surface too, so bodies with their own materials can be told apart
+      const regions = b.parts > 1 && lastParts.length === b.parts ? lastParts.map(q => ({ key: q.key, tris: simGeometry(oc, q.part.shape, q.part.faces as any[], r.lin, r.ang).tris })) : undefined;
+      post({ id: r.id, ok: true, geo: { ...geo, names: b.body.names }, solids: b.solids, parts: b.parts, regions }, [geo.tris.buffer, geo.face.buffer, ...(regions ?? []).map(q => q.tris.buffer)]);
     } else if (r.type === "exportMesh") {
       const oc = kernel.module;
       let out: { id: string | number; mesh: ExportMesh }[];

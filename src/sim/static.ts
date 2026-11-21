@@ -96,6 +96,12 @@ export interface StaticProblem {
   /** Polynomial degree 1..4. */
   p: number;
   mat: Material;
+  /**
+   * Bodies with a material each (two or more): every one gets its own elements, joined to its neighbours
+   * where their surfaces touch like elements inside a body are, each side with its own stiffness. `tris` =
+   * the body's own closed surface, wound outwards. `inside`/`mat` are then not used.
+   */
+  domains?: { inside: Inside; mat: Material; tris: ArrayLike<number> }[];
   fixed: Support[];
   loads: Load[];
   /** Gravity, mm/s² (needs `mat.rho`). */
@@ -177,7 +183,7 @@ export interface StaticResult {
    * error were every element like the one the point is in) at points; `nrm` = outward normals, so a point on
    * the surface is read from the cell the material is in. */
   /** `hit` (asked for with `hits`): 1 where the point lies in a cell of the grid, so the values there mean something. */
-  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array };
+  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; /** With `domains`: the one each point is in. */ dom?: Uint8Array };
   /** Displacement at a point, mm. */
   disp(x: number, y: number, z: number): [number, number, number];
   /** Modal: the modes, lowest first; `use(k)` makes `sample`/`disp`/`stress` read mode k (the first to begin with). */
@@ -224,9 +230,19 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   let grid = pb.grid;
   const deg = pb.grid && pb.degrees && pb.degrees.length === pb.grid.elems.length ? pb.degrees : null;
   if (grid) refit(grid, q, 2 * p + 1, deg ? c => deg[c.el] : undefined);
-  else grid = makeGrid(pb.lo, pb.hi, pb.h, pb.inside, { q, depth: pb.depth ?? 3, fit: 2 * p + 1 });
+  const doms = pb.domains && pb.domains.length > 1 ? pb.domains : null;
+  if (!grid) grid = makeGrid(pb.lo, pb.hi, pb.h, pb.inside, { q, depth: pb.depth ?? 3, fit: 2 * p + 1, domains: doms?.map(d => d.inside) });
   const t1 = now();
-  const { lam, mu } = lame(pb.mat);
+  // materials: one, or one per domain; `lam`/`mu` are those of the element being worked on (`setMat`)
+  const mats = doms ? doms.map(d => d.mat) : [pb.mat], lames = mats.map(lame);
+  let { lam, mu } = lames[0];
+  const domE = Uint8Array.from(grid.elems, E => (doms ? grid!.cells[E.cells[0]].dom : 0));
+  const setMat = (e: number) => { const L = lames[domE[e]]; lam = L.lam; mu = L.mu; };
+  const rhoOf = (e: number) => mats[domE[e]].rho ?? 0;
+  const hasRho = mats.every(q => (q.rho ?? 0) > 0);
+  /** The lowest E/ρ: the scale of the shift that stands in for stiffness the supports do not give. */
+  const stiffRho = () => Math.min(...mats.map(q => q.E / q.rho!));
+  const insideOfDom = (d: number) => (doms ? doms[d].inside : pb.inside);
   const bas = new Basis(p), bas2 = new Basis(p);
   const nb = bas.n, m = 3 * nb, nel = grid.elems.length;
   // functions per element: the leading ones of the hierarchical basis up to the element's own degree
@@ -235,7 +251,6 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const A = new BlockMatrix(nel, Array.from(nbs, v => 3 * v));
   const off = A.off;
   const f = new Float64Array(A.size);
-  const gbase = (pb.beta ?? 3) * (lam + 2 * mu) / grid.h;
   const pOf = (e: number) => (deg ? Math.min(p, Math.max(1, deg[e])) : p);
   // an element that is partly outside the body carries its polynomial on less material, so its tractions are
   // larger beside its energy: the penalty grows by the share that is missing (cells under 25 % are aggregated)
@@ -243,7 +258,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   for (let e = 0; e < nel; e++) {
     let fr = 0;
     for (const c of grid.elems[e].cells) fr = Math.max(fr, grid.cells[c].frac);
-    gam[e] = gbase * (pOf(e) + 1) ** 2 / Math.min(1, Math.max(0.2, fr));
+    setMat(e);
+    gam[e] = (pb.beta ?? 3) * (lam + 2 * mu) / grid.h * (pOf(e) + 1) ** 2 / Math.min(1, Math.max(0.2, fr));
   }
   let gamma = 0;
   const el = (c: number) => grid.elems[grid.cells[c].el];
@@ -253,6 +269,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const E = grid.elems[e];
     const K = A.block(e, e);
     const nb = nbs[e], m = 3 * nb;
+    setMat(e);
     for (const ci of E.cells) {
       const P = grid.cells[ci].pts;
       for (let k = 0; k < P.n; k++) {
@@ -283,11 +300,12 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const A0 = grid.cells[ca], ea = A0.el, eb = grid.cells[cb].el;
     if (ea === eb) return;
     const EA = grid.elems[ea], EB = grid.elems[eb];
+    setMat(ea);
     // fine points of a cut face are kept on the grid for later passes
     const key = ca * 3 + axis;
     let pts = grid!.faces.get(key);
     if (pts === undefined) {
-      pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, 5, pb.inside, pb.depth ?? 3);
+      pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, 5, insideOfDom(A0.dom), pb.depth ?? 3);
       // a whole face keeps no points: it gets the plain Gauss rule of each pass
       const area = grid!.h * grid!.h;
       grid!.faces.set(key, Math.abs(pts.weight() - area) < 1e-12 * area ? null : pts);
@@ -328,8 +346,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     }
   }
   for (let c = 0; c < grid.cells.length; c++) {
-    const [i, j, k] = grid.cells[c].ijk;
-    const nx = grid.at(i + 1, j, k), ny = grid.at(i, j + 1, k), nz = grid.at(i, j, k + 1);
+    const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom;
+    const nx = grid.at(i + 1, j, k, d), ny = grid.at(i, j + 1, k, d), nz = grid.at(i, j, k + 1, d);
     if (nx >= 0) face(c, nx, 0);
     if (ny >= 0) face(c, ny, 1);
     if (nz >= 0) face(c, nz, 2);
@@ -337,6 +355,38 @@ export function solveStatic(pb: StaticProblem): StaticResult {
 
   // boundary quadrature located in cells
   const tq = Math.max(2, p + 1);
+  // domains are joined where one's surface lies on another's: the same terms as between elements, each side
+  // with its own material. A point of A's surface is on B when a step along the normal ends inside B.
+  if (doms) {
+    const eps = 2e-3 * grid.h;
+    for (let a = 0; a + 1 < doms.length; a++) {
+      const T = doms[a].tris, { pts, tri } = gridTrianglePoints(T, grid.lo, grid.h, tq), nrms = triNormals(T);
+      for (let k = 0; k < pts.n; k++) {
+        const o = 4 * k, t = tri[k], w = pts.a[o + 3];
+        const nrm = [nrms[3 * t], nrms[3 * t + 1], nrms[3 * t + 2]];
+        const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
+        const bx = x + eps * nrm[0], by = y + eps * nrm[1], bz = z + eps * nrm[2];
+        let b = -1;
+        for (let d = a + 1; d < doms.length && b < 0; d++) if (doms[d].inside(bx, by, bz)) b = d;
+        if (b < 0) continue;
+        const ca = grid.cellOf(x - eps * nrm[0], y - eps * nrm[1], z - eps * nrm[2], a), cb = grid.cellOf(bx, by, bz, b);
+        if (ca < 0 || cb < 0) continue;
+        const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb];
+        bas.eval(x, y, z, EA.c, EA.s);
+        bas2.eval(x, y, z, EB.c, EB.s);
+        setMat(ea);
+        for (let q2 = 0; q2 < nb; q2++) traction(bas.g, 3 * q2, nrm, lam, mu, MA, 9 * q2);
+        setMat(eb);
+        for (let q2 = 0; q2 < nb; q2++) traction(bas2.g, 3 * q2, nrm, lam, mu, MB, 9 * q2);
+        const na = nbs[ea], nc = nbs[eb];
+        gamma = Math.max(gam[ea], gam[eb]);
+        pair(A.block(ea, ea), bas.v, MA, 1, na, bas.v, MA, 1, na, w);
+        pair(A.block(ea, eb), bas.v, MA, 1, na, bas2.v, MB, -1, nc, w);
+        pair(A.block(eb, ea), bas2.v, MB, -1, nc, bas.v, MA, 1, na, w);
+        pair(A.block(eb, eb), bas2.v, MB, -1, nc, bas2.v, MB, -1, nc, w);
+      }
+    }
+  }
   const located = (tris: ArrayLike<number>, fn: (e: number, x: number, y: number, z: number, w: number, nrm: number[]) => void) => {
     const { pts, tri } = gridTrianglePoints(tris, grid.lo, grid.h, tq);
     const nrms = triNormals(tris);
@@ -398,7 +448,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   };
   // Nitsche for P u = 0 (P projects on the held directions): −N_a (P M_b) − N_b (P M_a)ᵀ + 2γ N_a N_b P
   const free = freeModes(pb.fixed, pb.lo, pb.hi);
-  if (free > 0 && !pb.modal && !(pb.relief && pb.mat.rho)) throw new Error(`E-SIM-FREE: ${free}`);
+  if (free > 0 && !pb.modal && !(pb.relief && hasRho)) throw new Error(`E-SIM-FREE: ${free}`);
   const P = new Float64Array(9), PM = new Float64Array(9 * nb);
   const Pg = [0, 0, 0];
   const springAt = (s: Support, nrm: ArrayLike<number>) => {
@@ -409,6 +459,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   for (const s of pb.fixed) located(s.tris, (e, x, y, z, w, nrm) => {
     const E = grid.elems[e];
     bas.eval(x, y, z, E.c, E.s);
+    setMat(e);
     if (s.spring) {
       springAt(s, nrm);
       const K = A.block(e, e), v = bas.v, ne = nbs[e], m = 3 * ne;
@@ -531,10 +582,9 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       for (let a = 0; a < nbs[e]; a++) for (let c = 0; c < 3; c++) f[off[e] + 3 * a + c] += w * bas.v[a] * t[c];
     });
   }
-  if (pb.gravity && pb.mat.rho) {
-    const g = Array.from(pb.gravity).map(v => v * pb.mat.rho!);
+  if (pb.gravity && hasRho) {
     for (let e = 0; e < nel; e++) {
-      const E = grid.elems[e];
+      const E = grid.elems[e], g = Array.from(pb.gravity).map(v => v * rhoOf(e));
       for (const ci of E.cells) {
         const Q = grid.cells[ci].pts;
         for (let k = 0; k < Q.n; k++) {
@@ -546,10 +596,10 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       }
     }
   }
-  if (pb.spin && pb.mat.rho) {
-    const sp = pb.spin, ax = sp.axis, rho = pb.mat.rho, w2 = sp.omega * sp.omega, al = sp.alpha ?? 0;
+  if (pb.spin && hasRho) {
+    const sp = pb.spin, ax = sp.axis, w2 = sp.omega * sp.omega, al = sp.alpha ?? 0;
     for (let e = 0; e < nel; e++) {
-      const E = grid.elems[e];
+      const E = grid.elems[e], rho = rhoOf(e);
       for (const ci of E.cells) {
         const Q = grid.cells[ci].pts;
         for (let k = 0; k < Q.n; k++) {
@@ -566,15 +616,14 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   }
   // inertia relief: the rigid acceleration the loads give the free body, and its inertia forces as a body force
   let accel: { a: number[]; alpha: number[]; com: number[]; mass: number } | undefined;
-  const relief = !!pb.relief && !!pb.mat.rho && free > 0 && !pb.modal;
+  const relief = !!pb.relief && hasRho && free > 0 && !pb.modal;
   if (relief) {
-    const rho = pb.mat.rho!;
     let ms = 0;
     const c = [0, 0, 0], I = new Float64Array(9);
     const each = (fn: (e: number, x: number, y: number, z: number, w: number) => void) => {
       for (let e = 0; e < nel; e++) for (const ci of grid.elems[e].cells) {
         const Q = grid.cells[ci].pts;
-        for (let k = 0; k < Q.n; k++) fn(e, Q.a[4 * k], Q.a[4 * k + 1], Q.a[4 * k + 2], Q.a[4 * k + 3] * rho);
+        for (let k = 0; k < Q.n; k++) fn(e, Q.a[4 * k], Q.a[4 * k + 1], Q.a[4 * k + 2], Q.a[4 * k + 3] * rhoOf(e));
       }
     };
     each((_e, x, y, z, w) => { ms += w; c[0] += w * x; c[1] += w * y; c[2] += w * z; });
@@ -606,13 +655,12 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   }
   // modal: consistent mass from the same quadrature, the same for each component
   let modes: Mode[] | undefined, space: Float64Array[] | undefined, mass = 0;
-  const modal = pb.modal && pb.mat.rho ? pb.modal : null;
+  const modal = pb.modal && hasRho ? pb.modal : null;
   let modalRun: (() => Float64Array) | null = null;
   if (modal) {
-    const rho = pb.mat.rho!;
     const Mel: Float64Array[] = [], Sel: Float64Array[] = [];
     for (let e = 0; e < nel; e++) {
-      const E = grid.elems[e], ne = nbs[e];
+      const E = grid.elems[e], ne = nbs[e], rho = rhoOf(e);
       const M = new Float64Array(ne * ne), S = new Float64Array(ne);
       for (const ci of E.cells) {
         const Q = grid.cells[ci].pts;
@@ -642,7 +690,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     // a body the supports leave free has motions without stiffness: K + σM is solved instead, σ far under
     // the first elastic mode of anything but a hair
     const L = Math.hypot(pb.hi[0] - pb.lo[0], pb.hi[1] - pb.lo[1], pb.hi[2] - pb.lo[2]) || 1;
-    const scale = pb.mat.E / rho / (L * L);
+    const scale = stiffRho() / (L * L);
     const sigma = free > 0 ? 1e-4 * scale : 0;
     if (sigma > 0) for (let e = 0; e < nel; e++) {
       const K = A.block(e, e), M = Mel[e], ne = nbs[e], m = 3 * ne;
@@ -677,11 +725,10 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   // the first elastic mode) and the answer corrected once with the mass term on the right
   let reliefM: ((v: Float64Array, y: Float64Array) => void) | null = null;
   if (relief) {
-    const rho = pb.mat.rho!;
-    const Ld = Math.hypot(pb.hi[0] - pb.lo[0], pb.hi[1] - pb.lo[1], pb.hi[2] - pb.lo[2]) || 1, sigma = 1e-4 * pb.mat.E / rho / (Ld * Ld);
+    const Ld = Math.hypot(pb.hi[0] - pb.lo[0], pb.hi[1] - pb.lo[1], pb.hi[2] - pb.lo[2]) || 1, sigma = 1e-4 * stiffRho() / (Ld * Ld);
     const Ms: Float64Array[] = [];
     for (let e = 0; e < nel; e++) {
-      const E = grid.elems[e], ne = nbs[e], M = new Float64Array(ne * ne);
+      const E = grid.elems[e], ne = nbs[e], M = new Float64Array(ne * ne), rho = rhoOf(e);
       for (const ci of E.cells) {
         const Q = grid.cells[ci].pts;
         for (let k = 0; k < Q.n; k++) {
@@ -747,6 +794,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     located(s.tris, (e, px, py, pz, w, nrm) => {
       const E = grid.elems[e];
       bas.eval(px, py, pz, E.c, E.s);
+      setMat(e);
       if (s.spring) {
         // the springs' pull: −K u
         springAt(s, nrm);
@@ -795,6 +843,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     };
     for (let e = 0; e < nel; e++) {
       const E = grid.elems[e];
+      setMat(e);
       for (const ci of E.cells) {
         const Q = grid.cells[ci].pts;
         for (let k = 0; k < Q.n; k++) {
@@ -825,6 +874,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     if (c < 0) return -1;
     const E = el(c);
     bas.eval(px, py, pz, E.c, E.s);
+    setMat(grid.cells[c].el);
     return grid.cells[c].el;
   };
   return {
@@ -835,7 +885,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     use(k) { const v = modes?.[k]; if (v) x = v.x; },
     sample(pos, nrm, hits) {
       const n = pos.length / 3, u = new Float32Array(3 * n), vm = new Float32Array(n), err = new Float32Array(n);
-      const hit = hits ? new Uint8Array(n) : undefined;
+      const hit = hits ? new Uint8Array(n) : undefined, dom = doms ? new Uint8Array(n) : undefined;
       const eps = 1e-6 * grid.h, G = new Float64Array(9);
       for (let i = 0; i < n; i++) {
         let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
@@ -845,6 +895,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         const e = at(px, py, pz);
         if (e < 0) continue;
         if (hit) hit[i] = 1;
+        if (dom) dom[i] = domE[e];
         err[i] = local[e];
         G.fill(0);
         let ux = 0, uy = 0, uz = 0;
@@ -857,7 +908,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         const tr = G[0] + G[4] + G[8];
         vm[i] = vonMises([lam * tr + 2 * mu * G[0], lam * tr + 2 * mu * G[4], lam * tr + 2 * mu * G[8], mu * (G[1] + G[3]), mu * (G[5] + G[7]), mu * (G[6] + G[2])]);
       }
-      return hit ? { u, vm, err, hit } : { u, vm, err };
+      return { u, vm, err, ...(hit ? { hit } : {}), ...(dom ? { dom } : {}) };
     },
     disp(px, py, pz) {
       const e = at(px, py, pz);

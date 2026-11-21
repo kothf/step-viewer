@@ -16820,6 +16820,25 @@ try {
     await mp.waitForTimeout(300);
     const bd = await sim();
     const bdNote = await mp.evaluate(() => ({ note: document.querySelector("#sim-tree .sim-bonded")?.textContent ?? "", bodies: window.__sv.model.last().bodies?.length ?? 0 }));
+    // 1.629: the second body gets a material of its own (lighter, softer): the study keeps each body's material,
+    // so the mass is the sum of both and the first frequency rises with the lighter end.
+    const bmKey = await mp.evaluate(() => window.__sv.model.last().bodies.map(b => b.key).find(k => /b2/.test(k)));
+    await mp.evaluate(k => window.__sv.modeller.setBody(k, { material: { name: "Smoke alloy", density: 2.7, E: 70, nu: 0.33, sy: 100 } }), bmKey);
+    await settle();
+    const bmStale = (await sim()).stale;
+    const bmTree = await mp.evaluate(() => document.querySelector("#sim-tree .sim-bodymats")?.textContent ?? "");
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const bm = await sim();
+    const bmNote = await mp.evaluate(() => ({ note: document.querySelector("#sim-tree .sim-bonded")?.textContent ?? "", wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click("#lang-btn");
+    const bmRu = await mp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-bodymats, #tab-sim .sim-bonded")].map(e => e.textContent).filter(x => /Bodies|Each body|bonded/.test(x)));
+    await mp.click("#lang-btn");
+    await settle();
+    check(bmStale && /Smoke alloy/.test(bmTree) && !bm.error && bm.bodyMats?.length === 2 && bm.bodyMats[1] === "Smoke alloy" && /own material/.test(bmNote.note) && bmNote.wide <= 0
+      && Math.abs(bm.mass * 1000 - (0.628 + 0.0648)) < 0.003 && bm.modes[0].hz > bd.modes[0].hz * 1.05 && bm.modes[0].hz < 421 && bm.plot.shown && bmRu.length === 0,
+      `sim 1.629: a body with its own material is analysed with it: the mass is the sum of both bodies and the frequency follows; translated (${JSON.stringify({ bmKey, bmStale, bmTree, error: bm.error, bodyMats: bm.bodyMats, note: bmNote, mass: bm.mass, hz: [bd.modes[0].hz, bm.modes[0].hz], bmRu })})`);
     await addBody("b3", 300, 320);
     await settle();
     await mp.click('#sim-tools [data-s="solve"]');

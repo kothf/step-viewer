@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.629.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **bodies with their own materials**. A body that has a material of its own (Material… on the body in the Features tree) keeps it in static and modal studies: each body is solved with its own stiffness and density, joined to the others where they touch. The safety factor uses each body's yield strength, and the report lists the bodies' materials.
+
+### Fixed
+
+- Structural analysis: a part whose surface reaches a little way into the next row of solver cells (for example a plate a bit thicker than a whole number of cells) could come out too stiff in bending.
+
 ## [1.628.0] - 2026-11-21
 
 ### Added
@@ -4055,7 +4065,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.628.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.629.0...HEAD
+[1.629.0]: https://github.com/kothf/step-viewer/compare/v1.628.0...v1.629.0
 [1.628.0]: https://github.com/kothf/step-viewer/compare/v1.627.0...v1.628.0
 [1.627.0]: https://github.com/kothf/step-viewer/compare/v1.626.0...v1.627.0
 [1.626.0]: https://github.com/kothf/step-viewer/compare/v1.625.0...v1.626.0
