@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { studyProblem, runStatic, runModal } from "../../src/sim/run";
-import { MEMORY_LIMIT } from "../../src/sim/static";
+import { MEMORY_LIMIT, topEigen } from "../../src/sim/static";
 import { newStudy } from "../../src/sim/types";
 
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
@@ -72,4 +72,37 @@ test("memory: a modal study stops the same way", () => {
   assert.equal(r.length, 1);
   assert.ok(r[0].capped! > 0 && r[0].done);
   assert.equal(r[0].modes!.length, all[0].modes!.length);
+});
+
+test("faces that share a name are picked as one: a load on the name is spread over all of them", () => {
+  // the loaded end in two halves that carry one name, as the two walls of a hole cut by a slot do
+  const tr: number[] = [], fc: number[] = [], nm: string[] = [];
+  const add = (name: string, t: number[]) => { nm.push(name); tr.push(...t); for (let k = 0; k < t.length / 9; k++) fc.push(nm.length - 1); };
+  for (let a = 0; a < 3; a++) for (const end of [0, 1]) {
+    if (a === 0 && end === 1) {
+      add("x1", rectFace(0, L, [0, 0, 0], [L, B / 2, T], true));
+      add("x1", rectFace(0, L, [0, B / 2, 0], [L, B, T], true));
+    } else add("xyz"[a] + end, rectFace(a, end ? hi[a] : lo[a], lo, hi, !!end));
+  }
+  const split = { tris: Float64Array.from(tr), face: Int32Array.from(fc), names: nm, lo, hi };
+  const whole = studyProblem(study(), body), halves = studyProblem(study(), split);
+  assert.equal(halves.problems.length, 0);
+  assert.equal(halves.loads[0].tris!.length, 2 * whole.loads[0].tris!.length);
+  const a = [...runStatic(input(study(), 1))][0], b = [...runStatic({ ...input(study(), 1), body: split, problem: halves })][0];
+  assert.ok(Math.abs(b.energy / a.energy - 1) < 1e-6, `energy ${b.energy} vs ${a.energy}`);
+});
+
+// The penalty of a cut element is measured: twice the largest λ of T x = λ K x (T = the element's boundary flux
+// energy, K = its strain energy). K has a null space (rigid motions) on which T is zero too.
+test("the measured penalty: the largest ratio of flux to strain energy of an element", () => {
+  const n = 5, q = [[1, 2, 0, 1, 0], [0, 1, 3, 0, 1], [2, 0, 1, 1, 0], [0, 0, 1, 2, 1], [1, 1, 0, 0, 2]];
+  const k = [4, 2, 1, 0.5, 0], t = [4, 6, 0.5, 5, 0];
+  // K = Q diag(k) Qᵀ, T = Q diag(t) Qᵀ: the ratios are 1, 3, 0.5 and 10
+  const K = new Float64Array(n * n), T = new Float64Array(n * n);
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) for (let m = 0; m < n; m++) {
+    K[i * n + j] += q[i][m] * k[m] * q[j][m];
+    T[i * n + j] += q[i][m] * t[m] * q[j][m];
+  }
+  const lam = topEigen(T, K, n);
+  assert.ok(Math.abs(lam - 10) < 1e-3, `largest ratio ${lam}`);
 });

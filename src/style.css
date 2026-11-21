@@ -1841,3 +1841,13 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-contacts tr.sim-glue td { padding-left: 10px; color: var(--muted); }
 .sim-contacts tr.sim-glue input { width: 54px; font-size: 11px; }
 .sim-contacts tbody tr.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+
+/* Sketch relation icons (relIcons.ts): buttons, lists, menus, the glyphs on the sketch and the cursor inference. */
+.rel-ico { flex: none; display: block; }
+.btn.rel-btn { display: inline-flex; align-items: center; gap: 5px; }
+.rel-row { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.pm-rel-list .rel-row .rel-ico, .pm-dims .rel-row .rel-ico { color: #1f6b33; }
+:root[data-theme="dark"] .pm-rel-list .rel-row .rel-ico, :root[data-theme="dark"] .pm-dims .rel-row .rel-ico { color: #8ce0a6; }
+.pm-rel-list li.pm-err .rel-row .rel-ico { color: var(--danger); }
+.mc-menu .mc-i .rel-ico { margin: auto; }
+.sk-rel:not(.sk-fix), .sk-infer { display: flex; align-items: center; justify-content: center; padding: 0 1px; }

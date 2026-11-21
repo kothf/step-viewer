@@ -57,3 +57,13 @@ test("bodies apart stay apart: the study is refused", async () => {
   const b = m.bonded(r.body!);
   assert.deepEqual([b.parts, b.solids], [2, 2]);
 });
+
+test("bodies a hair apart are bonded too", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  // the second body starts 2e-5 mm after the first ends, as a real part's sketch did
+  const r = m.evaluate(doc([rect("s1", 0, 40), ext("f1", "s1"), rect("s2", 40.00002, 100), ext("f2", "s2", false)]));
+  const b = m.bonded(r.body!);
+  assert.deepEqual([b.parts, b.solids], [2, 1]);
+  assert.ok(Math.abs(m.props(b.body).volume - 20000) < 0.01);
+});

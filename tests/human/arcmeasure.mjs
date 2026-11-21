@@ -1,4 +1,4 @@
-// 1.645.0: Smart measure arc/circle conditions, by hand: a block with a Ø20 hole; click the block's corner, then the
+// 1.649.0: Smart measure arc/circle conditions, by hand: a block with a Ø20 hole; click the block's corner, then the
 // hole's rim: the card offers Centre / Minimum / Maximum (as other CAD apps' Measure tool), each giving its distance;
 // pin it at Maximum, select the pinned one and switch it to Minimum from its card.
 import { open, snap, check, finish, makeBlock, idle, clickAt, screenOf } from "./lib.mjs";

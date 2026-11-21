@@ -8,7 +8,7 @@ import { Basis, basisSize } from "./basis";
 import { gauss, gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
 import { makeGrid, memoryBytes, refit, type Grid } from "./grid";
 import { BlockMatrix, Envelope } from "./sparse";
-import { pcgSolver } from "./pcg";
+import { pcgSolver, cholesky } from "./pcg";
 import { subspace } from "./eigen";
 
 export interface Material {
@@ -349,6 +349,123 @@ function traction(g: Float64Array, o: number, n: ArrayLike<number>, lam: number,
     M[mo + ci * 3 + cj] = lam * G[cj] * n[ci] + (ci === cj ? mu * gn : 0) + mu * n[cj] * G[ci];
 }
 
+/** The measured penalty of a cut element: a margin over the bound, and the most it may grow over the formula. */
+const PENALTY_SAFE = 1.15, PENALTY_CAP = 40;
+
+/**
+ * The largest λ of T x = λ K x for symmetric n × n matrices (row-major), T positive semi-definite and K positive
+ * semi-definite with T zero on K's null space (an element's rigid motions): K is shifted by a hair to factor
+ * it, then power iteration on L⁻¹ T L⁻ᵀ.
+ */
+export function topEigen(T: Float64Array, K: Float64Array, n: number): number {
+  let top = 0;
+  for (let i = 0; i < n; i++) top = Math.max(top, K[i * n + i]);
+  if (!(top > 0)) return 0;
+  let L: Float64Array | null = null;
+  for (let shift = 1e-9; shift < 1; shift *= 100) {
+    const B = Float64Array.from(K);
+    for (let i = 0; i < n; i++) B[i * n + i] += shift * top;
+    if (cholesky(B, n)) { L = B; break; }
+  }
+  if (!L) return 0;
+  let v = new Float64Array(n), y = new Float64Array(n), z = new Float64Array(n), lam = 0;
+  for (let i = 0; i < n; i++) v[i] = 1 + 0.5 * Math.sin(1.7 * i + 0.3);
+  for (let it = 0; it < 80; it++) {
+    let nv = 0;
+    for (let i = 0; i < n; i++) nv += v[i] * v[i];
+    nv = Math.sqrt(nv);
+    if (!(nv > 0)) return 0;
+    // y = L⁻ᵀ v
+    for (let i = n - 1; i >= 0; i--) {
+      let s = v[i] / nv;
+      for (let k = i + 1; k < n; k++) s -= L[k * n + i] * y[k];
+      y[i] = s / L[i * n + i];
+    }
+    // z = T y
+    for (let i = 0; i < n; i++) { let s = 0; const r = i * n; for (let k = 0; k < n; k++) s += T[r + k] * y[k]; z[i] = s; }
+    // v = L⁻¹ z
+    for (let i = 0; i < n; i++) {
+      let s = z[i];
+      for (let k = 0; k < i; k++) s -= L[i * n + k] * v[k];
+      v[i] = s / L[i * n + i];
+    }
+    let nw = 0;
+    for (let i = 0; i < n; i++) nw += v[i] * v[i];
+    nw = Math.sqrt(nw);
+    if (it > 8 && Math.abs(nw - lam) < 1e-3 * nw) { lam = nw; break; }
+    lam = nw;
+  }
+  void y; void z;
+  return lam;
+}
+
+/**
+ * Raises the penalty of the elements the body cuts to what their tractions need (see `solveStatic`): kept out of
+ * `solveStatic`, which must stay small enough for the browser's compiler to optimise its loops.
+ */
+function measurePenalty(grid: Grid, nel: number, nbs: ArrayLike<number>, gam: Float64Array, p: number, rigid: (e: number) => boolean,
+  facePts: (c: number, ea: number, eb: number, axis: number) => { n: number; a: ArrayLike<number> },
+  tractions: (e: number, x: number, y: number, z: number, nrm: ArrayLike<number>) => Float64Array, block: (e: number) => Float64Array, surf: ArrayLike<number>[]) {
+
+    const TT: (Float64Array | undefined)[] = new Array(nel);
+    const cutE = new Uint8Array(nel);
+    for (let e = 0; e < nel; e++) cutE[e] = !rigid(e) && grid.elems[e].cells.some(c => grid.cells[c].frac < 1 - 1e-9) ? 1 : 0;
+    const acc = (e: number, M: Float64Array, w: number) => {
+      const n = nbs[e], mm = 3 * n;
+      const T = TT[e] ?? (TT[e] = new Float64Array(mm * mm));
+      for (let a = 0; a < n; a++) for (let c = 0; c < 3; c++) {
+        const s0 = w * M[9 * a + c], s1 = w * M[9 * a + 3 + c], s2 = w * M[9 * a + 6 + c], row = (3 * a + c) * mm;
+        for (let b2 = 0; b2 <= a; b2++) {
+          const o = 9 * b2, r = row + 3 * b2;
+          T[r] += s0 * M[o] + s1 * M[o + 3] + s2 * M[o + 6];
+          T[r + 1] += s0 * M[o + 1] + s1 * M[o + 4] + s2 * M[o + 7];
+          T[r + 2] += s0 * M[o + 2] + s1 * M[o + 5] + s2 * M[o + 8];
+        }
+      }
+    };
+    const at = (e: number, x: number, y: number, z: number, w: number, nrm: ArrayLike<number>) => acc(e, tractions(e, x, y, z, nrm), w);
+    if (cutE.some(Boolean)) {
+      for (let c = 0; c < grid.cells.length; c++) {
+        const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom, ea = grid.cells[c].el;
+        for (let axis = 0; axis < 3; axis++) {
+          const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), k + (axis === 2 ? 1 : 0), d);
+          if (o < 0) continue;
+          const eb = grid.cells[o].el;
+          if (ea === eb || !(cutE[ea] || cutE[eb])) continue;
+          const pts = facePts(c, ea, eb, axis), nrm = [0, 0, 0];
+          nrm[axis] = 1;
+          for (let q2 = 0; q2 < pts.n; q2++) {
+            const o4 = 4 * q2, w = pts.a[o4 + 3];
+            if (cutE[ea]) at(ea, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], w, nrm);
+            if (cutE[eb]) at(eb, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], w, nrm);
+          }
+        }
+      }
+      // the supports' faces and the domains' surfaces
+      const tq0 = Math.max(2, p + 1), eps = 1e-7 * grid.h;
+      for (const tris of surf) {
+        const { pts, tri } = gridTrianglePoints(tris, grid.lo, grid.h, tq0), nrms = triNormals(tris);
+        for (let q2 = 0; q2 < pts.n; q2++) {
+          const o4 = 4 * q2, t = tri[q2], nrm = [nrms[3 * t], nrms[3 * t + 1], nrms[3 * t + 2]];
+          const x = pts.a[o4], y = pts.a[o4 + 1], z = pts.a[o4 + 2];
+          const c = grid.cellOf(x - eps * nrm[0], y - eps * nrm[1], z - eps * nrm[2]);
+          if (c < 0 || !cutE[grid.cells[c].el]) continue;
+          at(grid.cells[c].el, x, y, z, pts.a[o4 + 3], nrm);
+        }
+      }
+      for (let e = 0; e < nel; e++) {
+        const T = TT[e];
+        if (!T) continue;
+        const mm = 3 * nbs[e];
+        for (let r = 0; r < mm; r++) for (let c = 0; c < r; c++) T[c * mm + r] = T[r * mm + c];
+        const lmax = topEigen(T, block(e), mm);
+        // never under the formula, and not without bound: a cell that keeps almost none of some function
+        const need = Math.min(PENALTY_CAP * gam[e], PENALTY_SAFE * 2 * lmax);
+        if (need > gam[e]) gam[e] = need;
+      }
+    }
+}
+
 /** A rigid domain's stiffness beside the stiffest material of the model. */
 const RIGID_STIFF = 1e3;
 
@@ -432,13 +549,15 @@ export function solveStatic(pb: StaticProblem): StaticResult {
 
   // interior faces between cells of different elements
   const MA = new Float64Array(9 * nb), MB = new Float64Array(9 * nb);
-  const face = (ca: number, cb: number, axis: number) => {
-    const A0 = grid.cells[ca], ea = A0.el, eb = grid.cells[cb].el;
-    if (ea === eb) return;
-    const EA = grid.elems[ea], EB = grid.elems[eb];
-    setMat(ea);
+  /** Quadrature of the face of cell `ca` on its high side along `axis`, for the elements `ea` and `eb` it parts. */
+  const fitted = new Map<number, ReturnType<typeof facePoints>>();
+  const facePts = (ca: number, ea: number, eb: number, axis: number) => {
+    const A0 = grid!.cells[ca];
     // fine points of a cut face are kept on the grid for later passes
     const key = ca * 3 + axis;
+    // the measured penalty and the face terms both ask: the fitted points of this solve are kept
+    const had = fitted.get(key);
+    if (had) return had;
     let pts = grid!.faces.get(key);
     if (pts === undefined) {
       pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, 5, insideOfDom(A0.dom), pb.depth ?? 3);
@@ -447,8 +566,16 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       grid!.faces.set(key, Math.abs(pts.weight() - area) < 1e-12 * area ? null : pts);
     }
     const pf = Math.max(pOf(ea), pOf(eb));
-    if (!pts) pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, pf + 1, () => true, 0);
-    else pts = fitFacePoints(pts, axis, A0.hi[axis], A0.lo, A0.hi, 2 * pf + 1);
+    const out = pts ? fitFacePoints(pts, axis, A0.hi[axis], A0.lo, A0.hi, 2 * pf + 1) : facePoints(axis, A0.hi[axis], A0.lo, A0.hi, pf + 1, () => true, 0);
+    fitted.set(key, out);
+    return out;
+  };
+  const face = (ca: number, cb: number, axis: number) => {
+    const A0 = grid.cells[ca], ea = A0.el, eb = grid.cells[cb].el;
+    if (ea === eb) return;
+    const EA = grid.elems[ea], EB = grid.elems[eb];
+    setMat(ea);
+    const pts = facePts(ca, ea, eb, axis);
     const na = nbs[ea], nc = nbs[eb];
     const nrm = [0, 0, 0];
     nrm[axis] = 1;
@@ -482,6 +609,25 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         }
       }
     }
+  }
+  // The penalty an element needs is set by how large its tractions on its faces can be beside its strain
+  // energy: the largest eigenvalue of the two. On whole cells the formula above covers it. On cells the body
+  // cuts it does not always (a bracket's forked lug at degree 5 came out 6 % too soft, and singular at 6), so
+  // there it is measured: T = ∫ (σ n)ᵀ(σ n) over the element's faces and the supports on it, K = its stiffness
+  // so far (volume terms only), γ = 2 λmax(T, K).
+  {
+    // the faces held by supports (not springs: those bring no flux terms), and with several domains every
+    // domain's surface (where two of them meet they are joined by the same terms)
+    const surf: ArrayLike<number>[] = [];
+    for (const s of pb.fixed) if (!s.spring && s.tris?.length) surf.push(s.tris);
+    if (doms && doms.length > 1) for (const d of doms) if (!d.rigid) surf.push(d.tris);
+    measurePenalty(grid, nel, nbs, gam, p, rigidE, facePts, (e, x, y, z, nrm) => {
+      const E = grid!.elems[e], n = nbs[e];
+      setMat(e);
+      bas.eval(x, y, z, E.c, E.s);
+      for (let b2 = 0; b2 < n; b2++) traction(bas.g, 3 * b2, nrm, lam, mu, MA, 9 * b2);
+      return MA;
+    }, e => A.block(e, e), surf);
   }
   for (let c = 0; c < grid.cells.length; c++) {
     const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom;
