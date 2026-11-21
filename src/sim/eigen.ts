@@ -13,6 +13,8 @@ export interface EigenOptions {
   maxIt?: number;
   /** Vectors carried beside the wanted ones (default: as many again, at least 8). */
   extra?: number;
+  /** The solves are exact (a factorisation): K y is then the right-hand side itself, not multiplied out. */
+  exact?: boolean;
 }
 
 export interface EigenResult {
@@ -106,7 +108,8 @@ export function subspace(
       if (theta[j] > 0) { for (let i = 0; i < n; i++) guess[i] = X[j][i] / theta[j]; g = guess; }
       const y = solve(Z, g);
       const ky = new Float64Array(n), my = new Float64Array(n);
-      mulK(y, ky); mulM(y, my);
+      if (o.exact) ky.set(Z); else mulK(y, ky);
+      mulM(y, my);
       Y.push(y); KY.push(ky); MY.push(my);
     }
     const m = Y.length, Kr = new Float64Array(m * m), Mr = new Float64Array(m * m);
