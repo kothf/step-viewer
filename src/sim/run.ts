@@ -2,7 +2,7 @@
 // Pure: runs in the solver worker and in node tests.
 
 import { MeshBody, insideOf } from "./body";
-import { solveStatic, momentField, triArea, triNormals, type Bolt, type BoltResult, type Contact, type Load, type Reaction, type Support } from "./static";
+import { solveStatic, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { GRAVITY, MAX_REFINE, type Study, type StudyEdge, type StudyPoint } from "./types";
@@ -53,6 +53,10 @@ export interface StudyProblem {
   relief?: boolean;
   /** Which study item each entry of `fixed` is. */
   supportIds: string[];
+  /** Connectors between two sets of faces and masses spread over faces (FR-CON-023), with the connectors' ids. */
+  connectors?: Connector[];
+  connectorIds?: string[];
+  masses?: FaceMass[];
 }
 
 function trisOf(b: SimBody, names: string[]): Float64Array | null {
@@ -328,6 +332,23 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
     if (!tris) { out.problems.push({ id: r.id, code: "E-SIM-REF" }); continue; }
     (out.refine ??= []).push({ tris, level: Math.max(1, Math.min(MAX_REFINE, Math.round(r.level) || 1)) });
   }
+  for (const c of st.connectors ?? []) {
+    if (off.has(c.id)) continue;
+    if (!c.faces.length || !c.faces2?.length) { out.problems.push({ id: c.id, code: "E-SIM-EMPTY" }); continue; }
+    const a = trisOf(b, c.faces.map(f => f.name)), d = trisOf(b, c.faces2.map(f => f.name));
+    if (!a || !d) { out.problems.push({ id: c.id, code: "E-SIM-REF" }); continue; }
+    const k = c.k.map(v => Math.max(0, Number(v) || 0));
+    if (c.kind === "spring" && !(k[0] + k[1] + k[2] > 0)) { out.problems.push({ id: c.id, code: "E-SIM-SPRING" }); continue; }
+    (out.connectors ??= []).push(c.kind === "spring" ? { a, b: d, k, ...(c.kr !== undefined ? { kr: Math.max(0, Number(c.kr) || 0) } : {}) } : { a, b: d });
+    (out.connectorIds ??= []).push(c.id);
+  }
+  for (const m of st.masses ?? []) {
+    if (off.has(m.id) || !(m.mass > 0)) continue;
+    if (!m.faces.length) { out.problems.push({ id: m.id, code: "E-SIM-EMPTY" }); continue; }
+    const tris = trisOf(b, m.faces.map(f => f.name));
+    if (!tris) { out.problems.push({ id: m.id, code: "E-SIM-REF" }); continue; }
+    (out.masses ??= []).push({ tris, mass: m.mass * 1e-3 });
+  }
   return out;
 }
 
@@ -345,6 +366,8 @@ export interface PassResult {
   contacts?: Contact[];
   /** Per bolt of the input, in its order. */
   bolts?: BoltResult[];
+  welds?: WeldResult[];
+  connectors?: ConnectorResult[];
   /** Change of the energy from the pass before, %, null on the first. */
   change: number | null;
   ms: number;
@@ -406,6 +429,8 @@ export interface RunInput {
   asm?: { gap: number; links?: { a: number; b: number; type: "sliding" | "none" }[] };
   /** Bolts between the regions (FR-CON-020): beams between two patches of their surfaces. */
   bolts?: Bolt[];
+  /** Welds along edges where two components meet (FR-CON-022). */
+  welds?: Weld[];
   problem: StudyProblem;
   passes: number;
   /** Energy change target, %. */
@@ -590,7 +615,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
       for (let e = 0; e < degrees.length; e++) p = Math.max(p, degrees[e]);
     }
     const r = solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts, welds: inp.welds, connectors: inp.problem.connectors, masses: inp.problem.masses,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin, relief: inp.problem.relief,
     });
@@ -610,7 +635,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     const change = k ? (Math.abs(r.energy - last) / Math.abs(r.energy || 1)) * 100 : null;
     last = r.energy;
     const converged = change != null && change <= inp.energyTol;
-    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), ...(r.contacts ? { contacts: r.contacts } : {}), ...(r.bolts ? { bolts: r.bolts } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
+    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), ...(r.contacts ? { contacts: r.contacts } : {}), ...(r.bolts ? { bolts: r.bolts } : {}), ...(r.welds ? { welds: r.welds } : {}), ...(r.connectors ? { connectors: r.connectors } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
     if (converged) return;
   }
 }
@@ -634,7 +659,7 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now(), p = k + 2;
     const solve = () => solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts, welds: inp.welds, connectors: inp.problem.connectors, masses: inp.problem.masses,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: [], modal: { count, start },
     });

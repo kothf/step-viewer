@@ -96,6 +96,55 @@ export interface Bolt {
   preload?: number;
 }
 
+/**
+ * A weld (FR-CON-022): two bodies that meet along a line share its motion there through an elastic strip.
+ * `lines` = segments of an edge of one body (9 numbers each: both ends and a direction into that body); the
+ * other body is the one found beside each point. `k` = the strip's stiffness per length, N/mm² (default: the
+ * softer body's elastic modulus, a strip as wide as it is thick).
+ */
+export interface Weld {
+  lines: ArrayLike<number>;
+  k?: number;
+}
+
+export interface WeldResult {
+  /** What the first body passes to the second through the weld, N, and the length that was joined, mm. */
+  force: [number, number, number];
+  length: number;
+  /** Largest and mean force per length, N/mm. */
+  peak: number;
+  mean: number;
+  /** Where the largest is. */
+  at: [number, number, number];
+}
+
+/**
+ * A connector (FR-CON-023) between two patches of faces: each patch moves as its mean displacement and rotation,
+ * and the two are tied at the point midway between their centres. Without `k` the tie is rigid; with it, a spring
+ * of `k` N/mm along X, Y and Z, and `kr` N·mm/rad against a relative turn (left out: the two cannot turn against each other).
+ */
+export interface Connector {
+  a: ArrayLike<number>;
+  b: ArrayLike<number>;
+  k?: ArrayLike<number>;
+  kr?: number;
+}
+
+export interface ConnectorResult {
+  /** What patch a passes to patch b: force, N, and moment at the midpoint, N·mm. */
+  force: [number, number, number];
+  moment: [number, number, number];
+  /** How far b moved from a at the midpoint, mm. */
+  stretch: [number, number, number];
+  a: number[]; b: number[];
+}
+
+/** Mass spread evenly over faces (FR-CON-023): it weighs under gravity and spinning, and counts in modal solves. `mass` in t. */
+export interface FaceMass {
+  tris: ArrayLike<number>;
+  mass: number;
+}
+
 export interface BoltResult {
   /** Tension (pulling the two patches together), N; with a preload it starts from it. */
   axial: number;
@@ -140,6 +189,9 @@ export interface StaticProblem {
   fixed: Support[];
   loads: Load[];
   bolts?: Bolt[];
+  welds?: Weld[];
+  connectors?: Connector[];
+  masses?: FaceMass[];
   /** Gravity, mm/s² (needs `mat.rho`). */
   gravity?: ArrayLike<number>;
   /**
@@ -219,6 +271,8 @@ export interface StaticResult {
   contacts?: Contact[];
   /** Per bolt, in the order given (static solves). */
   bolts?: BoltResult[];
+  welds?: WeldResult[];
+  connectors?: ConnectorResult[];
   /** Inertia relief: the acceleration the loads give the free body (mm/s², rad/s²), its centre of mass (mm) and mass (t). */
   accel?: { a: number[]; alpha: number[]; com: number[]; mass: number };
   /**
@@ -577,7 +631,36 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     }
     return { B, pa, pc, t, L, K, W, kax: B.E * Math.PI * B.d * B.d / 4 / L, g: null as Float64Array | null, f0: 0 };
   });
-  for (const b of boltSet) {
+  // connectors: the same rows, tied at the midpoint of the two centres by a spring or a stiff penalty
+  const connSet = (pb.connectors ?? []).map((C, ci) => {
+    let pa: Patch, pc: Patch;
+    try { pa = patchOf(C.a); pc = patchOf(C.b); } catch { throw new Error(`E-SIM-CONNECTOR: ${ci}`); }
+    const hx = (pc.c[0] - pa.c[0]) / 2, hy = (pc.c[1] - pa.c[1]) / 2, hz = (pc.c[2] - pa.c[2]) / 2;
+    let area = 0;
+    for (const P of [pa, pc]) for (let o = 0; o < P.pts.length; o += 5) area += P.pts[o + 4];
+    const R = Math.sqrt(area / 2) || grid.h;
+    // rigid: far stiffer than the bodies under the patches, without drowning the rest of the matrix
+    const kt = C.k ? [Math.max(0, C.k[0]), Math.max(0, C.k[1]), Math.max(0, C.k[2])] : [1e2 * stiffest * R, 1e2 * stiffest * R, 1e2 * stiffest * R];
+    const kr = C.k && C.kr !== undefined ? Math.max(0, C.kr) : 1e2 * stiffest * R * R * R;
+    // d = u_b + [h]× θ_b − u_a + [h]× θ_a, φ = θ_b − θ_a over (u_a, θ_a, u_b, θ_b)
+    const X = [0, -hz, hy, hz, 0, -hx, -hy, hx, 0], Bm = new Float64Array(72);
+    for (let i = 0; i < 3; i++) {
+      Bm[12 * i + i] = -1; Bm[12 * i + 6 + i] = 1;
+      for (let j = 0; j < 3; j++) { Bm[12 * i + 3 + j] = X[3 * i + j]; Bm[12 * i + 9 + j] = X[3 * i + j]; }
+      Bm[12 * (3 + i) + 3 + i] = -1; Bm[12 * (3 + i) + 9 + i] = 1;
+    }
+    const D = [kt[0], kt[1], kt[2], kr, kr, kr], K = new Float64Array(144);
+    for (let q = 0; q < 6; q++) if (D[q]) for (let i = 0; i < 12; i++) { const bi = Bm[12 * q + i]; if (bi) for (let j = 0; j < 12; j++) K[12 * i + j] += D[q] * bi * Bm[12 * q + j]; }
+    const W = new Map<number, Float64Array>();
+    for (const [P, r0] of [[pa, 0], [pc, 6]] as [Patch, number][]) for (const [e, We] of P.W) {
+      const me = 3 * nbs[e];
+      let Q = W.get(e);
+      if (!Q) { Q = new Float64Array(12 * me); W.set(e, Q); }
+      Q.set(We, r0 * me);
+    }
+    return { B: { a: C.a, b: C.b, d: 0, E: 0 } as Bolt, pa, pc, t: [0, 0, 1], L: 0, K, W, kax: 0, g: null as Float64Array | null, f0: 0, Bm, D };
+  });
+  for (const b of [...boltSet, ...connSet]) {
     const els = [...b.W.keys()];
     const KW = new Map<number, Float64Array>();
     for (const e of els) {
@@ -599,8 +682,76 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       b.g = g;
     }
   }
+  // welds: an elastic strip along the line between the body the edge is on and the body beside it
+  // (weld, element a, element b, x, y, z, length weight, stiffness per length) per point
+  const weldPts: number[] = [];
+  const weldSets: RigidSet[] = [];
+  if (doms && pb.welds?.length) {
+    const e0 = 2e-3 * grid.h, far = Math.max(0, pb.gap ?? 0) + e0, gw = gauss(Math.max(2, p + 1));
+    const DIRS: number[][] = [];
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) if (i || j || k) { const l = Math.hypot(i, j, k); DIRS.push([i / l, j / l, k / l]); }
+    const PI3 = Float64Array.from([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    pb.welds.forEach((W, wi) => {
+      const S = W.lines, mine = new Map<number, RigidSet>();
+      for (let o = 0; o + 8 < S.length; o += 9) {
+        const d = [S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]], l = Math.hypot(d[0], d[1], d[2]);
+        if (!(l > 0)) continue;
+        const cuts = [0, 1];
+        for (let a = 0; a < 3; a++) {
+          if (Math.abs(d[a]) < 1e-12) continue;
+          const u0 = (S[o + a] - grid.lo[a]) / grid.h, u1 = u0 + d[a] / grid.h;
+          for (let q = Math.ceil(Math.min(u0, u1)); q <= Math.floor(Math.max(u0, u1)); q++) {
+            const tt = (q - u0) / (u1 - u0);
+            if (tt > 1e-9 && tt < 1 - 1e-9) cuts.push(tt);
+          }
+        }
+        cuts.sort((x, y) => x - y);
+        for (let i = 1; i < cuts.length; i++) {
+          const t0 = cuts[i - 1], t1 = cuts[i];
+          if (t1 - t0 < 1e-12) continue;
+          for (let g = 0; g < gw.x.length; g++) {
+            const tt = t0 + (t1 - t0) * (gw.x[g] + 1) / 2, w = (gw.w[g] / 2) * (t1 - t0) * l;
+            const x = S[o] + tt * d[0], y = S[o + 1] + tt * d[1], z = S[o + 2] + tt * d[2];
+            const ax = x + e0 * S[o + 6], ay = y + e0 * S[o + 7], az = z + e0 * S[o + 8];
+            let a = -1, b = -1, bx = 0, by = 0, bz = 0;
+            for (let q = 0; q < doms.length; q++) if (doms[q].inside(ax, ay, az)) { a = q; break; }
+            if (a < 0) continue;
+            for (const st of far > e0 ? [e0, far] : [e0]) {
+              for (const D of DIRS) {
+                bx = x + st * D[0]; by = y + st * D[1]; bz = z + st * D[2];
+                for (let q = 0; q < doms.length; q++) if (q !== a && doms[q].inside(bx, by, bz)) { b = q; break; }
+                if (b >= 0) break;
+              }
+              if (b >= 0) break;
+            }
+            if (b < 0) continue;
+            const ca = grid.cellOf(ax, ay, az, a), cb = grid.cellOf(bx, by, bz, b);
+            if (ca < 0 || cb < 0) continue;
+            const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb];
+            const soft = Math.min(...[a, b].filter(q => !rigidD[q]).map(q => mats[q].E), Infinity);
+            const k = W.k ?? (Number.isFinite(soft) ? soft : stiffest), kw = k * w;
+            bas.eval(x, y, z, EA.c, EA.s);
+            bas2.eval(x, y, z, EB.c, EB.s);
+            for (const [e1, N1, s1] of [[ea, bas.v, 1], [eb, bas2.v, -1]] as [number, Float64Array, number][])
+              for (const [e2, N2, s2] of [[ea, bas.v, 1], [eb, bas2.v, -1]] as [number, Float64Array, number][]) {
+                const K = A.block(e1, e2), n1 = nbs[e1], n2 = nbs[e2], m2 = 3 * n2;
+                for (let i2 = 0; i2 < n1; i2++) for (let j2 = 0; j2 < n2; j2++) {
+                  const v = kw * s1 * s2 * N1[i2] * N2[j2];
+                  if (v) for (let c = 0; c < 3; c++) K[(3 * i2 + c) * m2 + 3 * j2 + c] += v;
+                }
+              }
+            weldPts.push(wi, ea, eb, x, y, z, w, k);
+            let r = mine.get(a * doms.length + b);
+            if (!r) { r = new RigidSet(a, b, rc, rL); mine.set(a * doms.length + b, r); weldSets.push(r); }
+            r.add(PI3, x, y, z, w * rL);
+          }
+        }
+      }
+      if (!mine.size) throw new Error(`E-SIM-WELD: ${wi}`);
+    });
+  }
   /** The 12 mean motions of a bolt's two patches for the unknowns `v`. */
-  const boltMotion = (b: (typeof boltSet)[number], v: Float64Array) => {
+  const boltMotion = (b: { W: Map<number, Float64Array> }, v: Float64Array) => {
     const q = new Float64Array(12);
     for (const [e, We] of b.W) { const me = 3 * nbs[e]; for (let i = 0; i < 12; i++) { let s2 = 0; for (let k = 0; k < me; k++) s2 += We[i * me + k] * v[off[e] + k]; q[i] += s2; } }
     return q;
@@ -681,6 +832,16 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       for (const P of [b.pa, b.pc]) for (let o = 0; o < P.pts.length; o += 5) r.add(PI, P.pts[o + 1], P.pts[o + 2], P.pts[o + 3], P.pts[o + 4]);
       sets.push(r);
     }
+    // a connector holds the directions its spring has a stiffness in: at the patches when it also resists
+    // turning, at its midpoint alone when it does not
+    for (const b of connSet) {
+      if (b.pa.dom === b.pc.dom) continue;
+      const r = new RigidSet(b.pa.dom, b.pc.dom, rc, rL), Pk = Float64Array.from([b.D[0] > 0 ? 1 : 0, 0, 0, 0, b.D[1] > 0 ? 1 : 0, 0, 0, 0, b.D[2] > 0 ? 1 : 0]);
+      if (b.D[3] > 0) { for (const P of [b.pa, b.pc]) for (let o = 0; o < P.pts.length; o += 5) r.add(Pk, P.pts[o + 1], P.pts[o + 2], P.pts[o + 3], P.pts[o + 4]); }
+      else r.add(Pk, (b.pa.c[0] + b.pc.c[0]) / 2, (b.pa.c[1] + b.pc.c[1]) / 2, (b.pa.c[2] + b.pc.c[2]) / 2, rL * rL);
+      sets.push(r);
+    }
+    for (const r of weldSets) sets.push(r);
     const fb = freeBodies(sets, doms.length);
     free = fb.free;
     if (free > 0 && !pb.modal && !(pb.relief && hasRho)) throw new Error(fb.loose.length && fb.loose.length < doms.length ? `E-SIM-LOOSE: ${fb.loose.join(",")}` : `E-SIM-FREE: ${free}`);
@@ -821,6 +982,30 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       for (let a = 0; a < nbs[e]; a++) for (let c = 0; c < 3; c++) f[off[e] + 3 * a + c] += w * bas.v[a] * t[c];
     });
   }
+  // masses spread over faces: points with a mass each (element, x, y, z, t)
+  const massPts: number[] = [];
+  for (const M of pb.masses ?? []) {
+    const at = massPts.length;
+    let area = 0;
+    located(M.tris, (e, x, y, z, w) => { massPts.push(e, x, y, z, w); area += w; });
+    if (!(area > 0)) throw new Error("E-SIM-MASS");
+    for (let o = at; o < massPts.length; o += 5) massPts[o + 4] *= M.mass / area;
+  }
+  const eachMass = (fn: (e: number, x: number, y: number, z: number, w: number) => void) => { for (let o = 0; o < massPts.length; o += 5) fn(massPts[o], massPts[o + 1], massPts[o + 2], massPts[o + 3], massPts[o + 4]); };
+  if (pb.gravity) eachMass((e, x, y, z, w) => {
+    const g = pb.gravity!, E = grid.elems[e];
+    bas.eval(x, y, z, E.c, E.s);
+    add(applied, x, y, z, w * g[0], w * g[1], w * g[2]);
+    for (let a = 0; a < nbs[e]; a++) for (let c = 0; c < 3; c++) f[off[e] + 3 * a + c] += w * bas.v[a] * g[c];
+  });
+  if (pb.spin) eachMass((e, x, y, z, w) => {
+    const sp = pb.spin!, ax = sp.axis, w2 = sp.omega * sp.omega, al = sp.alpha ?? 0, E = grid.elems[e];
+    const rx = x - sp.p[0], ry = y - sp.p[1], rz = z - sp.p[2], ra = rx * ax[0] + ry * ax[1] + rz * ax[2];
+    const bx = w2 * (rx - ra * ax[0]) - al * (ax[1] * rz - ax[2] * ry), by = w2 * (ry - ra * ax[1]) - al * (ax[2] * rx - ax[0] * rz), bz = w2 * (rz - ra * ax[2]) - al * (ax[0] * ry - ax[1] * rx);
+    bas.eval(x, y, z, E.c, E.s);
+    add(applied, x, y, z, w * bx, w * by, w * bz);
+    for (let a = 0, q = off[e]; a < nbs[e]; a++) { f[q + 3 * a] += w * bas.v[a] * bx; f[q + 3 * a + 1] += w * bas.v[a] * by; f[q + 3 * a + 2] += w * bas.v[a] * bz; }
+  });
   if (pb.gravity && hasRho) {
     for (let e = 0; e < nel; e++) {
       const E = grid.elems[e], g = Array.from(pb.gravity).map(v => v * rhoOf(e));
@@ -864,6 +1049,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         const Q = grid.cells[ci].pts;
         for (let k = 0; k < Q.n; k++) fn(e, Q.a[4 * k], Q.a[4 * k + 1], Q.a[4 * k + 2], Q.a[4 * k + 3] * rhoOf(e));
       }
+      eachMass(fn);
     };
     each((_e, x, y, z, w) => { ms += w; c[0] += w * x; c[1] += w * y; c[2] += w * z; });
     for (let i = 0; i < 3; i++) c[i] /= ms || 1;
@@ -916,6 +1102,12 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       }
       Mel.push(M); Sel.push(S);
     }
+    eachMass((e, x, y, z, w) => {
+      const E = grid.elems[e], ne = nbs[e], M = Mel[e], S = Sel[e];
+      bas.eval(x, y, z, E.c, E.s);
+      mass += w;
+      for (let a = 0; a < ne; a++) { const va = bas.v[a] * w; S[a] += va; for (let b = 0; b < ne; b++) M[a * ne + b] += va * bas.v[b]; }
+    });
     const mulM = (v: Float64Array, y: Float64Array) => {
       for (let e = 0; e < nel; e++) {
         const M = Mel[e], ne = nbs[e], o = off[e];
@@ -977,7 +1169,14 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         }
       }
       Ms.push(M);
-      const K = A.block(e, e), mm = 3 * ne;
+    }
+    eachMass((e, x, y, z, w) => {
+      const E = grid.elems[e], ne = nbs[e], M = Ms[e];
+      bas.eval(x, y, z, E.c, E.s);
+      for (let a = 0; a < ne; a++) { const va = bas.v[a] * w * sigma; for (let b = 0; b < ne; b++) M[a * ne + b] += va * bas.v[b]; }
+    });
+    for (let e = 0; e < nel; e++) {
+      const M = Ms[e], ne = nbs[e], K = A.block(e, e), mm = 3 * ne;
       for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) for (let c = 0; c < 3; c++) K[(3 * a + c) * mm + 3 * b + c] += M[a * ne + b];
     }
     reliefM = (v, y) => {
@@ -1109,6 +1308,34 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     };
   }) : undefined;
 
+  const connectors: ConnectorResult[] | undefined = connSet.length && !modal ? connSet.map(c => {
+    const q = boltMotion(c, xs), g = [0, 0, 0, 0, 0, 0];
+    for (let i = 0; i < 6; i++) for (let j = 0; j < 12; j++) g[i] += c.Bm[12 * i + j] * q[j];
+    // stretched (b moved away from a) the tie pulls b back: a passes −k d to b
+    return { force: [-c.D[0] * g[0], -c.D[1] * g[1], -c.D[2] * g[2]], moment: [-c.D[3] * g[3], -c.D[4] * g[4], -c.D[5] * g[5]], stretch: [g[0], g[1], g[2]], a: c.pa.c, b: c.pc.c };
+  }) : undefined;
+
+  // welds: the strip's force per length is its stiffness times the jump of the two bodies' motion
+  const welds: WeldResult[] | undefined = pb.welds?.length && !modal ? pb.welds.map(() => ({ force: [0, 0, 0], length: 0, peak: 0, mean: 0, at: [0, 0, 0] })) : undefined;
+  if (welds) {
+    const ju = [0, 0, 0];
+    for (let o = 0; o < weldPts.length; o += 8) {
+      const R = welds[weldPts[o]], px = weldPts[o + 3], py = weldPts[o + 4], pz = weldPts[o + 5], w = weldPts[o + 6], k = weldPts[o + 7];
+      ju[0] = ju[1] = ju[2] = 0;
+      for (const [e, sg] of [[weldPts[o + 1], 1], [weldPts[o + 2], -1]]) {
+        const E = grid.elems[e];
+        bas.eval(px, py, pz, E.c, E.s);
+        for (let b = 0; b < nb; b++) for (let d = 0; d < 3; d++) ju[d] += sg * bas.v[b] * x[e * m + 3 * b + d];
+      }
+      const f = k * Math.hypot(ju[0], ju[1], ju[2]);
+      for (let d = 0; d < 3; d++) R.force[d] += w * k * ju[d];
+      R.length += w;
+      R.mean += w * f;
+      if (f > R.peak) { R.peak = f; R.at = [px, py, pz]; }
+    }
+    for (const R of welds) if (R.length > 0) R.mean /= R.length;
+  }
+
   // connection forces: the flux the joining terms carry, ½(σ_a + σ_b) n − γ (u_a − u_b), is what b does to a
   if (!modal && joins.length) {
     const tot = contacts.map(() => new Float64Array(10));
@@ -1206,6 +1433,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     reactions, applied, eta, prevError, accel,
     ...(doms ? { contacts } : {}),
     ...(bolts ? { bolts } : {}),
+    ...(welds ? { welds } : {}),
+    ...(connectors ? { connectors } : {}),
     modes, space, mass: modal ? mass : undefined,
     use(k) { const v = modes?.[k]; if (v) x = v.x; },
     sample(pos, nrm, hits) {

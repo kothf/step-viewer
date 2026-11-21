@@ -12,7 +12,10 @@ const out = join(root, "node_modules/.cache/unit");
 const only = process.argv.slice(2);
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
-const files = readdirSync(dir).filter(f => f.endsWith(".test.ts") && (!only.length || only.some(o => f.includes(o))));
+// UNIT_SHARD=i/n runs every n-th test file starting at the i-th (CI runs the suite as parallel jobs).
+const [shard, shards] = (process.env.UNIT_SHARD ?? "1/1").split("/").map(Number);
+const files = readdirSync(dir).filter(f => f.endsWith(".test.ts") && (!only.length || only.some(o => f.includes(o)))).sort()
+  .filter((_f, i) => !(shards > 1) || i % shards === shard - 1);
 await build({
   entryPoints: files.map(f => join(dir, f)),
   outdir: out,
