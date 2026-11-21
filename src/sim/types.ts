@@ -16,12 +16,18 @@ export interface StudySupport {
   axialFree?: boolean;
   /** Fixed in directions: X, Y, Z held. */
   dirs?: [boolean, boolean, boolean];
+  /** Fixed and fixed in directions only: what is held, absent = faces. */
+  on?: "edges" | "points";
+  edges?: StudyEdge[];
+  points?: StudyPoint[];
 }
 
 /** An edge of the model, named by the two faces it joins. */
 export interface StudyEdge { faces: [string, string]; hint?: V3 }
 /** A corner of the model, named by the faces that meet there; `at` tells corners of the same faces apart. */
 export interface StudyPoint { faces: string[]; at: V3 }
+/** What takes edges or points instead of faces. */
+export const ON_TYPES: readonly string[] = ["force", "fixed", "dirs"];
 
 export interface StudyLoad {
   id: string;
@@ -59,6 +65,8 @@ export interface Study {
   settings: StudySettings;
   /** Ids of supports and loads left out of the solve. */
   suppressed?: string[];
+  /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
+  probes?: V3[];
   /** View state: the plot shown and the deformation scale (0 = automatic). */
   plot?: { kind: PlotKind; scale?: number; deformed?: boolean };
 }
@@ -98,6 +106,6 @@ export function itemName(st: Study, type: SupportType | LoadType): string {
 
 /** How many faces, edges or points an item is on. */
 export function pickCount(it: StudySupport | StudyLoad): number {
-  const l = it as StudyLoad;
+  const l = it as { on?: "edges" | "points"; edges?: StudyEdge[]; points?: StudyPoint[] };
   return l.on === "edges" ? l.edges?.length ?? 0 : l.on === "points" ? l.points?.length ?? 0 : it.faces.length;
 }

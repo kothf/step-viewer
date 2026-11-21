@@ -16,10 +16,11 @@ import type { Part, Viewer } from "../viewer/Viewer";
 import type { EdgeInfo } from "../topology";
 import { SIM_STOPPED, SimClient } from "./client";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
+import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, studyProblem, type PassResult, type SimBody } from "./run";
-import { GRAVITY, LOAD_LABEL, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyLoad, type StudySupport, type SupportType } from "./types";
+import { GRAVITY, LOAD_LABEL, ON_TYPES, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyLoad, type StudySupport, type SupportType } from "./types";
 
 export interface SimHost {
   viewer: Viewer;
@@ -109,8 +110,9 @@ export class SimController {
   private usedScale = 0;
   /** Probe mode: a click on the plot pins the value there. */
   private probing = false;
-  /** Pinned probes: a triangle of the plot mesh (three vertices) and the weights of the point in it. */
-  private probes: { i: [number, number, number]; w: [number, number, number] }[] = [];
+  /** The study's probes found on the plot mesh: a triangle (three vertices) and the weights of the point in it. */
+  private probes: Located[] = [];
+  private probeKey = "";
   /** The plotted value per plot-mesh vertex, as drawn. */
   private vals: Float32Array | null = null;
   private probeLayer: HTMLElement | null = null;
@@ -135,7 +137,8 @@ export class SimController {
       const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
       if (a === "close") { this.plot.on = false; this.probing = false; this.showPlot(); this.renderAll(); }
       else if (a === "probe") { this.probing = !this.probing; this.renderLegend(); }
-      else if (a === "noprobes") { this.probes = []; this.drawProbes(); this.renderLegend(); }
+      else if (a === "noprobes") this.setProbes(t("Clear probes"), () => []);
+      else if (a === "probecsv") this.exportProbes();
     });
     onCmTab(tab => { if (tab === "simulation" && this.host.doc()) this.host.showTab(); this.renderAll(); this.drawMarks(); });
     onLangChange(() => this.renderAll());
@@ -170,7 +173,7 @@ export class SimController {
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
-      probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), report: this.lastReport,
+      probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport,
       hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
     };
   }
@@ -182,11 +185,12 @@ export class SimController {
       this.docId = doc?.id ?? null;
       this.client.cancel();
       this.clearPlot();
-      this.edit = null; this.res = null; this.error = null; this.problems.clear(); this.activeId = null; this.running = false; this.probes = []; this.probing = false;
+      this.edit = null; this.res = null; this.error = null; this.problems.clear(); this.activeId = null; this.running = false; this.probes = []; this.probeKey = ""; this.probing = false;
     }
     $("#t-sim").hidden = !doc;
     if (this.edit && !this.study()) this.edit = null;
     if (this.stale() && this.saved) this.clearPlot();
+    if (this.saved) { this.syncProbes(); this.drawProbes(); }
     this.renderAll();
     this.drawMarks();
   }
@@ -297,7 +301,7 @@ export class SimController {
     if (!ed && this.probing && this.saved) { this.probeAt(e.clientX, e.clientY); return true; }
     if (!ed) return false;
     if (ed.draft.type === "gravity") return true;
-    if (ed.kind === "load" && ed.draft.on) { this.pickEdgeOrPoint(ed.draft, e); return true; }
+    if (ed.draft.on) { this.pickEdgeOrPoint(ed.draft, e); return true; }
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const name = hit ? this.host.faceNames()[hit.faceId] : undefined;
     if (!hit || !name) return true;
@@ -313,8 +317,8 @@ export class SimController {
     return true;
   }
 
-  /** A force on edges or points: the edge or corner under the pointer joins or leaves it. */
-  private pickEdgeOrPoint(d: StudyLoad, e: PointerEvent) {
+  /** A force or a support on edges or points: the edge or corner under the pointer joins or leaves it. */
+  private pickEdgeOrPoint(d: StudySupport | StudyLoad, e: PointerEvent) {
     const s = this.host.snapAt(e.clientX, e.clientY), names = this.host.faceNames(), part = this.host.viewer.parts[0];
     if (!part) return;
     if (d.on === "edges") {
@@ -365,7 +369,7 @@ export class SimController {
     }
     const part = this.host.viewer.parts[0];
     if (!part) { toast(t("The part has no body yet."), "warn"); return; }
-    this.running = true; this.error = null; this.res = null; this.problems.clear(); this.probes = []; this.hot = null; this.hotSel = -1;
+    this.running = true; this.error = null; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1;
     this.clearPlot();
     this.progress = t("Reading the geometry…");
     this.renderAll();
@@ -496,11 +500,10 @@ export class SimController {
         mesh.raycast = () => {};
         this.marks.add(mesh);
       }
-      if (!load) return;
       const l = it as StudyLoad, len = this.host.viewer.modelSize * 0.14;
       let dir: THREE.Vector3 | null = null, at = g.centre;
       let picked = g.tris.length > 0;
-      if (l.type === "force" && l.on) {
+      if (l.on) {
         const names = this.host.faceNames(), pts: number[] = [], sum = new THREE.Vector3();
         let n = 0;
         if (l.on === "edges") for (const e of l.edges ?? []) for (const ed of part.data.edges) {
@@ -524,6 +527,7 @@ export class SimController {
         picked = n > 0;
         if (n) at = sum.multiplyScalar(1 / n);
       }
+      if (!load) return;
       const comp = () => new THREE.Vector3(...(l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v) as [number, number, number]);
       if (l.type === "gravity") { dir = comp(); at = new THREE.Box3().setFromBufferAttribute(part.mesh.geometry.getAttribute("position") as THREE.BufferAttribute).getCenter(new THREE.Vector3()); }
       else if (!picked) return;
@@ -579,14 +583,57 @@ export class SimController {
     const pa = ov.geometry.getAttribute("position"), P = (i: number) => new THREE.Vector3().fromBufferAttribute(pa, i);
     const w = THREE.Triangle.getBarycoord(ov.worldToLocal(h.point.clone()), P(f.a), P(f.b), P(f.c), new THREE.Vector3());
     if (!w) return;
-    this.probes.push({ i: [f.a, f.b, f.c], w: [w.x, w.y, w.z] });
+    // kept as a point of the undeformed model, so it is read again after every solve
+    const p0 = this.res?.mesh.pos;
+    if (!p0) return;
+    const at = [0, 1, 2].map(c => w.x * p0[3 * f.a + c] + w.y * p0[3 * f.b + c] + w.z * p0[3 * f.c + c]) as [number, number, number];
+    this.setProbes(t("Probe"), list => [...list, at]);
+  }
+
+  /** Changes the study's probes (one undo step) and shows them. */
+  private setProbes(label: string, fn: (list: [number, number, number][]) => [number, number, number][]) {
+    const sid = this.study()?.id;
+    if (!sid) return;
+    this.host.change(label, d => {
+      const s = d.studies?.find(x => x.id === sid);
+      if (!s) return;
+      const list = fn(s.probes ?? []);
+      if (list.length) s.probes = list; else delete s.probes;
+    });
+    this.syncProbes();
     this.drawProbes();
     this.renderLegend();
   }
 
-  private probeValue(p: { i: [number, number, number]; w: [number, number, number] }) {
+  /** Finds the study's probes on the plot mesh of the results. */
+  private syncProbes() {
+    const pm = this.res?.mesh, list = this.study()?.probes ?? [];
+    const key = pm ? `${pm.pos.length}|${JSON.stringify(list)}` : "";
+    if (key === this.probeKey && this.probes.length === (pm ? list.length : 0)) return;
+    this.probeKey = key;
+    this.probes = pm ? list.map(p => locate(pm.pos, pm.index, p)).filter((x): x is Located => !!x) : [];
+  }
+
+  private probeValue(p: Located) {
     const a = this.vals;
-    return a ? p.w[0] * a[p.i[0]] + p.w[1] * a[p.i[1]] + p.w[2] * a[p.i[2]] : NaN;
+    return a ? valueAt(a, p) : NaN;
+  }
+
+  /** Every probe's place and results of the last pass, as CSV (null without results). */
+  private probeTable(): string | null {
+    const r = this.res?.passes.at(-1), pm = this.res?.mesh;
+    if (!r || !pm || this.stale() || !this.probes.length) return null;
+    const sy = this.host.doc()?.material?.sy ?? 0;
+    return probeCsv(this.probes.map(p => {
+      const vm = valueAt(r.vm, p);
+      return { at: [0, 1, 2].map(c => valueAt(pm.pos, p, 3, c)), vm, u: [valueAt(r.u, p, 3, 0), valueAt(r.u, p, 3, 1), valueAt(r.u, p, 3, 2)], sf: sy > 0 ? sy / Math.max(vm, 1e-9) : null };
+    }));
+  }
+
+  private exportProbes() {
+    const doc = this.host.doc(), st = this.study(), csv = this.probeTable();
+    if (!doc || !st || !csv) return;
+    download(new Blob([csv], { type: "text/csv" }), `${`${doc.name}-${st.name}`.replace(/[\\/:*?"<>|]+/g, "_")}-probes.csv`);
   }
 
   /** The plotted quantity's unit and the factor from the solver's units to it. */
@@ -636,7 +683,7 @@ export class SimController {
       $("#viewport").appendChild(el);
       el.addEventListener("click", e => {
         const b = (e.target as HTMLElement).closest<HTMLElement>("[data-rm]");
-        if (b) { this.probes.splice(Number(b.dataset.rm), 1); this.drawProbes(); this.renderLegend(); }
+        if (b) { const k = Number(b.dataset.rm); this.setProbes(t("Remove probe"), list => list.filter((_, i) => i !== k)); }
       });
       this.host.viewer.onRender(() => this.placeProbes());
     }
@@ -738,7 +785,7 @@ export class SimController {
     this.overlay.quaternion.copy(part.mesh.quaternion);
     this.overlay.scale.copy(part.mesh.scale);
     this.overlay.updateMatrixWorld(true);
-    if (this.probes.some(p => Math.max(...p.i) >= n)) this.probes = [];
+    this.syncProbes();
     this.drawProbes();
     this.host.viewer.invalidate();
   }
@@ -993,7 +1040,7 @@ export class SimController {
     if (d.type !== "gravity") {
       const on = (d as StudyLoad).on, n = pickCount(d);
       const ask = on === "edges" ? t("Click edges on the model") : on === "points" ? t("Click corner points on the model") : d.type === "hinge" ? t("Click cylindrical faces on the model") : t("Click faces on the model");
-      const sel = d.type === "force" ? `<label class="pm-field"><span>${esc(t("Acts on"))}</span><select data-k="on">${[["", "Faces"], ["edges", "Edges"], ["points", "Points"]].map(([v, l]) => `<option value="${v}"${(on ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : "";
+      const sel = ON_TYPES.includes(d.type) ? `<label class="pm-field"><span>${esc(e.kind === "load" ? t("Acts on") : t("Holds"))}</span><select data-k="on">${[["", "Faces"], ["edges", "Edges"], ["points", "Points"]].map(([v, l]) => `<option value="${v}"${(on ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : "";
       body += group(on === "edges" ? t("Edges") : on === "points" ? t("Points") : t("Faces"), sel + `<div class="pm-box focus sim-faces" role="status">${n ? esc(this.pickText(d)) : esc(ask)}</div>`
         + (n ? `<button class="btn small" data-k="clear">${esc(t("Clear"))}</button>` : ""));
     }
@@ -1001,6 +1048,7 @@ export class SimController {
       const s = e.draft;
       if (s.type === "hinge") body += group(t("Options"), chk("axialFree", s.axialFree, t("Free to slide along the axis")));
       if (s.type === "dirs") body += group(t("Held directions"), ["X", "Y", "Z"].map((a, i) => chk(`dir${i}`, (s.dirs ?? [true, true, true])[i], a)).join(""));
+      if (s.on) body += `<p class="pm-help muted">${esc(t("An edge or a point holds the part, but the stress right at it has no meaning: it grows with every pass."))}</p>`;
       if (s.type === "sliding") body += `<p class="pm-help muted">${esc(t("Use it on flat faces, or as a symmetry plane."))}</p>`;
     } else {
       const l = e.draft, c = (l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v);
@@ -1038,7 +1086,7 @@ export class SimController {
       + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "")
       + `<label class="chk"><input type="checkbox" data-k="marks"${this.plot.marks ? " checked" : ""} />${esc(t("Highest and lowest values"))}</label>`
       + `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the plot to read the value at a point"))}">${esc(t("Probe"))}</button>`
-      + (this.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button>` : "") + `</div>`;
+      + (this.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button><button class="btn small" data-a="probecsv" title="${esc(t("Save the probes' places and values as a CSV file"))}">${esc(t("Export CSV"))}</button>` : "") + `</div>`;
     $("#viewport").classList.toggle("sim-probing", this.probing);
   }
 
@@ -1081,7 +1129,7 @@ export class SimController {
       });
     } else if (a === "delstudy" && st) {
       this.client.cancel();
-      this.edit = null; this.res = null; this.error = null; this.probes = []; this.probing = false;
+      this.edit = null; this.res = null; this.error = null; this.probes = []; this.probeKey = ""; this.probing = false;
       this.clearPlot();
       this.host.change(t("Delete study"), d => { d.studies = (d.studies ?? []).filter(x => x.id !== st.id); if (!d.studies.length) delete d.studies; });
       this.activeId = null;
@@ -1123,7 +1171,7 @@ export class SimController {
     else if (k === "on") {
       const l = e.draft as StudyLoad, v = el.value as "" | "edges" | "points";
       l.faces = []; delete l.edges; delete l.points;
-      if (v) { l.on = v; l.normal = false; if (v === "edges") l.edges = []; else l.points = []; } else delete l.on;
+      if (v) { l.on = v; if (e.kind === "load") l.normal = false; if (v === "edges") l.edges = []; else l.points = []; } else delete l.on;
     }
     else if (k === "flip") d.flip = el.checked || undefined;
     else if (k?.startsWith("dir")) { const a = [...(d.dirs ?? [true, true, true])] as [boolean, boolean, boolean]; a[Number(k[3])] = el.checked; d.dirs = a; }

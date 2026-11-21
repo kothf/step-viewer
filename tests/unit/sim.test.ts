@@ -444,3 +444,44 @@ test("forces on an edge and on corners: found by face names, spread by length, b
   st.loads.push({ id: "l2", type: "force", faces: [], on: "points", points: [], comp });
   assert.deepEqual(studyProblem(st, b).problems, [{ id: "l1", code: "E-SIM-REF" }, { id: "l2", code: "E-SIM-EMPTY" }]);
 });
+
+test("supports on edges and points: a beam on two edges bends like a simply supported one; what stays free is counted", () => {
+  const b = boxBody(lo, hi);
+  const e0 = edgeLines(b, "x0", "z0")!, e1 = edgeLines(b, "x1", "z0")!;
+  const none = new Float64Array(0);
+  // an edge leaves the turn about itself, a point three turns
+  assert.equal(freeModes([{ tris: none, lines: e0 }], lo, hi), 1);
+  assert.equal(freeModes([{ tris: none, lines: e0 }, { tris: none, lines: e1, mode: "dirs", dirs: [false, false, true] }], lo, hi), 0);
+  const corner = (y: string, x = "x0") => cornerPoint(b, [x, y, "z0"], [x === "x0" ? 0 : L, y === "y0" ? -W / 2 : W / 2, -W / 2])!;
+  assert.equal(freeModes([{ tris: none, points: corner("y0") }], lo, hi), 3);
+  assert.equal(freeModes([{ tris: none, points: [...corner("y0"), ...corner("y1")] }], lo, hi), 1);
+  assert.equal(freeModes([{ tris: none, points: [...corner("y0"), ...corner("y1"), ...corner("y0", "x1")] }], lo, hi), 0);
+
+  const st = newStudy([]);
+  st.supports.push({ id: "s1", type: "fixed", faces: [], on: "edges", edges: [{ faces: ["x0", "z0"] }] });
+  st.supports.push({ id: "s2", type: "dirs", faces: [], on: "edges", edges: [{ faces: ["x1", "z0"] }], dirs: [false, false, true] });
+  st.loads.push({ id: "l1", type: "force", faces: [{ name: "z1" }], comp: [{ v: 0 }, { v: 0 }, { v: -F }] });
+  const pr = studyProblem(st, b);
+  assert.deepEqual(pr.problems, []);
+  assert.deepEqual(pr.supportIds, ["s1", "s2"]);
+  const pos = new Float32Array([L / 2, 0, 0]), nrm = new Float32Array([0, 0, 1]);
+  const ps = [...runStatic({ body: b, mat: { name: "Steel", E, nu: 0.3, rho: 0 }, problem: pr, passes: 3, energyTol: 0, pos, nrm })];
+  const r = ps[ps.length - 1];
+  // each edge carries half the load, and the far one only along z
+  assert.ok(Math.abs(r.reactions[0].force[2] - F / 2) < 0.01 * F, `reaction ${r.reactions[0].force}`);
+  assert.ok(Math.abs(r.reactions[1].force[2] - F / 2) < 0.01 * F, `reaction ${r.reactions[1].force}`);
+  assert.ok(Math.abs(r.reactions[1].force[0]) < 1e-9 * F && Math.abs(r.reactions[0].force[0]) < 1e-3 * F);
+  // uniform load on a simply supported beam: 5 F L³ / 384 E I at mid-span, a little more from shear and the edges' dents
+  const want = 5 * F * L ** 3 / (384 * E * (W ** 4 / 12));
+  assert.ok(-r.u[2] > 0.95 * want && -r.u[2] < 1.25 * want, `mid-span ${r.u[2]} vs ${want}`);
+
+  // three corners hold the part too; a pick that is gone is reported
+  const s3 = newStudy([]);
+  s3.supports.push({ id: "s1", type: "fixed", faces: [], on: "points", points: [{ faces: ["x0", "y0", "z0"], at: [0, -W / 2, -W / 2] }, { faces: ["x0", "y1", "z0"], at: [0, W / 2, -W / 2] }, { faces: ["x1", "y0", "z0"], at: [L, -W / 2, -W / 2] }] });
+  s3.loads.push({ id: "l1", type: "force", faces: [{ name: "z1" }], comp: [{ v: 0 }, { v: 0 }, { v: -F }] });
+  const p3 = studyProblem(s3, b);
+  const q = [...runStatic({ body: b, mat: { name: "Steel", E, nu: 0.3, rho: 0 }, problem: p3, passes: 2, energyTol: 0, pos, nrm })].at(-1)!;
+  assert.ok(Math.abs(q.reactions[0].force[2] - F) < 0.01 * F, `points reaction ${q.reactions[0].force}`);
+  s3.supports.push({ id: "s2", type: "fixed", faces: [], on: "edges", edges: [{ faces: ["x1", "nope"] }] });
+  assert.deepEqual(studyProblem(s3, b).problems, [{ id: "s2", code: "E-SIM-REF" }]);
+});
