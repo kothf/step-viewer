@@ -16893,7 +16893,7 @@ try {
   }
 
   // --- Structural analysis 1.637 (FR-CON-020/021): a toolbox screw with its nut is analysed as a bolt ---
-  if (inShard(2)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
