@@ -233,6 +233,23 @@ export interface PassResult {
   /** The energy change is within the target (or this was the last pass). */
   done: boolean;
   converged: boolean;
+  /**
+   * Modal studies: the modes, lowest first, and each one's shape at the sample points (3 each, scaled so the
+   * largest displacement is 1). `u` is then the first elastic mode's shape, `vm` zeros, `change` the largest
+   * change of an elastic frequency from the pass before, %.
+   */
+  modes?: ModeInfo[];
+  shapes?: Float32Array[];
+  /** Modal studies: the body's mass, t. */
+  mass?: number;
+}
+
+export interface ModeInfo {
+  hz: number;
+  /** A motion of the whole body without strain. */
+  rigid: boolean;
+  /** Effective mass along X, Y, Z as shares of the body's mass. */
+  eff: [number, number, number];
 }
 
 export interface RunInput {
@@ -247,6 +264,8 @@ export interface RunInput {
   nrm: Float32Array;
   /** Cells aimed for (default 150). */
   cells?: number;
+  /** A modal study: this many modes; loads are not used. */
+  modal?: { count: number };
 }
 
 /** Volume of a closed, outward-wound triangle mesh. */
@@ -348,6 +367,62 @@ export function* runStatic(inp: RunInput): Generator<PassResult> {
     last = r.energy;
     const converged = change != null && change <= inp.energyTol;
     yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
+    if (converged) return;
+  }
+}
+
+/**
+ * The passes of a modal study (FR-RES-020..022): degree 2, 3, 4 on the same cells, each starting from the
+ * modes of the one before, until the elastic frequencies settle within `energyTol` %.
+ */
+export function* runModal(inp: RunInput): Generator<PassResult> {
+  if (inp.problem.problems.length) throw new Error(`${inp.problem.problems[0].code}: ${inp.problem.problems[0].id}`);
+  if (!(inp.mat.rho > 0)) throw new Error("E-SIM-DENSITY");
+  const body = new MeshBody(inp.body.tris);
+  const inside = insideOf(body);
+  const h = cellSize(inp.body, inp.cells);
+  const passes = Math.max(1, Math.min(GLOBAL_PASSES, Math.round(inp.passes)));
+  const count = Math.max(1, Math.round(inp.modal?.count ?? 6));
+  let grid: Grid | undefined, start: Float64Array[] | undefined, before: number[] | null = null;
+  const none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
+  for (let k = 0; k < passes; k++) {
+    const t0 = Date.now(), p = k + 2;
+    const r = solveStatic({
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid,
+      mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
+      fixed: inp.problem.fixed, loads: [], modal: { count, start },
+    });
+    grid = r.grid; start = r.space;
+    const found = r.modes ?? [];
+    const shapes: Float32Array[] = [];
+    found.forEach((_m, i) => {
+      r.use!(i);
+      const u = r.sample(inp.pos, inp.nrm).u;
+      // largest displacement 1, and its largest component positive, so a mode looks the same in every pass
+      let top = 0, at = 0;
+      for (let j = 0; j < u.length; j += 3) { const l = Math.hypot(u[j], u[j + 1], u[j + 2]); if (l > top) { top = l; at = j; } }
+      let sign = 1;
+      if (top > 0) { const a = [Math.abs(u[at]), Math.abs(u[at + 1]), Math.abs(u[at + 2])], c = a.indexOf(Math.max(...a)); sign = u[at + c] < 0 ? -1 : 1; }
+      const f = top > 0 ? sign / top : 1;
+      for (let j = 0; j < u.length; j++) u[j] *= f;
+      shapes.push(u);
+    });
+    const freqs = found.map(m => m.hz);
+    let change: number | null = null;
+    if (before) {
+      change = 0;
+      found.forEach((m, i) => { if (!m.rigid && before![i] > 0) change = Math.max(change!, (Math.abs(m.hz - before![i]) / m.hz) * 100); });
+    }
+    before = freqs;
+    const first = Math.max(0, found.findIndex(m => !m.rigid));
+    const n = inp.pos.length / 3;
+    const converged = change != null && change <= inp.energyTol;
+    yield {
+      pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, energy: 0, change, ms: Date.now() - t0, reactions: [], applied: none,
+      u: shapes[first] ? Float32Array.from(shapes[first]) : new Float32Array(3 * n), vm: new Float32Array(n), err: new Float32Array(n), errors: [],
+      maxU: shapes.length ? 1 : 0, maxVm: 0, converged, done: converged || k === passes - 1,
+      modes: found.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })), shapes, mass: r.mass,
+    };
     if (converged) return;
   }
 }

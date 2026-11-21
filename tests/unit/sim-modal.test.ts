@@ -54,3 +54,30 @@ test("free beam: six rigid-body modes, then the first bending mode", () => {
   assert.ok(m.slice(0, 6).every(v => v.rigid && v.hz === 0));
   assert.ok(Math.abs(m[6].hz - beam(4.7300, T)) / beam(4.7300, T) < 0.02, `f ${m[6].hz} vs ${beam(4.73, T)}`);
 });
+
+test("modal passes of a study: frequencies settle, shapes are scaled to 1, a new modal study is named and set up", async () => {
+  const { runModal, studyProblem } = await import("../../src/sim/run");
+  const { newStudy } = await import("../../src/sim/types");
+  const tris: number[] = [], face: number[] = [], names: string[] = [];
+  for (let a = 0; a < 3; a++) for (const end of [0, 1]) {
+    const t = rectFace(a, end ? hi[a] : lo[a], lo, hi, !!end);
+    names.push("xyz"[a] + end);
+    tris.push(...t);
+    for (let k = 0; k < t.length / 9; k++) face.push(names.length - 1);
+  }
+  const body = { tris: Float64Array.from(tris), face: Int32Array.from(face), names, lo, hi };
+  const st = newStudy([newStudy([])], "modal");
+  assert.deepEqual([st.id, st.name, st.kind, st.settings.modes], ["st2", "Modal 1", "modal", 6]);
+  st.supports.push({ id: "s1", type: "fixed", faces: [{ name: "x0" }] });
+  const pos = new Float32Array([L, 0, 0, L / 2, 0, T / 2]), nrm = new Float32Array([1, 0, 0, 0, 0, 1]);
+  const passes = [...runModal({ body, mat: { name: "Steel", E, nu: 0.3, rho }, problem: studyProblem(st, body), passes: 3, energyTol: 2, pos, nrm, modal: { count: 4 } })];
+  const last = passes.at(-1)!;
+  assert.ok(passes.length >= 2 && last.converged && last.done, `passes ${passes.length}, change ${last.change}`);
+  assert.equal(last.modes!.length, 4);
+  assert.ok(Math.abs(last.modes![0].hz - beam(1.8751, T)) / beam(1.8751, T) < 0.02);
+  // the first mode bends across the thin side: the tip moves along Z by the whole scale
+  const s0 = last.shapes![0];
+  assert.ok(Math.abs(s0[2] - 1) < 1e-6 && Math.abs(s0[0]) < 0.05, `${Array.from(s0.slice(0, 3))}`);
+  assert.ok(Math.abs(last.mass! - rho * L * B * T) / last.mass! < 1e-6);
+  assert.throws(() => [...runModal({ body, mat: { name: "x", E, nu: 0.3, rho: 0 }, problem: studyProblem(st, body), passes: 1, energyTol: 2, pos, nrm, modal: { count: 2 } })], /E-SIM-DENSITY/);
+});

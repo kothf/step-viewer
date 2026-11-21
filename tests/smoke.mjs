@@ -16468,6 +16468,53 @@ try {
     await mp.click("#lang-btn");
     check(/^E-SIM-(FREE|NOLOAD)/.test(free.error ?? "") && free.text.length > 5 && left.length === 0,
       `sim 1.608: a study without supports or loads is refused with a message; the Study tab is translated (${JSON.stringify({ free, left: left.slice(0, 6) })})`);
+    // Modal study (1.617): the bar clamped at y = 0 has its two first bending modes at (1.875² / 2π) √(E I / ρ A L⁴) = 418 Hz
+    // (a little less with shear); the table lists the modes, a click shows one, and the shape swings on the model.
+    await mp.click('#sim-tools [data-s="newmodal"]');
+    await settle();
+    const mSet = await mp.evaluate(() => ({ kind: document.querySelector('#sim-tree [data-v="kind"]')?.textContent, heads: [...document.querySelectorAll("#sim-tree h4")].map(e => e.textContent), force: document.querySelector('#sim-tools [data-s="force"]').disabled,
+      studies: window.__sv.model.store.doc.studies.map(s => [s.name, s.kind, s.settings.modes ?? null]) }));
+    await mp.click('#sim-tools [data-s="fixed"]');
+    p = await at("f1:side:s1l1");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    await mp.selectOption('#sim-tree [data-k="passes"]', "2");
+    await settle();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const m1 = await sim();
+    await mp.waitForTimeout(500);
+    const m2 = await sim();
+    const mTab = await mp.evaluate(() => ({ rows: document.querySelectorAll("#sim-tree table.sim-modes tbody tr").length, f1: document.querySelector('#sim-tree [data-v="f1"]')?.textContent ?? "", mass: document.querySelector('#sim-tree [data-v="mass"]')?.textContent ?? "",
+      wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth, legend: document.querySelector('#sim-legend [data-k="mode"]')?.value, kinds: [...document.querySelectorAll('#sim-legend [data-k="kind"] option')].map(o => o.value).join() }));
+    await mp.click('#sim-tree table.sim-modes tbody tr[data-mode="2"]');
+    await mp.waitForTimeout(300);
+    const m3 = await sim();
+    await mp.uncheck('#sim-legend [data-k="animate"]');
+    await mp.waitForTimeout(200);
+    const m4 = await sim();
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    const mLeft = await mp.evaluate(() => {
+      const bad = [];
+      for (const root of [document.querySelector("#sim-tree"), document.querySelector("#sim-tools"), document.querySelector("#sim-legend")]) {
+        const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let n = w.nextNode(); n; n = w.nextNode()) if (!n.parentElement.closest('[translate="no"]') && /[A-Za-z]{3,}/.test(n.data.replace(/\b(GPa|MPa|mm)\b/g, ""))) bad.push(n.data.trim());
+        for (const e of root.querySelectorAll("[title], [aria-label]")) for (const a of ["title", "aria-label"]) { const v = e.getAttribute(a); if (v && /[A-Za-z]{3,}/.test(v) && !e.closest('[translate="no"]')) bad.push(v); }
+      }
+      return bad;
+    });
+    await mp.click("#lang-btn");
+    const hz = m1.modes.map(m => m.hz);
+    check(mSet.kind === "Modal" && !mSet.heads.includes("Loads") && mSet.force && JSON.stringify(mSet.studies.at(-1)) === JSON.stringify(["Modal 1", "modal", 6])
+      && !m1.error && m1.kind === "modal" && m1.passes.length === 2 && hz.length === 6 && Math.abs(hz[0] / 416 - 1) < 0.03 && Math.abs(hz[1] / hz[0] - 1) < 0.01 && hz[2] > 2000 && !m1.modes.some(m => m.rigid)
+      && Math.abs(m1.modes[0].eff[0] + m1.modes[0].eff[2] - 0.61) < 0.03 && Math.abs(m1.mass * 1000 - 0.628) < 0.002 && m1.plot.shown && m1.animating && m2.frames > m1.frames
+      && mTab.rows === 6 && /Hz/.test(mTab.f1) && /kg/.test(mTab.mass) && mTab.wide <= 0 && mTab.legend === "0" && mTab.kinds === "u,ux,uy,uz"
+      && m3.mode === 2 && m3.plot.shown && !m4.animating && mLeft.length === 0,
+      `sim 1.617: a modal study of the clamped bar finds its bending frequencies, lists the modes, shows the one clicked and swings its shape; the tab is translated (${JSON.stringify({ mSet, error: m1.error, hz, eff: m1.modes[0]?.eff, mass: m1.mass, passes: m1.passes, frames: [m1.frames, m2.frames], mTab, mode: m3.mode, animating: [m1.animating, m4.animating], left: mLeft.slice(0, 6) })})`);
     await ctx.close();
   }
 } catch (err) {
