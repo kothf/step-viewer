@@ -30,6 +30,7 @@ import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, 
 import { textBox, textKey, textOutline, textPolys } from "./text";
 import { inPolygon, textPath } from "./profile";
 import { sketchRegions } from "./regions";
+import { relIcon } from "./relIcons";
 import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
 import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { DEFAULT_SNAPS, SNAP_KINDS, arcCurve, intersections, perpendicularFoot, quadrants, tangentPoints, type SnapCurve, type SnapKind } from "./snaps";
@@ -115,10 +116,6 @@ const COLORS = {
 /** Curves whose model edge is gone (FR-SK-064): olive brown, as dangling items in CAD apps. */
 const DANGLING = { light: 0x8f6a00, dark: 0xd8b13a };
 
-const REL_GLYPH: Record<RelKind, string> = {
-  coincident: "◉", horizontal: "H", vertical: "V", parallel: "∥", perpendicular: "⊥", collinear: "⫽", equal: "=",
-  tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹", intersection: "✕", curvature: "κ", pierce: "⊕", offset: "⇉",
-};
 /** The padlock drawn for a fixed point or curve (gap list S11). */
 const LOCK_SVG = `<svg width="10" height="11" viewBox="0 0 10 11" aria-hidden="true"><path d="M3 5V3.6a2 2 0 0 1 4 0V5" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="1" y="5" width="8" height="6" rx="1.2" fill="currentColor"/></svg>`;
 export const REL_NAME: Record<RelKind, string> = {
@@ -692,8 +689,8 @@ export class SketchEditor {
 
   /** Add relation rows for the selection (FR-SK-054): the relations valid for it, then Merge points when it can. */
   relationRows(): [string, () => void, string?][] {
-    const rows: [string, () => void, string?][] = this.validRelations().map(k => [t(REL_NAME[k]), () => this.addRelation(k), REL_GLYPH[k]]);
-    if (this.canMerge()) rows.push([t("Merge points"), () => this.mergePoints()]);
+    const rows: [string, () => void, string?][] = this.validRelations().map(k => [t(REL_NAME[k]), () => this.addRelation(k), relIcon(k)]);
+    if (this.canMerge()) rows.push([t("Merge points"), () => this.mergePoints(), relIcon("merge")]);
     return rows;
   }
 
@@ -1221,11 +1218,11 @@ export class SketchEditor {
 
   /** The glyph beside the cursor for the relation a click would add (FR-SK-052). */
   private showInfer(s: Snap | null) {
-    const g = !s || !this.lastEv || this.tool === "select" ? ""
-      : s.rel ? REL_GLYPH[s.rel.t]
-      : s.hv ? REL_GLYPH[s.hv]
-      : s.id ? REL_GLYPH.coincident
-      : s.curve ? REL_GLYPH.onCurve : "";
+    const g: RelKind | "" = !s || !this.lastEv || this.tool === "select" ? ""
+      : s.rel ? s.rel.t
+      : s.hv ? s.hv
+      : s.id ? "coincident"
+      : s.curve ? "onCurve" : "";
     if (!g) { this.inferEl?.remove(); this.inferEl = null; return; }
     if (!this.inferEl) {
       this.inferEl = document.createElement("div");
@@ -1234,8 +1231,8 @@ export class SketchEditor {
       this.host.layer.appendChild(this.inferEl);
     }
     const r = this.host.layer.getBoundingClientRect();
-    this.inferEl.textContent = g;
-    this.inferEl.dataset.rel = s!.rel?.t ?? s!.hv ?? (s!.id ? "coincident" : "onCurve");
+    if (this.inferEl.dataset.rel !== g) this.inferEl.innerHTML = relIcon(g, 12);
+    this.inferEl.dataset.rel = g;
     this.inferEl.style.left = `${this.lastEv!.clientX - r.left + 14}px`;
     this.inferEl.style.top = `${this.lastEv!.clientY - r.top + 14}px`;
   }
@@ -4906,7 +4903,7 @@ export class SketchEditor {
       // Hidden glyphs (FR-SK-053) still show while selected, so a relation picked in the list can be seen.
       if (!lock && !this.showRels && !this.selection.has(r.id)) continue;
       const el = mk(r.id, lock ? "sk-rel sk-fix" : "sk-rel");
-      if (lock) el.innerHTML = LOCK_SVG; else el.textContent = r.ext ? "⊡" : REL_GLYPH[r.t];
+      if (lock) el.innerHTML = LOCK_SVG; else el.innerHTML = relIcon(r.ext ? "edge" : r.t, 12);
       const name = t(relName(r)) + (r.dangling ? ` · ${t("dangling: drag onto a model edge to re-attach")}` : "");
       el.title = name;
       el.setAttribute("aria-label", name);
