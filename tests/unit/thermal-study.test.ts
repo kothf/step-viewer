@@ -1,7 +1,7 @@
 // A thermal study from a board's STEP and its package (FRS-thermal J5, FR-TBRD-001/002/010/011): the plan.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BOARD_MATERIAL, DEFAULT_STACK, GUESS, K_FR4, boardConductivity, boardPlan, findBoard, guessMaterial } from "../../src/thermal/study";
+import { BOARD_MATERIAL, DEFAULT_STACK, GUESS, K_FR4, boardConductivity, boardK, boardPlan, plateAxis, findBoard, guessMaterial } from "../../src/thermal/study";
 import type { ModelBody, PartMatch } from "../../src/thermal/match";
 import type { ThermalManifest, ThermalPart } from "../../src/thermal/package";
 import { findMaterial } from "../../src/tools/materials";
@@ -62,4 +62,28 @@ test("the plan of a board study: board, names, materials and the heat of every p
   assert.ok(Math.abs(plan.power - 21.3) < 1e-9);
   assert.equal(plan.ambient, 40);
   assert.equal(plan.emissivity, 0.85);
+});
+
+test("a board's conductivity by direction from its surface (FR-TBRD-010)", () => {
+  const box = (lo: number[], hi: number[]) => {
+    const t: number[] = [];
+    for (let a = 0; a < 3; a++) for (const [at, out] of [[lo[a], false], [hi[a], true]] as [number, boolean][]) {
+      const a1 = (a + 1) % 3, a2 = (a + 2) % 3, P = (u: number, v: number) => { const p = [0, 0, 0]; p[a] = at; p[a1] = u; p[a2] = v; return p; };
+      const A = P(lo[a1], lo[a2]), B = P(hi[a1], lo[a2]), C = P(hi[a1], hi[a2]), D = P(lo[a1], hi[a2]);
+      t.push(...(out ? [...A, ...B, ...C, ...A, ...C, ...D] : [...A, ...C, ...B, ...A, ...D, ...C]));
+    }
+    return t;
+  };
+  const flat = plateAxis(box([0, 0, 0], [80, 50, 1.6]))!;
+  assert.equal(flat.axis, 2);
+  assert.ok(Math.abs(flat.t - 1.6) < 1e-9);
+  assert.equal(plateAxis(box([0, -1, 0], [80, 1, 50]))!.axis, 1);
+  assert.equal(plateAxis(box([0, 0, 0], [10, 10, 10])), null);
+  const k = boardK(box([0, 0, 0], [80, 50, 1.6]), DEFAULT_STACK), c = boardConductivity(1.6);
+  assert.deepEqual(k.k3, [c.along, c.along, c.through]);
+  assert.ok(k.along > 15 * k.through, `${k.along} vs ${k.through}`);
+  // a block is no plate: the in-plane value every way, at the thickness given
+  const b = boardK(box([0, 0, 0], [10, 10, 10]), DEFAULT_STACK, 1.6);
+  assert.equal(b.k3, undefined);
+  assert.equal(b.along, c.along);
 });

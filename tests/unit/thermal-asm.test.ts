@@ -77,3 +77,22 @@ test("a body nothing takes heat from is named", () => {
   assert.equal(r.contacts.length, 1);
   assert.throws(() => solveThermal({ lo, hi, inside: whole, h: 10, p: 2, k: 0, domains: [A, { ...B, k: 0 }], sinks, sources }), /E-TH-NOK/);
 });
+
+test("a body that conducts differently along the axes (a board: FR-TBRD-010)", () => {
+  // the second bar conducts 0.05 along X and forty times better across: along X only kx counts
+  const B3: ThermalDomain = { ...B, k: 2, k3: [0.05, 2, 2] };
+  const r = solveThermal({ lo, hi, inside: whole, h: 10, p: 2, k: 0, domains: [A, B3], sinks: [{ tris: left, temp: 20 }], sources: [{ tris: right, power: P }] });
+  const tj = 20 + (P * J) / (A.k * area), tr = tj + (P * (40 - J)) / (0.05 * area);
+  assert.ok(Math.abs(r.temp(40, 5, 5) - tr) < 2e-3 * tr, `T(40) = ${r.temp(40, 5, 5)} vs ${tr}`);
+  assert.ok(Math.abs(r.contacts[0].heat + P) < 2e-3 * P, `heat ${r.contacts[0].heat}`);
+  const s = r.sample([30, 5, 5]);
+  assert.ok(Math.abs(s.flux[0] + P / area) < 2e-3 * (P / area), `flux ${s.flux[0]}`);
+  // a plate on a block, heated on top and held below: through the plate only kz counts
+  const blk = dom([0, 0, 0], [20, 20, 7], 0.2), plate: ThermalDomain = { ...dom([0, 0, 7], [20, 20, 9], 0.02), k3: [0.02, 0.02, 0.0005] };
+  const l2 = [0, 0, 0], h2 = [20, 20, 9];
+  const q = solveThermal({ lo: l2, hi: h2, inside: boxIn(l2, h2), h: 5, p: 2, k: 0, domains: [blk, plate], sinks: [{ tris: rectFace(2, 0, l2, h2, false), temp: 20 }], sources: [{ tris: rectFace(2, 9, l2, h2, true), power: 2 }] });
+  const want = 20 + (2 * 7) / (0.2 * 400) + (2 * 2) / (0.0005 * 400);
+  assert.ok(Math.abs(q.temp(10, 10, 9) - want) < 2e-3 * want, `top ${q.temp(10, 10, 9)} vs ${want}`);
+  assert.ok(Math.abs(q.flows[0].out - 2) < 2e-3 * 2, `out ${q.flows[0].out}`);
+  assert.throws(() => solveThermal({ lo, hi, inside: whole, h: 10, p: 2, k: 0, domains: [A, { ...B, k3: [1, 0, 1] }], sinks: [{ tris: left, temp: 20 }], sources: [{ tris: right, power: P }] }), /E-TH-NOK/);
+});

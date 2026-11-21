@@ -46,6 +46,8 @@ export interface ThermalSource {
 export interface ThermalDomain {
   inside: Inside;
   k: number;
+  /** Conductivity along the world X, Y and Z axes when they differ (a board: copper layers along it, laminate through it). */
+  k3?: number[];
   tris: ArrayLike<number>;
 }
 
@@ -144,8 +146,9 @@ interface Ctx {
   p: number;
   nb: number;
   nel: number;
-  /** Conductivity and domain of each element. */
+  /** Conductivity (the largest of the three directions) and domain of each element; `k3` = along X, Y, Z, 3 each. */
   ke: Float64Array;
+  k3: Float64Array;
   dom: Uint8Array;
   doms: ThermalDomain[] | null;
   bas: Basis;
@@ -189,15 +192,15 @@ function facePts(c: Ctx, ca: number, axis: number): Points {
 function volumeTerms(c: Ctx, A: BlockMatrix) {
   const { grid, nb, bas } = c;
   for (let e = 0; e < c.nel; e++) {
-    const E = grid.elems[e], K = A.block(e, e), k = c.ke[e];
+    const E = grid.elems[e], K = A.block(e, e), kx = c.k3[3 * e], ky = c.k3[3 * e + 1], kz = c.k3[3 * e + 2];
     for (const ci of E.cells) {
       const P = grid.cells[ci].pts;
       for (let q = 0; q < P.n; q++) {
-        const o = 4 * q, w = k * P.a[o + 3];
+        const o = 4 * q, w = P.a[o + 3];
         bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], E.c, E.s);
         const g = bas.g;
         for (let a = 0; a < nb; a++) {
-          const ax = g[3 * a] * w, ay = g[3 * a + 1] * w, az = g[3 * a + 2] * w, r = a * nb;
+          const ax = g[3 * a] * w * kx, ay = g[3 * a + 1] * w * ky, az = g[3 * a + 2] * w * kz, r = a * nb;
           for (let b = 0; b < nb; b++) K[r + b] += ax * g[3 * b] + ay * g[3 * b + 1] + az * g[3 * b + 2];
         }
       }
@@ -210,7 +213,7 @@ function volumeTerms(c: Ctx, A: BlockMatrix) {
  * and its fixed-temperature faces, K its conduction matrix; never under the formula's value.
  */
 function measure(c: Ctx, A: BlockMatrix, held: Float64Array[]) {
-  const { grid, nb, nel, bas, ke, gam } = c;
+  const { grid, nb, nel, bas, k3, gam } = c;
   const cut = new Uint8Array(nel);
   let any = false;
   for (let e = 0; e < nel; e++) if (grid.elems[e].cells.some(ci => grid.cells[ci].frac < 1 - 1e-9)) { cut[e] = 1; any = true; }
@@ -219,8 +222,8 @@ function measure(c: Ctx, A: BlockMatrix, held: Float64Array[]) {
   const at = (e: number, x: number, y: number, z: number, w: number, nx: number, ny: number, nz: number) => {
     const E = grid.elems[e], T = TT[e] ?? (TT[e] = new Float64Array(nb * nb));
     bas.eval(x, y, z, E.c, E.s);
-    const k = ke[e];
-    for (let a = 0; a < nb; a++) M[a] = k * (bas.g[3 * a] * nx + bas.g[3 * a + 1] * ny + bas.g[3 * a + 2] * nz);
+    const kx = k3[3 * e] * nx, ky = k3[3 * e + 1] * ny, kz = k3[3 * e + 2] * nz;
+    for (let a = 0; a < nb; a++) M[a] = bas.g[3 * a] * kx + bas.g[3 * a + 1] * ky + bas.g[3 * a + 2] * kz;
     for (let a = 0; a < nb; a++) { const s = w * M[a], r = a * nb; for (let b = 0; b < nb; b++) T[r + b] += s * M[b]; }
   };
   for (let ci = 0; ci < grid.cells.length; ci++) {
@@ -264,7 +267,7 @@ const JOIN = 12;
  * with its own conductivity; a resistance = a conductance between the two temperatures.
  */
 function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalContact[]; joins: number[] } {
-  const { grid, nb, bas, bas2, gam, ke, pb } = c, doms = c.doms!, nd = doms.length;
+  const { grid, nb, bas, bas2, gam, k3, pb } = c, doms = c.doms!, nd = doms.length;
   const contacts: ThermalContact[] = [], joins: number[] = [];
   const eps = 2e-3 * grid.h, gap = Math.max(0, pb.gap ?? 0), far = gap + eps;
   const how = new Map<number, ThermalLink>();
@@ -320,10 +323,11 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
         joins.push(ci, ea, eb, x, y, z, w, nx, ny, nz, 0, hc);
         continue;
       }
-      const ka = ke[ea], kb = ke[eb], gamma = Math.max(gam[ea], gam[eb]);
+      const gamma = Math.max(gam[ea], gam[eb]), oa = 3 * ea, ob = 3 * eb;
+      const ax = k3[oa] * nx, ay = k3[oa + 1] * ny, az = k3[oa + 2] * nz, bx2 = k3[ob] * nx, by2 = k3[ob + 1] * ny, bz2 = k3[ob + 2] * nz;
       for (let i = 0; i < nb; i++) {
-        MA[i] = ka * (bas.g[3 * i] * nx + bas.g[3 * i + 1] * ny + bas.g[3 * i + 2] * nz);
-        MB[i] = kb * (bas2.g[3 * i] * nx + bas2.g[3 * i + 1] * ny + bas2.g[3 * i + 2] * nz);
+        MA[i] = bas.g[3 * i] * ax + bas.g[3 * i + 1] * ay + bas.g[3 * i + 2] * az;
+        MB[i] = bas2.g[3 * i] * bx2 + bas2.g[3 * i + 1] * by2 + bas2.g[3 * i + 2] * bz2;
       }
       pair(nb, Kaa, bas.v, MA, 1, bas.v, MA, 1, w, gamma);
       pair(nb, Kab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
@@ -337,21 +341,23 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
 
 /** What passes each contact, W from a to b, and the mean temperature of both sides there. */
 function contactFlows(c: Ctx, contacts: ThermalContact[], joins: number[], x: Float64Array) {
-  const { grid, nb, bas, bas2, ke } = c;
+  const { grid, nb, bas, bas2, k3 } = c;
   for (let o = 0; o < joins.length; o += JOIN) {
     const C = contacts[joins[o]], ea = joins[o + 1], eb = joins[o + 2], EA = grid.elems[ea], EB = grid.elems[eb];
     const w = joins[o + 6], nx = joins[o + 7], ny = joins[o + 8], nz = joins[o + 9];
     bas.eval(joins[o + 3], joins[o + 4], joins[o + 5], EA.c, EA.s);
     bas2.eval(joins[o + 3], joins[o + 4], joins[o + 5], EB.c, EB.s);
+    const oa = 3 * ea, ob = 3 * eb, ax = k3[oa] * nx, ay = k3[oa + 1] * ny, az = k3[oa + 2] * nz, bx = k3[ob] * nx, by = k3[ob + 1] * ny, bz = k3[ob + 2] * nz;
+    // da, db: k ∂T/∂n of each side
     let ta = 0, tb = 0, da = 0, db = 0;
     for (let i = 0; i < nb; i++) {
       const va = x[ea * nb + i], vb = x[eb * nb + i];
       ta += va * bas.v[i]; tb += vb * bas2.v[i];
-      da += va * (bas.g[3 * i] * nx + bas.g[3 * i + 1] * ny + bas.g[3 * i + 2] * nz);
-      db += vb * (bas2.g[3 * i] * nx + bas2.g[3 * i + 1] * ny + bas2.g[3 * i + 2] * nz);
+      da += va * (bas.g[3 * i] * ax + bas.g[3 * i + 1] * ay + bas.g[3 * i + 2] * az);
+      db += vb * (bas2.g[3 * i] * bx + bas2.g[3 * i + 1] * by + bas2.g[3 * i + 2] * bz);
     }
     C.ta += w * ta; C.tb += w * tb;
-    C.heat += joins[o + 11] > 0 ? w * joins[o + 11] * (ta - tb) : w * (-0.5 * (ke[ea] * da + ke[eb] * db) + joins[o + 10] * (ta - tb));
+    C.heat += joins[o + 11] > 0 ? w * joins[o + 11] * (ta - tb) : w * (-0.5 * (da + db) + joins[o + 10] * (ta - tb));
   }
   for (const C of contacts) if (C.area > 0) { C.ta /= C.area; C.tb /= C.area; }
 }
@@ -401,7 +407,7 @@ function faceTerms(c: Ctx, A: BlockMatrix) {
       if (o < 0) continue;
       const eb = grid.cells[o].el;
       if (ea === eb) continue;
-      const k = c.ke[ea];
+      const k = c.k3[3 * ea + axis];
       const EA = grid.elems[ea], EB = grid.elems[eb], pts = facePts(c, ci, axis), gamma = Math.max(gam[ea], gam[eb]);
       const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
       for (let q = 0; q < pts.n; q++) {
@@ -422,9 +428,10 @@ function faceTerms(c: Ctx, A: BlockMatrix) {
 function heldTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, g: number) {
   const { grid, nb, bas, gam } = c, M = new Float64Array(nb);
   for (let o = 0; o < L.length; o += 8) {
-    const e = L[o], E = grid.elems[e], w = L[o + 4], K = A.block(e, e), g2 = 2 * gam[e], fo = e * nb, k = c.ke[e];
+    const e = L[o], E = grid.elems[e], w = L[o + 4], K = A.block(e, e), g2 = 2 * gam[e], fo = e * nb;
+    const kx = c.k3[3 * e] * L[o + 5], ky = c.k3[3 * e + 1] * L[o + 6], kz = c.k3[3 * e + 2] * L[o + 7];
     bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s);
-    for (let a = 0; a < nb; a++) M[a] = k * (bas.g[3 * a] * L[o + 5] + bas.g[3 * a + 1] * L[o + 6] + bas.g[3 * a + 2] * L[o + 7]);
+    for (let a = 0; a < nb; a++) M[a] = bas.g[3 * a] * kx + bas.g[3 * a + 1] * ky + bas.g[3 * a + 2] * kz;
     for (let a = 0; a < nb; a++) {
       const na = bas.v[a], r = a * nb;
       f[fo + a] += w * (g2 * na - M[a]) * g;
@@ -472,14 +479,14 @@ function solveSystem(c: Ctx, A: BlockMatrix, f: Float64Array, x0: Float64Array |
 
 /** ∫ k |∇T|² and, with the pass before, the same of what this pass changed per element. */
 function energies(c: Ctx, x: Float64Array, prev: Float64Array | null) {
-  const { grid, nb, nel, bas, ke } = c, eta = new Float64Array(nel), pm = prev ? prev.length / nel : 0;
+  const { grid, nb, nel, bas, k3 } = c, eta = new Float64Array(nel), pm = prev ? prev.length / nel : 0;
   let energy = 0;
   for (let e = 0; e < nel; e++) {
-    const E = grid.elems[e];
+    const E = grid.elems[e], kx = k3[3 * e], ky = k3[3 * e + 1], kz = k3[3 * e + 2];
     for (const ci of E.cells) {
       const Q = grid.cells[ci].pts;
       for (let q = 0; q < Q.n; q++) {
-        const o = 4 * q, w = ke[e] * Q.a[o + 3];
+        const o = 4 * q, w = Q.a[o + 3];
         bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s);
         let gx = 0, gy = 0, gz = 0, hx = 0, hy = 0, hz = 0;
         for (let a = 0; a < nb; a++) {
@@ -487,8 +494,8 @@ function energies(c: Ctx, x: Float64Array, prev: Float64Array | null) {
           gx += v * bas.g[3 * a]; gy += v * bas.g[3 * a + 1]; gz += v * bas.g[3 * a + 2];
           hx += dv * bas.g[3 * a]; hy += dv * bas.g[3 * a + 1]; hz += dv * bas.g[3 * a + 2];
         }
-        energy += w * (gx * gx + gy * gy + gz * gz);
-        eta[e] += w * (hx * hx + hy * hy + hz * hz);
+        energy += w * (kx * gx * gx + ky * gy * gy + kz * gz * gz);
+        eta[e] += w * (kx * hx * hx + ky * hy * hy + kz * hz * hz);
       }
     }
   }
@@ -497,7 +504,7 @@ function energies(c: Ctx, x: Float64Array, prev: Float64Array | null) {
 
 /** What a sink takes, W: the flux the terms above carry through its points. */
 function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array): SinkFlow {
-  const { grid, nb, bas, ke, gam } = c;
+  const { grid, nb, bas, k3, gam } = c;
   let out = 0, area = 0, sum = 0;
   for (let o = 0; o < L.length; o += 8) {
     const e = L[o], E = grid.elems[e], w = L[o + 4];
@@ -506,10 +513,10 @@ function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array): SinkF
     for (let a = 0; a < nb; a++) {
       const v = x[e * nb + a];
       t += v * bas.v[a];
-      dn += v * (bas.g[3 * a] * L[o + 5] + bas.g[3 * a + 1] * L[o + 6] + bas.g[3 * a + 2] * L[o + 7]);
+      dn += v * (bas.g[3 * a] * k3[3 * e] * L[o + 5] + bas.g[3 * a + 1] * k3[3 * e + 1] * L[o + 6] + bas.g[3 * a + 2] * k3[3 * e + 2] * L[o + 7]);
     }
     area += w; sum += w * t;
-    if (s.temp !== undefined) out += w * (-ke[e] * dn + 2 * gam[e] * (t - s.temp));
+    if (s.temp !== undefined) out += w * (-dn + 2 * gam[e] * (t - s.temp));
     if (s.temp === undefined && s.emissivity) out += w * s.emissivity * SIGMA * ((t + KELVIN) ** 4 - ((s.ambient ?? 0) + KELVIN) ** 4);
     if (s.temp === undefined) out += w * (s.h ?? 0) * (t - (s.ambient ?? 0));
   }
@@ -524,7 +531,7 @@ const RAD_STEPS = 40;
 export function solveThermal(pb: ThermalProblem): ThermalResult {
   const p = pb.p;
   const doms = pb.domains && pb.domains.length > 1 ? pb.domains : null;
-  if (doms ? doms.some(d => !(d.k > 0)) : !(pb.k > 0)) throw new Error("E-TH-NOK");
+  if (doms ? doms.some(d => !(d.k > 0) || (d.k3 && !(d.k3.length === 3 && d.k3.every(v => v > 0)))) : !(pb.k > 0)) throw new Error("E-TH-NOK");
   if (!pb.sinks.length) throw new Error("E-TH-NOSINK");
   let grid = pb.grid;
   if (grid) refit(grid, p + 1, 2 * p + 1);
@@ -533,8 +540,14 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   const memory = thermalMemory(grid, p);
   if (memory > (pb.memory ?? MEMORY_LIMIT)) throw new Error(`E-SIM-MEMORY: ${memoryMb(memory)}`);
   const g1 = grid, dom = Uint8Array.from(grid.elems, E => (doms ? g1.cells[E.cells[0]].dom : 0));
-  const ke = Float64Array.from(dom, d => (doms ? doms[d].k : pb.k));
-  const c: Ctx = { pb, grid, p, nb, nel, ke, dom, doms, bas: new Basis(p), bas2: new Basis(p), gam: new Float64Array(nel), fitted: new Map() };
+  const k3 = new Float64Array(3 * nel), ke = new Float64Array(nel);
+  for (let e = 0; e < nel; e++) {
+    const d = doms ? doms[dom[e]] : null, k = d ? d.k : pb.k;
+    for (let a = 0; a < 3; a++) k3[3 * e + a] = d?.k3 ? d.k3[a] : k;
+    // the penalty goes by the best-conducting direction
+    ke[e] = Math.max(k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]);
+  }
+  const c: Ctx = { pb, grid, p, nb, nel, ke, k3, dom, doms, bas: new Basis(p), bas2: new Basis(p), gam: new Float64Array(nel), fitted: new Map() };
   for (let e = 0; e < nel; e++) {
     let fr = 0;
     for (const ci of grid.elems[e].cells) fr = Math.max(fr, grid.cells[ci].frac);
@@ -646,9 +659,8 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
         if (hit) hit[i] = 1;
         let t = 0, gx = 0, gy = 0, gz = 0;
         for (let a = 0; a < nb; a++) { const v = x[e * nb + a]; t += v * bas.v[a]; gx += v * bas.g[3 * a]; gy += v * bas.g[3 * a + 1]; gz += v * bas.g[3 * a + 2]; }
-        const k = ke[e];
         if (where) where[i] = dom[e];
-        temp[i] = t; flux[3 * i] = -k * gx; flux[3 * i + 1] = -k * gy; flux[3 * i + 2] = -k * gz; err[i] = local[e];
+        temp[i] = t; flux[3 * i] = -k3[3 * e] * gx; flux[3 * i + 1] = -k3[3 * e + 1] * gy; flux[3 * i + 2] = -k3[3 * e + 2] * gz; err[i] = local[e];
       }
       return { temp, flux, err, ...(hit ? { hit } : {}), ...(where ? { dom: where } : {}) };
     },
