@@ -2,7 +2,7 @@
 // Pure: runs in the solver worker and in node tests.
 
 import { MeshBody, insideOf } from "./body";
-import { solveStatic, momentField, triArea, triNormals, type Load, type Reaction, type Support } from "./static";
+import { solveStatic, momentField, triArea, triNormals, type Contact, type Load, type Reaction, type Support } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { GRAVITY, MAX_REFINE, type Study, type StudyEdge, type StudyPoint } from "./types";
@@ -324,6 +324,8 @@ export interface PassResult {
   cells: number;
   /** Strain energy, N·mm. */
   energy: number;
+  /** An assembly: the pairs of components found joined (by region index), with the area they share, mm². */
+  contacts?: Contact[];
   /** Change of the energy from the pass before, %, null on the first. */
   change: number | null;
   ms: number;
@@ -378,6 +380,11 @@ export interface RunInput {
    * touch. `body` stays the whole part (its faces are what supports and loads name), `mat` is not used then.
    */
   regions?: { tris: Float64Array; mat: SimMaterial }[];
+  /**
+   * An assembly: `regions` are its components, each solved as its own body whatever its material and joined to
+   * the others where they touch or come within `gap` mm (bonded unless `links` says otherwise, by region index).
+   */
+  asm?: { gap: number; links?: { a: number; b: number; type: "sliding" | "none" }[] };
   problem: StudyProblem;
   passes: number;
   /** Energy change target, %. */
@@ -492,7 +499,7 @@ export function domainsOf(inp: RunInput) {
   const R = inp.regions;
   if (!R || R.length < 2) return undefined;
   const a = R[0].mat;
-  if (R.every(r => r.mat.E === a.E && r.mat.nu === a.nu && r.mat.rho === a.rho)) return undefined;
+  if (!inp.asm && R.every(r => r.mat.E === a.E && r.mat.nu === a.nu && r.mat.rho === a.rho)) return undefined;
   return R.map(r => ({ inside: insideOf(new MeshBody(r.tris)), mat: { E: r.mat.E, nu: r.mat.nu, rho: r.mat.rho }, tris: r.tris }));
 }
 /** `solid` (asked for): 1 where the point is inside the body itself, not only in one of its cells. */
@@ -562,7 +569,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
       for (let e = 0; e < degrees.length; e++) p = Math.max(p, degrees[e]);
     }
     const r = solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains, gap: inp.asm?.gap, links: inp.asm?.links,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin, relief: inp.problem.relief,
     });
@@ -582,7 +589,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     const change = k ? (Math.abs(r.energy - last) / Math.abs(r.energy || 1)) * 100 : null;
     last = r.energy;
     const converged = change != null && change <= inp.energyTol;
-    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
+    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), ...(r.contacts ? { contacts: r.contacts } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
     if (converged) return;
   }
 }
@@ -606,7 +613,7 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now(), p = k + 2;
     const solve = () => solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains, gap: inp.asm?.gap, links: inp.asm?.links,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: [], modal: { count, start },
     });

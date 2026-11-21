@@ -102,6 +102,14 @@ export interface StaticProblem {
    * the body's own closed surface, wound outwards. `inside`/`mat` are then not used.
    */
   domains?: { inside: Inside; mat: Material; tris: ArrayLike<number> }[];
+  /**
+   * Domains are also joined across a gap up to this wide, mm (imprecise assemblies, FR-CON-003): a point of
+   * one's surface is on another when a step of the gap along its normal ends inside it.
+   */
+  gap?: number;
+  /** How pairs of domains are joined where they touch, when not bonded: sliding (only the motion across the
+   * surface is shared) or not at all. */
+  links?: { a: number; b: number; type: "sliding" | "none" }[];
   fixed: Support[];
   loads: Load[];
   /** Gravity, mm/s² (needs `mat.rho`). */
@@ -155,6 +163,9 @@ export interface Mode {
   x: Float64Array;
 }
 
+/** Two domains joined where they touch: `force` = what a passes to b over the patch, N (after the solve). */
+export interface Contact { a: number; b: number; area: number; type: "bonded" | "sliding"; force?: [number, number, number] }
+
 export interface StaticResult {
   grid: Grid;
   p: number;
@@ -170,6 +181,8 @@ export interface StaticResult {
   reactions: Reaction[];
   /** Sum of the applied loads: force, N, and moment about the origin, N·mm. */
   applied: Reaction;
+  /** With `domains`: the pairs found touching, the area they share (mm²) and how they are joined. */
+  contacts?: Contact[];
   /** Inertia relief: the acceleration the loads give the free body (mm/s², rad/s²), its centre of mass (mm) and mass (t). */
   accel?: { a: number[]; alpha: number[]; com: number[]; mass: number };
   /**
@@ -330,9 +343,11 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       pair(Kbb, bas2.v, MB, -1, nc, bas2.v, MB, -1, nc, w);
     }
   };
+  // a sliding joint shares only the motion along this normal (null: all of it)
+  let slideN: number[] | null = null;
   // block (rows i, cols j): −½ s_i N_i M_j − ½ s_j N_j M_iᵀ + γ s_i s_j N_i N_j I
   function pair(K: Float64Array, Ni: Float64Array, Mi: Float64Array, si: number, ni: number, Nj: Float64Array, Mj: Float64Array, sj: number, nj: number, w: number) {
-    const hw = 0.5 * w, gw = gamma * w * si * sj, m = 3 * nj;
+    const hw = 0.5 * w, gw = gamma * w * si * sj, m = 3 * nj, sn = slideN;
     for (let a = 0; a < ni; a++) {
       const na = Ni[a] * si * hw;
       for (let b = 0; b < nj; b++) {
@@ -340,7 +355,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         for (let c = 0; c < 3; c++) {
           const row = (3 * a + c) * m + 3 * b;
           for (let d = 0; d < 3; d++)
-            K[row + d] += -na * Mj[9 * b + c * 3 + d] - nbv * Mi[9 * a + d * 3 + c] + (c === d ? pen : 0);
+            K[row + d] += -na * Mj[9 * b + c * 3 + d] - nbv * Mi[9 * a + d * 3 + c] + (sn ? pen * sn[c] * sn[d] : c === d ? pen : 0);
         }
       }
     }
@@ -357,20 +372,51 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const tq = Math.max(2, p + 1);
   // domains are joined where one's surface lies on another's: the same terms as between elements, each side
   // with its own material. A point of A's surface is on B when a step along the normal ends inside B.
+  const contacts: Contact[] = [];
+  const sets: RigidSet[] = [];
+  const rc = [(pb.lo[0] + pb.hi[0]) / 2, (pb.lo[1] + pb.hi[1]) / 2, (pb.lo[2] + pb.hi[2]) / 2];
+  const rL = Math.hypot(pb.hi[0] - pb.lo[0], pb.hi[1] - pb.lo[1], pb.hi[2] - pb.lo[2]) / 2 || 1;
   if (doms) {
-    const eps = 2e-3 * grid.h;
-    for (let a = 0; a + 1 < doms.length; a++) {
+    const eps = 2e-3 * grid.h, gap = Math.max(0, pb.gap ?? 0), far = gap + eps, nd = doms.length;
+    const how = new Map<number, "sliding" | "none">();
+    for (const l of pb.links ?? []) how.set(Math.min(l.a, l.b) * nd + Math.max(l.a, l.b), l.type);
+    const boxes = doms.map(d => triBox(d.tris));
+    const found = new Map<number, { c: Contact; set: RigidSet }>();
+    const PJ = new Float64Array(9);
+    for (let a = 0; a + 1 < nd; a++) {
+      // only the domains whose boxes come within the gap of this one's can touch it
+      const near: number[] = [];
+      for (let d = a + 1; d < nd; d++) {
+        if (how.get(a * nd + d) === "none") continue;
+        let apart = false;
+        for (let k = 0; k < 3; k++) if (boxes[a][k] > boxes[d][3 + k] + far || boxes[d][k] > boxes[a][3 + k] + far) apart = true;
+        if (!apart) near.push(d);
+      }
+      if (!near.length) continue;
       const T = doms[a].tris, { pts, tri } = gridTrianglePoints(T, grid.lo, grid.h, tq), nrms = triNormals(T);
       for (let k = 0; k < pts.n; k++) {
         const o = 4 * k, t = tri[k], w = pts.a[o + 3];
         const nrm = [nrms[3 * t], nrms[3 * t + 1], nrms[3 * t + 2]];
         const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
-        const bx = x + eps * nrm[0], by = y + eps * nrm[1], bz = z + eps * nrm[2];
-        let b = -1;
-        for (let d = a + 1; d < doms.length && b < 0; d++) if (doms[d].inside(bx, by, bz)) b = d;
+        let b = -1, bx = 0, by = 0, bz = 0;
+        for (const d of near) {
+          const B = boxes[d];
+          if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
+          for (const st of gap > 0 ? [eps, far] : [eps]) {
+            bx = x + st * nrm[0]; by = y + st * nrm[1]; bz = z + st * nrm[2];
+            if (doms[d].inside(bx, by, bz)) { b = d; break; }
+          }
+          if (b >= 0) break;
+        }
         if (b < 0) continue;
         const ca = grid.cellOf(x - eps * nrm[0], y - eps * nrm[1], z - eps * nrm[2], a), cb = grid.cellOf(bx, by, bz, b);
         if (ca < 0 || cb < 0) continue;
+        const slide = how.get(a * nd + b) === "sliding";
+        let f = found.get(a * nd + b);
+        if (!f) { f = { c: { a, b, area: 0, type: slide ? "sliding" : "bonded" }, set: new RigidSet(a, b, rc, rL) }; found.set(a * nd + b, f); contacts.push(f.c); sets.push(f.set); }
+        f.c.area += w;
+        for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) PJ[3 * c + d] = slide ? nrm[c] * nrm[d] : c === d ? 1 : 0;
+        f.set.add(PJ, x, y, z, w);
         const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb];
         bas.eval(x, y, z, EA.c, EA.s);
         bas2.eval(x, y, z, EB.c, EB.s);
@@ -378,12 +424,21 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         for (let q2 = 0; q2 < nb; q2++) traction(bas.g, 3 * q2, nrm, lam, mu, MA, 9 * q2);
         setMat(eb);
         for (let q2 = 0; q2 < nb; q2++) traction(bas2.g, 3 * q2, nrm, lam, mu, MB, 9 * q2);
+        if (slide) {
+          // only the part of each traction along the normal works on the shared motion
+          for (const M of [MA, MB]) for (let q2 = 0; q2 < nb; q2++) for (let d = 0; d < 3; d++) {
+            const r = 9 * q2 + d, sN = nrm[0] * M[r] + nrm[1] * M[r + 3] + nrm[2] * M[r + 6];
+            M[r] = nrm[0] * sN; M[r + 3] = nrm[1] * sN; M[r + 6] = nrm[2] * sN;
+          }
+          slideN = nrm;
+        }
         const na = nbs[ea], nc = nbs[eb];
         gamma = Math.max(gam[ea], gam[eb]);
         pair(A.block(ea, ea), bas.v, MA, 1, na, bas.v, MA, 1, na, w);
         pair(A.block(ea, eb), bas.v, MA, 1, na, bas2.v, MB, -1, nc, w);
         pair(A.block(eb, ea), bas2.v, MB, -1, nc, bas.v, MA, 1, na, w);
         pair(A.block(eb, eb), bas2.v, MB, -1, nc, bas2.v, MB, -1, nc, w);
+        slideN = null;
       }
     }
   }
@@ -447,8 +502,44 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     }
   };
   // Nitsche for P u = 0 (P projects on the held directions): −N_a (P M_b) − N_b (P M_a)ᵀ + 2γ N_a N_b P
-  const free = freeModes(pb.fixed, pb.lo, pb.hi);
-  if (free > 0 && !pb.modal && !(pb.relief && hasRho)) throw new Error(`E-SIM-FREE: ${free}`);
+  let free: number;
+  if (doms) {
+    // each domain may move on its own: what the supports hold of each, and the joints of each pair
+    const eps = 2e-3 * grid.h, PS = new Float64Array(9);
+    const domAt = (x: number, y: number, z: number) => { const c = grid!.cellOf(x, y, z); return c < 0 ? 0 : grid!.cells[c].dom; };
+    for (const s of pb.fixed) {
+      const mine = new Map<number, RigidSet>();
+      const put = (d: number, x: number, y: number, z: number, w: number) => {
+        let r = mine.get(d);
+        if (!r) { r = new RigidSet(d, -1, rc, rL); mine.set(d, r); sets.push(r); }
+        r.add(PS, x, y, z, w);
+      };
+      const T = s.tris, nrm = triNormals(T), ar = triNormals(T, true);
+      for (let t = 0; t < ar.length; t++) {
+        if (!(ar[t] > 0)) continue;
+        const o = 9 * t, n = [nrm[3 * t], nrm[3 * t + 1], nrm[3 * t + 2]];
+        const d = domAt((T[o] + T[o + 3] + T[o + 6]) / 3 - eps * n[0], (T[o + 1] + T[o + 4] + T[o + 7]) / 3 - eps * n[1], (T[o + 2] + T[o + 5] + T[o + 8]) / 3 - eps * n[2]);
+        holdMatrix(s, n, PS);
+        for (let k = 0; k < 3; k++) put(d, T[o + 3 * k], T[o + 3 * k + 1], T[o + 3 * k + 2], ar[t] / 3);
+      }
+      const S = s.lines, Q = s.points;
+      if (S?.length || Q?.length) holdMatrix(s, [0, 0, 0], PS);
+      if (S) for (let o = 0; o + 8 < S.length; o += 9) {
+        const l = Math.hypot(S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]) * rL;
+        if (!(l > 0)) continue;
+        const mx = (S[o] + S[o + 3]) / 2, my = (S[o + 1] + S[o + 4]) / 2, mz = (S[o + 2] + S[o + 5]) / 2;
+        const d = domAt(mx + eps * S[o + 6], my + eps * S[o + 7], mz + eps * S[o + 8]);
+        put(d, S[o], S[o + 1], S[o + 2], l / 6); put(d, S[o + 3], S[o + 4], S[o + 5], l / 6); put(d, mx, my, mz, 2 * l / 3);
+      }
+      if (Q) for (let o = 0; o + 5 < Q.length; o += 6) put(domAt(Q[o] + eps * Q[o + 3], Q[o + 1] + eps * Q[o + 4], Q[o + 2] + eps * Q[o + 5]), Q[o], Q[o + 1], Q[o + 2], rL * rL);
+    }
+    const fb = freeBodies(sets, doms.length);
+    free = fb.free;
+    if (free > 0 && !pb.modal && !(pb.relief && hasRho)) throw new Error(fb.loose.length && fb.loose.length < doms.length ? `E-SIM-LOOSE: ${fb.loose.join(",")}` : `E-SIM-FREE: ${free}`);
+  } else {
+    free = freeModes(pb.fixed, pb.lo, pb.hi);
+    if (free > 0 && !pb.modal && !(pb.relief && hasRho)) throw new Error(`E-SIM-FREE: ${free}`);
+  }
   const P = new Float64Array(9), PM = new Float64Array(9 * nb);
   const Pg = [0, 0, 0];
   const springAt = (s: Support, nrm: ArrayLike<number>) => {
@@ -881,6 +972,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     grid, p, dofs: A.size, x, energy, iterations,
     ms: { grid: t1 - t0, assemble: t2 - t1, factor: t3 - t2, solve: t4 - t3 },
     reactions, applied, eta, prevError, accel,
+    ...(doms ? { contacts } : {}),
     modes, space, mass: modal ? mass : undefined,
     use(k) { const v = modes?.[k]; if (v) x = v.x; },
     sample(pos, nrm, hits) {
@@ -1030,6 +1122,71 @@ function relative(C: Float64Array, F: Float64Array, ridge: number) {
   const V = jacobi(B, 6), M = new Float64Array(36);
   for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) { let v = 0; for (let k = 0; k <= i; k++) v += L[i * 6 + k] * V[k * 6 + j]; M[i * 6 + j] = v; }
   return { val: [0, 1, 2, 3, 4, 5].map(i => B[i * 7]), M };
+}
+
+/** The box of a triangle soup: [lo x, y, z, hi x, y, z]. */
+export function triBox(T: ArrayLike<number>) {
+  const B = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < T.length; i++) { const a = i % 3; if (T[i] < B[a]) B[a] = T[i]; if (T[i] > B[3 + a]) B[3 + a] = T[i]; }
+  return B;
+}
+
+/**
+ * What one support holds of a domain (`b` = −1), or what a joint shares between two: sums over its points of
+ * the held part of the six rigid motions (C) and of all of them (F), about `c` in lengths of L.
+ */
+export class RigidSet {
+  C = new Float64Array(36);
+  F = new Float64Array(36);
+  w = 0;
+  private R = new Float64Array(18);
+  private PR = new Float64Array(18);
+  constructor(readonly a: number, readonly b: number, private c: number[], private L: number) {}
+  add(P: Float64Array, x: number, y: number, z: number, w: number) {
+    const { R, PR, C, F, c, L } = this, r0 = (x - c[0]) / L, r1 = (y - c[1]) / L, r2 = (z - c[2]) / L;
+    R.fill(0);
+    R[0] = R[7] = R[14] = 1;
+    R[4] = r2; R[5] = -r1; R[9] = -r2; R[11] = r0; R[15] = r1; R[16] = -r0;
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 6; j++) PR[i * 6 + j] = P[3 * i] * R[j] + P[3 * i + 1] * R[6 + j] + P[3 * i + 2] * R[12 + j];
+    for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) {
+      C[i * 6 + j] += w * (PR[i] * PR[j] + PR[6 + i] * PR[6 + j] + PR[12 + i] * PR[12 + j]);
+      F[i * 6 + j] += w * (R[i] * R[j] + R[6 + i] * R[6 + j] + R[12 + i] * R[12 + j]);
+    }
+    this.w += w;
+  }
+}
+
+/**
+ * Rigid motions left free in a set of `nd` domains held by supports and joined to each other: their number
+ * and the domains that take part in them (`loose`). As in `freeModes`, a motion a set holds less than 2 % as
+ * much as fixing the same points would counts as not held by it.
+ */
+export function freeBodies(sets: RigidSet[], nd: number): { free: number; loose: number[] } {
+  const n = 6 * nd, G = new Float64Array(n * n);
+  for (const s of sets) {
+    if (!(s.w > 0)) continue;
+    const { val, M } = relative(s.C, s.F, 1e-12 * s.w);
+    const H = new Float64Array(36);
+    for (let k = 0; k < 6; k++) {
+      if (val[k] < 0.02) continue;
+      for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) H[i * 6 + j] += (val[k] * M[i * 6 + k] * M[j * 6 + k]) / s.w;
+    }
+    const put = (p: number, q: number, sg: number) => { for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) G[(6 * p + i) * n + 6 * q + j] += sg * H[i * 6 + j]; };
+    put(s.a, s.a, 1);
+    if (s.b >= 0) { put(s.b, s.b, 1); put(s.a, s.b, -1); put(s.b, s.a, -1); }
+  }
+  let top = 0;
+  for (let i = 0; i < n; i++) top = Math.max(top, G[i * n + i]);
+  if (!(top > 0)) return { free: n, loose: [] };
+  const V = jacobi(G, n);
+  const loose = new Set<number>();
+  let free = 0;
+  for (let k = 0; k < n; k++) {
+    if (G[k * n + k] > 1e-9 * top) continue;
+    free++;
+    for (let d = 0; d < nd; d++) { let m = 0; for (let i = 0; i < 6; i++) m += V[(6 * d + i) * n + k] ** 2; if (m > 1e-6) loose.add(d); }
+  }
+  return { free, loose: [...loose].sort((x, y) => x - y) };
 }
 
 /**
