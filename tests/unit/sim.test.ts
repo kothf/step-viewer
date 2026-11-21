@@ -6,7 +6,7 @@ import { Basis, basisSize, legendre } from "../../src/sim/basis";
 import { gauss, volumePoints, gridTrianglePoints, fitPoints } from "../../src/sim/quad";
 import { solveStatic, vonMises } from "../../src/sim/static";
 import type { Grid } from "../../src/sim/grid";
-import { passError } from "../../src/sim/run";
+
 import { meshArea, plotTarget, refineMesh } from "../../src/sim/plotmesh";
 import { MeshBody, insideOf } from "../../src/sim/body";
 
@@ -222,7 +222,7 @@ test("Lamé thick cylinder: pressure, sliding supports and curved cut cells", ()
 
 // ---------- SA1: reactions, gravity, moment, supports, studies ----------
 import { freeModes, momentField } from "../../src/sim/static";
-import { axisOf, cellSize, cornerPoint, edgeLines, meshVolume, runStatic, studyProblem, type SimBody } from "../../src/sim/run";
+import { axisOf, cellSize, cornerPoint, edgeLines, markElements, meshVolume, passError, runStatic, studyProblem, type SimBody } from "../../src/sim/run";
 import { newStudy, nextId, itemName, type StudyLoad } from "../../src/sim/types";
 
 /** A box as a named-face body: faces x0, x1, y0, y1, z0, z1. */
@@ -329,6 +329,50 @@ test("a study on a named-face body runs its passes and converges", () => {
   const p2 = studyProblem(st2, b);
   assert.ok(Math.abs(p2.loads[0].pressure! + 1) < 1e-12);
   assert.throws(() => [...runStatic({ body: b, mat: { name: "", E, nu: 0.3, rho: 0 }, problem: studyProblem({ ...st2, loads: [] }, b), passes: 1, energyTol: 2, pos, nrm })], /E-SIM-NOLOAD/);
+});
+
+test("local refinement: elements of different degrees solve together, and a study's later passes raise only some", () => {
+  const run = (o: Partial<Parameters<typeof solveStatic>[0]>) => solveStatic({
+    lo, hi, inside: inBox, h: 20, p: 3, mat: { E, nu: 0.3 },
+    fixed: [{ tris: rectFace(0, 0, lo, hi, false) }],
+    loads: [{ tris: rectFace(0, L, lo, hi, true), force: [0, 0, -F] }], ...o,
+  });
+  const r3 = run({}), r4 = run({ p: 4, grid: r3.grid, prev: r3.x });
+  const nel = r3.grid.elems.length;
+  // degree 4 in the elements at the clamp, 3 elsewhere
+  const deg = Int8Array.from(r3.grid.elems, e => (e.c[0] < 30 ? 4 : 3));
+  const mixed = deg.reduce((s, d) => s + 3 * basisSize(d), 0);
+  const a = run({ p: 4, grid: r3.grid, prev: r3.x, degrees: deg, solver: "direct" });
+  const b = run({ p: 4, grid: r3.grid, prev: r3.x, degrees: deg, solver: "pcg" });
+  assert.equal(a.dofs, mixed);
+  assert.ok(a.dofs > r3.dofs && a.dofs < r4.dofs);
+  assert.equal(a.x.length, nel * 3 * basisSize(4));
+  assert.ok(Math.abs(a.energy - b.energy) < 1e-6 * a.energy, `${a.energy} vs ${b.energy}`);
+  assert.ok(a.energy > r3.energy * (1 - 1e-9) && a.energy < r4.energy * (1 + 1e-9), `${r3.energy} ${a.energy} ${r4.energy}`);
+  // the same degree everywhere through `degrees` is the plain pass
+  const same = run({ p: 4, grid: r3.grid, degrees: new Int8Array(nel).fill(4) });
+  assert.ok(Math.abs(same.energy - r4.energy) < 1e-9 * r4.energy);
+  assert.ok(Math.abs(a.reactions[0].force[2] - F) < 1e-5 * F);
+  assert.deepEqual(markElements([5, 1, 3, 0, 4], [4, 4, 4, 4, 6]), [0, 2]);
+  assert.deepEqual(markElements([5, 1], [6, 6]), []);
+
+  const body = boxBody(lo, hi);
+  const st = newStudy([]);
+  st.supports.push({ id: "s1", type: "fixed", faces: [{ name: "x0" }] });
+  st.loads.push({ id: "l1", type: "force", faces: [{ name: "x1" }], comp: [{ v: 0 }, { v: 0 }, { v: -F }] });
+  const pos = new Float32Array([L, 0, 0]), nrm = new Float32Array([1, 0, 0]);
+  const passes = [...runStatic({ body, mat: { name: "Steel", E, nu: 0.3, rho: 0 }, problem: studyProblem(st, body), passes: 5, energyTol: 0, pos, nrm })];
+  assert.equal(passes.length, 5);
+  assert.deepEqual(passes.map(q => q.p), [2, 3, 4, 5, 6]);
+  assert.equal(passes[2].raised, undefined);
+  const cells = passes[0].cells;
+  assert.ok(passes[3].raised! > 0 && passes[3].raised! < cells, `${passes[3].raised} of ${cells}`);
+  assert.ok(passes[3].dofs > passes[2].dofs && passes[3].dofs < cells * 3 * basisSize(5));
+  assert.ok(passes[4].dofs > passes[3].dofs);
+  for (let k = 1; k < 5; k++) assert.ok(passes[k].energy > passes[k - 1].energy * (1 - 1e-9), `pass ${k + 1}`);
+  assert.ok(passes[4].change! < passes[2].change!);
+  const want = F * L ** 3 / (3 * E * (W ** 4 / 12));
+  assert.ok(Math.abs(-passes[4].u[2] - want) / want < 0.03);
 });
 
 test("plot mesh: edges are split to the target with no cracks and the same area", () => {

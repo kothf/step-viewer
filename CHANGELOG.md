@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.613.0] - 2026-11-21
+
+### Added
+- Structural analysis: **local refinement**. A study can run up to **six passes**: the first three raise the accuracy over the whole part as before, and each later pass raises it only in the cells that hold most of the estimated error (at clamped edges, corners and under loads), so the answer keeps improving for a fraction of the unknowns a whole-part pass would need. The Study tab and the report say in how many cells each local pass worked.
+- Structural analysis: **Stop at energy change** in the Study tab sets the energy change (in %) at which the passes stop early; it was fixed at 2 %.
+
 ## [1.612.0] - 2026-11-21
 
 ### Added
@@ -3937,7 +3943,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.612.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.613.0...HEAD
+[1.613.0]: https://github.com/kothf/step-viewer/compare/v1.612.0...v1.613.0
 [1.612.0]: https://github.com/kothf/step-viewer/compare/v1.611.0...v1.612.0
 [1.611.0]: https://github.com/kothf/step-viewer/compare/v1.610.0...v1.611.0
 [1.610.0]: https://github.com/kothf/step-viewer/compare/v1.609.0...v1.610.0

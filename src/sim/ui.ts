@@ -17,7 +17,7 @@ import type { EdgeInfo } from "../topology";
 import { SIM_STOPPED, SimClient } from "./client";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
-import { studyProblem, type PassResult, type SimBody } from "./run";
+import { GLOBAL_PASSES, MAX_PASSES, studyProblem, type PassResult, type SimBody } from "./run";
 import { GRAVITY, LOAD_LABEL, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyLoad, type StudySupport, type SupportType } from "./types";
 
 export interface SimHost {
@@ -159,7 +159,7 @@ export class SimController {
     const last = this.res?.passes.at(-1);
     return {
       study: this.study()?.id ?? null, editing: this.edit ? this.edit.draft.id : null, running: this.running, error: this.error, stale: this.stale(),
-      passes: this.res?.passes.map(p => ({ p: p.p, dofs: p.dofs, energy: p.energy, change: p.change, ms: p.ms })) ?? [], errors: last?.errors ?? [],
+      passes: this.res?.passes.map(p => ({ p: p.p, raised: p.raised ?? null, cells: p.cells, dofs: p.dofs, energy: p.energy, change: p.change, ms: p.ms })) ?? [], errors: last?.errors ?? [],
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
@@ -381,7 +381,7 @@ export class SimController {
       const idx = g.getIndex()?.array ?? null;
       const mesh = refineMesh(p0, n0, idx, plotTarget(meshArea(p0, idx), size / 70));
       const pos = mesh.pos, nrm = mesh.nrm;
-      const total = Math.max(1, Math.min(3, Math.round(st.settings.passes)));
+      const total = Math.max(1, Math.min(MAX_PASSES, Math.round(st.settings.passes)));
       this.progress = t("Pass {n} of {m}…", { n: 1, m: total });
       this.renderAll();
       const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh };
@@ -785,6 +785,7 @@ export class SimController {
     blocks.push({ kind: "table", widths: [1, 2, 2, 2, 2], rows: [[t("Pass"), t("Unknowns"), t("Energy change"), t("Est. error"), t("Time")],
       ...res.passes.map((p, i) => [String(p.pass), p.dofs.toLocaleString("en-US").replace(/,/g, " "), p.change == null ? "–" : `${sig(p.change)} %`, errs[i] == null ? "–" : `${i === errs.length - 1 ? "≈ " : ""}${sig(errs[i]!)} %`, `${(p.ms / 1000).toFixed(1)} s`])] });
     if (errs.filter(e => e != null).length > 1) blocks.push({ kind: "chart", errs, label: t("Estimated error per pass") });
+    for (const line of this.localNotes(res.passes)) blocks.push({ kind: "p", muted: true, text: line });
     blocks.push({ kind: "p", muted: true, text: last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
       : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(st.settings.energyTol), n: sig(last.change) })
       : t("One pass only: no convergence check.") });
@@ -875,13 +876,19 @@ export class SimController {
       + (m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`) + `</div>`;
     html += `<div class="sim-sec"><h4>${esc(t("Supports"))}</h4><ul class="sim-list">${st.supports.map(s => row(s, false)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
     html += `<div class="sim-sec"><h4>${esc(t("Loads"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
-    html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${[1, 2, 3].map(k => `<option value="${k}"${k === st.settings.passes ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
-      + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once the strain energy changes by less than {n} %.", { n: sig(st.settings.energyTol) }))}</p></div>`;
+    html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: MAX_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === st.settings.passes ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
+      + `<label class="pm-field"><span>${esc(t("Stop at energy change"))}, %</span><input type="number" data-k="tol" min="0" max="20" step="0.1" value="${sig(st.settings.energyTol)}"></label>`
+      + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once the strain energy changes by less than {n} %.", { n: sig(st.settings.energyTol) }))} ${esc(t("Passes after the third raise it only where the estimated error is highest."))}</p></div>`;
     html += `<div class="sim-sec sim-res" aria-live="polite"><h4>${esc(t("Results"))}</h4>${this.resultsHtml()}</div>`;
     el.innerHTML = html;
   }
 
   private lenText(mm: number) { return `${sig(mm * UNITS[units.current].f)} ${units.current}`; }
+
+  /** One line per local pass: where the accuracy was raised. */
+  private localNotes(passes: PassResult[]): string[] {
+    return passes.filter(p => p.raised != null && p.pass > GLOBAL_PASSES).map(p => t("Pass {n}: accuracy raised in {k} of {m} cells.", { n: p.pass, k: p.raised!, m: p.cells }));
+  }
 
   private resultsHtml(): string {
     const r = this.res, last = r?.passes.at(-1);
@@ -902,6 +909,7 @@ export class SimController {
     html += `</dl><table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Energy change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
       + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 ? "≈ " : ""}${sig(errs[i]!)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
       + chartSvg(errs, t("Estimated error per pass"));
+    for (const line of this.localNotes(r.passes)) html += `<p class="sim-note muted sim-local">${esc(line)}</p>`;
     if (!this.running) {
       html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(this.study()?.settings.energyTol ?? 2), n: sig(last.change) })
@@ -1018,6 +1026,11 @@ export class SimController {
     if (!st) return;
     if (el.dataset.k === "study") { this.activeId = el.value; this.edit = null; this.changed(); }
     else if (el.dataset.k === "passes") this.host.change(t("Passes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.passes = Number(el.value) || 3; });
+    else if (el.dataset.k === "tol") {
+      const v = Number(el.value);
+      if (!(v >= 0 && v <= 20) || el.value.trim() === "") { el.value = sig(st.settings.energyTol); return; }
+      this.host.change(t("Stop at energy change"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.energyTol = v; });
+    }
   }
 
   private panelClick(e: Event) {

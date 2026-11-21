@@ -160,4 +160,21 @@ const total = Math.hypot(...r4.applied.force), before = Math.hypot(...r3.applied
 check("SA1-11", eb === "1 edge" && pb === "1 point" && !r4.error && total !== before && Math.abs(Math.hypot(...r4.reactions[0].force) - total) < 1e-3 * total,
   "a force on an edge and one on a corner point are picked on the model and solved; the support carries all the loads", { eb, pb, applied: r4.applied.force, reaction: r4.reactions[0].force }, img16);
 void img13; void img14; void img15;
+
+// SA1-12: local refinement: five passes with the stop target at 0; passes 4 and 5 work in some cells only.
+await pg.click("#t-sim");
+await pg.selectOption('#sim-tree [data-k="passes"]', "5");
+await idle(pg);
+await pg.fill('#sim-tree [data-k="tol"]', "0");
+await pg.keyboard.press("Tab");
+await idle(pg);
+await pg.click('#sim-tree [data-a="solve"]');
+await pg.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 600000 });
+const r5 = await sim();
+const notes = await pg.evaluate(() => [...document.querySelectorAll("#sim-tree .sim-local")].map(e => e.textContent));
+await pg.selectOption('#sim-legend [data-k="kind"]', "err");
+const img17 = await snap(pg, "local-passes");
+const lp = r5.passes;
+check("SA1-12", !r5.error && lp.length === 5 && lp[3].raised > 0 && lp[3].raised < lp[3].cells && lp[4].dofs > lp[3].dofs && notes.length === 2,
+  "passes 4 and 5 raise the accuracy only where the error estimate is highest; the Study tab says in how many cells", { passes: lp.map(q => ({ p: q.p, raised: q.raised, cells: q.cells, dofs: q.dofs, ms: q.ms })), notes }, img17);
 await finish(browser, pg);

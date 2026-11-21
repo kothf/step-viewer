@@ -44,7 +44,7 @@ export interface StudyLoad {
 }
 
 export interface StudySettings {
-  /** Adaptive passes, 1..3. */
+  /** Adaptive passes, 1..6: three over the whole body, the rest local (run.ts `MAX_PASSES`). */
   passes: number;
   /** Stop when the strain energy changes less than this between passes, %. */
   energyTol: number;

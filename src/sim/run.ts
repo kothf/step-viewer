@@ -190,7 +190,10 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
 
 export interface PassResult {
   pass: number;
+  /** Highest degree in use. */
   p: number;
+  /** Local passes: how many elements had their degree raised in this pass (absent on whole-body passes). */
+  raised?: number;
   dofs: number;
   cells: number;
   /** Strain energy, N·mm. */
@@ -260,7 +263,31 @@ export function passError(known: number[]): number | null {
   return b > 0 ? e * Math.min(1, e / b) : 0;
 }
 
-/** The passes of a static study: degree 2, 3, 4 on the same cells, until the energy settles. */
+/** Whole-body passes (degree 2, 3, 4), then local ones up to this many passes and this degree. */
+export const GLOBAL_PASSES = 3, MAX_PASSES = 6, LOCAL_DEGREE = 6;
+
+/**
+ * Elements to refine next: the fewest that hold `share` of the error indicator among those still below
+ * `pmax`, largest first.
+ */
+export function markElements(ind: ArrayLike<number>, deg: ArrayLike<number>, share = 0.6, pmax = LOCAL_DEGREE): number[] {
+  const open: number[] = [];
+  let total = 0;
+  for (let e = 0; e < ind.length; e++) if (deg[e] < pmax && ind[e] > 0) { open.push(e); total += ind[e]; }
+  open.sort((a, b) => ind[b] - ind[a]);
+  const out: number[] = [];
+  let sum = 0;
+  for (const e of open) {
+    if (sum >= share * total) break;
+    out.push(e); sum += ind[e];
+  }
+  return out;
+}
+
+/**
+ * The passes of a static study on the same cells, until the energy settles: degree 2, 3, 4 everywhere,
+ * then local passes that raise the degree by one only in the elements holding most of the error estimate.
+ */
 export function* runStatic(inp: RunInput): Generator<PassResult> {
   if (inp.problem.problems.length) throw new Error(`${inp.problem.problems[0].code}: ${inp.problem.problems[0].id}`);
   if (!inp.problem.loads.length && !inp.problem.gravity) throw new Error("E-SIM-NOLOAD");
@@ -268,19 +295,32 @@ export function* runStatic(inp: RunInput): Generator<PassResult> {
   const body = new MeshBody(inp.body.tris);
   const inside = insideOf(body);
   const h = cellSize(inp.body, inp.cells);
-  const passes = Math.max(1, Math.min(3, Math.round(inp.passes)));
+  const passes = Math.max(1, Math.min(MAX_PASSES, Math.round(inp.passes)));
   let grid: Grid | undefined, last = 0, prev: Float64Array | undefined;
   const known: number[] = [];
+  // local passes: each element's degree, and its share of the error when its degree was last raised
+  let degrees: Int8Array | undefined, ind: Float64Array | undefined;
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now();
-    const p = k + 2;
+    let p = k + 2, raised: number | undefined, marked: number[] = [];
+    if (k >= GLOBAL_PASSES && grid && ind) {
+      degrees ??= new Int8Array(grid.elems.length).fill(GLOBAL_PASSES + 1);
+      marked = markElements(ind, degrees);
+      if (!marked.length) return;
+      for (const e of marked) degrees[e]++;
+      raised = marked.length;
+      p = 0;
+      for (let e = 0; e < degrees.length; e++) p = Math.max(p, degrees[e]);
+    }
     const r = solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity,
     });
     grid = r.grid;
     prev = r.x;
+    if (!ind || !degrees) ind = Float64Array.from(r.eta);
+    else for (const e of marked) ind[e] = r.eta[e];
     if (r.prevError != null) known.push(r.prevError);
     const errors: (number | null)[] = [...known, passError(known)];
     const { u, vm, err } = r.sample(inp.pos, inp.nrm);
@@ -292,7 +332,7 @@ export function* runStatic(inp: RunInput): Generator<PassResult> {
     const change = k ? (Math.abs(r.energy - last) / Math.abs(r.energy || 1)) * 100 : null;
     last = r.energy;
     const converged = change != null && change <= inp.energyTol;
-    yield { pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 };
+    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
     if (converged) return;
   }
 }
