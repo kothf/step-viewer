@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.616.0] - 2026-11-21
+
+### Added
+- Structural analysis: **results are kept between sessions**. A finished solve is stored in the browser's disk cache under the model, the material and the study's set-up; opening the part again shows its results (numbers, hot spots, probes and, with **Results**, the plots) without solving. Any change to the model or the study still asks for a new solve.
+- Structural analysis: **load values take expressions**, units and global variables: `2 kN`, `30 psi`, `3 * F + 10`, `1 g` for gravity. The text is kept, and the value follows the variables like a feature's does, so an equation can drive a load.
+- Structural analysis: the **probes are listed in the Study tab** with their places, von Mises stress and displacement; a row's × removes that probe, **Export CSV** is there too.
+
 ## [1.615.0] - 2026-11-21
 
 ### Added
@@ -3955,7 +3962,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.615.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.616.0...HEAD
+[1.616.0]: https://github.com/kothf/step-viewer/compare/v1.615.0...v1.616.0
 [1.615.0]: https://github.com/kothf/step-viewer/compare/v1.614.0...v1.615.0
 [1.614.0]: https://github.com/kothf/step-viewer/compare/v1.613.0...v1.614.0
 [1.613.0]: https://github.com/kothf/step-viewer/compare/v1.612.0...v1.613.0

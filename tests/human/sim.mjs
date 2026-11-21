@@ -218,4 +218,40 @@ const tot6 = Math.hypot(...r6.applied.force), sum6 = [0, 1, 2].map(c => r6.react
 check("SA1-15", sb === "1 edge" && !r6.error && r6.reactions.length === 2 && Math.hypot(...r6.reactions[1].force) > 1e-3 * tot6 && Math.hypot(...sum6) < 2e-3 * tot6 && r6.probes.length === 2,
   "a fixed support on an edge is picked on the model and solved; the two supports together carry the loads, the probes are still shown", { sb, reactions: r6.reactions.map(q => q.force), applied: r6.applied.force }, img21);
 void img20;
+// SA1-16: the probes are listed in the Study tab; a force typed as "0.4 kN + 100" is kept as text and worth 500 N.
+const ptable = await pg.evaluate(() => [...document.querySelectorAll("#sim-tree table.sim-ptable tbody tr")].map(r => [...r.querySelectorAll("td")].slice(0, 4).map(c => c.textContent)));
+await pg.locator('#sim-tree .sim-row:has-text("Force 1") [data-a="edit"]').click();
+await pg.waitForSelector("#sim-pm [data-n]");
+const field = pg.locator("#sim-pm [data-n]").last();
+await field.fill("0.4 kN + 100");
+await pg.keyboard.press("Tab");
+const img22 = await snap(pg, "force-expression");
+await pg.click("#sim-pm .pm-ok");
+await idle(pg);
+const typed = await pg.evaluate(() => { const l = window.__sv.model.store.doc.studies[0].loads.find(x => x.name === "Force 1"); return [l.value, ...(l.comp ?? [])].filter(n => n?.expr); });
+await pg.click('#sim-tools [data-s="solve"]');
+await pg.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 300000 });
+const r7 = await sim();
+await pg.click("#t-sim");
+const img23 = await snap(pg, "probe-table");
+check("SA1-16", ptable.length === 2 && ptable[0].length === 4 && typed.length === 1 && typed[0].v === 500 && typed[0].expr === "0.4 kN + 100" && !r7.error,
+  "the Study tab lists the probes with their places and values; a load value takes an expression with a unit", { ptable, typed, applied: r7.applied?.force }, img23);
+void img22;
+// SA1-17: a new part in another tab, then back: the results are there again without solving.
+await pg.waitForTimeout(1500);
+const tab0 = await pg.evaluate(() => document.querySelector('#doc-tabs [data-dt][aria-current="page"]')?.dataset.dt ?? "");
+await pg.click("#new-part");
+await idle(pg);
+await pg.click(`#doc-tabs [data-dt="${tab0}"]`);
+await pg.waitForFunction(() => window.__sv.sim.state().cached, null, { timeout: 60000 }).catch(() => {});
+await idle(pg);
+await pg.click("#cm-t-simulation");
+await pg.click("#t-sim");
+await pg.click('#sim-tools [data-s="results"]');
+await idle(pg);
+const r8 = await sim();
+const note = await pg.evaluate(() => document.querySelector("#sim-tree .sim-kept")?.textContent ?? "");
+const img24 = await snap(pg, "results-kept");
+check("SA1-17", r8.cached && !r8.stale && r8.passes.length === r7.passes.length && r8.maxVm === r7.maxVm && r8.plot.shown && !!note,
+  "opening the part again shows the results of its last solve from the disk cache; the plot is drawn from them", { cached: r8.cached, passes: r8.passes.length, vm: [r7.maxVm, r8.maxVm], note }, img24);
 await finish(browser, pg);
