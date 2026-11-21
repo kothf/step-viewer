@@ -1715,6 +1715,12 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-dot.load { background: #d6336c; }
 .sim-dot.ref { background: #1c7ed6; }
 .sim-refs { margin-top: 6px; }
+.sim-case { margin: 6px 0 0; padding: 6px; border: 1px solid var(--line); border-radius: 6px; display: grid; gap: 3px; }
+.sim-case-h { display: flex; gap: 4px; align-items: center; }
+.sim-case-h input { flex: 1; min-width: 0; }
+.sim-cases > .btn { margin-top: 6px; }
+.sim-casetable tbody tr { cursor: pointer; }
+.sim-casetable tbody tr.sel { font-weight: 600; }
 .sim-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .sim-ib { width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; }
 .sim-ib:hover { background: var(--panel-2); color: var(--text); }
