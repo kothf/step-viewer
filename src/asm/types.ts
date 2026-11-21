@@ -51,6 +51,8 @@ export interface AsmDoc {
   activeConfig?: string;
   /** Assembly features (FR-ASM-027): cuts that exist only in the assembly, applied to the placed components in order. */
   features?: AsmFeature[];
+  /** Structural analysis studies (FRS-structural SA3): supports, loads, connections; results are not stored. */
+  studies?: import("../sim/types").Study[];
   /** Motion studies (FR-FT-122): keys and motors on mates, explode and camera animation. */
   motions?: MotionStudy[];
   /** Display states (FR-ASM-025) and the active one. */

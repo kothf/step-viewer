@@ -16850,6 +16850,97 @@ try {
       `sim 1.620: two touching bodies are analysed bonded as one longer bar, and a body that touches nothing is refused (${JSON.stringify({ bdNote, error: bd.error, bodies: bd.bodies, hz: bd.modes.map(m => m.hz), mass: bd.mass, apart: apart.error })})`);
     await ctx.close();
   }
+
+  // --- Structural analysis 1.630 (FRS-structural SA3): a static study of an assembly, components joined across a gap ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // A 20 × 20 bar, 100 long along Y, in steel.
+    await mp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235 };
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await mp.click("#new-more");
+    await mp.click("#new-asm-part");
+    const built = n => mp.waitForFunction(k => window.__sv.asm.doc?.components.length === k && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await built(1);
+    // a second bar end to end with the first, 0.05 mm away
+    await mp.evaluate(() => window.__sv.asm.change(d => { const c = d.components[0], tf = [...c.tf]; tf[7] += 100.05; d.components.push({ ...c, id: "c2", name: "Bar<2>", tf, fixed: true }); }));
+    await mp.waitForTimeout(300);
+    await built(2);
+    await mp.waitForTimeout(600);
+    { const r = await mp.$eval("#viewport", e => { const b = e.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; }); await mp.mouse.move(r[0], r[1]); }
+    await mp.keyboard.press("f");
+    await mp.waitForTimeout(900);
+    const sim = () => mp.evaluate(() => window.__sv.sim.state());
+    const solved = async () => { await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await mp.waitForTimeout(400); };
+    // the face of component i whose centre is lowest (-1) or highest (+1) along an axis, on screen
+    const at = (i, axis, sign) => mp.evaluate(([i, axis, sign]) => {
+      const v = window.__sv.viewer, part = v.parts[i];
+      let best = null, top = -Infinity;
+      for (const f of part.data.faces) { const w = v.toWorld(part, f.center), q = sign * w.getComponent(axis); if (q > top) { top = q; best = w.clone(); } }
+      const s = best.project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, [i, axis, sign]);
+    await mp.click("#cm-t-simulation");
+    await mp.waitForTimeout(300);
+    const asTab = await mp.evaluate(() => ({ tab: document.querySelector("#tab-sim").classList.contains("on"), mat: !!document.querySelector('#sim-tools [data-s="mat"]:not([hidden])') }));
+    await mp.click('#sim-tools [data-s="fixed"]');
+    let p = await at(0, 1, -1);
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(250);
+    const asPick = await mp.evaluate(() => document.querySelector("#sim-pm .sim-faces")?.textContent ?? "");
+    await mp.click("#sim-pm .pm-ok");
+    await mp.waitForTimeout(400);
+    await mp.click('#sim-tools [data-s="force"]');
+    p = await at(1, 2, 1);
+    await mp.mouse.click(p.x, p.y);
+    await mp.fill('#sim-pm [data-n="value"]', "500");
+    await mp.keyboard.press("Tab");
+    await mp.click("#sim-pm .pm-ok");
+    await mp.waitForTimeout(400);
+    const asSet = await mp.evaluate(() => { const st = window.__sv.asm.doc.studies?.[0]; return st && { sup: st.supports.map(x => x.faces.map(f => f.name)), load: st.loads.map(x => x.faces.map(f => f.name)), gap: document.querySelector('#sim-tree [data-k="gap"]')?.value ?? null }; });
+    await mp.selectOption('#sim-tree [data-k="passes"]', "2");
+    await mp.waitForTimeout(300);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const a1 = await sim();
+    const asTree = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#sim-tree .sim-contacts tbody tr")].map(tr => tr.textContent), wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click("#lang-btn");
+    const asRu = await mp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-links *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    // not joined: the second bar is held by nothing and is named; bonded again, the results are as before
+    await mp.selectOption('#sim-tree select[data-k="link"]', "none");
+    await mp.waitForTimeout(400);
+    const a2 = await sim();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const a3 = await sim();
+    const asSaid = await mp.evaluate(() => [...document.querySelectorAll(".toast")].map(x => x.textContent).join(" | "));
+    await mp.evaluate(() => window.__sv.asm.undo());
+    await mp.waitForTimeout(500);
+    const a4 = await sim();
+    // a cantilever 200.05 long, 500 N spread over the top of the outer half: tip deflection of the order F a² (3 L − a) / 6 E I
+    check(asTab.tab && !asTab.mat && asPick === "1 face" && asSet && /@/.test(asSet.sup[0][0]) && /^c2@/.test(asSet.load[0][0]) && Number(asSet.gap) > 0
+      && a1.asm && !a1.error && a1.contacts.length === 1 && Math.abs(a1.contacts[0].area / 400 - 1) < 0.02 && a1.contacts[0].type === "bonded" && a1.comps.length === 2 && asTree.rows.length === 1 && asTree.wide <= 0 && a1.plot.shown
+      && a1.maxU > 0.2 && a1.maxU < 0.6 && asRu.length === 0
+      && a2.stale && a2.links.length === 1 && /E-SIM-LOOSE/.test(a3.error ?? "") && /Nothing holds/.test(asSaid) && a4.links.length === 0,
+      `sim 1.630: an assembly's study joins two bars across a 0.05 mm gap and lists the connection; not joined, the loose bar is named; translated (${JSON.stringify({ asTab, asPick, asSet, error: a1.error, contacts: a1.contacts, comps: a1.comps, maxU: a1.maxU, asTree, asRu, stale: a2.stale, links: [a2.links, a4.links], loose: a3.error, asSaid })})`);
+    await ctx.close();
+  }
 } catch (err) {
   console.error(err);
   failures++;

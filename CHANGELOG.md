@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.630.0] - 2026-11-21
+
+### Added
+
+- Structural analysis of **assemblies**. The Simulation tab now works on an assembly: every shown component is analysed with its part's material (or its bodies' own), and components that touch, or come within the gap tolerance (0.1 mm unless changed in the Study tab), are joined, so small modelling gaps need no clean-up. Supports and loads are picked on the components' faces as on a part. After a solve the Study tab lists the pairs found under Connections with their contact areas; each pair can be Bonded, Sliding (free to slide along the joint) or Not joined. A component that nothing holds is named in the message. Static and modal studies, the plots, probes, sections and the report work as for a part.
+
 ## [1.629.0] - 2026-11-21
 
 ### Added
@@ -4065,7 +4071,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.629.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.630.0...HEAD
+[1.630.0]: https://github.com/kothf/step-viewer/compare/v1.629.0...v1.630.0
 [1.629.0]: https://github.com/kothf/step-viewer/compare/v1.628.0...v1.629.0
 [1.628.0]: https://github.com/kothf/step-viewer/compare/v1.627.0...v1.628.0
 [1.627.0]: https://github.com/kothf/step-viewer/compare/v1.626.0...v1.627.0

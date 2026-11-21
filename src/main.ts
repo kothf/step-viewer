@@ -62,6 +62,7 @@ import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
 import { ModelController } from "./model/controller";
 import { SimController } from "./sim/ui";
+import { asmModel, partModel, type AsmModel } from "./sim/model";
 import { gestureDialog } from "./gestureUi";
 import { openPrefs, type SettingsPage } from "./prefsUi";
 import { getPref, onPrefs } from "./prefs";
@@ -1661,7 +1662,7 @@ function syncCmTabs() {
   const app = $("#app");
   const list: CmTabId[] = app.classList.contains("gerber") ? []
     : app.classList.contains("model") ? ["features", "sketch", "surfaces", "sheetmetal", "weldments", "simulation", "evaluate"]
-    : app.classList.contains("asm") ? ["assembly", "evaluate"]
+    : app.classList.contains("asm") ? ["assembly", "simulation", "evaluate"]
     : $("#empty").hidden ? ["evaluate"] : [];
   setCmTabs(list);
   fitCm();
@@ -2106,7 +2107,7 @@ canvas.addEventListener("pointerup", e => {
   const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
   const btn = downAt.button;
   downAt = null;
-  if (moved > 4 || btn !== 0 || !viewer.parts.length || modeller.picking || asm.picking) return;
+  if (moved > 4 || btn !== 0 || !viewer.parts.length || modeller.picking || asm.picking || (asm.active && sim.active)) return;
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
   const r = canvas.getBoundingClientRect();
   if (state.tool === "sectionFace") { sectionOnFace(faceUnder(e.clientX - r.left, e.clientY - r.top)); return; }
@@ -2310,23 +2311,66 @@ $("#m-csv").addEventListener("click", () => state.measurements.length ? measurem
 
 const showLeftTab = bindTabs($(".tabs"), tab => { $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)); if (tab === "vault") void vaultPanel.render(); });
 // Structural analysis (FRS-structural, SA1): the Simulation tab and the Study side tab of a part.
+const partSim = modeller.simAccess(), asmSim = asm.simAccess();
+// An assembly's study is drawn on its shown components joined into one model (made again when the view's parts are).
+let asmSimModel: { of: unknown; n: number; model: AsmModel | null } | null = null;
+const simAsmModel = () => {
+  const first = viewer.parts[0]?.mesh ?? null;
+  if (!asmSimModel || asmSimModel.of !== first || asmSimModel.n !== viewer.parts.length) {
+    asmSimModel?.model?.frame.removeFromParent();
+    asmSimModel?.model?.geometry.dispose();
+    asmSimModel = { of: first, n: viewer.parts.length, model: asmModel(viewer, asmSim.shown()) };
+  } else if (asmSimModel.model && !asmSimModel.model.frame.parent) viewer.modelRoot.add(asmSimModel.model.frame);
+  return asmSimModel.model;
+};
 const sim = new SimController({
   viewer,
   section,
-  ...modeller.simAccess(),
+  asm: () => asm.active,
+  doc: () => (asm.active ? asmSim.doc() : partSim.doc()),
+  change: (label, fn) => { if (asm.active) asmSim.change(d => fn(d)); else partSim.change(label, d => fn(d)); },
+  model: () => (asm.active ? simAsmModel() : viewer.parts[0] ? partModel(viewer.parts[0]) : null),
+  stateKey: () => {
+    if (asm.active) return { head: [asmSim.stateKey()], tail: [] };
+    const d = partSim.doc();
+    if (!d) return { head: [], tail: [] };
+    const own = Object.entries(d.bodies ?? {}).filter(([, b]) => b.material).map(([k, b]) => [k, b.material]);
+    return { head: [d.features, d.rollback, d.vars ?? null, d.material ?? null], tail: own.length ? [own] : [] };
+  },
+  faceNames: () => (asm.active ? simAsmModel()?.names ?? [] : partSim.faceNames()),
+  simGeo: (lin, ang) => (asm.active ? asmSim.simGeo(lin, ang) : partSim.simGeo(lin, ang)),
+  idle: () => (asm.active ? asmSim.idle() : partSim.idle()),
+  redraw: () => { if (!asm.active) partSim.redraw(); },
   faceAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();
     const f = faceUnder(x - r.left, y - r.top);
-    return f ? { faceId: f.face.id, point: f.point.toArray() as [number, number, number] } : null;
+    if (!f) return null;
+    if (!asm.active) return { faceId: f.face.id, point: f.point.toArray() as [number, number, number] };
+    const m = simAsmModel(), k = m ? m.parts.indexOf(viewer.parts.indexOf(f.part)) : -1;
+    return m && k >= 0 ? { faceId: m.faceOff[k] + f.part.data.faces.indexOf(f.face), point: viewer.toPart(f.part, f.point.clone()).toArray() as [number, number, number] } : null;
   },
   snapAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();
     const s = snapper.pick(x - r.left, y - r.top);
-    return s ? { kind: s.kind, point: viewer.toPart(s.part, s.point.clone()).toArray() as [number, number, number], edge: s.edge } : null;
+    if (!s) return null;
+    const point = viewer.toPart(s.part, s.point.clone()).toArray() as [number, number, number];
+    if (!asm.active) return { kind: s.kind, point, edge: s.edge };
+    // the edge as the joined model has it: its faces count through every component
+    const m = simAsmModel(), k = m ? m.parts.indexOf(viewer.parts.indexOf(s.part)) : -1;
+    const ei = s.edge ? s.part.data.edges.indexOf(s.edge) : -1;
+    return m && k >= 0 ? { kind: s.kind, point, edge: ei >= 0 ? m.edges[m.edgeOff[k] + ei] : undefined } : null;
   },
   showTab: () => { if (!$("#t-sim").hidden) showLeftTab("sim"); },
 });
-modeller.simHook = { active: () => sim.active, click: e => sim.click(e), key: e => sim.key(e), changed: () => sim.changed(), plotting: () => sim.plotting };
+asm.simHook = { active: () => sim.active, click: e => sim.click(e), changed: () => sim.changed() };
+// Enter and Esc of a study's open panel over an assembly (a part's own key handler passes them on itself)
+window.addEventListener("keydown", e => {
+  if (!asm.active || !sim.active || (e.key !== "Enter" && e.key !== "Escape")) return;
+  const tg = e.target as HTMLElement;
+  if (tg.closest?.("dialog") || (tg.tagName === "INPUT" && !tg.closest("#sim-pm")) || tg.tagName === "TEXTAREA" || tg.tagName === "SELECT") return;
+  if (sim.key(e)) { e.preventDefault(); e.stopPropagation(); }
+}, true);
+modeller.simHook = { active: () => !asm.active && sim.active, click: e => sim.click(e), key: e => sim.key(e), changed: () => sim.changed(), plotting: () => sim.plotting };
 partListeners.push(() => sim.rebuilt());
 // Local vault (FRS 12.5): the Vault tab.
 const vaultPanel = new VaultPanel($("#vault-panel"), {

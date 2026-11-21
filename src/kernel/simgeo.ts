@@ -59,3 +59,50 @@ export function faceTris(g: SimGeo, which: Set<number>): Float64Array {
   for (let t = 0; t < g.face.length; t++) if (which.has(g.face[t])) for (let k = 0; k < 9; k++) out.push(g.tris[9 * t + k]);
   return Float64Array.from(out);
 }
+
+/** An assembly for the solver: every component's faces in one list (`names` = `<component>@<face>`), and each solid on its own. */
+export interface AsmSimGeo extends SimGeo {
+  names: string[];
+  /** One per solid: its component, which of the component's solids it is, and its closed surface. */
+  regions: { comp: string; solid: number; tris: Float64Array }[];
+}
+
+/** The placed components (`shape` already moved to its place) as the solver's geometry. */
+export function asmSimGeometry(oc: any, placed: { id: string; shape: any; faces: any[]; names: string[] }[], lin: number, ang: number): AsmSimGeo {
+  const parts: SimGeo[] = [], names: string[] = [], regions: AsmSimGeo["regions"] = [];
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  let nt = 0;
+  for (const p of placed) {
+    const smap = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(p.shape, oc.TopAbs_ShapeEnum.TopAbs_SOLID, smap);
+    const ns = smap.Extent();
+    if (!ns) { smap.delete(); continue; }
+    const g = simGeometry(oc, p.shape, p.faces, lin, ang);
+    if (ns === 1) regions.push({ comp: p.id, solid: 0, tris: g.tris });
+    else {
+      const all = new oc.TopTools_IndexedMapOfShape_1();
+      for (const f of p.faces) all.Add(f);
+      for (let k = 1; k <= ns; k++) {
+        const fm = new oc.TopTools_IndexedMapOfShape_1();
+        oc.TopExp.MapShapes_1(smap.FindKey(k), oc.TopAbs_ShapeEnum.TopAbs_FACE, fm);
+        const own = new Set<number>();
+        for (let i = 1; i <= fm.Extent(); i++) { const at = all.FindIndex(fm.FindKey(i)); if (at > 0) own.add(at - 1); }
+        fm.delete();
+        regions.push({ comp: p.id, solid: k - 1, tris: faceTris(g, own) });
+      }
+      all.delete();
+    }
+    smap.delete();
+    // face indices run on through the components
+    const off = names.length;
+    if (off) for (let t = 0; t < g.face.length; t++) g.face[t] += off;
+    names.push(...p.names.map(n => `${p.id}@${n}`));
+    parts.push(g);
+    nt += g.face.length;
+    for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], g.lo[a]); hi[a] = Math.max(hi[a], g.hi[a]); }
+  }
+  const tris = new Float64Array(9 * nt), face = new Int32Array(nt);
+  let o = 0;
+  for (const g of parts) { tris.set(g.tris, 9 * o); face.set(g.face, o); o += g.face.length; }
+  return { tris, face, lo, hi, names, regions };
+}

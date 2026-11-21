@@ -64,6 +64,9 @@ export const KERNEL_MEMORY = /malloc failed|bad_alloc|out of memory|Cannot enlar
 /** The message of calls cut short by `stop()`. */
 export const STOPPED = "The geometry kernel was stopped.";
 
+/** `regions`: one per solid, with its component, its part's key and its own body material's name (null = the part's). */
+export interface AsmSimReply { geo: SimBody; regions: { comp: string; solid: number; part: string; mat: string | null; tris: Float64Array }[] }
+
 export class ModelKernel {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
@@ -385,6 +388,12 @@ export class ModelKernel {
   async simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts: number; regions?: { key: string; tris: Float64Array }[] }> {
     await this.start();
     return this.call<{ geo: SimBody; solids: number; parts: number; regions?: { key: string; tris: Float64Array }[] }>({ type: "simGeo", lin, ang });
+  }
+
+  /** Structural analysis of an assembly: the shown components of `doc` (as the last `assembly` built it) as fine triangles, each solid also on its own. */
+  async asmSimGeo(doc: AsmDoc, lin: number, ang: number): Promise<AsmSimReply> {
+    await this.start();
+    return this.call<AsmSimReply>({ type: "asmSimGeo", doc, lin, ang });
   }
 
   async step(name: string, color: V3): Promise<Uint8Array> {

@@ -16,7 +16,9 @@ import { download, pdfWriter } from "../tools/exporters";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
 import { chooseModal, toast } from "../ui";
-import type { Part, Viewer } from "../viewer/Viewer";
+import type { Viewer } from "../viewer/Viewer";
+import type { MatRef } from "../tools/materials";
+import type { SimModel } from "./model";
 import type { EdgeInfo } from "../topology";
 import { SIM_STOPPED, SimClient } from "./client";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
@@ -28,19 +30,30 @@ import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, typ
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, envelope, positiveAxis, studyProblem, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
-import { DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, caseStudy, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
+import { DEFAULT_GAP, DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, caseStudy, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
+
+/** What a study needs of its document: a part's, or an assembly's (which has no material or bodies of its own). */
+export type SimDoc = Pick<PartDoc, "id" | "name"> & Partial<Pick<PartDoc, "studies" | "vars" | "material" | "bodies">>;
 
 export interface SimHost {
   viewer: Viewer;
   /** The section planes of the view: their caps are painted with the results (FR-RES-030). */
   section: SectionManager;
-  doc(): PartDoc | null;
-  change(label: string, fn: (d: PartDoc) => void): void;
+  /** The part or assembly the studies live in. */
+  doc(): SimDoc | null;
+  change(label: string, fn: (d: SimDoc) => void): void;
+  /** What the studies are drawn on: the part, or the assembly's shown components as one. */
+  model(): SimModel | null;
+  /** Everything of the model the results depend on (`head` before the study's own set-up in the key, `tail` after it). */
+  stateKey(): { head: unknown[]; tail: unknown[] };
+  /** The model is an assembly: every component is solved as its own body, joined to the others where they touch. */
+  asm(): boolean;
   faceNames(): string[];
   faceAt(x: number, y: number): { faceId: number; point: [number, number, number] } | null;
   /** The snapped point under the pointer (part coordinates) and the edge it is on, if any. */
   snapAt(x: number, y: number): { kind: string; point: [number, number, number]; edge?: EdgeInfo } | null;
-  simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts?: number; regions?: { key: string; tris: Float64Array }[] }>;
+  /** `regions` of an assembly carry each solid's material and its component's name. */
+  simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts?: number; regions?: { key: string; tris: Float64Array; mat?: MatRef | null; name?: string }[] }>;
   /** No part command is open. */
   idle(): boolean;
   /** Draws the part's planes, sketches and marks again. */
@@ -54,14 +67,14 @@ type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "
 /** One load case's results; `job` names its solution in the worker (0 = not held). */
 interface CaseResult { id: string; name: string; passes: PassResult[]; job: number }
 /** `passes` are the shown ones: the study's, or with load cases the picked case's or the envelope (one made-up pass). */
-interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number }[] }
+interface Results { /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number }[] }
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 const pct = (v: number) => (Math.abs(v) < 0.01 ? (v === 0 ? "0" : "< 0.01") : sig(v));
 const RELIEF_NOTE = "The part is held by nothing: its supports are left out and the loads are balanced by its own inertia, as for a part in free flight or afloat.";
 /** The most load cases a study has. */
 export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
+interface Kept { comps?: { key: string; name: string }[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
@@ -143,7 +156,9 @@ export class SimController {
   private cacheHits = 0;
   private docId: string | null = null;
   private marks = new THREE.Group();
-  private saved: { mesh: THREE.Mesh; mat: THREE.Material } | null = null;
+  /** An assembly's solids as last sent to the solver (the solver names them by their place in this list). */
+  private comps: { key: string; name: string }[] = [];
+  private saved: { meshes: { mesh: THREE.Mesh; mat: THREE.Material | THREE.Material[] }[] } | null = null;
   private overlay: THREE.Mesh | null = null;
   // results on section planes: the caps as the section manager last made them, and what was painted
   private caps: { mesh: THREE.Mesh }[] = [];
@@ -228,11 +243,12 @@ export class SimController {
   }
 
   /** What the results depend on: the model, the material and the study's set-up. */
-  private keyOf(doc: PartDoc, st: Study) {
-    const parts: unknown[] = [doc.features, doc.rollback, doc.vars ?? null, doc.material ?? null, st.supports, st.loads, st.settings, st.suppressed ?? null];
+  private keyOf(_doc: SimDoc, st: Study) {
+    const model = this.host.stateKey();
+    const parts: unknown[] = [...model.head, st.supports, st.loads, st.settings, st.suppressed ?? null];
     if (st.refine?.length) parts.push(st.refine);
-    const own = Object.entries(doc.bodies ?? {}).filter(([, b]) => b.material).map(([k, b]) => [k, b.material]);
-    if (own.length) parts.push(own);
+    parts.push(...model.tail);
+    if (st.links?.length) parts.push(st.links);
     if (st.kind === "modal") parts.push("modal");
     else if (st.cases?.length) parts.push(st.cases.map(c => [c.id, c.off]));
     return JSON.stringify(parts);
@@ -302,6 +318,7 @@ export class SimController {
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
+      asm: this.host.asm(), comps: this.res?.comps?.map(c => c.name) ?? null, contacts: (last?.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type })), links: this.study()?.links ?? [],
       relief: !!this.study()?.settings.relief, accel: last?.accel ? { a: last.accel.a, alpha: last.accel.alpha } : null,
       cases: (this.study()?.cases ?? []).map(c => ({ name: c.name, off: c.off })), caseSel: this.caseSel, enveloped: this.enveloped,
       caseResults: (this.res?.cases ?? []).map(c => ({ name: this.caseName(c), maxVm: c.passes.at(-1)?.maxVm ?? null, maxU: c.passes.at(-1)?.maxU ?? null, passes: c.passes.length })),
@@ -340,7 +357,7 @@ export class SimController {
     const kept = await cacheGet<Kept>(await cacheKey("sim", key));
     const now = this.host.doc(), s2 = this.study();
     if (!kept?.passes?.length || !kept.mesh || this.res || this.running || now !== doc && now?.id !== doc.id || !s2 || s2.id !== st.id || !now || this.keyOf(now, s2) !== key) return;
-    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
+    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.comps ? { comps: kept.comps } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
       ...(kept.cases?.length ? { cases: kept.cases.map(c => ({ ...c, job: 0 })) } : {}) };
     this.caseSel = -1;
     this.applyCase();
@@ -353,7 +370,7 @@ export class SimController {
 
   /** The model was built and shown again: the mesh is new. */
   rebuilt() {
-    if (this.saved && this.saved.mesh === this.host.viewer.parts[0]?.mesh) this.clearPlot();
+    if (this.saved && this.saved.meshes[0]?.mesh === this.host.model()?.meshes[0]) this.clearPlot();
     this.saved = null;
     this.disposePlot();
     this.showPlot();
@@ -495,9 +512,9 @@ export class SimController {
     const i = d.faces.findIndex(f => f.name === name);
     if (i >= 0) d.faces.splice(i, 1);
     else {
-      if (d.type === "hinge" && this.host.viewer.parts[0]?.data.faces[hit.faceId]?.type !== "cylinder") { toast(t("A hinge needs a cylindrical face."), "warn"); return true; }
-      if (d.type === "centrifugal" && this.host.viewer.parts[0]?.data.faces[hit.faceId]?.type !== "cylinder") { toast(t("Click a cylindrical face: its axis is the spin axis."), "warn"); return true; }
-      if ((d.type === "torque" || d.type === "bearing") && this.host.viewer.parts[0]?.data.faces[hit.faceId]?.type !== "cylinder") { toast(t("Click a cylindrical face."), "warn"); return true; }
+      if (d.type === "hinge" && this.host.model()?.faces[hit.faceId]?.type !== "cylinder") { toast(t("A hinge needs a cylindrical face."), "warn"); return true; }
+      if (d.type === "centrifugal" && this.host.model()?.faces[hit.faceId]?.type !== "cylinder") { toast(t("Click a cylindrical face: its axis is the spin axis."), "warn"); return true; }
+      if ((d.type === "torque" || d.type === "bearing") && this.host.model()?.faces[hit.faceId]?.type !== "cylinder") { toast(t("Click a cylindrical face."), "warn"); return true; }
       d.faces.push({ name, hint: hit.point });
     }
     this.renderPanel();
@@ -507,7 +524,7 @@ export class SimController {
 
   /** A force or a support on edges or points: the edge or corner under the pointer joins or leaves it. */
   private pickEdgeOrPoint(d: StudySupport | StudyLoad, e: PointerEvent) {
-    const s = this.host.snapAt(e.clientX, e.clientY), names = this.host.faceNames(), part = this.host.viewer.parts[0];
+    const s = this.host.snapAt(e.clientX, e.clientY), names = this.host.faceNames(), part = this.host.model();
     if (!part) return;
     if (d.on === "edges") {
       const ed = s?.edge, a = ed ? names[ed.faces[0]] : undefined, b = ed ? names[ed.faces[1]] : undefined;
@@ -519,7 +536,7 @@ export class SimController {
       if (!s || s.kind !== "vertex") { toast(t("Click a corner point of the model."), "warn"); return; }
       const tol = 1e-4 * this.host.viewer.modelSize, near = (q: number[]) => Math.hypot(q[0] - s.point[0], q[1] - s.point[1], q[2] - s.point[2]) <= tol;
       const fs = new Set<string>();
-      for (const ed of part.data.edges) if (near(ed.start) || near(ed.end)) for (const f of ed.faces) if (names[f]) fs.add(names[f]);
+      for (const ed of part.edges) if (near(ed.start) || near(ed.end)) for (const f of ed.faces) if (names[f]) fs.add(names[f]);
       if (fs.size < 2) { toast(t("Click a corner point of the model."), "warn"); return; }
       const list = (d.points ??= []);
       const i = list.findIndex(x => near(x.at));
@@ -550,14 +567,14 @@ export class SimController {
     const doc = this.host.doc(), st = this.study();
     if (!doc || !st || this.running) return;
     if (this.edit) { toast(t("Finish the open command first.")); return; }
-    const m = doc.material;
-    if (!m || !m.E || m.nu == null) {
+    const m = doc.material, asm = this.host.asm();
+    if (!asm && (!m || !m.E || m.nu == null)) {
       toast(t("Pick a material with an elastic modulus and Poisson's ratio first."), "warn");
       void this.pickMat();
       return;
     }
-    const part = this.host.viewer.parts[0];
-    if (!part) { toast(t("The part has no body yet."), "warn"); return; }
+    const part = this.host.model();
+    if (!part) { toast(asm ? t("The assembly has no components to analyse yet.") : t("The part has no body yet."), "warn"); return; }
     this.running = true; this.error = null; this.errorIn = ""; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.modeSel = -1;
     const modal = st.kind === "modal";
     // a mode is a shape: it is drawn deformed, whatever the last static plot was set to
@@ -570,11 +587,22 @@ export class SimController {
     try {
       const size = this.host.viewer.modelSize;
       const { geo, solids, parts, regions: bodies } = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
-      if (solids !== 1) throw new Error("E-SIM-BODIES");
+      if (!asm && solids !== 1) throw new Error("E-SIM-BODIES");
       // bodies with a material of their own keep it: each body is then solved with its own stiffness and density
       const simMat = (q: NonNullable<typeof doc.material>) => ({ name: q.name, E: (q.E ?? 0) * 1000, nu: q.nu ?? 0, rho: q.density * 1e-9, sy: q.sy ?? undefined, su: q.su ?? undefined });
       let regions: { tris: Float64Array; mat: ReturnType<typeof simMat> }[] | undefined;
-      if (bodies && bodies.length > 1 && bodies.some(b => doc.bodies?.[b.key]?.material)) {
+      // an assembly: every component is its own body with its part's material, joined to the others where they touch
+      let joined: { gap: number; links: { a: number; b: number; type: "sliding" | "none" }[] } | undefined;
+      if (asm) {
+        if (!bodies?.length) throw new Error("E-SIM-NOBODY");
+        regions = bodies.map(b => {
+          if (!b.mat || !b.mat.E || b.mat.nu == null) throw new Error(`E-SIM-COMPMAT: ${b.name ?? b.key}`);
+          return { tris: b.tris, mat: simMat(b.mat) };
+        });
+        this.comps = bodies.map(b => ({ key: b.key, name: b.name ?? b.key }));
+        const at = new Map(bodies.map((b, i) => [b.key, i]));
+        joined = { gap: st.settings.gap ?? DEFAULT_GAP, links: (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) ? [{ a: at.get(l.a)!, b: at.get(l.b)!, type: l.type }] : [])) };
+      } else if (m && bodies && bodies.length > 1 && bodies.some(b => doc.bodies?.[b.key]?.material)) {
         regions = bodies.map(b => {
           const q = doc.bodies?.[b.key]?.material ?? m;
           if (!q.E || q.nu == null) throw new Error(`E-SIM-BODYMAT: ${q.name}`);
@@ -590,7 +618,7 @@ export class SimController {
         throw new Error(`${r.problem.problems[0].code}: ${r.problem.problems[0].id}`);
       }
       const problem = runs[0].problem;
-      const g = part.mesh.geometry, pa = g.getAttribute("position"), na = g.getAttribute("normal"), n = pa.count;
+      const g = part.geometry, pa = g.getAttribute("position"), na = g.getAttribute("normal"), n = pa.count;
       const p0 = new Float32Array(3 * n), n0 = new Float32Array(3 * n);
       for (let i = 0; i < n; i++) {
         p0[3 * i] = pa.getX(i); p0[3 * i + 1] = pa.getY(i); p0[3 * i + 2] = pa.getZ(i);
@@ -602,7 +630,7 @@ export class SimController {
       const pos = mesh.pos, nrm = mesh.nrm;
       const total = Math.max(1, Math.min(modal ? MODAL_PASSES : MAX_PASSES, Math.round(st.settings.passes)));
       if (modal) problem.loads = [];
-      const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh, ...(parts && parts > 1 ? { parts } : {}), ...(cases.length ? { cases: [] } : {}), ...(regions ? { bodyMats: regions.map(r => ({ name: r.mat.name, sy: r.mat.sy ?? 0 })) } : {}) };
+      const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh, ...(parts && parts > 1 ? { parts } : {}), ...(asm ? { comps: this.comps } : {}), ...(cases.length ? { cases: [] } : {}), ...(regions ? { bodyMats: regions.map(r => ({ name: r.mat.name, sy: r.mat.sy ?? 0 })) } : {}) };
       made = res; whole = false;
       for (let ci = 0; ci < runs.length; ci++) {
       const run = runs[ci], problem = run.problem, pre = run.c ? `${run.c.name}: ` : "";
@@ -615,7 +643,7 @@ export class SimController {
         ...(modal ? { modal: st.settings.range
           ? { count: DEFAULT_MODES, max: MAX_MODES, range: [st.settings.range.from, st.settings.range.to] as [number, number] }
           : { count: Math.max(1, Math.min(MAX_MODES, Math.round(st.settings.modes ?? DEFAULT_MODES))) } } : {}),
-        mat: simMat(m), ...(regions ? { regions } : {}),
+        mat: m && !asm ? simMat(m) : regions![0].mat, ...(regions ? { regions } : {}), ...(joined ? { asm: joined } : {}),
       }, p => {
         mine.push(p);
         res.ms = performance.now() - t0;
@@ -639,7 +667,7 @@ export class SimController {
       }
       // a finished solve is kept for the next time this document is opened
       if (res.passes.length) {
-        const keep: Kept = { passes: res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts, ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}), ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
+        const keep: Kept = { passes: res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts, ...(res.comps ? { comps: res.comps } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}), ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
         void cacheKey("sim", key).then(k => cachePut(k, keep));
       }
     } catch (e) {
@@ -654,6 +682,31 @@ export class SimController {
     }
   }
 
+  /** An assembly study: how its components are joined, and after a solve the pairs found touching. */
+  private linksHtml(st: Study): string {
+    const res = this.res && !this.stale() ? this.res : null, comps = res?.comps ?? [], found = res?.passes.at(-1)?.contacts ?? [];
+    const key = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+    const typed = new Map((st.links ?? []).map(l => [key(l.a, l.b), l.type]));
+    const names = new Map(comps.map(c => [c.key, c.name]));
+    const rows: { a: string; b: string; area: number | null }[] = found.map(c => ({ a: comps[c.a]?.key ?? "", b: comps[c.b]?.key ?? "", area: c.area })).filter(r => r.a && r.b);
+    const seen = new Set(rows.map(r => key(r.a, r.b)));
+    for (const l of st.links ?? []) if (!seen.has(key(l.a, l.b))) rows.push({ a: l.a, b: l.b, area: null });
+    const f = UNITS[units.current].f;
+    const opt = (v: string, label: string, cur: string) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(t(label))}</option>`;
+    let html = `<div class="sim-sec sim-links"><h4>${esc(t("Connections"))}</h4>`
+      + `<p class="sim-note muted">${esc(t("Every component is analysed with its part's material. Components that touch, or come within the gap, are joined."))}</p>`
+      + `<label class="sim-kv2">${esc(t("Gap tolerance"))} <input type="number" data-k="gap" min="0" step="0.05" value="${sig((st.settings.gap ?? DEFAULT_GAP) * f)}" aria-label="${esc(t("Gap tolerance"))}" /> ${esc(units.current)}</label>`;
+    if (rows.length) {
+      html += `<table class="sim-contacts"><thead><tr><th>${esc(t("Components"))}</th><th>${esc(t("Area"))}, ${esc(units.current)}²</th><th>${esc(t("Type"))}</th></tr></thead><tbody>`
+        + rows.map(r => {
+          const cur = typed.get(key(r.a, r.b)) ?? "bonded";
+          return `<tr data-link="${esc(key(r.a, r.b))}"><td translate="no">${esc(names.get(r.a) ?? r.a)} – ${esc(names.get(r.b) ?? r.b)}</td><td>${r.area == null ? "" : sig(r.area * f * f)}</td>`
+            + `<td><select data-k="link" data-a="${esc(r.a)}" data-b="${esc(r.b)}" aria-label="${esc(t("Type"))}">${opt("bonded", "Bonded", cur)}${opt("sliding", "Sliding", cur)}${opt("none", "Not joined", cur)}</select></td></tr>`;
+        }).join("") + `</tbody></table>`;
+    } else html += `<p class="sim-note muted" data-v="nolinks">${esc(res ? t("No components touch.") : t("The pairs found touching are listed here after a solve."))}</p>`;
+    return html + `</div>`;
+  }
+
   private nameOf(id: string) {
     const st = this.study();
     return [...(st?.supports ?? []), ...(st?.loads ?? []), ...(st?.refine ?? [])].find(x => x.id === id)?.name ?? id;
@@ -666,9 +719,11 @@ export class SimController {
       case "E-SIM-NOLOAD": return t("Add a load first.");
       case "E-SIM-FREE": return rest.trim() === "6" && !this.study()?.supports.length ? t("Add a support first, or turn on Inertia relief for a part that nothing holds.") : t("The supports leave the part free to move ({n} free motions). Add or change the supports.", { n: rest.trim() });
       case "E-SIM-BODIES": return t("Some bodies of the part touch no other body. A study needs one connected piece: join the bodies or delete the loose ones.");
+      case "E-SIM-COMPMAT": return t("The component {name} has no material with an elastic modulus and Poisson's ratio. Give its part one (right-click the component, Material…).", { name: msg.split(": ")[1] ?? "" });
+      case "E-SIM-LOOSE": return t("Nothing holds {names}: they touch no held component and have no support. Add a support, move them into contact or raise the gap tolerance.", { names: rest.split(",").map(i => this.comps[Number(i)]?.name ?? i).join(", ") });
       case "E-SIM-BODYMAT": return t("The material {name} of a body has no elastic modulus or Poisson's ratio.", { name: msg.split(": ")[1] ?? "" });
       case "E-SIM-DENSITY": return t("The material has no density: a modal study needs one.");
-      case "E-SIM-NOBODY": return t("The part has no body yet.");
+      case "E-SIM-NOBODY": return this.host.asm() ? t("The assembly has no components to analyse yet.") : t("The part has no body yet.");
       case "E-SIM-REF": return t("{name}: a face is gone. Pick its faces again.", { name });
       case "E-SIM-EMPTY": return t("{name} has no faces.", { name });
       case "E-SIM-SPRING": return t("{name}: give a stiffness above 0.", { name });
@@ -690,13 +745,13 @@ export class SimController {
   }
 
   /** Triangles of the faces, in the part's coordinates, with their area-weighted centre and normal. */
-  private faceGeo(part: Part, ids: number[]) {
-    const g = part.mesh.geometry, pos = g.getAttribute("position"), idx = g.getIndex();
+  private faceGeo(part: SimModel, ids: number[]) {
+    const g = part.geometry, pos = g.getAttribute("position"), idx = g.getIndex();
     const out: number[] = [], c = new THREE.Vector3(), nrm = new THREE.Vector3();
     const a = new THREE.Vector3(), b = new THREE.Vector3(), d = new THREE.Vector3(), w = new THREE.Vector3();
     let area = 0;
     for (const i of ids) {
-      const fc = part.data.faces[i];
+      const fc = part.faces[i];
       if (!fc) continue;
       for (let tri = fc.triStart; tri < fc.triStart + fc.triCount; tri++) {
         const v = [0, 1, 2].map(k => (idx ? idx.getX(tri * 3 + k) : tri * 3 + k));
@@ -722,10 +777,10 @@ export class SimController {
       (m.material as THREE.Material | undefined)?.dispose?.();
       if (o instanceof THREE.ArrowHelper) o.dispose();
     }
-    const part = this.host.viewer.parts[0], st = this.study();
+    const part = this.host.model(), st = this.study();
     this.marks.removeFromParent();
     if (!part || !st || cmTab() !== "simulation") { this.host.viewer.invalidate(); return; }
-    part.group.add(this.marks);
+    part.frame.add(this.marks);
     const plotted = !!this.saved;
     const off = new Set(st.suppressed ?? []);
     const draw = (it: StudySupport | StudyLoad | StudyRefine, load: boolean, hot: boolean) => {
@@ -746,7 +801,7 @@ export class SimController {
       if (l.on) {
         const names = this.host.faceNames(), pts: number[] = [], sum = new THREE.Vector3();
         let n = 0;
-        if (l.on === "edges") for (const e of l.edges ?? []) for (const ed of part.data.edges) {
+        if (l.on === "edges") for (const e of l.edges ?? []) for (const ed of part.edges) {
           const a = names[ed.faces[0]], b = names[ed.faces[1]];
           if (!((a === e.faces[0] && b === e.faces[1]) || (a === e.faces[1] && b === e.faces[0]))) continue;
           for (let k = 0; k + 5 < ed.pts.length; k += 3) pts.push(ed.pts[k], ed.pts[k + 1], ed.pts[k + 2], ed.pts[k + 3], ed.pts[k + 4], ed.pts[k + 5]);
@@ -774,11 +829,11 @@ export class SimController {
         if (!picked) { dir = new THREE.Vector3(l.axis === "x" ? 1 : 0, l.axis === "y" ? 1 : 0, !l.axis || l.axis === "z" ? 1 : 0); at = new THREE.Vector3(); }
         else return;
       }
-      else if (l.type === "gravity") { dir = comp(); at = new THREE.Box3().setFromBufferAttribute(part.mesh.geometry.getAttribute("position") as THREE.BufferAttribute).getCenter(new THREE.Vector3()); }
+      else if (l.type === "gravity") { dir = comp(); at = new THREE.Box3().setFromBufferAttribute(part.geometry.getAttribute("position") as THREE.BufferAttribute).getCenter(new THREE.Vector3()); }
       else if (!picked) return;
       else if (l.type === "torque") {
         // along the faces' axis, the way the torque turns right-handed (run.ts `positiveAxis`)
-        const ax = part.data.faces[this.faceIds(l.faces)[0]]?.axis;
+        const ax = part.faces[this.faceIds(l.faces)[0]]?.axis;
         dir = ax ? new THREE.Vector3(...positiveAxis(ax) as [number, number, number]).multiplyScalar(l.flip ? -1 : 1) : null;
       }
       else if (l.type === "hydro") dir = g.normal ? g.normal.clone().multiplyScalar(-1) : null;
@@ -943,7 +998,7 @@ export class SimController {
   /** The path (or its first picked point) on the model, while a plot is shown. */
   private drawPath() {
     if (this.pathMark) { this.pathMark.removeFromParent(); this.pathMark.traverse(o => { const m = o as THREE.Line; m.geometry?.dispose(); (m.material as THREE.Material | undefined)?.dispose(); }); this.pathMark = null; }
-    const part = this.host.viewer.parts[0], path = this.study()?.path, pts = this.pathFirst ? [this.pathFirst] : path && !this.pathing ? path : [];
+    const part = this.host.model(), path = this.study()?.path, pts = this.pathFirst ? [this.pathFirst] : path && !this.pathing ? path : [];
     if (!part || !this.saved || !pts.length) { this.host.viewer.invalidate(); return; }
     // on a plot drawn deformed the path moves with the part
     const rows = pts.length > 1 && this.usedScale > 0 ? this.pathData?.rows : undefined, k = this.usedScale;
@@ -953,7 +1008,7 @@ export class SimController {
     g.add(new THREE.Points(new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(new Float32Array(ends), 3)), new THREE.PointsMaterial({ color: PATH_COLOR, size: 9, sizeAttenuation: false, depthTest: false, transparent: true })));
     g.traverse(o => { o.renderOrder = 3200; o.raycast = () => {}; });
     g.userData.simPath = pts.length;
-    part.group.add(g);
+    part.frame.add(g);
     this.pathMark = g;
     this.host.viewer.invalidate();
   }
@@ -1166,9 +1221,9 @@ export class SimController {
     try {
       do {
         this.capAgain = false;
-        const v = this.host.viewer, part = v.parts[0];
+        const v = this.host.viewer, part = this.host.model();
         if (!part) return;
-        const size = v.modelSize * 1.3, back = new THREE.Matrix4().copy(v.placing(part)).invert();
+        const size = v.modelSize * 1.3, back = new THREE.Matrix4().copy(part.frame.matrixWorld).invert();
         const info = { painted: 0, points: 0, hit: 0, min: Infinity, max: -Infinity };
         for (const cap of [...this.caps]) {
           const mesh = cap.mesh;
@@ -1222,7 +1277,7 @@ export class SimController {
     const was = !!this.saved;
     if (this.saved) {
       const s = this.saved;
-      s.mesh.material = s.mat;
+      for (const m of s.meshes) m.mesh.material = m.mat;
       this.saved = null;
     }
     this.disposePlot();
@@ -1237,7 +1292,7 @@ export class SimController {
    */
   private showPlot() {
     this.clearPlot();
-    const part = this.host.viewer.parts[0], res = this.res, r0 = res?.passes.at(-1);
+    const part = this.host.model(), res = this.res, r0 = res?.passes.at(-1);
     if (!part || !res || !r0 || !this.plot.on || this.stale()) return;
     const pm = res.mesh, n = pm.pos.length / 3;
     if (r0.vm.length !== n) return;
@@ -1264,8 +1319,8 @@ export class SimController {
     under.clippingPlanes = this.host.viewer.clipPlanes;
     under.visible = this.plot.deformed;
     this.mats.push(colorMat, under);
-    this.saved = { mesh: part.mesh, mat: part.mesh.material };
-    part.mesh.material = under;
+    this.saved = { meshes: part.meshes.map(mesh => ({ mesh, mat: mesh.material })) };
+    for (const mesh of part.meshes) mesh.material = under;
     this.host.redraw();
     const scale = this.plot.scale > 0 ? this.plot.scale : r.maxU > 0 ? ((r0.modes ? 0.08 : 0.05) * this.host.viewer.modelSize) / r.maxU : 1;
     this.usedScale = this.plot.deformed ? scale : 0;
@@ -1282,10 +1337,7 @@ export class SimController {
     this.overlay = new THREE.Mesh(geo, colorMat);
     this.overlay.userData.simPlot = true;
     this.overlay.raycast = () => {};
-    part.mesh.parent?.add(this.overlay);
-    this.overlay.position.copy(part.mesh.position);
-    this.overlay.quaternion.copy(part.mesh.quaternion);
-    this.overlay.scale.copy(part.mesh.scale);
+    part.frame.add(this.overlay);
     this.overlay.updateMatrixWorld(true);
     if (shape && this.plot.deformed && this.animate) this.startAnim(pm.pos, shape, scale);
     this.capsSoon();
@@ -1400,7 +1452,18 @@ export class SimController {
   }
 
   /** The report's table of the materials bodies have of their own (nothing when no body has one). */
-  private bodyMatBlocks(doc: PartDoc, blocks: ReportBlock[]) {
+  private bodyMatBlocks(doc: SimDoc, blocks: ReportBlock[]) {
+    const res = this.res;
+    if (res?.comps) {
+      // an assembly: its components with their materials, and the pairs joined
+      blocks.push({ kind: "table", widths: [4, 4, 2], rows: [[t("Components"), t("Material"), t("Yield strength")], ...res.comps.map((c, i) => [c.name, res.bodyMats?.[i]?.name ?? "", res.bodyMats?.[i]?.sy ? `${sig(res.bodyMats[i].sy)} MPa` : "–"])] });
+      const cs = res.passes.at(-1)?.contacts ?? [];
+      if (cs.length) {
+        blocks.push({ kind: "h", text: t("Connections") });
+        blocks.push({ kind: "table", widths: [6, 2, 2], rows: [[t("Components"), `${t("Area")}, mm²`, t("Type")], ...cs.map(c => [`${res.comps![c.a]?.name ?? ""} – ${res.comps![c.b]?.name ?? ""}`, sig(c.area), t(c.type === "sliding" ? "Sliding" : "Bonded")])] });
+      }
+      return;
+    }
     const seen = new Set<string>(), rows: string[][] = [];
     for (const b of Object.values(doc.bodies ?? {})) {
       const q = b.material;
@@ -1504,7 +1567,7 @@ export class SimController {
     return { title: t("Structural analysis report"), sub: `${doc.name} · ${st.name} · ${new Date().toLocaleString(lang())} · MöbiusCAD ${__APP_VERSION__}`, blocks };
   }
 
-  private modalReport(doc: PartDoc, st: Study, res: Results, last: PassResult): SimReport {
+  private modalReport(doc: SimDoc, st: Study, res: Results, last: PassResult): SimReport {
     const m = doc.material, off = new Set(st.suppressed ?? []), blocks: ReportBlock[] = [];
     const kv = (rows: string[][]) => blocks.push({ kind: "table", rows: [[t("Property"), t("Value")], ...rows], widths: [2, 3] });
     blocks.push({ kind: "h", text: t("Study") });
@@ -1599,7 +1662,7 @@ export class SimController {
     const group = (label: string, inner: string) => `<div class="mc-g" role="group" aria-label="${esc(label)}">${inner}</div>`;
     const sep = `<div class="mc-sep"></div>`;
     const noLoads = st?.kind === "modal";
-    el.innerHTML = group(t("Study"), btn("new", t("New study"), t("New static study of this part"), { dis: busy }) + btn("newmodal", t("Modal study"), t("New modal study: the natural frequencies and mode shapes of this part"), { dis: busy }) + btn("mat", t("Material"), t("The part's material: elastic modulus, Poisson's ratio, strength"), { dis: busy }))
+    el.innerHTML = group(t("Study"), btn("new", t("New study"), this.host.asm() ? t("New static study of this assembly") : t("New static study of this part"), { dis: busy }) + btn("newmodal", t("Modal study"), this.host.asm() ? t("New modal study: the natural frequencies and mode shapes of this assembly") : t("New modal study: the natural frequencies and mode shapes of this part"), { dis: busy }) + (this.host.asm() ? "" : btn("mat", t("Material"), t("The part's material: elastic modulus, Poisson's ratio, strength"), { dis: busy })))
       + sep + group(t("Supports"), SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
       + sep + group(t("Loads"), LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy || noLoads })).join(""))
       + sep + group(t("Solve"), btn("refine", t(REFINE_LABEL), t("Local accuracy: the solution starts finer at the picked faces"), { dis: busy || noLoads }) + (busy ? btn("stop", t("Stop"), t("Stop the analysis")) : btn("solve", t("Solve"), t("Run the analysis"), { dis: !st }))
@@ -1613,7 +1676,7 @@ export class SimController {
     if (!doc) { el.innerHTML = ""; return; }
     const st = this.study();
     if (!st) {
-      el.innerHTML = `<div class="sim-empty"><p>${esc(t("A study holds the supports and loads of one analysis. The part is solved as it is, without a mesh."))}</p><button class="btn" data-a="new">${esc(t("New study"))}</button> <button class="btn" data-a="newmodal">${esc(t("Modal study"))}</button></div>`;
+      el.innerHTML = `<div class="sim-empty"><p>${esc(this.host.asm() ? t("A study holds the supports and loads of one analysis. The assembly is solved as it is, without a mesh: every component with its part's material, joined where they touch.") : t("A study holds the supports and loads of one analysis. The part is solved as it is, without a mesh."))}</p><button class="btn" data-a="new">${esc(t("New study"))}</button> <button class="btn" data-a="newmodal">${esc(t("Modal study"))}</button></div>`;
       return;
     }
     const list = doc.studies ?? [];
@@ -1636,7 +1699,8 @@ export class SimController {
       + (list.length > 1 ? `<select data-k="study" aria-label="${esc(t("Study"))}" translate="no">${list.map(s => `<option value="${s.id}"${s.id === st.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`
         : `<b translate="no">${esc(st.name)}</b>`)
       + `<span class="muted" data-v="kind">${esc(st.kind === "modal" ? t("Modal") : t("Static"))}</span><button class="sim-ib" data-a="delstudy" title="${esc(t("Delete study"))}" aria-label="${esc(t("Delete study"))}">×</button></div>`;
-    html += `<div class="sim-sec"><h4>${esc(t("Material"))}</h4><button class="pm-box${matOk ? "" : " sim-warn"}" data-a="mat">${m ? `<span translate="no">${esc(m.name)}</span>` : esc(t("No material"))}</button>`
+    if (this.host.asm()) html += this.linksHtml(st);
+    else html += `<div class="sim-sec"><h4>${esc(t("Material"))}</h4><button class="pm-box${matOk ? "" : " sim-warn"}" data-a="mat">${m ? `<span translate="no">${esc(m.name)}</span>` : esc(t("No material"))}</button>`
       + (m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`)
       + (ownMats.length ? `<p class="sim-note muted sim-bodymats">${esc(t("Bodies with their own material:"))} <span translate="no">${esc(ownMats.join(", "))}</span></p>` : "") + `</div>`;
     const modal = st.kind === "modal";
@@ -1950,6 +2014,20 @@ export class SimController {
       this.host.change(t("Modes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.modes = v; });
     }
     else if (el.dataset.k === "cumul") { this.cumul = el.checked; this.renderTree(); }
+    else if (el.dataset.k === "gap") {
+      const v = Math.max(0, Number(el.value) / UNITS[units.current].f);
+      if (!Number.isFinite(v)) return;
+      this.host.change(t("Gap tolerance"), d => { const s2 = d.studies?.find(x => x.id === st.id); if (s2) { if (Math.abs(v - DEFAULT_GAP) < 1e-12) delete s2.settings.gap; else s2.settings.gap = v; } });
+    } else if (el.dataset.k === "link") {
+      const a = el.dataset.a!, b = el.dataset.b!, v = el.value;
+      this.host.change(t("Connection type"), d => {
+        const s2 = d.studies?.find(x => x.id === st.id);
+        if (!s2) return;
+        const rest = (s2.links ?? []).filter(l => !((l.a === a && l.b === b) || (l.a === b && l.b === a)));
+        if (v === "sliding" || v === "none") rest.push({ a, b, type: v });
+        if (rest.length) s2.links = rest; else delete s2.links;
+      });
+    }
     else if (el.dataset.k === "relief") this.host.change(t("Inertia relief"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) { if (el.checked) s.settings.relief = true; else delete s.settings.relief; } });
     else if (el.dataset.k === "case") this.pickCase(Number(el.value));
     else if (el.dataset.k === "cname" || el.dataset.k === "cload") {
@@ -2032,7 +2110,7 @@ export class SimController {
     else if (nk) {
       let v: Num;
       const doc = this.host.doc();
-      try { v = typedValue(el.value, nk[0] === "r" ? "moment" : e.draft.type as LoadType, doc ? evalVars(doc, units.current).values : {}); el.setAttribute("aria-invalid", "false"); el.title = ""; }
+      try { v = typedValue(el.value, nk[0] === "r" ? "moment" : e.draft.type as LoadType, doc && !this.host.asm() ? evalVars(doc as PartDoc, units.current).values : {}); el.setAttribute("aria-invalid", "false"); el.title = ""; }
       catch (err) {
         const x = err as ExprError;
         el.setAttribute("aria-invalid", "true");

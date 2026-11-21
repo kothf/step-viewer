@@ -82,6 +82,8 @@ export interface StudySettings {
   passes: number;
   /** Stop when the strain energy changes less than this between passes, %. */
   energyTol: number;
+  /** Assemblies: components are joined across gaps up to this wide, mm (default `DEFAULT_GAP`). */
+  gap?: number;
   /** Modal studies: how many modes are found (default `DEFAULT_MODES`, at most `MAX_MODES`). */
   modes?: number;
   /** Modal studies: only the modes between these frequencies, Hz (then `modes` is not used; at most `MAX_MODES` are found). */
@@ -107,6 +109,8 @@ export interface Study {
   refine?: StudyRefine[];
   /** Ids of supports, loads and refinements left out of the solve. */
   suppressed?: string[];
+  /** Assemblies: pairs of components that are not bonded where they touch (FR-CON-005/006). */
+  links?: StudyLink[];
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
   /** Static studies: load cases (FR-LOAD-022), each solved on its own with the same supports. None = one case with every load. */
@@ -118,6 +122,11 @@ export interface Study {
   /** View state: the plot shown and the deformation scale (0 = automatic). */
   plot?: { kind: PlotKind; scale?: number; deformed?: boolean };
 }
+
+/** How two components (by id, `a` < `b`) are joined where they touch: sliding along the surface, or not at all. */
+export interface StudyLink { a: string; b: string; type: "sliding" | "none" }
+/** Assemblies: components are joined across gaps up to this wide, mm, when the study sets none (FR-CON-003). */
+export const DEFAULT_GAP = 0.1;
 
 export type PlotKind = "vm" | "u" | "ux" | "uy" | "uz" | "sf" | "err";
 
