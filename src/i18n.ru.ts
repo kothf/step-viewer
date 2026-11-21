@@ -5655,5 +5655,11 @@ export const RU: Record<string, string> = {
   "Structural analysis report": "Отчёт о прочностном расчёте",
   "Solve the study first.": "Сначала решите исследование.",
   "Est. error": "Погрешн.",
+  "By component": "По компонентам",
+  "Stress": "Напряж.",
+  "Displ.": "Перем.",
+  "SF": "Запас",
+  "Showing {name} alone, on its own colour scale.": "Показан только {name}, со своей цветовой шкалой.",
+  "Click a row to show that component alone.": "Щёлкните строку, чтобы показать только этот компонент.",
   "Estimated error per pass": "Оценка погрешности по проходам",
 };

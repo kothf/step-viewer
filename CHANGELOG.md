@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.634.0] - 2026-11-21
+
+### Added
+
+- Structural analysis of assemblies: results **By component** (FR-CON-030). The Study tab lists every component with its highest von Mises stress, largest displacement and lowest safety factor against its own yield strength.
+- A click on a row shows that component alone: the others fade to ghosts, the colour scale and the Max / Min labels are the component's own. The same click again, or **Show all**, brings the whole assembly back.
+- The report has the same table.
+
+### Fixed
+
+- Vault dialogs: a dialog opened right after another one closed could be answered by the closing of the first, and then stayed open doing nothing (seen at the log in after closing Users…).
+
 ## [1.633.0] - 2026-11-21
 
 ### Added
@@ -4093,7 +4105,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.633.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.634.0...HEAD
+[1.634.0]: https://github.com/kothf/step-viewer/compare/v1.633.0...v1.634.0
 [1.633.0]: https://github.com/kothf/step-viewer/compare/v1.632.0...v1.633.0
 [1.632.0]: https://github.com/kothf/step-viewer/compare/v1.631.0...v1.632.0
 [1.631.0]: https://github.com/kothf/step-viewer/compare/v1.630.0...v1.631.0

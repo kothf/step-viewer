@@ -16561,6 +16561,38 @@ try {
       && mTab.rows === 6 && /Hz/.test(mTab.f1) && /kg/.test(mTab.mass) && mTab.wide <= 0 && mTab.legend === "0" && mTab.kinds === "u,ux,uy,uz"
       && m3.mode === 2 && m3.plot.shown && !m4.animating && mLeft.length === 0,
       `sim 1.617: a modal study of the clamped bar finds its bending frequencies, lists the modes, shows the one clicked and swings its shape; the tab is translated (${JSON.stringify({ mSet, error: m1.error, hz, eff: m1.modes[0]?.eff, mass: m1.mass, passes: m1.passes, frames: [m1.frames, m2.frames], mTab, mode: m3.mode, animating: [m1.animating, m4.animating], left: mLeft.slice(0, 6) })})`);
+    await ctx.close();
+  }
+
+  // --- Structural analysis, second half (its own page, so no shard runs all of it): more supports and loads, sections, paths, cases, bodies ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await mp.waitForTimeout(150); await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 }); };
+    // A 20 × 20 bar, 200 long along Y, in a steel with E 210 GPa.
+    await mp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 200), P(4, -10, 200), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235 };
+    }));
+    await settle();
+    const at = name => mp.evaluate(n => {
+      const v = window.__sv.viewer, part = v.parts[0], names = window.__sv.model.last().faceNames, f = part.data.faces[names.indexOf(n)];
+      const s = v.toWorld(part, f.center).clone().project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, name);
+    const sim = () => mp.evaluate(() => window.__sv.sim.state());
+    await mp.click("#cm-t-simulation");
+    let p;
     // 1.621: an elastic support under the bar's end, its top pushed down 0.05 mm by an enforced displacement (no load needed),
     // then a centrifugal load: 6000 rpm about X throws the bar (0.628 kg, centre at y = 100, z = 10) outwards with ρ ω² V r.
     await mp.click('#sim-tools [data-s="new"]');
@@ -16802,7 +16834,16 @@ try {
     check(!ir.error && ir.relief && ir.accel && irF > 0 && Math.abs(irA / (irF / irMass) - 1) < 0.02 && ir.reactions === 0 && ir.maxVm > 0 && ir.maxU < 5 && ir.shown && /m\/s²/.test(ir.dd) && ir.note && ir.wide <= 0 && irRu.length === 0
       && !irOff.relief && irOff.stale,
       `sim 1.628: with Inertia relief a study is solved without supports; the acceleration is the applied force over the mass; translated (${JSON.stringify({ ir, irF, irA, irMass, irRu, irOff })})`);
-    await mp.selectOption('#sim-tree [data-k="study"]', "st2");
+    // a modal study of the clamped bar, for the bodies below
+    await mp.click('#sim-tools [data-s="newmodal"]');
+    await settle();
+    await mp.click('#sim-tools [data-s="fixed"]');
+    p = await at("f1:side:s1l1");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    await mp.selectOption('#sim-tree [data-k="passes"]', "2");
     await settle();
     // 1.620: a second body on the end of the bar is analysed bonded to it (one bar 260 long: 421 × (200 / 260)² = 249 Hz);
     // a body that touches nothing is refused with a message.
@@ -16972,6 +17013,21 @@ try {
     await mp.click("#lang-btn");
     await mp.waitForTimeout(300);
     const cWide = await mp.evaluate(() => document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth);
+    // results by component: a row shows its component alone, on its own scale
+    const k0 = await sim();
+    const kRows = await mp.evaluate(() => [...document.querySelectorAll("#sim-tree .sim-comptable tbody tr")].map(r => r.textContent));
+    await mp.click('#sim-tree .sim-comptable tbody tr[data-rcomp="0"]');
+    await mp.waitForTimeout(300);
+    const k1 = await sim();
+    const kNote = await mp.evaluate(() => document.querySelector('#sim-tree [data-v="compnote"]')?.textContent ?? "");
+    await mp.click('#sim-tree [data-a="rcompall"]');
+    await mp.waitForTimeout(300);
+    const k2 = await sim();
+    const kTop = Math.max(...(k0.compRows ?? []).map(x => x.vm));
+    check(k0.compRows?.length === 2 && kRows.length === 2 && Math.abs(kTop / k0.maxVm - 1) < 1e-6 && k0.compSel === -1 && k0.drawn > 0
+      && k1.compSel === 0 && k1.drawn > 0 && k1.drawn < k0.drawn && Math.abs(k1.plot.range[1] / k0.compRows[0].vm - 1) < 1e-6 && kNote.includes("alone")
+      && k2.compSel === -1 && k2.drawn === k0.drawn,
+      `sim 1.634: results by component, and a row shows its component alone (${JSON.stringify({ rows: k0.compRows, kRows, drawn: [k0.drawn, k1.drawn, k2.drawn], range: [k0.plot.range, k1.plot.range], kNote })})`);
     // left out: the load on it can no longer be solved, and the message says why; the last component cannot be left out
     await mp.uncheck('#sim-tree .sim-complist li[data-comp="c2"] [data-k="compon"]');
     await mp.waitForTimeout(400);

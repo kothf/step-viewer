@@ -22,6 +22,7 @@ import type { AsmModel, SimModel } from "./model";
 import type { EdgeInfo } from "../topology";
 import { SIM_STOPPED, SimClient } from "./client";
 import type { Connection } from "./connect";
+import { aloneIndex, componentRows, type CompRow } from "./comps";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
 import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
@@ -154,6 +155,10 @@ export class SimController {
   private hot: { res: Results; n: number; list: HotSpot[] } | null = null;
   /** The hot spot picked in the list (its label is drawn on the model). */
   private hotSel = -1;
+  /** Results of an assembly: the component (solver domain) shown alone, -1 = all of them. View only. */
+  private compSel = -1;
+  /** Plot-mesh vertices in view when one component is shown alone (1 = shown). */
+  private mask: Uint8Array | null = null;
   /** The pairs found touching before a solve (FR-CON-003), for the model state and gap they were found with. */
   private found: { key: string; comps: { key: string; name: string }[]; list: Connection[] } | null = null;
   private finding = false;
@@ -362,6 +367,7 @@ export class SimController {
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
+      compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0,
       asm: this.host.asm(), comps: this.res?.comps?.map(c => c.name) ?? null, contacts: (last?.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, force: c.force ?? null, moment: c.moment ?? null, at: c.at ?? null })), links: this.study()?.links ?? [],
       compList: this.host.asm() ? this.host.comps().map(c => { const o = this.study()?.comps?.[c.id]; return { id: c.id, name: c.name, off: !!o?.off, material: o?.material?.name ?? c.material, own: !!o?.material }; }) : null, excluded: this.res?.off ?? [],
       found: this.freshFound(this.study())?.list.map(c => ({ a: this.found!.comps[c.a]?.name ?? "", b: this.found!.comps[c.b]?.name ?? "", area: c.area, gap: c.gap, at: c.at })) ?? null, finding: this.finding, linkSel: this.linkSel,
@@ -406,7 +412,7 @@ export class SimController {
     if (!kept?.passes?.length || !kept.mesh || this.res || this.running || now !== doc && now?.id !== doc.id || !s2 || s2.id !== st.id || !now || this.keyOf(now, s2) !== key) return;
     this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.comps ? { comps: kept.comps } : {}), ...(kept.off ? { off: kept.off } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
       ...(kept.cases?.length ? { cases: kept.cases.map(c => ({ ...c, job: 0 })) } : {}) };
-    this.caseSel = -1;
+    this.caseSel = -1; this.compSel = -1;
     this.applyCase();
     this.cacheHits++;
     this.plot.on = false;
@@ -623,7 +629,7 @@ export class SimController {
     }
     const part = this.host.model();
     if (!part) { toast(asm ? t("The assembly has no components to analyse yet.") : t("The part has no body yet."), "warn"); return; }
-    this.running = true; this.error = null; this.errorIn = ""; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.modeSel = -1;
+    this.running = true; this.error = null; this.errorIn = ""; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.compSel = -1; this.modeSel = -1;
     const modal = st.kind === "modal";
     // a mode is a shape: it is drawn deformed, whatever the last static plot was set to
     if (modal) this.plot.deformed = true;
@@ -1254,6 +1260,46 @@ export class SimController {
     return k === "vm" ? ["MPa", 1] : k === "sf" ? ["", 1] : k === "err" ? ["%", 1] : [units.current, UNITS[units.current].f];
   }
 
+  /** Triangles of the plot that are drawn (a component shown alone leaves the others out). */
+  private drawnTris(): number {
+    const ix = this.overlay?.geometry.getIndex();
+    if (!ix) return 0;
+    let n = 0;
+    for (let i = 0; i < ix.count; i += 3) if (ix.getX(i) !== ix.getX(i + 1)) n++;
+    return n;
+  }
+
+  /** The solver domain shown alone, -1 when all components are shown (or the results have none). */
+  private aloneDom(): number {
+    const r = this.res, last = r?.passes.at(-1);
+    return r?.comps && last?.dom && !last.modes && this.compSel >= 0 && this.compSel < r.comps.length ? this.compSel : -1;
+  }
+
+  /** An assembly's results per component (FR-CON-030): empty for a part or a modal study. */
+  private compRows(): CompRow[] {
+    const r = this.res, last = r?.passes.at(-1);
+    if (!r?.comps || !last?.dom || last.modes) return [];
+    return componentRows(last.dom, last.vm, last.u, r.comps.length, r.bodyMats?.map(b => b.sy) ?? []);
+  }
+
+  /** The table of results per component: a row shows its component alone. */
+  private compTableHtml(): string {
+    const r = this.res, rows = this.compRows();
+    if (!r?.comps || rows.length < 2) return "";
+    const uf = UNITS[units.current].f, alone = this.aloneDom(), sf = rows.some(x => x.sf != null);
+    return `<h5 class="sim-sub">${esc(t("By component"))}</h5><table class="sim-passes sim-comptable"><thead><tr><th>${esc(t("Component"))}</th><th title="${esc(t("von Mises stress"))}">${esc(t("Stress"))}, MPa</th><th title="${esc(t("Displacement"))}">${esc(t("Displ."))}, ${esc(units.current)}</th>${sf ? `<th title="${esc(t("Lowest safety factor (yield)"))}">${esc(t("SF"))}</th>` : ""}</tr></thead><tbody>`
+      + rows.map(x => `<tr data-a="rcomp" data-rcomp="${x.d}" tabindex="0" class="${x.d === alone ? "sel" : ""}"><td translate="no" title="${esc(r.comps![x.d].name)}">${esc(r.comps![x.d].name)}</td><td>${sig(x.maxVm)}</td><td>${sig(x.maxU * uf)}</td>${sf ? `<td${x.sf != null && x.sf < 1 ? ' class="sim-low"' : ""}>${x.sf == null ? "–" : sig(x.sf)}</td>` : ""}</tr>`).join("") + `</tbody></table>`
+      + `<p class="sim-note muted" data-v="compnote">${alone >= 0 ? `${esc(t("Showing {name} alone, on its own colour scale.", { name: r.comps[alone].name }))} <button class="btn small" data-a="rcompall">${esc(t("Show all"))}</button>` : esc(t("Click a row to show that component alone."))}</p>`;
+  }
+
+  /** Shows one component's results alone (the same again: all of them). */
+  private pickComp(d: number) {
+    this.compSel = d === this.compSel ? -1 : d;
+    if (!this.plot.on) this.plot.on = true;
+    this.showPlot();
+    this.renderAll();
+  }
+
   /** The hot spots of the last pass: the highest stress peaks, likely singularities flagged. */
   private hotList(): HotSpot[] {
     const r = this.res;
@@ -1269,13 +1315,15 @@ export class SimController {
     const [unit, f] = this.plotUnit(), val = (x: number) => `${sig(x * f)}${unit ? ` ${esc(unit)}` : ""}`;
     const out: { v: number; html: string }[] = [];
     const sing = esc(t("Stress singularity: value depends on refinement"));
-    let lo = 0, hi = 0;
-    for (let i = 1; i < a.length; i++) { if (a[i] < a[lo]) lo = i; if (a[i] > a[hi]) hi = i; }
+    const mk = this.mask;
+    let lo = -1, hi = -1;
+    for (let i = 0; i < a.length; i++) { if (mk && !mk[i]) continue; if (lo < 0 || a[i] < a[lo]) lo = i; if (hi < 0 || a[i] > a[hi]) hi = i; }
+    if (lo < 0) return [];
     const label = (cls: string, key: string, text: string, v: number, warn = false) => out.push({ v, html: `<div class="sim-probe sim-peak ${cls}${warn ? " warn" : ""}" data-peak="${key}"${warn ? ` title="${sing}"` : ""}><i></i><span>${warn ? "⚠ " : ""}${text}</span></div>` });
     if (this.plot.kind === "vm") {
       const hs = this.hotList(), top = hs.findIndex(h => !h.singular);
-      hs.forEach((h, i) => { if (h.singular || i === top || i === this.hotSel) label("hot", `h${i}`, `<b>${i + 1}</b> <span translate="no">${val(h.vm)}</span>`, h.v, h.singular); });
-      if (!hs.length) label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[hi])}</span>`, hi);
+      hs.forEach((h, i) => { if (mk && !mk[h.v]) return; if (h.singular || i === top || i === this.hotSel) label("hot", `h${i}`, `<b>${i + 1}</b> <span translate="no">${val(h.vm)}</span>`, h.v, h.singular); });
+      if (!hs.length || (mk && !hs.some(h => mk[h.v]))) label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[hi])}</span>`, hi);
     } else if (this.plot.kind === "sf") label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
     else {
       label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[hi])}</span>`, hi);
@@ -1328,6 +1376,7 @@ export class SimController {
     if (this.overlay) { this.overlay.removeFromParent(); this.overlay.geometry.dispose(); this.overlay = null; }
     for (const m of this.mats) m.dispose();
     this.mats = [];
+    this.mask = null;
   }
 
   /** A result plot is on the model. */
@@ -1450,8 +1499,13 @@ export class SimController {
     // the error estimate compares two passes
     if (this.plot.kind === "err" && r.pass < 2) this.plot.kind = "vm";
     const val = this.values(r, this.plot.kind), sf = this.plot.kind === "sf";
+    // one component alone: only its points are drawn, and the colour scale is its own
+    const alone = this.aloneDom(), dom = r0.dom;
+    const mask = alone >= 0 && dom ? Uint8Array.from(dom, d => (d === alone ? 1 : 0)) : null;
+    this.mask = mask;
     let lo = Infinity, hi = -Infinity;
-    for (let i = 0; i < n; i++) { if (val[i] < lo) lo = val[i]; if (val[i] > hi) hi = val[i]; }
+    for (let i = 0; i < n; i++) { if (mask && !mask[i]) continue; if (val[i] < lo) lo = val[i]; if (val[i] > hi) hi = val[i]; }
+    if (!Number.isFinite(lo)) { lo = 0; hi = 0; }
     if (this.plot.kind === "vm" || this.plot.kind === "u" || this.plot.kind === "err") lo = 0;
     this.range = [lo, hi];
     this.vals = val;
@@ -1467,6 +1521,9 @@ export class SimController {
     this.saved = { meshes: part.meshes.map(mesh => ({ mesh, mat: mesh.material })) };
     // a component the study leaves out stays in view as a ghost, whatever the plot
     const out = new Set(res.off ?? []), am = part as AsmModel;
+    // with one component alone, the others stay as ghosts too
+    const only = mask && res.comps?.[alone] ? compOf(res.comps[alone].key) : "";
+    if (only && am.names) for (const c of new Set(am.names.map(compOf))) if (c !== only) out.add(c);
     let ghost: THREE.Material | null = null;
     if (out.size && am.names) {
       ghost = new THREE.MeshBasicMaterial({ color: 0x8a8f98, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide });
@@ -1483,7 +1540,7 @@ export class SimController {
       for (let i = 0; i < 3 * n; i++) at[i] = pm.pos[i] + scale * r.u[i];
     }
     const geo = new THREE.BufferGeometry();
-    geo.setIndex(new THREE.BufferAttribute(pm.index, 1));
+    geo.setIndex(new THREE.BufferAttribute(mask && dom ? aloneIndex(pm.index, dom, alone) : pm.index, 1));
     geo.setAttribute("position", new THREE.BufferAttribute(at, 3));
     geo.setAttribute("normal", new THREE.BufferAttribute(pm.nrm, 3));
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -1617,6 +1674,12 @@ export class SimController {
         const v3 = (v: number[] | undefined, k: number) => (v ? `${sig(Math.hypot(v[0], v[1], v[2]) * k)} (${v.map(x => sig(x * k)).join(", ")})` : "–");
         blocks.push({ kind: "table", widths: [4, 1.5, 3, 3, 1.5], rows: [[t("Components"), `${t("Area")}, mm²`, `${t("Force")}, N`, `${t("Moment")}, N·m`, t("Type")], ...cs.map(c => [`${res.comps![c.a]?.name ?? ""} – ${res.comps![c.b]?.name ?? ""}`, sig(c.area), v3(c.force, 1), v3(c.moment, 1e-3), t(c.type === "sliding" ? "Sliding" : "Bonded")])] });
         blocks.push({ kind: "p", text: t("Force: what the first component passes to the second. Moment: about the centre of the contact.") });
+      }
+      const rows = this.compRows();
+      if (rows.length > 1) {
+        const uf = UNITS[units.current].f;
+        blocks.push({ kind: "h", text: t("By component") });
+        blocks.push({ kind: "table", widths: [4, 2, 2, 2], rows: [[t("Component"), `${t("von Mises stress")}, MPa`, `${t("Displacement")}, ${units.current}`, t("Lowest safety factor (yield)")], ...rows.map(x => [res.comps![x.d].name, sig(x.maxVm), sig(x.maxU * uf), x.sf == null ? "–" : sig(x.sf)])] });
       }
       return;
     }
@@ -1940,6 +2003,7 @@ export class SimController {
         + hs.map((h, i) => `<tr data-a="hot" data-hot="${i}" tabindex="0" class="${h.singular ? "sing" : ""}${i === this.hotSel ? " sel" : ""}"><td>${i + 1}</td><td>${sig(h.vm)} MPa${h.singular ? ` ${warn}` : ""}</td><td>${h.at.map(x => String(Number((x * uf).toFixed(3)))).join(", ")}</td></tr>`).join("") + `</tbody></table>`;
       if (singular) html += `<p class="sim-note sim-sing">⚠ ${esc(t("Stress singularity: value depends on refinement"))}. ${esc(real ? t("The safety factor uses the highest stress away from singularities.") : "")}</p>`;
     }
+    html += this.compTableHtml();
     html += this.probesHtml();
     html += this.pathHtml();
     if (!this.running) {
@@ -2131,6 +2195,8 @@ export class SimController {
       this.renderTree();
       this.drawMarks();
     }
+    else if (a === "rcomp") this.pickComp(Number(b.dataset.rcomp));
+    else if (a === "rcompall") this.pickComp(this.compSel);
     else if (a === "hot") {
       const i = Number(b.dataset.hot);
       this.hotSel = this.hotSel === i ? -1 : i;

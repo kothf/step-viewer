@@ -125,6 +125,16 @@ await solved();
 const m2 = await sim();
 check("SAS-8", m1.compList?.[0]?.own && m1.stale && !m2.error && m2.maxU > 1.05 * r3.maxU, "a component given aluminium for the study deforms more than in steel; the part keeps its own material", { list: m1.compList, error: m2.error, maxU: [r3.maxU, m2.maxU] }, await snap(pg, "component-material"));
 
+// results by component: the table, and one component alone
+const b0 = await sim();
+await pg.click('#sim-tree .sim-comptable tbody tr[data-rcomp="1"]');
+await pg.waitForTimeout(400);
+const b1 = await sim();
+check("SAS-10", b0.compRows?.length === 2 && b1.compSel === 1 && b1.drawn < b0.drawn && Math.abs(b1.plot.range[1] / b0.compRows[1].vm - 1) < 1e-6,
+  "the results list both components, and a click on a row shows that one alone with its own colour scale", { rows: b0.compRows, drawn: [b0.drawn, b1.drawn], range: b1.plot.range }, await snap(pg, "component-alone"));
+await pg.click('#sim-tree [data-a="rcompall"]');
+await pg.waitForTimeout(300);
+
 // left out: the component is a ghost, and what was put on it is named when solving
 await pg.uncheck('#sim-tree .sim-complist li:nth-child(2) [data-k="compon"]');
 await pg.waitForTimeout(400);
