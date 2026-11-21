@@ -6,7 +6,7 @@
 import { BlockMatrix, Envelope } from "./sparse";
 
 /** In-place Cholesky of an n×n row-major SPD matrix; returns false when it is not positive definite. */
-function cholesky(a: Float64Array, n: number) {
+export function cholesky(a: Float64Array, n: number) {
   for (let j = 0; j < n; j++) {
     let s = a[j * n + j];
     for (let k = 0; k < j; k++) s -= a[j * n + k] ** 2;
