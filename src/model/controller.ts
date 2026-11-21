@@ -7494,7 +7494,7 @@ export class ModelController {
         if (mm.kind === "feature" && mm.draft.type === "hole" && this.store!.feature(id)?.type === "sketch" && mm.focus !== "hupto") {
           const si = this.doc.features.findIndex(x => x.id === id);
           if (si >= mm.index) { toast(t("Pick a sketch made before the hole."), true); return; }
-          if (!hasHolePoints(this.store!.feature(id))) { toast(t("This sketch has no points for holes: add sketch points (or line ends that are not construction)."), true); return; }
+          if (!hasHolePoints(this.store!.feature(id))) { toast(t("This sketch has no points for holes: add sketch points."), true); return; }
           mm.draft.sketch = id;
           syncHole(this.doc, mm.draft);
           mm.focus = "pts";

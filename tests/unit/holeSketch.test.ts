@@ -19,12 +19,12 @@ const doc = (features: Feature[]): PartDoc => ({ schema: 1, kind: "part", id: "d
 const base = (pts: [number, number][]): Feature[] => [plate, { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } } as Feature, pos(pts), structuredClone(hole)];
 const cyl = Math.PI * 16 * 20;
 
-test("hole sketch points: free points and the ends of lines/arcs that are not construction", () => {
+test("hole sketch points: free Point entities only, not construction, not curve ends", () => {
   const sk: SketchFeature = { id: "s", type: "sketch", name: "S", plane: { std: "XY" }, rels: [], dims: [], ents: [
     P("p1", 0, 0), P("p2", 10, 0, true), P("e1", 20, 0), P("e2", 30, 0), { id: "l", t: "line", a: "e1", b: "e2" },
     P("k1", 40, 0), P("k2", 50, 0), { id: "lc", t: "line", a: "k1", b: "k2", cons: true },
     P("cc", 60, 0), { id: "c", t: "circle", c: "cc", r: 3 }] };
-  assert.deepEqual(holeSketchPoints(sk).map(p => p.id), ["p1", "e1", "e2"]);
+  assert.deepEqual(holeSketchPoints(sk).map(p => p.id), ["p1"]);
 });
 
 test("hole from a sketch: drilled at the sketch points, moved when they move", async () => {
