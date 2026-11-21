@@ -3912,7 +3912,7 @@ try {
     const vNoShell = await vol();
     await mp.keyboard.press("Escape");
     await mp.click('#mc-tools [data-c="hole"]');
-    // 1.637 (FR-FT-052): the first click opens the hole's position sketch with a point there; the second adds a point with the Point tool; ✓ goes back to the hole.
+    // 1.638 (FR-FT-052): the first click opens the hole's position sketch with a point there; the second adds a point with the Point tool; ✓ goes back to the hole.
     const hA = await world([30, 15, 20]);
     await mp.mouse.click(hA[0], hA[1]);
     await mp.waitForFunction(() => window.__sv.model.mode().kind === "sketch", null, { timeout: 30000 });
@@ -16899,6 +16899,123 @@ try {
     await ctx.close();
   }
 
+  // --- Structural analysis 1.637 (FR-CON-020/021): a toolbox screw with its nut is analysed as a bolt ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const bp = await ctx.newPage();
+    bp.on("pageerror", e => errors.push(e.message));
+    bp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await bp.goto(`${origin}/index.html?debug`);
+    await bp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await bp.goto(`${origin}/index.html?debug`);
+    await bp.waitForFunction(() => window.__sv);
+    await bp.click("#new-part");
+    await bp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // A 40 × 20 × 5 steel plate with a Ø6.6 hole in the middle.
+    await bp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const pt = (id, x, y) => ({ id, t: "point", x, y }), ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("a", 0, 0), pt("b", 40, 0), pt("c", 40, 20), pt("d", 0, 20), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a"), pt("h1", 20, 10), { id: "k1", t: "circle", c: "h1", r: 3.3 }] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 5 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235 };
+    }));
+    await bp.waitForTimeout(150);
+    await bp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await bp.click("#new-more");
+    await bp.click("#new-asm-part");
+    const shown = n => bp.waitForFunction(k => window.__sv.asm.doc && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await shown(1);
+    // a second plate on top of the first, an M6 screw through both and a nut under them
+    await bp.evaluate(() => window.__sv.asm.change(d => { const c = d.components[0], tf = [...c.tf]; tf[11] += 5; d.components.push({ ...c, id: "c2", name: "Plate<2>", tf, fixed: true }); }));
+    await bp.waitForTimeout(300);
+    await shown(2);
+    await bp.click('#asm-tools [data-ac="fastener"]');
+    await bp.evaluate(() => window.__sv.asm.setFastener({ kind: "iso4762", size: "M6", length: 16 }));
+    const hole = (i, z) => bp.evaluate(([i, z]) => {
+      const a = window.__sv.asm, d = window.__sv.viewer.parts[i].data;
+      a.fastenHole(i, d.faces.findIndex(f => f.type === "cylinder"), [23.3, 10, z]);
+    }, [i, z]);
+    await hole(1, 9.5);
+    await shown(3);
+    await bp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 2 && !window.__sv.asm.building, null, { timeout: 120000 });
+    await bp.evaluate(() => window.__sv.asm.setFastener({ kind: "iso4032" }));
+    await hole(0, 0.5);
+    await shown(4);
+    await bp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 4 && !window.__sv.asm.building, null, { timeout: 120000 });
+    await shown(4);
+    await bp.evaluate(() => window.__sv.asm.closeTools());
+    { const r = await bp.$eval("#viewport", e => { const b = e.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; }); await bp.mouse.move(r[0], r[1]); }
+    await bp.keyboard.press("f");
+    await bp.waitForTimeout(900);
+    const sim = () => bp.evaluate(() => window.__sv.sim.state());
+    const solved = async () => { await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await bp.waitForTimeout(400); };
+    const at = (i, axis, sign) => bp.evaluate(([i, axis, sign]) => {
+      const v = window.__sv.viewer, part = v.parts[i];
+      let best = null, top = -Infinity;
+      for (const f of part.data.faces) { const w = v.toWorld(part, f.center), q = sign * w.getComponent(axis); if (q > top) { top = q; best = w.clone(); } }
+      const s = best.project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height];
+    }, [i, axis, sign]);
+    await bp.click("#cm-t-simulation");
+    await bp.waitForTimeout(300);
+    await bp.click('#sim-tools [data-s="new"]');
+    await bp.waitForTimeout(500);
+    await bp.keyboard.press("Escape");
+    const b0 = await sim();
+    // held on a long side of the lower plate, the upper plate's end pushed along the plates
+    await bp.click('#sim-tools [data-s="fixed"]');
+    { const p = await at(0, 1, -1); await bp.mouse.click(p[0], p[1]); }
+    await bp.waitForTimeout(300);
+    await bp.click("#sim-pm .pm-ok");
+    await bp.waitForTimeout(300);
+    await bp.click('#sim-tools [data-s="force"]');
+    { const p = await at(1, 0, 1); await bp.mouse.click(p[0], p[1]); }
+    await bp.waitForTimeout(300);
+    await bp.fill('#sim-pm [data-n="value"]', "-100");
+    await bp.keyboard.press("Tab");
+    await bp.click("#sim-pm .pm-ok");
+    await bp.waitForTimeout(300);
+    await bp.selectOption('#sim-tree [data-k="passes"]', "2");
+    await bp.waitForTimeout(300);
+    // plates not joined: the bolt carries the whole push in shear
+    await bp.click('#sim-tree [data-a="findlinks"]');
+    await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.finding && s.found; }, null, { timeout: 120000 });
+    await bp.waitForTimeout(300);
+    const b1 = await sim();
+    await bp.selectOption("#sim-tree select[data-k=link]", "none");
+    await bp.waitForTimeout(300);
+    await bp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const b2 = await sim();
+    const bTree = await bp.evaluate(() => ({ rows: document.querySelectorAll("#sim-tree .sim-bolttable tbody tr").length, shear: parseFloat(document.querySelector("#sim-tree .sim-bolttable [data-v=bshear]")?.textContent ?? ""), wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await bp.click("#lang-btn");
+    const bRu = await bp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-bolts *, #tab-sim .sim-bolttable *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await bp.click("#lang-btn");
+    await bp.waitForTimeout(300);
+    // tightened to 2000 N with the plates sliding on each other: the tension is the preload, rated by class 12.9
+    await bp.selectOption("#sim-tree select[data-k=link]", "sliding");
+    await bp.waitForTimeout(300);
+    await bp.fill("#sim-tree .sim-boltlist input[data-k=boltpre]", "2000");
+    await bp.keyboard.press("Tab");
+    await bp.waitForTimeout(300);
+    await bp.selectOption("#sim-tree .sim-boltlist select[data-k=boltcls]", "12.9");
+    await bp.waitForTimeout(300);
+    const b3 = await sim();
+    await bp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const b4 = await sim();
+    // the screw analysed as a solid again: no bolt in the results
+    await bp.uncheck("#sim-tree .sim-boltlist input[data-k=bolton]");
+    await bp.waitForTimeout(300);
+    const b5 = await sim();
+    check(b0.boltList?.length === 1 && !b0.boltList[0].off && b1.boltList[0].found && !b1.boltList[0].missed
+      && !b2.error && b2.bolts?.length === 1 && Math.abs(b2.bolts[0].shear / 100 - 1) < 0.01 && Math.abs(b2.bolts[0].axial) < 1 && b2.bolts[0].cls === "8.8" && b2.bolts[0].sf > 1 && b2.boltMarks >= 1
+      && b2.excluded?.length === 2 && bTree.rows === 1 && Math.abs(bTree.shear / 100 - 1) < 0.01 && bTree.wide <= 0 && bRu.length === 0
+      && b3.stale && !b4.error && Math.abs(b4.bolts[0].axial / 2000 - 1) < 0.02 && b4.bolts[0].preload === 2000 && b4.bolts[0].cls === "12.9" && b4.bolts[0].sf > 1
+      && b5.stale && b5.boltList[0].off,
+      `sim 1.637: a toolbox screw with its nut is analysed as a bolt: it carries the push in shear when the plates are not joined, keeps its preload when tightened, and is rated by its class; translated (${JSON.stringify({ list: [b0.boltList, b1.boltList, b5.boltList], error: [b2.error, b4.error], bolts: [b2.bolts, b4.bolts], marks: b2.boltMarks, excluded: b2.excluded, bTree, bRu, stale: [b3.stale, b5.stale] })})`);
+    await ctx.close();
+  }
+
   // --- Structural analysis 1.630 (FRS-structural SA3): a static study of an assembly, components joined across a gap ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -17092,7 +17209,7 @@ try {
     await ctx.close();
   }
   if (inShard(1)) {
-    // model 1.637: holes placed by the points of a position sketch (FR-FT-052): drilled there, following the sketch.
+    // model 1.638: holes placed by the points of a position sketch (FR-FT-052): drilled there, following the sketch.
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const hp = await ctx.newPage();
     hp.on("pageerror", e => errors.push(e.message));
@@ -17119,7 +17236,7 @@ try {
     const cyl = Math.PI * 25 * 10;
     check(r0.ok && r1.ok && r0.pts.length === 2 && r0.plane?.face?.name === "x:end" && Math.abs(r0.v - (60000 - 2 * cyl)) < 0.5
       && r1.pts.length === 3 && r1.pts[1][0] === -35 && Math.abs(r1.v - (60000 - 3 * cyl)) < 0.5 && Math.abs(r1.com[0] - 15 * cyl / (60000 - 3 * cyl)) < 1e-3,
-      `model 1.637: a hole takes its centres from its position sketch's points (construction left out) and follows when they move (${JSON.stringify({ r0, r1 })})`);
+      `model 1.638: a hole takes its centres from its position sketch's points (construction left out) and follows when they move (${JSON.stringify({ r0, r1 })})`);
     await ctx.close();
   }
 } catch (err) {

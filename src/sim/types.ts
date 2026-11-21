@@ -114,6 +114,8 @@ export interface Study {
   links?: StudyLink[];
   /** Assemblies: what the study changes on a component, by component id (FR-CON-001/002). */
   comps?: Record<string, StudyComp>;
+  /** Assemblies: how the bolts found among the fasteners are taken (FR-CON-020), by screw component id. */
+  bolts?: Record<string, StudyBolt>;
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
   /** Static studies: load cases (FR-LOAD-022), each solved on its own with the same supports. None = one case with every load. */
@@ -129,6 +131,15 @@ export interface Study {
 /** A component in a study: left out of the analysis (`off`), or analysed with another material than its part's. */
 /** `rigid`: the component moves as a body with its mass, without strain (FR-CON-001). */
 export interface StudyComp { off?: boolean; material?: MatRef; rigid?: boolean }
+/**
+ * A bolt in a study, by its screw's component id: `off` = the fastener is analysed as a solid like any other
+ * component, `cls` = property class (default 8.8), `preload` = tightening, N, or N·mm of torque with `torque`
+ * (tension = torque / (`k` · d), nut factor `k` 0.2 unless given).
+ */
+export interface StudyBolt { off?: boolean; cls?: string; preload?: number; torque?: boolean; k?: number }
+export const NUT_FACTOR = 0.2;
+/** The tension a bolt's tightening leaves in it, N. */
+export const boltPreload = (b: StudyBolt | undefined, d: number) => (!b?.preload || !(b.preload > 0) ? 0 : b.torque ? b.preload / ((b.k && b.k > 0 ? b.k : NUT_FACTOR) * d) : b.preload);
 /** The component a region key (`<comp>` or `<comp>#<solid>`) or a face name (`<comp>@<face>`) belongs to. */
 export const compOf = (key: string) => { const m = /[@#]/.exec(key); return m ? key.slice(0, m.index) : key; };
 /** The ids of the components a study leaves out. */

@@ -1675,7 +1675,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-FT-033 | Setback fillets (P3, S) | Yes | Built in 1.134.0: setback vertices with a distance each; fillets cut square to the edges, corner filled with a G1 patch |
 | FR-FT-041 | Vertex chamfer (three distances) and offset-face chamfer | 1.100.0: offset-face and vertex chamfers | Done |
 | FR-FT-050 | Hole types counterdrilled, clearance (close/normal/loose) and slot; end conditions up to face and up to next | 1.100.0: clearance, counterdrill and slot holes; Up to next and Up to surface ends | Done |
-| FR-FT-052 | Placement by sketch points that can be dimensioned and related, or points of an existing sketch | 1.637.0: position sketch made on the face with the Point tool, live preview, existing sketches picked in the tree | Done |
+| FR-FT-052 | Placement by sketch points that can be dimensioned and related, or points of an existing sketch | 1.638.0: position sketch made on the face with the Point tool, live preview, existing sketches picked in the tree | Done |
 | FR-FT-060 | Shell with multi-thickness faces (P3) | 1.100.0: multi-thickness faces | Done |
 | FR-FT-061 | Parting-line draft (P5) | 1.100.0: parting-line draft | Done |
 | FR-FT-062 | Rib draft | 1.100.0: rib draft (normal ribs) | Done |

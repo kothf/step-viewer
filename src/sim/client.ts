@@ -4,6 +4,7 @@ import SimWorker from "./sim.worker?worker";
 import type { PassResult, RunInput, SampleResult } from "./run";
 import type { SimReply } from "./sim.worker";
 import type { Connection } from "./connect";
+import type { FastenerBody, findBolts } from "./bolts";
 
 export const SIM_STOPPED = "E-SIM-STOPPED";
 
@@ -58,7 +59,7 @@ export class SimClient {
       const end = () => { if (this.job?.id === id) this.job = null; };
       w.onmessage = (e: MessageEvent<SimReply>) => {
         const d = e.data;
-        if ("found" in d) return;
+        if ("found" in d || "bolts" in d) return;
         if ("sample" in d) { const f = this.asks.get(d.id); this.asks.delete(d.id); f?.(d.sample); return; }
         if (d.id !== id) return;
         if ("pass" in d) { passes.push(d.pass); onPass(d.pass); }
@@ -93,6 +94,21 @@ export class SimClient {
     });
   }
   private finder: (() => void) | null = null;
+
+  /** The bolts among the bodies (FR-CON-020), found in a worker of its own. */
+  bolts(bodies: Float64Array[], fast: FastenerBody[]): Promise<ReturnType<typeof findBolts>> {
+    const w = new SimWorker(), id = ++this.seq;
+    return new Promise((resolve, reject) => {
+      w.onmessage = (e: MessageEvent<SimReply>) => {
+        const d = e.data;
+        if (d.id !== id) return;
+        w.terminate();
+        if ("bolts" in d) resolve(d.bolts); else reject(new Error("error" in d ? d.error : SIM_STOPPED));
+      };
+      w.onerror = ev => { w.terminate(); reject(new Error(ev.message || SIM_STOPPED)); };
+      w.postMessage({ id, type: "bolts", bodies, fast });
+    });
+  }
 
   /** Ends the running solve; the passes already delivered stay with the caller. */
   cancel() {
