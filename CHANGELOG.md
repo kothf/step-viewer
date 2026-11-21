@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.621.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **Elastic support**. The picked faces rest on springs, with a stiffness per area along the face normal and in the face (N/mm³); the support's reaction is listed like any other.
+- Structural analysis: **Enforced displacement**. Faces, edges or corner points are moved by a given distance along X, Y or Z, the other directions stay free. It loads the part by itself, so such a study needs no force.
+- Structural analysis: **Centrifugal load**. The part spins about a world axis through the origin, or about the axis of a clicked cylindrical face, at a speed in rpm (rad/s and Hz are understood too), with an optional angular acceleration.
+
 ## [1.620.0] - 2026-11-21
 
 ### Added
@@ -3999,7 +4007,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.620.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.621.0...HEAD
+[1.621.0]: https://github.com/kothf/step-viewer/compare/v1.620.0...v1.621.0
 [1.620.0]: https://github.com/kothf/step-viewer/compare/v1.619.0...v1.620.0
 [1.619.0]: https://github.com/kothf/step-viewer/compare/v1.618.0...v1.619.0
 [1.618.0]: https://github.com/kothf/step-viewer/compare/v1.617.0...v1.618.0

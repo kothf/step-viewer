@@ -27,7 +27,15 @@ export interface Support {
    * `hinge` the normal and the `axis` direction (a pin in a bore; `axialFree` leaves the axis free),
    * `dirs` the ticked world directions.
    */
-  mode?: "fixed" | "sliding" | "hinge" | "dirs";
+  mode?: "fixed" | "sliding" | "hinge" | "dirs" | "tangent";
+  /** Enforced displacement, mm: the held directions are moved to this instead of 0 (P u = P value). */
+  value?: ArrayLike<number>;
+  /**
+   * Elastic support (faces only): instead of being held, the faces rest on springs of stiffness per area
+   * `kn` along the normal and `kt` in the tangent plane, N/mm³. `mode` is then only what the free check
+   * counts as held (`sliding` for kn alone, `tangent` for kt alone).
+   */
+  spring?: { kn: number; kt: number };
   axis?: ArrayLike<number>;
   axialFree?: boolean;
   dirs?: [boolean, boolean, boolean];
@@ -77,6 +85,11 @@ export interface StaticProblem {
   loads: Load[];
   /** Gravity, mm/s² (needs `mat.rho`). */
   gravity?: ArrayLike<number>;
+  /**
+   * Spinning about the line through `p` along the unit `axis` (needs `mat.rho`): `omega` rad/s gives the
+   * centrifugal body force ρ ω² r, `alpha` rad/s² the inertia force −ρ α × r of speeding up.
+   */
+  spin?: { p: ArrayLike<number>; axis: ArrayLike<number>; omega: number; alpha?: number };
   /** Cells of an earlier pass on the same body and cell size: reused, only refitted for p. */
   grid?: Grid;
   /** Octree depth of the quadrature in cut cells (default 3). */
@@ -363,9 +376,24 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const free = freeModes(pb.fixed, pb.lo, pb.hi);
   if (free > 0 && !pb.modal) throw new Error(`E-SIM-FREE: ${free}`);
   const P = new Float64Array(9), PM = new Float64Array(9 * nb);
+  const Pg = [0, 0, 0];
+  const springAt = (s: Support, nrm: ArrayLike<number>) => {
+    // kt I + (kn − kt) n nᵀ
+    const k = s.spring!;
+    for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) P[3 * c + d] = (c === d ? k.kt : 0) + (k.kn - k.kt) * nrm[c] * nrm[d];
+  };
   for (const s of pb.fixed) located(s.tris, (e, x, y, z, w, nrm) => {
     const E = grid.elems[e];
     bas.eval(x, y, z, E.c, E.s);
+    if (s.spring) {
+      springAt(s, nrm);
+      const K = A.block(e, e), v = bas.v, ne = nbs[e], m = 3 * ne;
+      for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
+        const q = w * v[a] * v[b];
+        for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) K[(3 * a + c) * m + 3 * b + d] += q * P[3 * c + d];
+      }
+      return;
+    }
     for (let b = 0; b < nb; b++) traction(bas.g, 3 * b, nrm, lam, mu, MA, 9 * b);
     holdMatrix(s, nrm, P);
     for (let b = 0; b < nb; b++) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++)
@@ -381,6 +409,13 @@ export function solveStatic(pb: StaticProblem): StaticResult {
           K[row + d] += -w * (v[a] * PM[9 * b + 3 * c + d] + v[b] * PM[9 * a + 3 * d + c]) + pen * P[3 * c + d];
       }
     }
+    // an enforced displacement g: −(P σ(v) n)·g + 2γ (P g)·v on the right-hand side
+    const g = s.value;
+    if (g) {
+      for (let c = 0; c < 3; c++) Pg[c] = P[3 * c] * g[0] + P[3 * c + 1] * g[1] + P[3 * c + 2] * g[2];
+      for (let a = 0, o = off[e]; a < ne; a++) for (let c = 0; c < 3; c++)
+        f[o + 3 * a + c] += w * (-(PM[9 * a + c] * g[0] + PM[9 * a + 3 + c] * g[1] + PM[9 * a + 6 + c] * g[2]) + 2 * gam[e] * v[a] * Pg[c]);
+    }
   });
   // edges and points: a penalty on P u there (no flux terms: a line carries no traction integral)
   const N0 = [0, 0, 0];
@@ -393,6 +428,9 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       const pen = w * v[a] * v[b];
       for (let c2 = 0; c2 < 3; c2++) for (let d = 0; d < 3; d++) K[(3 * a + c2) * m + 3 * b + d] += pen * P[3 * c2 + d];
     }
+    const g = s.value;
+    if (g) for (let a = 0, o = off[e]; a < ne; a++) for (let c2 = 0; c2 < 3; c2++)
+      f[o + 3 * a + c2] += w * v[a] * (P[3 * c2] * g[0] + P[3 * c2 + 1] * g[1] + P[3 * c2 + 2] * g[2]);
   });
   const applied: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
   const add = (R: Reaction, x: number, y: number, z: number, fx: number, fy: number, fz: number) => {
@@ -449,6 +487,24 @@ export function solveStatic(pb: StaticProblem): StaticResult {
           bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s);
           add(applied, Q.a[o], Q.a[o + 1], Q.a[o + 2], w * g[0], w * g[1], w * g[2]);
           for (let a = 0; a < nbs[e]; a++) for (let c = 0; c < 3; c++) f[off[e] + 3 * a + c] += w * bas.v[a] * g[c];
+        }
+      }
+    }
+  }
+  if (pb.spin && pb.mat.rho) {
+    const sp = pb.spin, ax = sp.axis, rho = pb.mat.rho, w2 = sp.omega * sp.omega, al = sp.alpha ?? 0;
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e];
+      for (const ci of E.cells) {
+        const Q = grid.cells[ci].pts;
+        for (let k = 0; k < Q.n; k++) {
+          const o = 4 * k, w = Q.a[o + 3] * rho;
+          const rx = Q.a[o] - sp.p[0], ry = Q.a[o + 1] - sp.p[1], rz = Q.a[o + 2] - sp.p[2], ra = rx * ax[0] + ry * ax[1] + rz * ax[2];
+          // ω² r⊥ − α a × r
+          const bx = w2 * (rx - ra * ax[0]) - al * (ax[1] * rz - ax[2] * ry), by = w2 * (ry - ra * ax[1]) - al * (ax[2] * rx - ax[0] * rz), bz = w2 * (rz - ra * ax[2]) - al * (ax[0] * ry - ax[1] * rx);
+          bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s);
+          add(applied, Q.a[o], Q.a[o + 1], Q.a[o + 2], w * bx, w * by, w * bz);
+          for (let a = 0, q = off[e]; a < nbs[e]; a++) { f[q + 3 * a] += w * bas.v[a] * bx; f[q + 3 * a + 1] += w * bas.v[a] * by; f[q + 3 * a + 2] += w * bas.v[a] * bz; }
         }
       }
     }
@@ -560,6 +616,14 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     located(s.tris, (e, px, py, pz, w, nrm) => {
       const E = grid.elems[e];
       bas.eval(px, py, pz, E.c, E.s);
+      if (s.spring) {
+        // the springs' pull: −K u
+        springAt(s, nrm);
+        uu[0] = uu[1] = uu[2] = 0;
+        for (let b = 0; b < nb; b++) for (let d = 0; d < 3; d++) uu[d] += bas.v[b] * x[e * m + 3 * b + d];
+        add(R, px, py, pz, -w * (P[0] * uu[0] + P[1] * uu[1] + P[2] * uu[2]), -w * (P[3] * uu[0] + P[4] * uu[1] + P[5] * uu[2]), -w * (P[6] * uu[0] + P[7] * uu[1] + P[8] * uu[2]));
+        return;
+      }
       holdMatrix(s, nrm, P);
       sn[0] = sn[1] = sn[2] = uu[0] = uu[1] = uu[2] = 0;
       for (let b = 0; b < nb; b++) {
@@ -570,6 +634,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
           sn[0] += MA[d] * v; sn[1] += MA[3 + d] * v; sn[2] += MA[6 + d] * v;
         }
       }
+      if (s.value) for (let c = 0; c < 3; c++) uu[c] -= s.value[c];
       for (let c = 0; c < 3; c++) sn[c] -= 2 * gam[e] * uu[c];
       add(R, px, py, pz, w * (P[0] * sn[0] + P[1] * sn[1] + P[2] * sn[2]), w * (P[3] * sn[0] + P[4] * sn[1] + P[5] * sn[2]), w * (P[6] * sn[0] + P[7] * sn[1] + P[8] * sn[2]));
     });
@@ -580,6 +645,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       holdMatrix(s, N0, P);
       uu[0] = uu[1] = uu[2] = 0;
       for (let b = 0; b < nb; b++) for (let d = 0; d < 3; d++) uu[d] += bas.v[b] * x[e * m + 3 * b + d];
+      if (s.value) for (let c = 0; c < 3; c++) uu[c] -= s.value[c];
       add(R, px, py, pz, -w * (P[0] * uu[0] + P[1] * uu[1] + P[2] * uu[2]), -w * (P[3] * uu[0] + P[4] * uu[1] + P[5] * uu[2]), -w * (P[6] * uu[0] + P[7] * uu[1] + P[8] * uu[2]));
     });
     return R;
@@ -615,6 +681,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       }
     }
   }
+  // with an enforced displacement f·x / 2 is not the strain energy: the integral is
+  if (pb.fixed.some(q => q.value)) energy = strain;
   let etaSum = 0;
   for (let e = 0; e < nel; e++) etaSum += eta[e];
   const prevError = !prev ? null : strain > 0 ? 100 * Math.sqrt(etaSum / strain) : 0;
@@ -710,6 +778,7 @@ export function holdMatrix(s: Support, n: ArrayLike<number>, P: Float64Array) {
   const mode = s.mode ?? "fixed";
   if (mode === "fixed") { P[0] = P[4] = P[8] = 1; return; }
   if (mode === "dirs") { const d = s.dirs ?? [true, true, true]; if (d[0]) P[0] = 1; if (d[1]) P[4] = 1; if (d[2]) P[8] = 1; return; }
+  if (mode === "tangent") { for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) P[3 * c + d] = (c === d ? 1 : 0) - n[c] * n[d]; return; }
   for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) P[3 * c + d] = n[c] * n[d];
   if (mode === "hinge" && s.axis && !s.axialFree) {
     // the axis direction square to the normal (on the bore they are square already)
