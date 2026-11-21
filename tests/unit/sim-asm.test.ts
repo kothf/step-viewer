@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { studyProblem, runStatic, type RunInput } from "../../src/sim/run";
 import { newStudy } from "../../src/sim/types";
+import { findConnections } from "../../src/sim/connect";
 
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
   const a1 = (axis + 1) % 3, a2 = (axis + 2) % 3;
@@ -125,4 +126,24 @@ test("FR-RES-008: a sliding connection passes on only the force square to it", (
   // a holds b up: it passes +F along z
   assert.ok(Math.abs(c.force![2] / F - 1) < 0.02, `normal ${c.force}`);
   assert.ok(Math.abs(c.force![0]) < 1e-6 * F && Math.abs(c.force![1]) < 1e-6 * F, `tangential ${c.force}`);
+});
+
+test("FR-CON-003: the pairs that touch or face each other within the gap are found before solving", () => {
+  const g = 0.05;
+  const m = boxes([
+    { id: "a", lo: [0, 0, 0], hi: [40, 20, 10] }, { id: "b", lo: [40 + g, 0, 0], hi: [100, 20, 10] },
+    { id: "c", lo: [10, 5, 10], hi: [20, 15, 30] }, { id: "d", lo: [200, 0, 0], hi: [210, 10, 10] },
+  ]);
+  const found = findConnections(m.parts, 0.1);
+  assert.deepEqual(found.map(f => [f.a, f.b]), [[0, 1], [0, 2]]);
+  const ab = found[0], ac = found[1];
+  assert.ok(Math.abs(ab.area / 200 - 1) < 0.01, `area ${ab.area}`);
+  assert.ok(Math.abs(ab.gap - g) < 0.005, `gap ${ab.gap}`);
+  assert.ok(Math.abs(ab.at[0] - 40) < 0.1 && Math.abs(ab.at[1] - 10) < 0.5 && Math.abs(ab.at[2] - 5) < 0.5, `centre ${ab.at}`);
+  // the small block stands on the big one: the patch is its foot, on both sides
+  assert.ok(Math.abs(ac.area / 100 - 1) < 0.15, `area ${ac.area}`);
+  assert.ok(ac.gap < 1e-6, `gap ${ac.gap}`);
+  assert.ok(ac.pa.length > 0 && ac.pb.length > 0);
+  // a tighter tolerance leaves the gapped pair out
+  assert.deepEqual(findConnections(m.parts, 0.01).map(f => [f.a, f.b]), [[0, 2]]);
 });

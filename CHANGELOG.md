@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.632.0] - 2026-11-21
+
+### Added
+
+- Structural analysis of assemblies: **Find connections**. The button in the Study tab lists the pairs of components that touch, overlap or face each other within the gap tolerance before anything is solved, each with its contact area and its gap, so a pair that is missing or should slide can be set right first (FR-CON-003, FR-CON-004). A solve fills the same list.
+- A click on a row of the Connections table shows the contact on the model: orange where the first component lies on the second, blue on the second.
+- With four or more pairs the table can be narrowed to one component or one type, and **All shown** sets the type of every listed pair at once.
+
 ## [1.631.0] - 2026-11-21
 
 ### Added
@@ -4077,7 +4085,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.631.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.632.0...HEAD
+[1.632.0]: https://github.com/kothf/step-viewer/compare/v1.631.0...v1.632.0
 [1.631.0]: https://github.com/kothf/step-viewer/compare/v1.630.0...v1.631.0
 [1.630.0]: https://github.com/kothf/step-viewer/compare/v1.629.0...v1.630.0
 [1.629.0]: https://github.com/kothf/step-viewer/compare/v1.628.0...v1.629.0

@@ -1789,3 +1789,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-contacts th, .sim-contacts td { padding: 2px 3px; text-align: left; border-bottom: 1px solid var(--line); }
 .sim-contacts th { color: var(--muted); font: 500 11px inherit; }
 .sim-contacts select { max-width: 96px; font-size: 11px; }
+.sim-find { margin: 2px 0 6px; }
+.sim-lfilter { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.sim-lfilter select { flex: 1 1 100px; min-width: 0; max-width: 100%; font-size: 11px; }
+.sim-contacts tbody tr[data-a="link"] { cursor: pointer; }
+.sim-contacts tbody tr[data-a="link"]:hover, .sim-contacts tbody tr[data-a="link"]:focus-visible { background: var(--panel-2); }
+.sim-contacts tbody tr.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }

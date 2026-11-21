@@ -16914,6 +16914,21 @@ try {
     const asSet = await mp.evaluate(() => { const st = window.__sv.asm.doc.studies?.[0]; return st && { sup: st.supports.map(x => x.faces.map(f => f.name)), load: st.loads.map(x => x.faces.map(f => f.name)), gap: document.querySelector('#sim-tree [data-k="gap"]')?.value ?? null }; });
     await mp.selectOption('#sim-tree [data-k="passes"]', "2");
     await mp.waitForTimeout(300);
+    // 1.632: the connections are found before solving, with their gap; a click on the row shows the patch
+    await mp.click('#sim-tree [data-a="findlinks"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.finding && s.found; }, null, { timeout: 120000 });
+    await mp.waitForTimeout(300);
+    const f1 = await sim();
+    await mp.click("#sim-tree .sim-contacts tbody tr td");
+    await mp.waitForTimeout(300);
+    const f2 = await sim();
+    const fTree = await mp.evaluate(() => ({ gap: parseFloat(document.querySelector("#sim-tree .sim-contacts [data-v=cgap]")?.textContent ?? ""), sel: !!document.querySelector("#sim-tree .sim-contacts tr.sel"), wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click("#sim-tree .sim-contacts tbody tr td");
+    await mp.waitForTimeout(200);
+    const f3 = await sim();
+    check(f1.found?.length === 1 && Math.abs(f1.found[0].area / 400 - 1) < 0.02 && Math.abs(f1.found[0].gap - 0.05) < 0.01 && !f1.done
+      && f2.patches.length === 2 && f2.patches.every(q => q.tris > 0) && f2.linkSel && fTree.sel && Math.abs(fTree.gap - 0.05) < 0.01 && fTree.wide <= 0 && f3.patches.length === 0,
+      `sim 1.632: Find connections lists the pair with its area and gap before a solve; a click on the row shows the contact on both components (${JSON.stringify({ found: f1.found, done: f1.done, patches: f2.patches, sel: f2.linkSel, fTree, after: f3.patches })})`);
     await mp.click('#sim-tools [data-s="solve"]');
     await solved();
     const a1 = await sim();

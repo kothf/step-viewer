@@ -70,6 +70,18 @@ check("SAS-2", s0.asm && !!s0.study && s0.marks > 0 && /1/.test(picked), "the as
 
 await pg.selectOption('#sim-tree [data-k="passes"]', "2");
 await pg.waitForTimeout(300);
+// before any solve: Find connections lists the pair with its gap, and a click on the row shows the contact
+await pg.click('#sim-tree [data-a="findlinks"]');
+await pg.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.finding && s.found; }, null, { timeout: 120000 });
+await pg.waitForTimeout(400);
+await pg.click("#sim-tree .sim-contacts tbody tr td");
+await pg.waitForTimeout(400);
+const fnd = await sim();
+const gapCell = await pg.evaluate(() => document.querySelector('#sim-tree .sim-contacts [data-v="cgap"]')?.textContent ?? "");
+check("SAS-7", fnd.found?.length === 1 && Math.abs(fnd.found[0].area / 400 - 1) < 0.02 && Math.abs(fnd.found[0].gap - 0.05) < 0.01 && Math.abs(parseFloat(gapCell) - 0.05) < 0.01 && fnd.patches.length === 2 && !fnd.done,
+  "Find connections lists the pair before a solve, with its area and its 0.05 mm gap; the picked row shows the contact in two colours", { found: fnd.found, gapCell, patches: fnd.patches }, await snap(pg, "found-connection"));
+await pg.click("#sim-tree .sim-contacts tbody tr td");
+await pg.waitForTimeout(300);
 await pg.click('#sim-tools [data-s="solve"]');
 await solved();
 const r = await sim();
