@@ -14,7 +14,7 @@ export interface Num { v: number; expr?: string }
 // ---------- sketch ----------
 
 /**
- * `ref` (1.646.0): a hidden copy of a model edge, made when a sketch point snaps to that edge (its end, middle or
+ * `ref` (1.647.0): a hidden copy of a model edge, made when a sketch point snaps to that edge (its end, middle or
  * centre) or a relation or dimension picks it. It is construction geometry that holds the relation to the model,
  * as a relation straight to the model edge does in other CAD apps: not drawn unless selected or under the pointer,
  * and removed with the last thing that uses it (editor `dropUnusedRefs`).

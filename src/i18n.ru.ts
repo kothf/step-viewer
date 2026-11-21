@@ -1059,7 +1059,7 @@ export const RU: Record<string, string> = {
   "Edit position sketch": "Редактировать эскиз расположения",
   "Hole positions: place points, dimension them, then ✓ to go back to the hole.": "Расположение отверстий: поставьте точки, проставьте размеры, затем ✓ — назад к отверстию.",
   "Pick a sketch made before the hole.": "Выберите эскиз, созданный до отверстия.",
-  "This sketch has no points for holes: add sketch points (or line ends that are not construction).": "В этом эскизе нет точек для отверстий: добавьте точки эскиза (или концы невспомогательных отрезков).",
+  "This sketch has no points for holes: add sketch points.": "В этом эскизе нет точек для отверстий: добавьте точки эскиза.",
   "Position sketch": "Эскиз расположения",
   "Edit positions in the sketch": "Изменить расположение в эскизе",
   "Place and dimension positions": "Расставить и образмерить",

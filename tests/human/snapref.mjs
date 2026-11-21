@@ -1,4 +1,4 @@
-// 1.646.0: snapping a sketch line to model edges draws no extra lines, by hand. A line from the middle of the block's
+// 1.647.0: snapping a sketch line to model edges draws no extra lines, by hand. A line from the middle of the block's
 // front top edge to the middle of its back top edge gets two Midpoint relations to the model edges, as in other CAD
 // apps; the copies of the edges that hold them stay hidden (they used to show as dashed construction lines), and
 // deleting the line takes them away.
