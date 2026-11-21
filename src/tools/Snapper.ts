@@ -147,7 +147,17 @@ export class Snapper {
     return out;
   }
 
-  pick(sx: number, sy: number): Snap | null {
+  /**
+   * The nearest visible edge within the snap radius, whatever point snaps beat it in `pick` (a narrow face's
+   * centre or a fillet's virtual corner sits within the radius of its edges): what a click that wants an edge takes.
+   * Leaves the current snap and inference hint alone.
+   */
+  edgeNear(sx: number, sy: number): Snap | null {
+    const keep = this.current, hint = this.hint;
+    try { return this.pick(sx, sy, true); } finally { this.current = keep; this.hint = hint; }
+  }
+
+  pick(sx: number, sy: number, edgesOnly = false): Snap | null {
     const v = this.viewer;
     const ndc = this.ndc(sx, sy);
     const hit = v.pickMeshes(ndc);
@@ -283,6 +293,13 @@ export class Snapper {
     // Best first; the first one the camera can actually see wins.
     if (!SEL_FILTER.faces || !SEL_FILTER.edges || !SEL_FILTER.vertices) {
       for (let i = cands.length - 1; i >= 0; i--) if (!selAllowed(cands[i].kind)) { sure.delete(cands[i]); cands.splice(i, 1); }
+    }
+    if (edgesOnly) {
+      // Every candidate on an edge, ranked by how far it is from the cursor only.
+      for (let i = cands.length - 1; i >= 0; i--) if (!cands[i].edge || cands[i].section) { sure.delete(cands[i]); cands.splice(i, 1); }
+      cands.sort((a, b) => a.px - b.px);
+      for (const c of cands.slice(0, 40)) if (see || this.isVisible(c.point, false)) return c;
+      return null;
     }
     cands.sort((a, b) => score(a) - score(b));
     let best: Snap | null = null;
