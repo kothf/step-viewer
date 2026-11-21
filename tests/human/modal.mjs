@@ -95,4 +95,24 @@ const img5 = await snap(pg, "free-bar");
 check("SA2-5", !f.error && f.modes.length === 8 && f.modes.filter(m => m.rigid).length === 6 && f.modes[6].hz > 5000 && f.mode === 6 && note.rows === 6 && /^6 /.test(note.rigid),
   "a free bar has six rigid-body modes at 0 Hz, and the first elastic mode is the one shown", { hz: f.modes.map(m => m.hz), mode: f.mode, note }, img5);
 
+// SA2-7: Find ▸ Modes in a frequency range keeps only the modes between the two frequencies; the table adds the effective masses up.
+await pg.selectOption('#sim-tree [data-k="find"]', "range");
+await idle(pg);
+await pg.fill('#sim-tree [data-k="rto"]', "20000");
+await pg.keyboard.press("Tab");
+await idle(pg);
+await pg.fill('#sim-tree [data-k="rfrom"]', "1000");
+await pg.keyboard.press("Tab");
+await idle(pg);
+await pg.click('#sim-tools [data-s="solve"]');
+await solved();
+const rg = await sim();
+await pg.check('#sim-tree [data-k="cumul"]');
+await pg.waitForTimeout(300);
+const cu = await pg.evaluate(() => ({ last: [...document.querySelectorAll("#sim-tree table.sim-modes tbody tr:last-child td")].slice(2).map(e => e.textContent).join(), sum: [...document.querySelectorAll("#sim-tree table.sim-modes tfoot td")].slice(2).map(e => e.textContent).join(),
+  rows: document.querySelectorAll("#sim-tree table.sim-modes tbody tr").length }));
+const img7 = await snap(pg, "range");
+check("SA2-7", !rg.error && rg.modes.length >= 1 && rg.modes.every(m => !m.rigid && m.hz >= 1000 && m.hz <= 20000) && cu.rows === rg.modes.length && cu.last === cu.sum,
+  "only the modes between 1000 and 20000 Hz are listed (no rigid-body ones), and the last added-up row equals the sum", { hz: rg.modes.map(m => m.hz), more: rg.more, cu }, img7);
+
 await finish(browser, pg);

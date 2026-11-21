@@ -56,11 +56,13 @@ export interface StudySettings {
   energyTol: number;
   /** Modal studies: how many modes are found (default `DEFAULT_MODES`, at most `MAX_MODES`). */
   modes?: number;
+  /** Modal studies: only the modes between these frequencies, Hz (then `modes` is not used; at most `MAX_MODES` are found). */
+  range?: { from: number; to: number };
 }
 
 /** `modal` = natural frequencies and mode shapes: supports only (none = a free body), no loads. */
 export type StudyKind = "static" | "modal";
-export const DEFAULT_MODES = 6, MAX_MODES = 30;
+export const DEFAULT_MODES = 6, MAX_MODES = 50;
 /** Passes of a modal study: degree 2, 3, 4 over the whole body. */
 export const MODAL_PASSES = 3;
 

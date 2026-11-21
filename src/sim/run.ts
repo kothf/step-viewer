@@ -242,6 +242,8 @@ export interface PassResult {
   shapes?: Float32Array[];
   /** Modal studies: the body's mass, t. */
   mass?: number;
+  /** A frequency range was asked for and the most modes allowed were found without passing its end: more may lie in it. */
+  more?: boolean;
 }
 
 export interface ModeInfo {
@@ -265,7 +267,12 @@ export interface RunInput {
   /** Cells aimed for (default 150). */
   cells?: number;
   /** A modal study: this many modes; loads are not used. */
-  modal?: { count: number };
+  modal?: {
+    count: number;
+    /** Only the modes from `range[0]` to `range[1]` Hz: modes are found from the lowest up, `count` at first and then twice as many, until one lies above the range or there are `max`. */
+    range?: [number, number];
+    max?: number;
+  };
 }
 
 /** Volume of a closed, outward-wound triangle mesh. */
@@ -382,18 +389,28 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
   const inside = insideOf(body);
   const h = cellSize(inp.body, inp.cells);
   const passes = Math.max(1, Math.min(GLOBAL_PASSES, Math.round(inp.passes)));
-  const count = Math.max(1, Math.round(inp.modal?.count ?? 6));
+  let count = Math.max(1, Math.round(inp.modal?.count ?? 6));
+  const range = inp.modal?.range, most = Math.max(count, Math.round(inp.modal?.max ?? count));
   let grid: Grid | undefined, start: Float64Array[] | undefined, before: number[] | null = null;
   const none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now(), p = k + 2;
-    const r = solveStatic({
+    const solve = () => solveStatic({
       lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: [], modal: { count, start },
     });
+    let r = solve();
     grid = r.grid; start = r.space;
+    // a frequency range: more modes until one lies above it (the count then stays for the later passes)
+    while (range && count < most && (r.modes ?? []).length >= count && !(r.modes ?? []).some(m => m.hz > range[1])) {
+      count = Math.min(most, count * 2);
+      r = solve();
+      start = r.space;
+    }
     const found = r.modes ?? [];
+    const more = !!range && found.length >= count && !found.some(m => m.hz > range[1]);
+    const keep = found.map(m => !range || (m.rigid ? range[0] <= 0 : m.hz >= range[0] && m.hz <= range[1]));
     const shapes: Float32Array[] = [];
     found.forEach((_m, i) => {
       r.use!(i);
@@ -411,17 +428,18 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
     let change: number | null = null;
     if (before) {
       change = 0;
-      found.forEach((m, i) => { if (!m.rigid && before![i] > 0) change = Math.max(change!, (Math.abs(m.hz - before![i]) / m.hz) * 100); });
+      found.forEach((m, i) => { if (keep[i] && !m.rigid && before![i] > 0) change = Math.max(change!, (Math.abs(m.hz - before![i]) / m.hz) * 100); });
     }
     before = freqs;
-    const first = Math.max(0, found.findIndex(m => !m.rigid));
+    const kept = found.filter((_m, i) => keep[i]), keptShapes = shapes.filter((_s, i) => keep[i]);
+    const first = Math.max(0, kept.findIndex(m => !m.rigid));
     const n = inp.pos.length / 3;
     const converged = change != null && change <= inp.energyTol;
     yield {
       pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, energy: 0, change, ms: Date.now() - t0, reactions: [], applied: none,
-      u: shapes[first] ? Float32Array.from(shapes[first]) : new Float32Array(3 * n), vm: new Float32Array(n), err: new Float32Array(n), errors: [],
-      maxU: shapes.length ? 1 : 0, maxVm: 0, converged, done: converged || k === passes - 1,
-      modes: found.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })), shapes, mass: r.mass,
+      u: keptShapes[first] ? Float32Array.from(keptShapes[first]) : new Float32Array(3 * n), vm: new Float32Array(n), err: new Float32Array(n), errors: [],
+      maxU: keptShapes.length ? 1 : 0, maxVm: 0, converged, done: converged || k === passes - 1,
+      modes: kept.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })), shapes: keptShapes, mass: r.mass, ...(more ? { more: true } : {}),
     };
     if (converged) return;
   }

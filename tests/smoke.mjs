@@ -16513,6 +16513,35 @@ try {
     check(x1.near.join() === "0,1" && xTab.near === "0,1" && xTab.warn && /417|416/.test(xTab.note) && xTab.wide <= 0 && x1.plot.shown && x2.near === 0 && !x2.warn && x2.note
       && x3.gif.frames === 24 && x3.gif.bytes > 20000 && x3.gif.w > 100 && x3.plot.shown && !x3.animating,
       `sim 1.618: modes within 10 % of a typed excitation frequency are marked without making the results stale, and a mode's swing is saved as a GIF (${JSON.stringify({ near: x1.near, xTab, x2, gif: x3.gif })})`);
+    // 1.619: effective masses added up, the animation speed, and only the modes in a frequency range
+    await mp.check('#sim-tree [data-k="cumul"]');
+    await mp.waitForTimeout(200);
+    const cu = await mp.evaluate(() => ({ last: [...document.querySelectorAll("#sim-tree table.sim-modes tbody tr:last-child td")].slice(2).map(e => e.textContent).join(), sum: [...document.querySelectorAll("#sim-tree table.sim-modes tfoot td")].slice(2).map(e => e.textContent).join(),
+      first: [...document.querySelectorAll("#sim-tree table.sim-modes tbody tr:first-child td")].slice(2).map(e => parseFloat(e.textContent)), on: window.__sv.sim.state().cumul }));
+    await mp.check('#sim-legend [data-k="animate"]');
+    await mp.selectOption('#sim-legend [data-k="speed"]', "4");
+    await mp.waitForTimeout(300);
+    const sp = await sim();
+    await mp.selectOption('#sim-tree [data-k="find"]', "range");
+    await settle();
+    await mp.fill('#sim-tree [data-k="rfrom"]', "300");
+    await mp.keyboard.press("Tab");
+    await settle();
+    await mp.fill('#sim-tree [data-k="rto"]', "200");
+    await mp.keyboard.press("Tab");
+    await mp.waitForTimeout(300);
+    const rg0 = await mp.evaluate(() => ({ to: document.querySelector('#sim-tree [data-k="rto"]').value, range: window.__sv.model.store.doc.studies.at(-1).settings.range, modes: !!document.querySelector('#sim-tree [data-k="modes"]') }));
+    await mp.selectOption('#sim-tree [data-k="passes"]', "1");
+    await settle();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const rg = await sim();
+    const rgTab = await mp.evaluate(() => ({ rows: document.querySelectorAll("#sim-tree table.sim-modes tbody tr").length, wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    check(cu.on && cu.last === cu.sum && Math.abs(cu.first[0] + cu.first[2] - 61) < 3 && sp.speed === 4 && sp.animating
+      && rg0.to === "1000" && rg0.range.from === 300 && rg0.range.to === 1000 && !rg0.modes
+      && !rg.error && rg.modes.length === 2 && rg.modes.every(m => m.hz > 300 && m.hz < 1000) && !rg.more && rg.plot.shown && rgTab.rows === 2 && rgTab.wide <= 0,
+      `sim 1.619: the mode table adds the effective masses up, the swing changes speed, and a frequency range gives only the modes in it (${JSON.stringify({ cu, speed: sp.speed, rg0, error: rg.error, hz: rg.modes.map(m => m.hz), more: rg.more, rgTab })})`);
     await mp.click("#lang-btn");
     await mp.waitForTimeout(300);
     const mLeft = await mp.evaluate(() => {

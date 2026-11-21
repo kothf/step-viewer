@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.619.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: a modal study can find **Modes in a frequency range** (From and To, Hz) instead of the lowest N; the modes are found from the lowest up until one lies above the range, and a note says so when the range holds more than a study finds.
+- Structural analysis: **Add the effective masses up** in the mode table shows the running total along X, Y and Z, and the report lists it too.
+- Structural analysis: **Speed** in the legend of a modal study (×0.25 to ×4) for the mode animation and the recorded GIF.
+
+### Changed
+
+- Structural analysis: a modal study finds up to 50 modes (was 30).
+- Structural analysis: checked against the free square plate benchmark (first five elastic frequencies within 2 %).
+
 ## [1.618.0] - 2026-11-21
 
 ### Added
@@ -3976,7 +3989,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.617.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.619.0...HEAD
+[1.619.0]: https://github.com/kothf/step-viewer/compare/v1.618.0...v1.619.0
 [1.618.0]: https://github.com/kothf/step-viewer/compare/v1.617.0...v1.618.0
 [1.617.0]: https://github.com/kothf/step-viewer/compare/v1.616.0...v1.617.0
 [1.616.0]: https://github.com/kothf/step-viewer/compare/v1.615.0...v1.616.0

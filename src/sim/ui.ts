@@ -138,6 +138,9 @@ export class SimController {
   /** Modal results: the mode shown (−1 = the first elastic one) and whether its shape swings. */
   private modeSel = -1;
   private animate = true;
+  /** Mode animation speed (1 = one swing in `MODE_PERIOD`) and whether the mode table adds the effective masses up; view only. */
+  private speed = 1;
+  private cumul = false;
   private recording = false;
   private gifs = 0;
   private lastGif: { bytes: number; frames: number; w: number; h: number } | null = null;
@@ -210,7 +213,7 @@ export class SimController {
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
-      animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)),
+      animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
     };
   }
@@ -461,7 +464,9 @@ export class SimController {
       const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh };
       await this.client.solve({
         body: geo, problem, passes: total, energyTol: st.settings.energyTol, pos, nrm,
-        ...(modal ? { modal: { count: Math.max(1, Math.min(MAX_MODES, Math.round(st.settings.modes ?? DEFAULT_MODES))) } } : {}),
+        ...(modal ? { modal: st.settings.range
+          ? { count: DEFAULT_MODES, max: MAX_MODES, range: [st.settings.range.from, st.settings.range.to] as [number, number] }
+          : { count: Math.max(1, Math.min(MAX_MODES, Math.round(st.settings.modes ?? DEFAULT_MODES))) } } : {}),
         mat: { name: m.name, E: m.E * 1000, nu: m.nu, rho: m.density * 1e-9, sy: m.sy ?? undefined, su: m.su ?? undefined },
       }, p => {
         res.passes.push(p);
@@ -884,7 +889,7 @@ export class SimController {
     const step = () => {
       const ov = this.overlay;
       if (this.anim !== a || !ov) return;
-      const k = scale * Math.cos((2 * Math.PI * (performance.now() - a.t0)) / MODE_PERIOD);
+      const k = scale * Math.cos((2 * Math.PI * (performance.now() - a.t0) * this.speed) / MODE_PERIOD);
       const pa = ov.geometry.getAttribute("position") as THREE.BufferAttribute, arr = pa.array as Float32Array;
       for (let i = 0; i < arr.length; i++) arr[i] = base[i] + k * u[i];
       pa.needsUpdate = true;
@@ -906,7 +911,7 @@ export class SimController {
     const was = this.anim;
     this.anim = null;
     if (was) cancelAnimationFrame(was.raf);
-    const n = GIF_FRAMES, fps = Math.round((1000 * n) / MODE_PERIOD), k = Math.min(1, maxW / src.width);
+    const n = GIF_FRAMES, fps = Math.round((1000 * n * this.speed) / MODE_PERIOD), k = Math.min(1, maxW / src.width);
     const c = document.createElement("canvas");
     c.width = Math.max(2, Math.round(src.width * k)); c.height = Math.max(2, Math.round(src.height * k));
     const g = c.getContext("2d", { willReadFrequently: true })!, frames: Uint8ClampedArray[] = [];
@@ -943,8 +948,9 @@ export class SimController {
   }
 
   /** The modes as rows of text: number, frequency, effective mass along X, Y, Z (%). */
-  private modeRows(r: PassResult): string[][] {
-    return (r.modes ?? []).map((m, i) => [String(i + 1), m.rigid ? `0 (${t("rigid body")})` : sig(m.hz), ...m.eff.map(e => (100 * e).toFixed(1))]);
+  private modeRows(r: PassResult, cumul = false): string[][] {
+    const run = [0, 0, 0];
+    return (r.modes ?? []).map((m, i) => [String(i + 1), m.rigid ? `0 (${t("rigid body")})` : sig(m.hz), ...m.eff.map((e, c) => (100 * (cumul ? (run[c] += e) : e)).toFixed(1))]);
   }
 
   // ---------- report ----------
@@ -1062,8 +1068,13 @@ export class SimController {
       s.type === "hinge" && s.axialFree ? t("Free to slide along the axis") : s.type === "dirs" ? ["X", "Y", "Z"].filter((_, i) => (s.dirs ?? [true, true, true])[i]).join(", ") : ""])] });
     else blocks.push({ kind: "p", text: t("No supports: the part is free.") });
     blocks.push({ kind: "h", text: t("Modes") });
+    if (st.settings.range) blocks.push({ kind: "p", text: t("Modes between {a} and {b} Hz.", { a: sig(st.settings.range.from), b: sig(st.settings.range.to) }) + (last.more ? " " + t("{n} modes were found, the most a study finds, and the range goes on: more modes may lie in it.", { n: MAX_MODES }) : "") });
     const sum = [0, 1, 2].map(c => (last.modes ?? []).reduce((a, x) => a + x.eff[c], 0));
     blocks.push({ kind: "table", widths: [1, 3, 2, 2, 2], rows: [["#", `${t("Frequency")}, Hz`, `${t("Effective mass")} X, %`, "Y, %", "Z, %"], ...this.modeRows(last), ["", t("Sum"), ...sum.map(v => (100 * v).toFixed(1))]] });
+    if ((last.modes ?? []).length > 1) {
+      blocks.push({ kind: "p", muted: true, text: t("Effective mass added up over the modes:") });
+      blocks.push({ kind: "table", widths: [1, 3, 2, 2, 2], rows: [["#", `${t("Frequency")}, Hz`, "X, %", "Y, %", "Z, %"], ...this.modeRows(last, true)] });
+    }
     const ex = parseExcitation(st.excite ?? ""), near = this.nearModes(last);
     if (ex != null) blocks.push({ kind: "p", text: near.length
       ? t("Resonance risk: mode {list} lies within 10 % of the excitation at {f} Hz.|Resonance risk: modes {list} lie within 10 % of the excitation at {f} Hz.", { n: near.length, list: near.map(i => `${i + 1} (${sig(last.modes![i].hz)} Hz)`).join(", "), f: sig(ex) })
@@ -1173,7 +1184,10 @@ export class SimController {
     const modal = st.kind === "modal";
     html += `<div class="sim-sec"><h4>${esc(t("Supports"))}</h4><ul class="sim-list">${st.supports.map(s => row(s, false)).join("") || none(modal ? t("None: the part is free. Supports are optional here.") : t("None yet: pick one in the Simulation tab."))}</ul></div>`;
     if (!modal) html += `<div class="sim-sec"><h4>${esc(t("Loads"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
-    if (modal) html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Modes"))}</span><input type="number" data-k="modes" min="1" max="${MAX_MODES}" step="1" value="${st.settings.modes ?? DEFAULT_MODES}"></label>`
+    if (modal) html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Find"))}</span><select data-k="find"><option value="count"${st.settings.range ? "" : " selected"}>${esc(t("The lowest modes"))}</option><option value="range"${st.settings.range ? " selected" : ""}>${esc(t("Modes in a frequency range"))}</option></select></label>`
+      + (st.settings.range
+        ? `<label class="pm-field"><span>${esc(t("From"))}, Hz</span><input type="number" data-k="rfrom" min="0" step="any" value="${sig(st.settings.range.from)}"></label><label class="pm-field"><span>${esc(t("To"))}, Hz</span><input type="number" data-k="rto" min="0" step="any" value="${sig(st.settings.range.to)}"></label>`
+        : `<label class="pm-field"><span>${esc(t("Modes"))}</span><input type="number" data-k="modes" min="1" max="${MAX_MODES}" step="1" value="${st.settings.modes ?? DEFAULT_MODES}"></label>`)
       + `<label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: MODAL_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === Math.min(MODAL_PASSES, st.settings.passes) ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
       + `<label class="pm-field"><span>${esc(t("Stop at frequency change"))}, %</span><input type="number" data-k="tol" min="0" max="20" step="0.1" value="${sig(st.settings.energyTol)}"></label>`
       + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once no frequency changes by more than {n} %.", { n: sig(st.settings.energyTol) }))}</p>`
@@ -1242,10 +1256,14 @@ export class SimController {
     const near = new Set(this.nearModes(last));
     let html = `<dl class="sim-kv">` + (first ? `<dt>${esc(t("Lowest natural frequency"))}</dt><dd data-v="f1">${sig(first.hz)} Hz</dd>` : "")
       + `<dt>${esc(t("Mass"))}</dt><dd data-v="mass">${sig((last.mass ?? 0) * 1000)} kg</dd></dl>`;
-    html += `<table class="sim-hot sim-modes"><thead><tr><th>#</th><th>${esc(t("Frequency"))}, Hz</th><th title="${esc(t("Effective mass: the share of the part's mass that moves with the mode along each axis"))}">X, %</th><th>Y, %</th><th>Z, %</th></tr></thead><tbody>`
-      + this.modeRows(last).map((c, i) => `<tr data-a="mode" data-mode="${i}" tabindex="0" class="${modes[i].rigid ? "rigid" : ""}${i === sel ? " sel" : ""}${near.has(i) ? " near" : ""}">${c.map((x, j) => `<td>${esc(x)}${j === 1 && near.has(i) ? ` <span class="sim-warn" title="${esc(t("Within 10 % of the excitation frequency"))}">⚠</span>` : ""}</td>`).join("")}</tr>`).join("")
+    const range = this.study()?.settings.range;
+    if (range && !modes.length) html += `<p class="sim-note sim-norange">${esc(t("No mode lies between {a} and {b} Hz.", { a: sig(range.from), b: sig(range.to) }))}</p>`;
+    if (last.more) html += `<p class="sim-note sim-more">${esc(t("{n} modes were found, the most a study finds, and the range goes on: more modes may lie in it.", { n: MAX_MODES }))}</p>`;
+    if (modes.length) html += `<label class="chk sim-cumul"><input type="checkbox" data-k="cumul"${this.cumul ? " checked" : ""} />${esc(t("Add the effective masses up"))}</label>`;
+    html += `<table class="sim-hot sim-modes"${modes.length ? "" : " hidden"}><thead><tr><th>#</th><th>${esc(t("Frequency"))}, Hz</th><th title="${esc(t("Effective mass: the share of the part's mass that moves with the mode along each axis"))}">X, %</th><th>Y, %</th><th>Z, %</th></tr></thead><tbody>`
+      + this.modeRows(last, this.cumul).map((c, i) => `<tr data-a="mode" data-mode="${i}" tabindex="0" class="${modes[i].rigid ? "rigid" : ""}${i === sel ? " sel" : ""}${near.has(i) ? " near" : ""}">${c.map((x, j) => `<td>${esc(x)}${j === 1 && near.has(i) ? ` <span class="sim-warn" title="${esc(t("Within 10 % of the excitation frequency"))}">⚠</span>` : ""}</td>`).join("")}</tr>`).join("")
       + `</tbody><tfoot><tr><td></td><td>${esc(t("Sum"))}</td>${sum.map(v => `<td>${(100 * v).toFixed(1)}</td>`).join("")}</tr></tfoot></table>`;
-    html += `<p class="sim-note muted">${esc(t("X, Y, Z: effective mass, the share of the part's mass that moves with the mode along each axis. Click a mode to see its shape."))}</p>`;
+    if (modes.length) html += `<p class="sim-note muted">${esc(this.cumul ? t("X, Y, Z: the effective mass of this mode and the ones before it, added up. Modes that reach 90 % along an axis describe the motion along it well.") : t("X, Y, Z: effective mass, the share of the part's mass that moves with the mode along each axis. Click a mode to see its shape."))}</p>`;
     const ex = parseExcitation(this.study()?.excite ?? "");
     if (ex != null) html += near.size
       ? `<p class="sim-note sim-excite warn">${esc(t("Resonance risk: mode {list} lies within 10 % of the excitation at {f} Hz.|Resonance risk: modes {list} lie within 10 % of the excitation at {f} Hz.", { n: near.size, list: [...near].map(i => `${i + 1} (${sig(modes[i].hz)} Hz)`).join(", "), f: sig(ex) }))}</p>`
@@ -1324,7 +1342,7 @@ export class SimController {
       + (k === "err" ? `<p class="ana-note">${esc(t("Where the last pass still changed the solution: the places that would gain most from more accuracy."))}</p>` : "")
       + `<label class="chk"><input type="checkbox" data-k="deformed"${this.plot.deformed ? " checked" : ""} />${esc(t("Deformed shape"))}</label>`
       + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "")
-      + (modes ? (this.plot.deformed ? `<label class="chk"><input type="checkbox" data-k="animate"${this.animate ? " checked" : ""} />${esc(t("Animate"))}</label><button class="btn small" data-a="gif" title="${esc(t("Save one swing of this mode shape as an animated GIF of the current view"))}">${esc(t("Record GIF"))}</button>` : "") + `<p class="ana-note">${esc(t("Mode shapes have no scale: only the pattern of the motion is meaningful."))}</p>` : "")
+      + (modes ? (this.plot.deformed ? `<label class="chk"><input type="checkbox" data-k="animate"${this.animate ? " checked" : ""} />${esc(t("Animate"))}</label><label class="ana-row"><span>${esc(t("Speed"))}</span><select data-k="speed">${[0.25, 0.5, 1, 2, 4].map(x => `<option value="${x}"${x === this.speed ? " selected" : ""}>×${x}</option>`).join("")}</select></label><button class="btn small" data-a="gif" title="${esc(t("Save one swing of this mode shape as an animated GIF of the current view"))}">${esc(t("Record GIF"))}</button>` : "") + `<p class="ana-note">${esc(t("Mode shapes have no scale: only the pattern of the motion is meaningful."))}</p>` : "")
       + (modes ? "" : `<label class="chk"><input type="checkbox" data-k="marks"${this.plot.marks ? " checked" : ""} />${esc(t("Highest and lowest values"))}</label>`)
       + (modes ? "" : `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the plot to read the value at a point"))}">${esc(t("Probe"))}</button>`
       + (this.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button><button class="btn small" data-a="probecsv" title="${esc(t("Save the probes' places and values as a CSV file"))}">${esc(t("Export CSV"))}</button>` : "") + `</div>`);
@@ -1398,6 +1416,18 @@ export class SimController {
       if (!(v >= 1 && v <= MAX_MODES)) { el.value = String(st.settings.modes ?? DEFAULT_MODES); return; }
       this.host.change(t("Modes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.modes = v; });
     }
+    else if (el.dataset.k === "cumul") { this.cumul = el.checked; this.renderTree(); }
+    else if (el.dataset.k === "find") {
+      const on = el.value === "range";
+      if (on === !!st.settings.range) return;
+      this.host.change(t("Modes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) { if (on) s.settings.range = { from: 0, to: 1000 }; else delete s.settings.range; } });
+    }
+    else if (el.dataset.k === "rfrom" || el.dataset.k === "rto") {
+      const r = st.settings.range, v = Number(el.value), from = el.dataset.k === "rfrom";
+      if (!r) return;
+      if (!el.value.trim() || !(v >= 0) || (from ? v >= r.to : v <= r.from)) { el.value = sig(from ? r.from : r.to); toast(t("The range must run from a lower to a higher frequency."), "warn"); return; }
+      this.host.change(t("Frequency range"), d => { const s = d.studies?.find(x => x.id === st.id); if (s?.settings.range) { if (from) s.settings.range.from = v; else s.settings.range.to = v; } });
+    }
     else if (el.dataset.k === "excite") {
       const v = el.value.trim();
       if (v && parseExcitation(v) == null) { el.setAttribute("aria-invalid", "true"); toast(t("Type a frequency such as 50 Hz or 3000 rpm."), "warn"); return; }
@@ -1464,6 +1494,7 @@ export class SimController {
     else if (k === "deformed") this.plot.deformed = el.checked;
     else if (k === "marks") this.plot.marks = el.checked;
     else if (k === "animate") this.animate = el.checked;
+    else if (k === "speed") this.speed = Number(el.value) || 1;
     else if (k === "mode") { this.modeSel = Number(el.value); this.renderTree(); }
     else if (k === "scale") { const v = num(el.value); this.plot.scale = el.value.trim() && v != null && v > 0 ? v : 0; }
     else return;

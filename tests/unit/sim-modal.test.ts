@@ -81,3 +81,37 @@ test("modal passes of a study: frequencies settle, shapes are scaled to 1, a new
   assert.ok(Math.abs(last.mass! - rho * L * B * T) / last.mass! < 1e-6);
   assert.throws(() => [...runModal({ body, mat: { name: "x", E, nu: 0.3, rho: 0 }, problem: studyProblem(st, body), passes: 1, energyTol: 2, pos, nrm, modal: { count: 2 } })], /E-SIM-DENSITY/);
 });
+
+test("modes in a frequency range: found from the lowest up until one lies above the range", async () => {
+  const { runModal, studyProblem } = await import("../../src/sim/run");
+  const { newStudy } = await import("../../src/sim/types");
+  const tris: number[] = [], face: number[] = [], names: string[] = [];
+  for (let a = 0; a < 3; a++) for (const end of [0, 1]) {
+    const t = rectFace(a, end ? hi[a] : lo[a], lo, hi, !!end);
+    names.push("xyz"[a] + end);
+    tris.push(...t);
+    for (let k = 0; k < t.length / 9; k++) face.push(names.length - 1);
+  }
+  const body = { tris: Float64Array.from(tris), face: Int32Array.from(face), names, lo, hi };
+  const st = newStudy([], "modal");
+  st.supports.push({ id: "s1", type: "fixed", faces: [{ name: "x0" }] });
+  const pos = new Float32Array([L, 0, 0]), nrm = new Float32Array([1, 0, 0]);
+  const run = (modal: { count: number; range?: [number, number]; max?: number }) =>
+    [...runModal({ body, mat: { name: "Steel", E, nu: 0.3, rho }, problem: studyProblem(st, body), passes: 1, energyTol: 2, pos, nrm, modal })].at(-1)!;
+  // a range with no end in reach: every mode allowed, and the result says more may follow
+  const all = run({ count: 2, max: 8, range: [0, 1e9] });
+  assert.equal(all.modes!.length, 8);
+  assert.equal(all.more, true);
+  const f = all.modes!.map(m => m.hz);
+  console.log(f.map(v => v.toFixed(1)).join(" "));
+  // modes 3 to 5 only: the count grows from 2 until mode 6 shows the range is covered
+  const mid = run({ count: 2, max: 8, range: [f[2] - 1, f[4] + 1] });
+  assert.equal(mid.modes!.length, 3);
+  assert.ok(!mid.more);
+  mid.modes!.forEach((m, i) => assert.ok(Math.abs(m.hz - f[i + 2]) / f[i + 2] < 1e-3, `${m.hz} vs ${f[i + 2]}`));
+  assert.equal(mid.shapes!.length, 3);
+  // nothing in the range
+  const none = run({ count: 2, max: 8, range: [f[0] + 1, f[1] - 1] });
+  assert.equal(none.modes!.length, 0);
+  assert.ok(!none.more && none.maxU === 0);
+});
