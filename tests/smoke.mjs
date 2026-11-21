@@ -16651,6 +16651,31 @@ try {
       && JSON.stringify(hySet.at(-1)) === JSON.stringify(["hydro", 1000, "z", 1020])
       && !n3.error && Math.abs(n3.applied.force[2] / -39.23 - 1) < 0.01 && Math.abs(n3.applied.force[0]) < 0.01 && Math.abs(n3.applied.force[1]) < 0.01 && tqRu.length === 0,
       `sim 1.622: Torque and Bearing load ask for cylindrical faces; Hydrostatic pressure of a fluid above the face presses it with ρ g h A; the panel is translated (${JSON.stringify({ tqPanel, brPanel, hyPanel, hySet, e3: n3.error, applied: n3.applied?.force, tqRu })})`);
+    // 1.623: Remote load: 50 N along Y at a point 100 mm above the top face's centre, carried to the face.
+    // Its resultant is the force at the point: about the origin the moment is (0, 100, 120) × (0, 50, 0) = (−6000, 0, 0) N·mm.
+    await mp.locator('#sim-tree .sim-row [data-a="toggle"]').last().click();
+    await settle();
+    await mp.click('#sim-tools [data-s="remote"]');
+    await mp.waitForTimeout(200);
+    p = await at("f1:end");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    for (const [k, v] of [["a0", "0"], ["a1", "100"], ["a2", "120"]]) { await mp.fill(`#sim-pm [data-q="${k}"]`, v); await mp.keyboard.press("Tab"); }
+    for (const [k, v] of [["c0", "0"], ["c1", "50"], ["c2", "0"]]) { await mp.fill(`#sim-pm [data-n="${k}"]`, v); await mp.keyboard.press("Tab"); }
+    const rmPanel = await mp.evaluate(() => ({ title: document.querySelector("#sim-pm h3")?.textContent, groups: [...document.querySelectorAll("#sim-pm legend")].map(e => e.textContent), pick: !!document.querySelector('#sim-pm [data-k="pickat"]'),
+      wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    const rmSet = await mp.evaluate(() => { const l = window.__sv.model.store.doc.studies.at(-1).loads.at(-1); return [l.type, l.at, l.comp.map(c => c.v), l.mom.map(c => c.v), l.faces.length]; });
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const n4 = await sim();
+    check(rmPanel.title === "Remote load" && JSON.stringify(rmPanel.groups) === JSON.stringify(["Faces", "Point", "Force", "Moment"]) && rmPanel.pick && rmPanel.wide <= 0
+      && JSON.stringify(rmSet) === JSON.stringify(["remote", [0, 100, 120], [0, 50, 0], [0, 0, 0], 1])
+      && !n4.error && Math.abs(n4.applied.force[1] / 50 - 1) < 1e-6 && Math.abs(n4.applied.force[0]) < 1e-6 && Math.abs(n4.applied.force[2]) < 1e-6
+      && Math.abs(n4.applied.moment[0] / -6000 - 1) < 1e-4 && Math.abs(n4.applied.moment[1]) < 0.5 && Math.abs(n4.applied.moment[2]) < 0.5,
+      `sim 1.623: a remote load carries a force at a point to the picked face: the applied force and its moment about the origin are those of the force at the point (${JSON.stringify({ rmPanel, rmSet, e4: n4.error, applied: n4.applied })})`);
     await mp.selectOption('#sim-tree [data-k="study"]', "st2");
     await settle();
     // 1.620: a second body on the end of the bar is analysed bonded to it (one bar 260 long: 421 × (200 / 260)² = 249 Hz);

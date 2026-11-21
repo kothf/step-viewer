@@ -1,5 +1,5 @@
-// Loads on round faces and from a fluid, by hand (FRS-structural FR-LOAD-005, FR-LOAD-008, FR-LOAD-009): a plate
-// with a hole gets a torque and a bearing load on the hole and a hydrostatic pressure on its top face.
+// Loads on round faces and from a fluid, by hand (FRS-structural FR-LOAD-005, FR-LOAD-006, FR-LOAD-008, FR-LOAD-009): a plate
+// with a hole gets a torque and a bearing load on the hole, a hydrostatic pressure on its top face and a remote load.
 import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock } from "./lib.mjs";
 const { browser, pg } = await open("loads3");
 await makeBlock(pg, 100, 60, 20);
@@ -113,5 +113,32 @@ const r3 = await sim();
 const row = await pg.evaluate(() => [...document.querySelectorAll("#sim-tree .sim-row")].at(-1)?.textContent ?? "");
 check("L3-3", !r3.error && wide <= 0 && Math.abs(r3.applied.force[2] / -55.76 - 1) < 0.01 && Math.hypot(r3.applied.force[0], r3.applied.force[1]) < 0.05,
   "water 1 m above the top face presses it down with ρ g h A", { error: r3.error, wide, row, applied: r3.applied?.force }, img3);
+
+// L3-4: the water left out, a Remote load on the top face: the point is picked on a corner of the plate, then lifted
+// to z = 100 by typing; 100 N along X there. About the origin its moment is (50, −30, 100) × (100, 0, 0) = (0, 10000, 3000) N·mm.
+await pg.locator('#sim-tree .sim-row [data-a="toggle"]').last().click();
+await idle(pg);
+await pg.click('#sim-tools [data-s="remote"]');
+await pg.waitForTimeout(250);
+await clickAt(pg, await screenOf(pg, [30, 15, 20]));
+await pg.waitForTimeout(250);
+await pg.click('#sim-pm [data-k="pickat"]');
+await pg.waitForTimeout(150);
+await clickAt(pg, await screenOf(pg, [50, -30, 20]));
+await pg.waitForTimeout(250);
+const picked = await pg.evaluate(() => ["a0", "a1", "a2"].map(k => Number(document.querySelector(`#sim-pm [data-q="${k}"]`)?.value)));
+await pg.fill('#sim-pm [data-q="a2"]', "100"); await pg.keyboard.press("Tab");
+await pg.fill('#sim-pm [data-n="c0"]', "100"); await pg.keyboard.press("Tab");
+await pg.fill('#sim-pm [data-n="c2"]', "0"); await pg.keyboard.press("Tab");
+const img4 = await snap(pg, "remote-panel");
+const wide4 = await pg.evaluate(() => document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth);
+await pg.click("#sim-pm .pm-ok");
+await idle(pg);
+await pg.click('#sim-tools [data-s="solve"]');
+await solved();
+const r4 = await sim();
+check("L3-4", JSON.stringify(picked) === JSON.stringify([50, -30, 20]) && wide4 <= 0 && !r4.error && Math.abs(r4.applied.force[0] / 100 - 1) < 1e-6
+  && Math.abs(r4.applied.moment[1] / 10000 - 1) < 1e-3 && Math.abs(r4.applied.moment[2] / 3000 - 1) < 1e-3 && Math.abs(r4.applied.moment[0]) < 1,
+  "a remote load: the point is picked on a corner and lifted by typing; the face carries the force at that point with its moment", { picked, wide4, error: r4.error, applied: r4.applied }, img4);
 
 await finish(browser, pg);

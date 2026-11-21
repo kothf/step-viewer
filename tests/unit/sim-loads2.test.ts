@@ -177,3 +177,32 @@ test("study items: torque, bearing load and hydrostatic pressure become the solv
   assert.equal(loadValue("0.85 g/cm³", "hydro"), 850);
   assert.equal(loadValue("2 kN", "bearing"), 2000);
 });
+
+test("remote load: a force at a point beyond the end bends the bar like the force and its moment (FR-LOAD-006)", async () => {
+  const { studyProblem } = await import("../../src/sim/run");
+  const { newStudy } = await import("../../src/sim/types");
+  const { refreshStudyValues } = await import("../../src/sim/values");
+  const body = { tris: Float64Array.from([...x0, ...x1]), face: Int32Array.from([0, 0, 1, 1]), names: ["x0", "x1"], lo, hi };
+  const st = newStudy([]);
+  const F = 200, arm = 50;
+  st.supports.push({ id: "s1", type: "fixed", faces: [{ name: "x0" }] });
+  st.loads.push({ id: "l1", type: "remote", faces: [{ name: "x1" }], comp: [{ v: 0 }, { v: 0 }, { v: -F }], mom: [{ v: 0 }, { v: 0 }, { v: 0 }], at: [L + arm, B / 2, T / 2] });
+  const pb = studyProblem(st, body);
+  assert.deepEqual(pb.problems, []);
+  assert.equal(pb.loads.length, 2);
+  const r = solveStatic({ lo, hi, inside, h: 10, p: 3, mat: { E, nu: 0.3 }, fixed: pb.fixed, loads: pb.loads });
+  // the resultant is the force at the point: about the origin its moment is r × F
+  near(r.applied.force[2], -F, 1e-9, "force");
+  near(r.applied.moment[0], -(B / 2) * F, 1e-6, "moment X");
+  near(r.applied.moment[1], (L + arm) * F, 1e-6, "moment Y");
+  // end deflection of a cantilever under F and the moment F × arm
+  const I = (B * T ** 3) / 12;
+  near(r.disp(L - 1e-9, B / 2, T / 2)[2], -((F * L ** 3) / (3 * E * I) + (F * arm * L ** 2) / (2 * E * I)), 0.03, "deflection");
+  // a typed moment alone gives no force; its text is kept and worked out again as a moment
+  st.loads[0].comp = [{ v: 0 }, { v: 0 }, { v: 0 }];
+  st.loads[0].mom = [{ v: 0 }, { v: 1, expr: "(2 * T) N·m" }, { v: 0 }];
+  assert.deepEqual(refreshStudyValues({ studies: [st] } as never, { T: 3 }), []);
+  assert.equal(st.loads[0].mom![1].v, 6000);
+  const pm = studyProblem(st, body);
+  assert.deepEqual([pm.loads.length, Array.from(pm.loads[0].moment!)], [1, [0, 6000, 0]]);
+});

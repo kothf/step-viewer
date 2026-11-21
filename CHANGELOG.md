@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.623.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **Remote load**. A force and a moment act at a point, typed or picked on the model, and are carried to the picked faces as if the point were joined to them: the faces get the force spread evenly plus the moment the offset makes.
+
 ## [1.622.0] - 2026-11-21
 
 ### Added
@@ -4015,7 +4021,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.622.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.623.0...HEAD
+[1.623.0]: https://github.com/kothf/step-viewer/compare/v1.622.0...v1.623.0
 [1.622.0]: https://github.com/kothf/step-viewer/compare/v1.621.0...v1.622.0
 [1.621.0]: https://github.com/kothf/step-viewer/compare/v1.620.0...v1.621.0
 [1.620.0]: https://github.com/kothf/step-viewer/compare/v1.619.0...v1.620.0
