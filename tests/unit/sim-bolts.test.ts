@@ -93,3 +93,73 @@ test("tightening leaves the preload in the bolt; plates that touch take most of 
 test("plates that are not joined cannot take a preload", () => {
   assert.throws(() => solve(null, 5000, "none"), /E-SIM-PRELOAD/);
 });
+
+// finding bolts from the fasteners (FR-CON-020)
+import { findBolts, boltCheck, stressArea } from "../../src/sim/bolts";
+
+const box = (lo: number[], hi: number[]) => { const t: number[] = []; for (let a = 0; a < 3; a++) for (const end of [0, 1]) t.push(...rectFace(a, end ? hi[a] : lo[a], lo, hi, !!end)); return t; };
+/** A plate with a square hole through it along Z. */
+function holed(lo: number[], hi: number[], h0: number, h1: number): number[] {
+  const t: number[] = [];
+  for (const a of [0, 1]) for (const end of [0, 1]) t.push(...rectFace(a, end ? hi[a] : lo[a], lo, hi, !!end));
+  // the hole's walls look into it
+  for (const a of [0, 1]) for (const end of [0, 1]) t.push(...rectFace(a, end ? h1 : h0, [h0, h0, lo[2]], [h1, h1, hi[2]], !end));
+  // top and bottom: four strips round the hole
+  for (const end of [0, 1]) {
+    const z = end ? hi[2] : lo[2];
+    for (const [l, h] of [[[lo[0], lo[1]], [hi[0], h0]], [[lo[0], h1], [hi[0], hi[1]]], [[lo[0], h0], [h0, h1]], [[h1, h0], [hi[0], h1]]]) t.push(...rectFace(2, z, [l[0], l[1], 0], [h[0], h[1], 0], !!end));
+  }
+  return t;
+}
+const C = S / 2;
+const screwBody = (tip: number) => [...box([C - 6, C - 6, 2 * T], [C + 6, C + 6, 2 * T + 5]), ...box([C - 3, C - 3, tip], [C + 3, C + 3, 2 * T])];
+const screwF = { body: 2, kind: "screw" as const, d: 6, pitch: 1, o: [C, C, 2 * T], z: [0, 0, 1] };
+
+test("a screw with a nut is found as a bolt between the faces under its head and under its nut", () => {
+  const bodies = [holed([0, 0, 0], [S, S, T], C - 4, C + 4), holed([0, 0, T], [S, S, 2 * T], C - 4, C + 4), screwBody(-6), box([C - 7, C - 7, -5], [C + 7, C + 7, 0])];
+  const r = findBolts(bodies, [screwF, { body: 3, kind: "nut", d: 6, pitch: 1, o: [C, C, 0], z: [0, 0, -1] }]);
+  assert.equal(r.missed.length, 0);
+  assert.equal(r.bolts.length, 1);
+  const b = r.bolts[0];
+  assert.deepEqual([b.ia, b.ib, b.tapped], [1, 0, false]);
+  assert.deepEqual(b.members.sort(), [2, 3]);
+  const area = (t: Float64Array) => { let s = 0; for (let o = 0; o < t.length; o += 9) { const e1 = [t[o + 3] - t[o], t[o + 4] - t[o + 1]], e2 = [t[o + 6] - t[o], t[o + 7] - t[o + 1]]; s += Math.abs(e1[0] * e2[1] - e1[1] * e2[0]) / 2; } return s; };
+  // the head's 12 × 12 less the 8 × 8 hole, the nut's 14 × 14 less the hole
+  assert.ok(Math.abs(area(b.a) / (144 - 64) - 1) < 0.15, `head ${area(b.a)}`);
+  assert.ok(Math.abs(area(b.b) / (196 - 64) - 1) < 0.15, `nut ${area(b.b)}`);
+});
+
+test("without a nut the bolt holds the wall of the tapped hole; a screw in nothing is no bolt", () => {
+  const plates = [holed([0, 0, 0], [S, S, T], C - 3, C + 3), holed([0, 0, T], [S, S, 2 * T], C - 4, C + 4)];
+  const r = findBolts([...plates, screwBody(2)], [screwF]);
+  assert.equal(r.bolts.length, 1);
+  assert.deepEqual([r.bolts[0].ia, r.bolts[0].ib, r.bolts[0].tapped], [1, 0, true]);
+  // the wall pieces are on the lower plate, along the screw
+  let zs = 0;
+  for (let o = 2; o < r.bolts[0].b.length; o += 3) { const z = r.bolts[0].b[o]; assert.ok(z > -0.01 && z < T + 0.01, `z ${z}`); zs += z; }
+  assert.ok(zs / (r.bolts[0].b.length / 3) > 0.5 * T);
+  const loose = findBolts([holed([0, 0, 0], [S, S, T], C - 4, C + 4), plates[1], screwBody(2)], [screwF]);
+  assert.deepEqual(loose.missed, [{ screw: 2, why: "thread" }]);
+});
+
+test("a found bolt carries the load between plates that are not joined, and is rated by its class", () => {
+  const plates = [holed([0, 0, 0], [S, S, T], C - 3, C + 3), holed([0, 0, T], [S, S, 2 * T], C - 4, C + 4)];
+  const fb = findBolts([...plates, screwBody(2)], [screwF]).bolts[0];
+  const m = model(), st = newStudy([]);
+  st.supports.push({ id: "s1", type: "fixed", faces: [{ name: "a@x0" }] });
+  st.loads.push({ id: "l1", type: "force", faces: [{ name: "b@x1" }], comp: [{ v: 0 }, { v: 0 }, { v: F }] });
+  const tris = plates.map(p => Float64Array.from(p));
+  const all = Float64Array.from([...plates[0], ...plates[1]]);
+  // the faces keep the plain plates' names: the four sides first, as in `boxes`
+  const face = new Int32Array(all.length / 9), names = m.body.names;
+  for (let k = 0; k < 2; k++) for (let i = 0; i < plates[k].length / 9; i++) face[k * plates[0].length / 9 + i] = k * 6 + (i < 8 ? Math.floor(i / 2) : 4);
+  const inp: RunInput = {
+    body: { ...m.body, tris: all, face, names }, mat: steel, regions: tris.map(t => ({ tris: t, mat: steel })), asm: { gap: 0.1, links: [{ a: 0, b: 1, type: "none" }] },
+    bolts: [{ a: fb.a, b: fb.b, d: fb.d, E: 210000 }], problem: studyProblem(st, { ...m.body, tris: all, face, names }), passes: 2, energyTol: 0, pos: Float32Array.from([S, C, 1.5 * T]), nrm: Float32Array.from([1, 0, 0]),
+  };
+  const r = [...runStatic(inp)].at(-1)!, b = r.bolts![0];
+  assert.ok(Math.abs(b.axial / F - 1) < 0.02, `axial ${b.axial}`);
+  const c = boltCheck(b, 6, 1, 580);
+  assert.ok(Math.abs(stressArea(6, 1) / 20.1 - 1) < 0.01);
+  assert.ok(c.sigma > F / c.area && c.sf > 0 && c.sf < 580 / (F / c.area), `sf ${c.sf}`);
+});

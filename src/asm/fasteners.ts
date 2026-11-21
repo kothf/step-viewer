@@ -265,6 +265,27 @@ export const FASTENERS: FastenerInfo[] = [
   { kind: "linear", label: "Linear ball bearing (LM..UU)", name: "Linear bearing", group: "Bearings", seat: "flush", screw: false, table: TLINEAR, fit: "D" },
   { kind: "thrust", label: "Thrust ball bearing (ISO 104)", name: "Thrust ball bearing", group: "Bearings", seat: "flush", screw: false, table: TTHRUST, fit: "D" },
 ];
+/** Proof stress (0.2 % proof for the stainless classes), MPa, by property class (ISO 898-1, ISO 3506-1). */
+export const PROPERTY_CLASSES: Record<string, number> = { "4.6": 225, "5.8": 380, "8.8": 580, "10.9": 830, "12.9": 970, "A2-70": 450, "A4-80": 600 };
+export const DEFAULT_CLASS = "8.8";
+export const proofStress = (cls: string | undefined, d: number) => (cls === "8.8" || !cls || !(cls in PROPERTY_CLASSES) ? (d > 16 ? 600 : 580) : PROPERTY_CLASSES[cls]);
+
+/**
+ * What a toolbox part is, from its document id (`fastener:<kind>:<size>[x<length>]`): its part in a bolted
+ * joint (null for pins, keys and the like, and for set screws), thread diameter and pitch in mm.
+ */
+export function fastenerOfId(id: string | undefined): { kind: FastenerKind; size: string; role: "screw" | "nut" | "washer" | null; d: number; pitch: number } | null {
+  const m = /^fastener:([^:]+):(.+)$/.exec(id ?? "");
+  const info = m && FASTENERS.find(f => f.kind === m[1]);
+  if (!m || !info) return null;
+  const size = info.screw ? m[2].replace(/x[\d.]+$/, "") : m[2], row = info.table[size];
+  if (!row) return null;
+  const tpi = /-(\d+)$/.exec(size), d = row.d;
+  const pitch = info.inch && tpi ? 25.4 / Number(tpi[1]) : COARSE_PITCH[d] ?? 0.15 * d;
+  const role = info.group === "Screws" ? (info.kind === "iso4026" ? null : "screw") : info.group === "Nuts" ? "nut" : info.group === "Washers" ? "washer" : null;
+  return { kind: info.kind, size, role, d, pitch };
+}
+
 export const TOOLBOX_GROUPS: ToolboxGroup[] = ["Screws", "Nuts", "Washers", "Spacers", "Pins", "Keys", "Retaining rings", "Bearings"];
 
 const LENGTHS = [3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 180, 200, 220, 240, 260, 280, 300];

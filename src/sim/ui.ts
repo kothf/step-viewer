@@ -22,6 +22,8 @@ import type { AsmModel, SimModel } from "./model";
 import type { EdgeInfo } from "../topology";
 import { SIM_STOPPED, SimClient } from "./client";
 import type { Connection } from "./connect";
+import { boltCheck } from "./bolts";
+import { DEFAULT_CLASS, PROPERTY_CLASSES, proofStress } from "../asm/fasteners";
 import { aloneIndex, componentRows, moveWithParts, vertexParts, withoutParts, type CompRow } from "./comps";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
 import { locate, probeCsv, valueAt, type Located } from "./probes";
@@ -32,6 +34,7 @@ import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, typ
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, envelope, positiveAxis, studyProblem, withoutFaces, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
+import { NUT_FACTOR, boltPreload, type StudyBolt } from "./types";
 import { DEFAULT_GAP, DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 /** What a study needs of its document: a part's, or an assembly's (which has no material or bodies of its own). */
@@ -51,7 +54,7 @@ export interface SimHost {
   /** The model is an assembly: every component is solved as its own body, joined to the others where they touch. */
   asm(): boolean;
   /** An assembly's shown components with their parts' material names ("" = none). */
-  comps(): { id: string; name: string; material: string }[];
+  comps(): { id: string; name: string; material: string; fastener?: { role: "screw" | "nut" | "washer"; d: number; pitch: number; o: number[]; z: number[] } }[];
   faceNames(): string[];
   faceAt(x: number, y: number): { faceId: number; point: [number, number, number] } | null;
   /** The snapped point under the pointer (part coordinates) and the edge it is on, if any. */
@@ -71,14 +74,19 @@ type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "
 /** One load case's results; `job` names its solution in the worker (0 = not held). */
 interface CaseResult { id: string; name: string; passes: PassResult[]; job: number }
 /** `passes` are the shown ones: the study's, or with load cases the picked case's or the envelope (one made-up pass). */
-interface Results { /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean }[] }
+/** A bolt of a solve: its screw's component id and name, every fastener it stands for, its thread. */
+type BoltKept = { id: string; name: string; members: string[]; d: number; pitch: number; tapped: boolean };
+/** A bolt found among the fasteners, with the patches it joins. */
+interface BoltUse extends BoltKept { a: Float64Array; b: Float64Array; E: number }
+interface Results { /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean }[] }
+const BOLT_NOTE = "Tension, shear and bending of each bolt as a beam. The safety factor compares their combined stress on the thread's stress area with the proof stress of the property class.";
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 const pct = (v: number) => (Math.abs(v) < 0.01 ? (v === 0 ? "0" : "< 0.01") : sig(v));
 const RELIEF_NOTE = "The part is held by nothing: its supports are left out and the loads are balanced by its own inertia, as for a part in free flight or afloat.";
 /** The most load cases a study has. */
 export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
+interface Kept { bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
@@ -117,6 +125,7 @@ const GIF_FRAMES = 24;
 const SUPPORT_COLOR = 0x2f9e44, LOAD_COLOR = 0xd6336c, REFINE_COLOR = 0x1c7ed6;
 /** A picked connection's patch: on its first component and on its second. */
 const PATCH_A = 0xf59f00, PATCH_B = 0x1c7ed6;
+const BOLT_COLOR = 0x7048e8;
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 /** Blue, cyan, green, yellow, red. */
 const RAMP: [number, number, number][] = [[0.11, 0.3, 0.85], [0.1, 0.75, 0.85], [0.25, 0.75, 0.3], [0.95, 0.85, 0.2], [0.88, 0.2, 0.15]];
@@ -162,6 +171,8 @@ export class SimController {
   /** The pairs found touching before a solve (FR-CON-003), for the model state and gap they were found with. */
   private found: { key: string; comps: { key: string; name: string }[]; list: Connection[] } | null = null;
   private finding = false;
+  /** The bolts found among the fasteners (FR-CON-020), for the model state they were found in. */
+  private boltsFound: { key: string; list: BoltUse[]; missed: { id: string; why: string }[] } | null = null;
   /** The connection whose patch is shown (its pair key), and what the Connections table is narrowed to. */
   private linkSel = "";
   private linkFilter = { comp: "", type: "" };
@@ -273,12 +284,46 @@ export class SimController {
     parts.push(...model.tail);
     if (st.links?.length) parts.push(st.links);
     if (st.comps && Object.keys(st.comps).length) parts.push(Object.entries(st.comps).sort(([a], [b]) => (a < b ? -1 : 1)));
+    const bolts = this.boltSettings(st);
+    if (bolts.length) parts.push(bolts);
     if (st.kind === "modal") parts.push("modal");
     else if (st.cases?.length) parts.push(st.cases.map(c => [c.id, c.off]));
     return JSON.stringify(parts);
   }
 
-  private foundKey(st: Study) { const off = [...offComps(st)].sort(); return JSON.stringify(off.length ? [this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP, off] : [this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP]); }
+  private foundKey(st: Study) { const off = [...offComps(st), ...this.solidScrews(st).map(id => `-${id}`)].sort(); return JSON.stringify(off.length ? [this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP, off] : [this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP]); }
+  /** What of the bolts' settings a solve depends on (the property class only rates the result). */
+  private boltSettings(st: Study) {
+    return Object.entries(st.bolts ?? {}).filter(([, b]) => b.off || (b.preload ?? 0) > 0).sort(([a], [b]) => (a < b ? -1 : 1)).map(([id, b]) => [id, b.off ? 1 : 0, b.off ? 0 : b.preload ?? 0, b.torque ? b.k ?? NUT_FACTOR : 0]);
+  }
+  /** The screws the study takes as solids, not as bolts. */
+  private solidScrews(st: Study) { return Object.entries(st.bolts ?? {}).filter(([, b]) => b.off).map(([id]) => id).sort(); }
+  private boltKey(st: Study) { return JSON.stringify([this.host.stateKey(), [...offComps(st)].sort(), this.solidScrews(st)]); }
+  private freshBolts(st: Study | null | undefined) { return st && this.boltsFound && this.boltsFound.key === this.boltKey(st) ? this.boltsFound : null; }
+  /** The screws of the assembly a study can take as bolts. */
+  private screws(st: Study) { const off = offComps(st); return this.host.asm() ? this.host.comps().filter(c => c.fastener?.role === "screw" && !off.has(c.id)) : []; }
+
+  /**
+   * The bolts of the study among the solver's bodies: every toolbox screw (unless the study takes it as a
+   * solid) with the nut and washers on its axis, and the two patches it holds together.
+   */
+  private async boltsOf(st: Study, bodies: { key: string; tris: Float64Array; mat?: { E?: number | null } | null }[]): Promise<BoltUse[]> {
+    const key = this.boltKey(st), had = this.freshBolts(st);
+    if (had) return had.list;
+    const off = offComps(st), live = bodies.filter(b => !off.has(compOf(b.key))), comps = this.host.comps();
+    const solid = new Set(this.solidScrews(st));
+    const fs = comps.filter(c => c.fastener && !off.has(c.id) && !solid.has(c.id));
+    if (!fs.some(c => c.fastener!.role === "screw")) { this.boltsFound = { key, list: [], missed: [] }; return []; }
+    const fast = fs.flatMap(c => { const body = live.findIndex(b => compOf(b.key) === c.id), f = c.fastener!; return body < 0 ? [] : [{ body, kind: f.role, d: f.d, pitch: f.pitch, o: f.o, z: f.z }]; });
+    const r = await this.client.bolts(live.map(b => b.tris), fast);
+    const idOf = (i: number) => compOf(live[i]?.key ?? ""), nameOf = (id: string) => comps.find(c => c.id === id)?.name ?? id;
+    const list = r.bolts.map(b => {
+      const id = idOf(b.screw), E = live[b.screw]?.mat?.E;
+      return { id, name: nameOf(id), members: b.members.map(idOf), d: b.d, pitch: b.pitch, tapped: b.tapped, a: b.a, b: b.b, E: E && E > 0 ? E * 1000 : 210000 };
+    });
+    this.boltsFound = { key, list, missed: r.missed.map(m => ({ id: idOf(m.screw), why: m.why })) };
+    return list;
+  }
   private freshFound(st: Study | null | undefined) { return st && this.found && this.found.key === this.foundKey(st) ? this.found : null; }
 
   /** Finds the pairs of components that touch or come within the gap, without solving (FR-CON-003). */
@@ -292,6 +337,7 @@ export class SimController {
       const size = this.host.viewer.modelSize, key = this.foundKey(st);
       const { regions } = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
       const off = offComps(st);
+      for (const b of await this.boltsOf(st, regions ?? [])) for (const m of b.members) off.add(m);
       await this.findFrom((regions ?? []).filter(b => !off.has(compOf(b.key))), st.settings.gap ?? DEFAULT_GAP, key);
       const n = this.found?.key === key ? this.found.list.length : 0;
       toast(n ? t("Connections found: {n}", { n }) : t("No components touch within the gap tolerance."), n ? "success" : "warn");
@@ -378,6 +424,9 @@ export class SimController {
       compList: this.host.asm() ? this.host.comps().map(c => { const o = this.study()?.comps?.[c.id]; return { id: c.id, name: c.name, off: !!o?.off, rigid: !!o?.rigid, material: o?.material?.name ?? c.material, own: !!o?.material }; }) : null, excluded: this.res?.off ?? [],
       found: this.freshFound(this.study())?.list.map(c => ({ a: this.found!.comps[c.a]?.name ?? "", b: this.found!.comps[c.b]?.name ?? "", area: c.area, gap: c.gap, at: c.at })) ?? null, finding: this.finding, linkSel: this.linkSel,
       patches: this.marks.children.filter(o => o.userData.simPatch).map(o => ({ side: o.userData.simPatch as string, tris: ((o as THREE.Mesh).geometry.getAttribute("position")?.count ?? 0) / 3 })),
+      boltMarks: this.marks.children.filter(o => o.userData.simBolt).length,
+      bolts: this.boltRows().map(x => ({ id: x.id, name: x.name, cls: x.cls, tapped: x.tapped, preload: x.preload, axial: x.axial, shear: x.shear, moment: x.moment, eq: x.eq, sf: x.sf })),
+      boltList: this.study() ? this.screws(this.study()!).map(c => { const st = this.study()!, f = this.freshBolts(st); return { id: c.id, name: c.name, off: !!st.bolts?.[c.id]?.off, found: !!f?.list.some(x => x.id === c.id), missed: f?.missed.find(x => x.id === c.id)?.why ?? null }; }) : [],
       relief: !!this.study()?.settings.relief, accel: last?.accel ? { a: last.accel.a, alpha: last.accel.alpha } : null,
       cases: (this.study()?.cases ?? []).map(c => ({ name: c.name, off: c.off })), caseSel: this.caseSel, enveloped: this.enveloped,
       caseResults: (this.res?.cases ?? []).map(c => ({ name: this.caseName(c), maxVm: c.passes.at(-1)?.maxVm ?? null, maxU: c.passes.at(-1)?.maxU ?? null, passes: c.passes.length })),
@@ -416,7 +465,7 @@ export class SimController {
     const kept = await cacheGet<Kept>(await cacheKey("sim", key));
     const now = this.host.doc(), s2 = this.study();
     if (!kept?.passes?.length || !kept.mesh || this.res || this.running || now !== doc && now?.id !== doc.id || !s2 || s2.id !== st.id || !now || this.keyOf(now, s2) !== key) return;
-    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.comps ? { comps: kept.comps } : {}), ...(kept.off ? { off: kept.off } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
+    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.comps ? { comps: kept.comps } : {}), ...(kept.off ? { off: kept.off } : {}), ...(kept.bolts ? { bolts: kept.bolts } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
       ...(kept.cases?.length ? { cases: kept.cases.map(c => ({ ...c, job: 0 })) } : {}) };
     this.caseSel = -1; this.compSel = -1;
     this.applyCase();
@@ -649,6 +698,10 @@ export class SimController {
       const got = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05), { solids, parts } = got;
       // components the study leaves out are not there for the solver: no body, no faces to hold or load
       const off = asm ? offComps(st) : new Set<string>();
+      // a bolt stands for its fasteners: they are not solids of the study
+      const uses = asm ? await this.boltsOf(st, got.regions ?? []) : [];
+      for (const b of uses) for (const m of b.members) off.add(m);
+      const bolts = uses.map(b => { const pre = modal ? 0 : boltPreload(st.bolts?.[b.id], b.d); return { a: b.a, b: b.b, d: b.d, E: b.E, ...(pre > 0 ? { preload: pre } : {}) }; });
       const geo = off.size ? withoutFaces(got.geo, n => off.has(compOf(n))) : got.geo;
       const bodies = off.size ? got.regions?.filter(b => !off.has(compOf(b.key))) : got.regions;
       if (!asm && solids !== 1) throw new Error("E-SIM-BODIES");
@@ -709,7 +762,7 @@ export class SimController {
       const pos = mesh.pos, nrm = mesh.nrm;
       const total = Math.max(1, Math.min(modal ? MODAL_PASSES : MAX_PASSES, Math.round(st.settings.passes)));
       if (modal) problem.loads = [];
-      const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh, ...(parts && parts > 1 ? { parts } : {}), ...(asm ? { comps: this.comps } : {}), ...(off.size ? { off: [...off] } : {}), ...(cases.length ? { cases: [] } : {}), ...(regions ? { bodyMats: regions.map(r => ({ name: r.mat.name, sy: r.mat.sy ?? 0, ...(r.rigid ? { rigid: true } : {}) })) } : {}) };
+      const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh, ...(parts && parts > 1 ? { parts } : {}), ...(asm ? { comps: this.comps } : {}), ...(off.size ? { off: [...off] } : {}), ...(uses.length ? { bolts: uses.map(b => ({ id: b.id, name: b.name, members: b.members, d: b.d, pitch: b.pitch, tapped: b.tapped })) } : {}), ...(cases.length ? { cases: [] } : {}), ...(regions ? { bodyMats: regions.map(r => ({ name: r.mat.name, sy: r.mat.sy ?? 0, ...(r.rigid ? { rigid: true } : {}) })) } : {}) };
       made = res; whole = false;
       for (let ci = 0; ci < runs.length; ci++) {
       const run = runs[ci], problem = run.problem, pre = run.c ? `${run.c.name}: ` : "";
@@ -722,7 +775,7 @@ export class SimController {
         ...(modal ? { modal: st.settings.range
           ? { count: DEFAULT_MODES, max: MAX_MODES, range: [st.settings.range.from, st.settings.range.to] as [number, number] }
           : { count: Math.max(1, Math.min(MAX_MODES, Math.round(st.settings.modes ?? DEFAULT_MODES))) } } : {}),
-        mat: m && !asm ? simMat(m) : regions![0].mat, ...(regions ? { regions } : {}), ...(joined ? { asm: joined } : {}),
+        mat: m && !asm ? simMat(m) : regions![0].mat, ...(regions ? { regions } : {}), ...(joined ? { asm: joined } : {}), ...(bolts.length ? { bolts } : {}),
       }, p => {
         mine.push(p);
         res.ms = performance.now() - t0;
@@ -746,7 +799,7 @@ export class SimController {
       }
       // a finished solve is kept for the next time this document is opened
       if (res.passes.length) {
-        const keep: Kept = { passes: res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}), ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
+        const keep: Kept = { passes: res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bolts ? { bolts: res.bolts } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}), ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
         void cacheKey("sim", key).then(k => cachePut(k, keep));
       }
     } catch (e) {
@@ -774,6 +827,69 @@ export class SimController {
           + `<button class="btn small sim-crigid${o?.rigid ? " on" : ""}" data-a="comprigid" data-c="${esc(c.id)}" aria-pressed="${o?.rigid ? "true" : "false"}" title="${esc(t("Rigid: the component moves as a body, without strain"))}"${dis || (o?.off ? " disabled" : "")}>${esc(t("Rigid"))}</button>`
           + `<button class="btn small${own ? " own" : ""}${name ? "" : " sim-warn"}" data-a="compmat" data-c="${esc(c.id)}" title="${esc(own ? t("Material picked for this study") : t("The part's material"))}"${dis}>${name ? `<span translate="no">${esc(name)}</span>` : esc(t("No material"))}</button></li>`;
       }).join("") + `</ul></div>`;
+  }
+
+  /** An assembly study: the toolbox screws it takes as bolts, each with its property class and tightening. */
+  private boltsHtml(st: Study): string {
+    const list = this.screws(st);
+    if (!list.length) return "";
+    const dis = this.running ? " disabled" : "", found = this.freshBolts(st);
+    const classes = (cur: string) => Object.keys(PROPERTY_CLASSES).map(c => `<option value="${c}"${c === cur ? " selected" : ""}>${c}</option>`).join("");
+    const fields = (id: string, b: StudyBolt | undefined, d: number, off: boolean) => {
+      const tq = !!b?.torque, v = b?.preload ? trim(tq ? b.preload / 1000 : b.preload) : "";
+      const tension = tq && b?.preload ? ` title="${esc(t("Tension: {n} N", { n: sig(boltPreload(b, d)) }))}"` : "";
+      return `<span class="sim-boltset"><select data-k="boltcls" data-c="${esc(id)}" title="${esc(t("Property class"))}"${dis || (off ? " disabled" : "")}>${id === "*" ? `<option value="">${esc(t("Class"))}</option>` : ""}${classes(id === "*" ? "" : b?.cls ?? DEFAULT_CLASS)}</select>`
+        + `<input type="text" inputmode="decimal" data-k="boltpre" data-c="${esc(id)}" value="${esc(v)}" placeholder="${esc(t("Preload"))}"${tension} aria-label="${esc(t("Preload"))}"${dis || (off ? " disabled" : "")} />`
+        + `<select data-k="boltby" data-c="${esc(id)}" aria-label="${esc(t("Preload as"))}" title="${esc(t("Preload as a tension, or as a tightening torque (nut factor {k})", { k: NUT_FACTOR }))}"${dis || (off ? " disabled" : "")}><option value="n"${tq ? "" : " selected"}>N</option><option value="nm"${tq ? " selected" : ""}>N·m</option></select></span>`;
+    };
+    const why: Record<string, string> = { head: "nothing under its head", nut: "its nut presses on nothing", thread: "no nut and no tapped hole" };
+    return `<div class="sim-sec sim-bolts"><h4>${esc(t("Bolts"))}</h4>`
+      + `<p class="sim-note muted">${esc(t("A toolbox screw is analysed as a bolt: a beam between the face under its head and its nut or tapped hole. Untick one to analyse it as a solid. The parts a bolt clamps stay joined where they touch unless their connection is set to Sliding or Not joined."))}</p>`
+      + (list.length > 1 ? `<div class="sim-boltall"><span>${esc(t("All bolts"))}</span>${fields("*", undefined, 0, false)}</div>` : "")
+      + `<ul class="sim-boltlist">` + list.map(c => {
+        const b = st.bolts?.[c.id], hit = found?.list.find(x => x.id === c.id), miss = found?.missed.find(x => x.id === c.id);
+        const note = b?.off ? "" : hit ? t(hit.tapped ? "in a tapped hole" : "with a nut") : miss ? t("not a bolt: {why}", { why: t(why[miss.why] ?? miss.why) }) : "";
+        return `<li data-bolt="${esc(c.id)}" class="${b?.off ? "off" : ""}${miss && !b?.off ? " miss" : ""}"><label><input type="checkbox" data-k="bolton" data-c="${esc(c.id)}"${b?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
+          + (note ? `<span class="sim-boltnote muted" data-v="boltnote">${esc(note)}</span>` : "") + fields(c.id, b, c.fastener!.d, !!b?.off) + `</li>`;
+      }).join("") + `</ul></div>`;
+  }
+
+  /** Changes a bolt's settings in the study (`*` = every screw's). */
+  private setBolt(id: string, name: string, fn: (b: StudyBolt) => void) {
+    const st = this.study();
+    if (!st || this.running) return;
+    const ids = id === "*" ? this.screws(st).map(c => c.id) : [id];
+    this.host.change(name, d => {
+      const s = d.studies?.find(x => x.id === st.id);
+      if (!s) return;
+      const all = { ...(s.bolts ?? {}) };
+      for (const k of ids) {
+        const b = { ...(all[k] ?? {}) };
+        fn(b);
+        if (!b.preload) { delete b.preload; delete b.torque; delete b.k; }
+        if (b.cls === DEFAULT_CLASS) delete b.cls;
+        if (Object.keys(b).length) all[k] = b; else delete all[k];
+      }
+      if (Object.keys(all).length) s.bolts = all; else delete s.bolts;
+    });
+  }
+
+  /** The bolts' results of the shown pass, each rated by its property class. */
+  private boltRows() {
+    const r = this.res, last = r?.passes.at(-1), st = this.study();
+    if (!r?.bolts || !last?.bolts || last.bolts.length !== r.bolts.length) return [];
+    return r.bolts.map((b, i) => {
+      const v = last.bolts![i], set = st?.bolts?.[b.id], cls = set?.cls ?? DEFAULT_CLASS;
+      return { id: b.id, name: b.name, cls, tapped: b.tapped, d: b.d, preload: boltPreload(set, b.d), axial: v.axial, shear: v.shear, moment: v.moment, a: v.a, b: v.b, ...boltCheck(v, b.d, b.pitch, proofStress(cls, b.d)) };
+    });
+  }
+
+  private boltTableHtml(): string {
+    const rows = this.boltRows();
+    if (!rows.length) return "";
+    return `<h5 class="sim-sub">${esc(t("Bolts"))}</h5><table class="sim-passes sim-bolttable"><thead><tr><th>${esc(t("Bolt"))}</th><th>${esc(t("Tension"))}, N</th><th>${esc(t("Shear"))}, N</th><th title="${esc(t("Safety factor against the proof stress of the property class"))}">${esc(t("SF"))}</th></tr></thead><tbody>`
+      + rows.map(x => `<tr data-bolt="${esc(x.id)}" class="${x.sf < 1 ? "bad" : ""}" title="${esc(`${t("Bending moment")}: ${sig(x.moment * 1e-3)} N·m. ${t("Stress")}: ${sig(x.eq)} MPa. ${t("Class")} ${x.cls}`)}"><td translate="no">${esc(x.name)}</td><td data-v="baxial">${sig(x.axial)}</td><td data-v="bshear">${sig(x.shear)}</td><td data-v="bsf">${isFinite(x.sf) ? sig(x.sf) : "–"}</td></tr>`).join("")
+      + `</tbody></table><p class="sim-note muted" data-v="boltnote2">${esc(t(BOLT_NOTE))}</p>`;
   }
 
   /** The material a component is analysed with in this study: a picked one, or (No material) its part's again. */
@@ -879,6 +995,8 @@ export class SimController {
       case "E-SIM-LOOSE": return t("Nothing holds {names}: they touch no held component and have no support. Add a support, move them into contact or raise the gap tolerance.", { names: rest.split(",").map(i => this.comps[Number(i)]?.name ?? i).join(", ") });
       case "E-SIM-BODYMAT": return t("The material {name} of a body has no elastic modulus or Poisson's ratio.", { name: msg.split(": ")[1] ?? "" });
       case "E-SIM-DENSITY": return t("The material has no density: a modal study needs one.");
+      case "E-SIM-PRELOAD": return t("A preloaded bolt clamps components that are not joined where they touch, so nothing takes the preload. Set their connection to Bonded or Sliding.");
+      case "E-SIM-BOLT": return t("A bolt's seat could not be placed on the components. Untick that bolt to analyse it as a solid.");
       case "E-SIM-ALLRIGID": return t("Every component is rigid, so nothing can deform. Make at least one component elastic.");
       case "E-SIM-NOBODY": return this.host.asm() ? t("The assembly has no components to analyse yet.") : t("The part has no body yet.");
       case "E-SIM-REF": {
@@ -1038,6 +1156,17 @@ export class SimController {
       mesh.userData.simPatch = side;
       mesh.raycast = () => {};
       this.marks.add(mesh);
+    }
+    // the bolts found: a line from the seat under each head to its nut or thread
+    const bl = this.host.asm() ? this.freshBolts(st)?.list ?? [] : [];
+    if (bl.length) {
+      const mid = (T: Float64Array) => { const c = [0, 0, 0]; for (let i = 0; i < T.length; i++) c[i % 3] += T[i]; return c.map(v => v / (T.length / 3 || 1)); };
+      const pts = bl.flatMap(b => [...mid(b.a), ...mid(b.b)]);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(Float32Array.from(pts), 3));
+      const mat = { color: BOLT_COLOR, depthTest: false, depthWrite: false, transparent: true };
+      const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial(mat)), dots = new THREE.Points(geo.clone(), new THREE.PointsMaterial({ ...mat, size: 7, sizeAttenuation: false }));
+      for (const o of [lines, dots]) { o.renderOrder = 2962; o.userData.simBolt = bl.length; o.raycast = () => {}; this.marks.add(o); }
     }
     const ed = this.edit;
     for (const s of st.supports) if (s.id !== ed?.draft.id && !off.has(s.id) && !plotted) draw(s, false, false);
@@ -1780,7 +1909,15 @@ export class SimController {
     if (res?.comps) {
       // an assembly: its components with their materials, and the pairs joined
       blocks.push({ kind: "table", widths: [4, 4, 2], rows: [[t("Components"), t("Material"), t("Yield strength")], ...res.comps.map((c, i) => [c.name, `${res.bodyMats?.[i]?.name ?? ""}${res.bodyMats?.[i]?.rigid ? ` (${t("Rigid").toLowerCase()})` : ""}`, res.bodyMats?.[i]?.sy ? `${sig(res.bodyMats[i].sy)} MPa` : "–"])] });
-      if (res.off?.length) { const cs = this.host.comps(); blocks.push({ kind: "p", text: `${t("Left out of the study")}: ${res.off.map(id => cs.find(c => c.id === id)?.name ?? id).join(", ")}` }); }
+      const asBolt = new Set((res.bolts ?? []).flatMap(b => b.members)), left = (res.off ?? []).filter(id => !asBolt.has(id));
+      if (left.length) { const cs = this.host.comps(); blocks.push({ kind: "p", text: `${t("Left out of the study")}: ${left.map(id => cs.find(c => c.id === id)?.name ?? id).join(", ")}` }); }
+      const br = this.boltRows();
+      if (br.length) {
+        blocks.push({ kind: "h", text: t("Bolts") });
+        blocks.push({ kind: "table", widths: [4, 1.5, 2, 2, 2, 2, 2, 1.5], rows: [[t("Bolt"), t("Class"), `${t("Preload")}, N`, `${t("Tension")}, N`, `${t("Shear")}, N`, `${t("Bending moment")}, N·m`, `${t("Stress")}, MPa`, t("Safety factor")],
+          ...br.map(x => [x.name, x.cls, x.preload ? sig(x.preload) : "–", sig(x.axial), sig(x.shear), sig(x.moment * 1e-3), sig(x.eq), isFinite(x.sf) ? sig(x.sf) : "–"])] });
+        blocks.push({ kind: "p", text: t(BOLT_NOTE) });
+      }
       const cs = res.passes.at(-1)?.contacts ?? [];
       if (cs.length) {
         blocks.push({ kind: "h", text: t("Connections") });
@@ -2031,7 +2168,7 @@ export class SimController {
       + (list.length > 1 ? `<select data-k="study" aria-label="${esc(t("Study"))}" translate="no">${list.map(s => `<option value="${s.id}"${s.id === st.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`
         : `<b translate="no">${esc(st.name)}</b>`)
       + `<span class="muted" data-v="kind">${esc(st.kind === "modal" ? t("Modal") : t("Static"))}</span><button class="sim-ib" data-a="delstudy" title="${esc(t("Delete study"))}" aria-label="${esc(t("Delete study"))}">×</button></div>`;
-    if (this.host.asm()) html += this.compsHtml(st) + this.linksHtml(st);
+    if (this.host.asm()) html += this.compsHtml(st) + this.boltsHtml(st) + this.linksHtml(st);
     else html += `<div class="sim-sec"><h4>${esc(t("Material"))}</h4><button class="pm-box${matOk ? "" : " sim-warn"}" data-a="mat">${m ? `<span translate="no">${esc(m.name)}</span>` : esc(t("No material"))}</button>`
       + (m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`)
       + (ownMats.length ? `<p class="sim-note muted sim-bodymats">${esc(t("Bodies with their own material:"))} <span translate="no">${esc(ownMats.join(", "))}</span></p>` : "") + `</div>`;
@@ -2117,6 +2254,7 @@ export class SimController {
       if (singular) html += `<p class="sim-note sim-sing">⚠ ${esc(t("Stress singularity: value depends on refinement"))}. ${esc(real ? t("The safety factor uses the highest stress away from singularities.") : "")}</p>`;
     }
     html += this.compTableHtml();
+    html += this.boltTableHtml();
     html += this.probesHtml();
     html += this.pathHtml();
     if (!this.running) {
@@ -2359,6 +2497,19 @@ export class SimController {
       this.host.change(t("Modes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.modes = v; });
     }
     else if (el.dataset.k === "cumul") { this.cumul = el.checked; this.renderTree(); }
+    else if (el.dataset.k === "bolton") {
+      const on = el.checked;
+      this.setBolt(el.dataset.c ?? "", on ? t("Analyse as a bolt") : t("Analyse as a solid"), b => { if (on) delete b.off; else b.off = true; });
+    } else if (el.dataset.k === "boltcls") {
+      const v = el.value;
+      if (v) this.setBolt(el.dataset.c ?? "", t("Property class"), b => { b.cls = v; });
+    } else if (el.dataset.k === "boltpre" || el.dataset.k === "boltby") {
+      const row = el.closest(".sim-boltset"), inp = row?.querySelector<HTMLInputElement>("[data-k=boltpre]"), by = row?.querySelector<HTMLSelectElement>("[data-k=boltby]");
+      const v = inp && inp.value.trim() ? num(inp.value) : 0, tq = by?.value === "nm";
+      if (v == null || v < 0) { toast(t("Type the preload as a number."), "warn"); this.renderTree(); return; }
+      if (el.dataset.c === "*" && el.dataset.k === "boltby" && !v) return;
+      this.setBolt(el.dataset.c ?? "", t("Bolt preload"), b => { if (v > 0) { b.preload = tq ? v * 1000 : v; if (tq) b.torque = true; else delete b.torque; } else delete b.preload; });
+    }
     else if (el.dataset.k === "compon") {
       const id = el.dataset.c ?? "", on = el.checked;
       if (!on && this.host.comps().filter(c => !offComps(st).has(c.id)).length <= 1) { el.checked = true; toast(t("A study needs at least one component."), "warn"); return; }

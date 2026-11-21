@@ -32,7 +32,7 @@ import { isLongPress } from "../longPress";
 import { lassoMode, mergeSel, rectRegion, regionProbe, type Rect, type Region as SelArea } from "../boxSelect";
 import { SelDrag } from "../selDrag";
 import { toRef } from "../tools/materials";
-import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, lengthLabel, searchFasteners, sizeForHole, type FastenerKind, type ToolboxGroup } from "./fasteners";
+import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerOfId, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, lengthLabel, searchFasteners, sizeForHole, type FastenerKind, type ToolboxGroup } from "./fasteners";
 import { fastenerShape, shapeSvg, shapeVolume, type ToolShape } from "./toolboxShape";
 import { applySolved, autoExplode, expandPatterns, explodeAt, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
@@ -247,7 +247,12 @@ export class AsmController {
       /** The shown components, once each, with their parts' material names. */
       comps: () => {
         const ex = this.expanded?.doc ?? this.doc;
-        return [...new Set(this.shownIds)].map(id => { const c = ex?.components.find(x => x.id === id); return { id, name: c?.name ?? id, material: (c && ex?.parts[c.part]?.doc?.material?.name) || "" }; });
+        return [...new Set(this.shownIds)].map(id => {
+          const c = ex?.components.find(x => x.id === id), pd = c && ex?.parts[c.part]?.doc, f = fastenerOfId(pd?.id);
+          // a toolbox screw, nut or washer: its axis, for the bolts of a study (FR-CON-020)
+          const fastener = c && f?.role ? { role: f.role, d: f.d, pitch: f.pitch, o: applyPoint(c.tf, [0, 0, 0]), z: applyDir(c.tf, [0, 0, 1]) } : undefined;
+          return { id, name: c?.name ?? id, material: (pd && pd.material?.name) || "", ...(fastener ? { fastener } : {}) };
+        });
       },
       /** A fingerprint of everything but the studies and the view's own data. */
       stateKey: () => {
