@@ -590,7 +590,7 @@ export class ThermalMaps {
     ];
     const bad = misfit(a.match) && !a.fitted;
     el.innerHTML = `<div class="th-sec th-src"><h4 translate="no">${esc(mf.design || a.pkg.name)}</h4>`
-      + (src ? `<p class="muted" data-v="source">${esc(t("From {app}", { app: src }))}</p>` : "")
+      + (src ? `<p class="muted" data-v="source">${esc(t("From {app}", { app: "\u0001" })).replace("\u0001", `<span translate="no">${esc(src)}</span>`)}</p>` : "")
       + (set ? `<p class="muted" data-v="settings">${esc(set)}</p>` : "")
       + (mf.accuracy !== undefined ? `<p class="muted" data-v="accuracy">${esc(t("Estimate ±{v} °C", { v: deg(mf.accuracy) }))}</p>` : "")
       + (a.own ? `<p class="th-note" data-v="own">${esc(t("Open the board's STEP to measure it or simulate it."))}</p>`
@@ -661,7 +661,7 @@ export class ThermalMaps {
       + `<button class="sim-ib" data-a="close" title="${esc(t("Hide the map"))}" aria-label="${esc(t("Hide the map"))}">×</button></div>`
       + `<div class="ana-ramp" style="background:${paletteCss(this.prefs.palette)}"></div>`
       + `<div class="ana-scale"><span data-v="min" translate="no">${mr[0] < lo - 1e-6 ? "▼ " : ""}${rise ? "+" : ""}${esc(deg(lo - off))}</span><span>°C</span><span data-v="max" translate="no">${mr[1] > hi + 1e-6 ? "▲ " : ""}${rise ? "+" : ""}${esc(deg(hi - off))}</span></div>`
-      + (src ? `<p class="ana-note" data-v="source">${esc(t("From {app}", { app: src }))}</p>` : "")
+      + (src ? `<p class="ana-note" data-v="source">${esc(t("From {app}", { app: "\u0001" })).replace("\u0001", `<span translate="no">${esc(src)}</span>`)}</p>` : "")
       + (amb !== undefined ? `<p class="ana-note" data-v="ambient">${esc(t("Ambient {v} °C", { v: deg(amb) }))}${mf.settings.operatingPoint ? ` · ${esc(t("operating point {v}", { v: mf.settings.operatingPoint }))}` : ""}</p>` : "")
       + (mf.accuracy !== undefined ? `<p class="ana-note" data-v="accuracy">${esc(t("Estimate ±{v} °C", { v: deg(mf.accuracy) }))}</p>` : "")
       + (misfit(a!.match) && !a!.fitted ? `<p class="th-warn" data-v="misfit">${esc(t("The map does not fit this model (about {v} mm off).", { v: a!.match.off.toFixed(1) }))} <button class="btn small" data-a="fit">${esc(t("Fit by parts"))}</button></p>` : "")

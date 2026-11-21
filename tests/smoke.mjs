@@ -16242,7 +16242,8 @@ try {
     await ctx.close();
   }
   // --- Structural analysis 1.608 (FRS-structural SA1): a cantilever through the Simulation tab ---
-  if (inShard(1)) {
+  // In shard 4 since 1.652.0: shard 1 reached the 12 minute limit.
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
