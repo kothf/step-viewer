@@ -5,7 +5,8 @@ import { MeshBody, insideOf } from "./body";
 import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
-import { GRAVITY, MAX_REFINE, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { DEFAULT_AMBIENT, GRAVITY, MAX_REFINE, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { solveThermal, thermalMemory, type SinkFlow, type ThermalSink, type ThermalSource } from "./thermal";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
 export interface SimBody {
@@ -263,7 +264,7 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
   const relief = !!st.settings.relief && st.kind !== "modal";
   if (relief) out.relief = true;
   for (const s of st.supports) {
-    if (off.has(s.id) || relief) continue;
+    if (off.has(s.id) || relief || isThermalType(s.type)) continue;
     const moved = (sup: Support) => {
       if (s.type !== "disp") return;
       const d = s.dirs ?? [true, true, true], v = s.disp ?? [0, 0, 0];
@@ -290,7 +291,7 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
       out.supportIds.push(s.id);
       continue;
     }
-    const sup: Support = { tris, mode: s.type === "disp" ? "dirs" : s.type };
+    const sup: Support = { tris, mode: (s.type === "disp" ? "dirs" : s.type) as Support["mode"] };
     moved(sup);
     if (s.type === "hinge") {
       const axis = axisOf(tris);
@@ -302,7 +303,7 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
     out.supportIds.push(s.id);
   }
   for (const l of st.loads) {
-    if (off.has(l.id)) continue;
+    if (off.has(l.id) || isThermalType(l.type)) continue;
     const comp = (l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(c => c.v);
     if (l.type === "gravity") {
       out.gravity = (out.gravity ?? [0, 0, 0]).map((v, i) => v + comp[i]);
@@ -446,6 +447,55 @@ export interface PassResult {
   more?: boolean;
   /** Bodies with different materials: the body (index into `RunInput.regions`) each sample point is in. */
   dom?: Uint8Array;
+  /**
+   * Thermal studies: `vm` is then the temperature at the sample points, °C, and `u` the heat flux, W/mm². Lowest and
+   * highest temperature, the heat the sources put in and what each surface condition takes away (W, in the order of
+   * `ThermalSetup.sinkIds`), and how many solves the pass took (radiation is solved step by step).
+   */
+  thermal?: { min: number; max: number; applied: number; flows: SinkFlow[]; solves: number };
+}
+
+/** A thermal study on the body's triangles. */
+export interface ThermalSetup {
+  sinks: ThermalSink[];
+  sources: ThermalSource[];
+  sinkIds: string[];
+  problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-TH-VALUE" }[];
+}
+
+/** The surface conditions and heat sources of a thermal study (FR-TLOAD, FR-TBC): W/m² and W/(m²·K) become per mm². */
+export function thermalSetup(st: Study, b: SimBody): ThermalSetup {
+  const off = new Set(st.suppressed ?? []), amb = st.settings.ambient ?? DEFAULT_AMBIENT;
+  const out: ThermalSetup = { sinks: [], sources: [], sinkIds: [], problems: [] };
+  const facesOf = (it: { id: string; faces: { name: string }[] }) => {
+    if (!it.faces.length) { out.problems.push({ id: it.id, code: "E-SIM-EMPTY" }); return null; }
+    const tris = trisOf(b, it.faces.map(f => f.name));
+    if (!tris) out.problems.push({ id: it.id, code: "E-SIM-REF" });
+    return tris;
+  };
+  for (const s of st.supports) {
+    if (off.has(s.id) || !isThermalType(s.type)) continue;
+    const tris = facesOf(s);
+    if (!tris) continue;
+    if (s.type === "temp") out.sinks.push({ tris, temp: s.temp ?? amb });
+    else if (s.type === "conv") {
+      if (!((s.h ?? 0) > 0)) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
+      out.sinks.push({ tris, h: s.h! * 1e-6, ambient: s.ambient ?? amb });
+    } else {
+      if (!((s.emis ?? 0) > 0) || s.emis! > 1) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
+      out.sinks.push({ tris, emissivity: s.emis, ambient: s.ambient ?? amb });
+    }
+    out.sinkIds.push(s.id);
+  }
+  for (const l of st.loads) {
+    if (off.has(l.id) || !isThermalType(l.type)) continue;
+    const v = l.value?.v ?? 0;
+    if (l.type === "heat" && l.body) { out.sources.push({ power: v }); continue; }
+    const tris = facesOf(l);
+    if (!tris) continue;
+    out.sources.push(l.type === "heat" ? { tris, power: v } : { tris, flux: v * 1e-6 });
+  }
+  return out;
 }
 
 export interface ModeInfo {
@@ -485,6 +535,8 @@ export interface RunInput {
   nrm: Float32Array;
   /** Cells aimed for (default 150). */
   cells?: number;
+  /** A thermal study: conductivity W/(mm·K) and its set-up. `mat`, `problem` and the structural parts are not used. */
+  thermal?: { k: number; setup: ThermalSetup };
   /** A modal study: this many modes; loads are not used. */
   modal?: {
     count: number;
@@ -765,6 +817,58 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
       u: keptShapes[first] ? Float32Array.from(keptShapes[first]) : new Float32Array(3 * n), vm: new Float32Array(n), err: new Float32Array(n), errors: [],
       maxU: keptShapes.length ? 1 : 0, maxVm: 0, converged, done: converged || capped > 0 || k === passes - 1,
       modes: kept.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })), shapes: keptShapes, mass: r.mass, ...(more ? { more: true } : {}),
+    };
+    if (converged || capped) return;
+  }
+}
+
+/**
+ * The passes of a thermal study (FR-TSOL-010): degree 2, 3, 4 on the same cells, until no temperature changes by
+ * more than `energyTol` % of the temperature range. `keep` gets each pass's solution (temperature as `vm`, heat
+ * flux as `u`), to be read later at other points.
+ */
+export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: number, y: number, z: number) => boolean) => void): Generator<PassResult> {
+  const T = inp.thermal!, set = T.setup;
+  if (set.problems.length) throw new Error(`${set.problems[0].code}: ${set.problems[0].id}`);
+  if (!(T.k > 0)) throw new Error("E-TH-NOK");
+  if (!set.sinks.length) throw new Error("E-TH-NOSINK");
+  // nothing brings heat and nothing differs: every point would just sit at the one temperature
+  const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
+  if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
+  const inside = insideOf(new MeshBody(inp.body.tris));
+  const h = cellSize(inp.body, inp.cells);
+  const passes = Math.max(1, Math.min(GLOBAL_PASSES, Math.round(inp.passes)));
+  let grid: Grid | undefined, prev: Float64Array | undefined, before: Float32Array | null = null;
+  const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
+  for (let k = 0; k < passes; k++) {
+    const t0 = Date.now(), p = k + 2;
+    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.k, grid, prev, sinks: set.sinks, sources: set.sources, memory: inp.memory });
+    grid = r.grid; prev = r.x;
+    if (r.prevError != null) known.push(r.prevError);
+    const sampler: Sampler = (pos, nrm, hits) => { const s = r.sample(pos, nrm, hits); return { u: s.flux, vm: s.temp, err: s.err, ...(s.hit ? { hit: s.hit } : {}) }; };
+    keep?.(sampler, inside);
+    const s = r.sample(inp.pos, inp.nrm);
+    let min = Infinity, max = -Infinity, maxU = 0, moved = 0;
+    for (let i = 0; i < s.temp.length; i++) {
+      const v = s.temp[i];
+      if (v < min) min = v;
+      if (v > max) max = v;
+      maxU = Math.max(maxU, Math.hypot(s.flux[3 * i], s.flux[3 * i + 1], s.flux[3 * i + 2]));
+      if (before) moved = Math.max(moved, Math.abs(v - before[i]));
+    }
+    if (!s.temp.length) { min = 0; max = 0; }
+    // the range the change is measured against takes in the surroundings, so a nearly even part still converges
+    let lo = min, hi = max;
+    for (const q of set.sinks) { const v = q.temp ?? q.ambient ?? min; lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    const change = before ? (100 * moved) / Math.max(hi - lo, 1e-9) : null;
+    before = s.temp.slice(); // a copy: the worker hands the pass's own arrays over
+    const converged = change != null && change <= inp.energyTol;
+    const need = !converged && k + 1 < passes ? thermalMemory(r.grid, p + 1) : 0;
+    const capped = need > (inp.memory ?? MEMORY_LIMIT) ? Math.ceil(need / 2 ** 20) : 0;
+    yield {
+      pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, ...(capped ? { capped } : {}), energy: r.energy, change, ms: Date.now() - t0, reactions: [], applied: none,
+      u: s.flux, vm: s.temp, err: s.err, errors: [...known, passError(known)], maxU, maxVm: max, converged, done: converged || capped > 0 || k === passes - 1,
+      thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations },
     };
     if (converged || capped) return;
   }

@@ -55,12 +55,13 @@ export function valueAt(a: ArrayLike<number>, at: Located, stride = 1, c = 0): n
 export interface ProbeRow { at: ArrayLike<number>; vm: number; u: [number, number, number]; sf?: number | null }
 
 /** The probe table: place (mm), von Mises stress (MPa), displacement and its components (mm), safety factor when known. */
-export function probeCsv(rows: ProbeRow[]): string {
+export function probeCsv(rows: ProbeRow[], thermal = false): string {
+  const f = thermal ? 1e6 : 1;
   const withSf = rows.some(r => r.sf != null);
   const n = (x: number) => Number.isFinite(x) ? String(Number(x.toPrecision(7))) : "";
-  const out = [["Probe", "X (mm)", "Y (mm)", "Z (mm)", "von Mises (MPa)", "Displacement (mm)", "UX (mm)", "UY (mm)", "UZ (mm)", ...(withSf ? ["Safety factor"] : [])].join(",")];
+  const out = [(thermal ? ["Probe", "X (mm)", "Y (mm)", "Z (mm)", "Temperature (°C)", "Heat flux (W/m²)", "QX (W/m²)", "QY (W/m²)", "QZ (W/m²)"] : ["Probe", "X (mm)", "Y (mm)", "Z (mm)", "von Mises (MPa)", "Displacement (mm)", "UX (mm)", "UY (mm)", "UZ (mm)", ...(withSf ? ["Safety factor"] : [])]).join(",")];
   // places to a nanometre: a point on a face reads 20, not 19.99999997
   const at = (x: number) => String(Number(x.toFixed(6)) || 0);
-  rows.forEach((r, i) => out.push([String(i + 1), at(r.at[0]), at(r.at[1]), at(r.at[2]), n(r.vm), n(Math.hypot(r.u[0], r.u[1], r.u[2])), n(r.u[0]), n(r.u[1]), n(r.u[2]), ...(withSf ? [r.sf == null ? "" : n(r.sf)] : [])].join(",")));
+  rows.forEach((r, i) => out.push([String(i + 1), at(r.at[0]), at(r.at[1]), at(r.at[2]), n(r.vm), n(Math.hypot(r.u[0], r.u[1], r.u[2]) * f), n(r.u[0] * f), n(r.u[1] * f), n(r.u[2] * f), ...(withSf && !thermal ? [r.sf == null ? "" : n(r.sf)] : [])].join(",")));
   return out.join("\r\n") + "\r\n";
 }

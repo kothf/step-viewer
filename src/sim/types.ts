@@ -5,8 +5,14 @@
 import type { FaceRef, Num, V3 } from "../model/types";
 import type { MatRef } from "../tools/materials";
 
-export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp";
-export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote";
+/** `temp`, `conv` and `rad` are a thermal study's surface conditions: a fixed temperature, convection to air, radiation to the surroundings. */
+export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp" | "temp" | "conv" | "rad";
+/** `heat` (W) and `hflux` (W/m²) are a thermal study's heat sources. */
+export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote" | "heat" | "hflux";
+export const THERMAL_SUPPORTS: SupportType[] = ["temp", "conv", "rad"];
+export const THERMAL_LOADS: LoadType[] = ["heat", "hflux"];
+/** Whether a support or load type belongs to thermal studies. */
+export const isThermalType = (type: string) => (THERMAL_SUPPORTS as string[]).includes(type) || (THERMAL_LOADS as string[]).includes(type);
 
 export interface StudySupport {
   id: string;
@@ -22,6 +28,14 @@ export interface StudySupport {
   /** Elastic support: stiffness per area along the face normal and in its plane, N/mm³. */
   kn?: number;
   kt?: number;
+  /** Fixed temperature, °C. */
+  temp?: number;
+  /** Convection: film coefficient, W/(m²·K). */
+  h?: number;
+  /** Radiation: emissivity, 0..1. */
+  emis?: number;
+  /** Convection and radiation: the temperature of the air or the surroundings, °C; absent = the study's ambient. */
+  ambient?: number;
   /** Fixed, fixed in directions and enforced displacement only: what is held, absent = faces. */
   on?: "edges" | "points";
   edges?: StudyEdge[];
@@ -65,6 +79,8 @@ export interface StudyLoad {
   normal?: boolean;
   /** Reverses a normal force or a pressure (pulls), or a torque. */
   flip?: boolean;
+  /** Heat power: made throughout the whole body instead of entering through faces. */
+  body?: boolean;
 }
 
 /** Local accuracy (FR-SOL-012): the solution starts `level` degrees higher where it meets these faces. */
@@ -144,10 +160,18 @@ export interface StudySettings {
   range?: { from: number; to: number };
   /** Static studies: inertia relief (FR-SUP-007). The part is held by nothing, its supports are left out, and the loads are balanced by its own inertia. */
   relief?: boolean;
+  /** Thermal studies: the temperature of the air and the surroundings, °C (default `DEFAULT_AMBIENT`). */
+  ambient?: number;
 }
+export const DEFAULT_AMBIENT = 25;
+/** Passes of a thermal study: degree 2, 3, 4 over the whole body. */
+export const THERMAL_PASSES = 3;
+/** Film coefficients people reach for, W/(m²·K). */
+export const FILM_PRESETS: [string, number][] = [["Still air (natural convection)", 8], ["Moving air (fan)", 40], ["Still water", 500], ["Flowing water", 3000]];
 
 /** `modal` = natural frequencies and mode shapes: supports only (none = a free body), no loads. */
-export type StudyKind = "static" | "modal";
+/** `thermal` = steady temperatures: heat sources (its loads) and surface conditions (its supports). */
+export type StudyKind = "static" | "modal" | "thermal";
 export const DEFAULT_MODES = 6, MAX_MODES = 50;
 /** Passes of a modal study: degree 2, 3, 4 over the whole body. */
 export const MODAL_PASSES = 3;
@@ -220,7 +244,7 @@ export function glueStiffness(l: { t?: number; E?: number }): [number, number] {
 /** Assemblies: components are joined across gaps up to this wide, mm, when the study sets none (FR-CON-003). */
 export const DEFAULT_GAP = 0.1;
 
-export type PlotKind = "vm" | "u" | "ux" | "uy" | "uz" | "sf" | "err";
+export type PlotKind = "vm" | "u" | "ux" | "uy" | "uz" | "sf" | "err" | "temp" | "flux";
 
 export const DEFAULT_SETTINGS: StudySettings = { passes: 3, energyTol: 2 };
 export const GRAVITY = 9806.65;
@@ -247,10 +271,10 @@ export function caseStudy(st: Study, c: StudyCase): Study {
 export function newStudy(existing: Study[], kind: StudyKind = "static"): Study {
   let n = 1, k = 1;
   const ids = new Set(existing.map(s => s.id)), names = new Set(existing.map(s => s.name));
-  const label = kind === "modal" ? "Modal" : "Static";
+  const label = kind === "modal" ? "Modal" : kind === "thermal" ? "Thermal" : "Static";
   while (ids.has(`st${n}`)) n++;
   while (names.has(`${label} ${k}`)) k++;
-  return { id: `st${n}`, name: `${label} ${k}`, kind, supports: [], loads: [], settings: kind === "modal" ? { ...DEFAULT_SETTINGS, modes: DEFAULT_MODES } : { ...DEFAULT_SETTINGS } };
+  return { id: `st${n}`, name: `${label} ${k}`, kind, supports: [], loads: [], settings: kind === "modal" ? { ...DEFAULT_SETTINGS, modes: DEFAULT_MODES } : kind === "thermal" ? { ...DEFAULT_SETTINGS, energyTol: 1, ambient: DEFAULT_AMBIENT } : { ...DEFAULT_SETTINGS } };
 }
 
 /** The next free id with a prefix among a study's supports and loads. */
@@ -261,8 +285,8 @@ export function nextId(st: Study, prefix: "s" | "l" | "r" | "w" | "k" | "m"): st
   return `${prefix}${n}`;
 }
 
-export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement" };
-export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure", remote: "Remote load" };
+export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement", temp: "Fixed temperature", conv: "Convection", rad: "Radiation" };
+export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure", remote: "Remote load", heat: "Heat power", hflux: "Heat flux" };
 
 export const REFINE_LABEL = "Local accuracy";
 

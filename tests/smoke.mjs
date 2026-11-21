@@ -16566,7 +16566,7 @@ try {
     // (a little less with shear); the table lists the modes, a click shows one, and the shape swings on the model.
     await mp.click('#sim-tools [data-s="newmodal"]');
     await settle();
-    const mSet = await mp.evaluate(() => ({ kind: document.querySelector('#sim-tree [data-v="kind"]')?.textContent, heads: [...document.querySelectorAll("#sim-tree h4")].map(e => e.textContent), force: document.querySelector('#sim-tools [data-s="force"]').disabled,
+    const mSet = await mp.evaluate(() => ({ kind: document.querySelector('#sim-tree [data-v="kind"]')?.textContent, heads: [...document.querySelectorAll("#sim-tree h4")].map(e => e.textContent), force: !document.querySelector('#sim-tools [data-s="force"]') && !!document.querySelector('#sim-tools [data-s="fixed"]'),
       studies: window.__sv.model.store.doc.studies.map(s => [s.name, s.kind, s.settings.modes ?? null]) }));
     await mp.click('#sim-tools [data-s="fixed"]');
     p = await at("f1:side:s1l1");
@@ -17073,6 +17073,119 @@ try {
     check(bdNote.bodies === 2 && !bd.error && bd.bodies === 2 && /2/.test(bdNote.note) && bd.modes.length === 6 && Math.abs(bd.modes[0].hz / 249 - 1) < 0.04 && Math.abs(bd.mass * 1000 - 0.628 * 1.3) < 0.003 && bd.plot.shown
       && apart.error === "E-SIM-BODIES" && /touch no other body/.test(apartText),
       `sim 1.620: two touching bodies are analysed bonded as one longer bar, and a body that touches nothing is refused (${JSON.stringify({ bdNote, error: bd.error, bodies: bd.bodies, hz: bd.modes.map(m => m.hz), mass: bd.mass, apart: apart.error })})`);
+    await ctx.close();
+  }
+
+  // --- Thermal analysis 1.651 (FRS-thermal TH2): the Simulation bar's Structural | Thermal switch and a thermal study of a part ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.goto(`${origin}/index.html?debug`);
+    await tp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await tp.goto(`${origin}/index.html?debug`);
+    await tp.waitForFunction(() => window.__sv);
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await tp.waitForTimeout(150); await tp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 }); };
+    // A 20 × 20 bar, 200 long along Y, with a conductivity of 50 W/(m·K).
+    await tp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 200), P(4, -10, 200), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50 };
+    }));
+    await settle();
+    const at = name => tp.evaluate(n => {
+      const v = window.__sv.viewer, part = v.parts[0], names = window.__sv.model.last().faceNames, f = part.data.faces[names.indexOf(n)];
+      const s = v.toWorld(part, f.center).clone().project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, name);
+    const sim = () => tp.evaluate(() => window.__sv.sim.state());
+    const bar = () => tp.evaluate(() => ({ ids: [...document.querySelectorAll("#sim-tools [data-s]")].map(b => b.dataset.s), on: document.querySelector("#sim-tools .sim-mode-b.on")?.dataset.s ?? "", checked: [...document.querySelectorAll('#sim-tools [role="radio"][aria-checked="true"]')].length,
+      wide: document.querySelector("#cm-body").scrollWidth > document.querySelector("#cm-body").clientWidth + 1, words: [...document.querySelectorAll("#sim-tools .sim-mode-b .mc-l")].filter(e => e.getBoundingClientRect().width > 0).length }));
+    const solved = async () => { await tp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 240000 }); await tp.waitForTimeout(300); };
+    await tp.click("#cm-t-simulation");
+    await tp.waitForTimeout(300);
+    const b0 = await bar();
+    await tp.click('#sim-tools [data-s="mode-thermal"]');
+    await tp.waitForTimeout(150);
+    const b1 = await bar();
+    const empty = await tp.evaluate(() => !!document.querySelector('#sim-tree .sim-empty [data-a="newthermal"]'));
+    check(b0.on === "mode-structural" && b0.ids.includes("force") && b0.ids.includes("fixed") && !b0.ids.includes("heat") && b0.checked === 1 && !b0.wide && b0.words === 2
+      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "heat", "hflux", "temp", "conv", "rad", "solve", "results", "report"]) && empty,
+      `thermal 1.651: the Simulation bar has a Structural | Thermal switch; Thermal shows the thermal study's commands in place of supports and loads (${JSON.stringify({ b0, b1, empty })})`);
+    // 8 W made in the whole bar (a thermal study is made on the way), the top face held at 30 °C
+    await tp.click('#sim-tools [data-s="heat"]');
+    await tp.waitForSelector("#sim-pm .pm-ok");
+    await tp.check('#sim-pm [data-k="body"]');
+    const noFaces = await tp.evaluate(() => !document.querySelector("#sim-pm .sim-faces"));
+    await tp.fill('#sim-pm [data-n="value"]', "8000 mW");
+    await tp.press('#sim-pm [data-n="value"]', "Tab");
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    await tp.click('#sim-tools [data-s="temp"]');
+    let p = await at("f1:end");
+    await tp.mouse.click(p.x, p.y);
+    await tp.waitForTimeout(200);
+    await tp.fill('#sim-pm [data-q="temp"]', "30");
+    await tp.press('#sim-pm [data-q="temp"]', "Tab");
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    const set = await tp.evaluate(() => ({ kind: document.querySelector('#sim-tree [data-v="kind"]')?.textContent, heads: [...document.querySelectorAll("#sim-tree h4")].map(e => e.textContent), k: document.querySelector('#sim-tree [data-v="kcond"]')?.textContent ?? "",
+      metas: [...document.querySelectorAll("#sim-tree .sim-row .sim-meta")].map(e => e.textContent), studies: window.__sv.model.store.doc.studies.map(s => [s.name, s.kind, s.loads.map(l => [l.type, l.body ?? false, l.value?.v]), s.supports.map(x => [x.type, x.temp])]) }));
+    await tp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t1 = await sim();
+    const res = await tp.evaluate(() => ({ tmax: document.querySelector('#sim-tree [data-v="tmax"]')?.textContent ?? "", heat: document.querySelector('#sim-tree [data-v="heatin"]')?.textContent ?? "", flow: document.querySelector('#sim-tree [data-v="flow"]')?.textContent ?? "",
+      rows: document.querySelectorAll("#sim-tree .sim-passes tbody tr").length, plots: [...document.querySelectorAll('#sim-legend [data-k="kind"] option')].map(o => o.value), deformed: !!document.querySelector('#sim-legend [data-k="deformed"]'),
+      unit: document.querySelector("#sim-legend .ana-scale")?.textContent ?? "", wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth, assume: document.querySelector("#sim-tree .sim-assume")?.textContent ?? "" }));
+    await tp.click("#lang-btn");
+    const ru = await tp.evaluate(() => [...document.querySelectorAll("#tab-sim *, #sim-tools *, #sim-legend *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await tp.click("#lang-btn");
+    await settle();
+    const rise = 8 * 0.02 / (2 * 50 * 4e-3);
+    check(noFaces && set.kind === "Thermal" && set.heads.includes("Heat sources") && set.heads.includes("Cooling and fixed temperatures") && !set.heads.includes("Loads") && !set.heads.includes("Supports") && /50 W/.test(set.k) && /whole body · 8 W/.test(set.metas[0]) && /1 face · 30 °C/.test(set.metas[1])
+      && JSON.stringify(set.studies) === JSON.stringify([["Thermal 1", "thermal", [["heat", true, 8]], [["temp", 30]]]])
+      && !t1.error && t1.kind === "thermal" && t1.barMode === "thermal" && Math.abs(t1.thermal.min - 30) < 0.01 && Math.abs((t1.thermal.max - 30) / rise - 1) < 0.02 && Math.abs(t1.thermal.applied - 8) < 1e-6 && Math.abs(t1.thermal.out[0] - 8) < 0.01 && t1.passes.length === 2
+      && /30\.4 °C/.test(res.tmax) && /8 W/.test(res.heat) && /8 W/.test(res.flow) && res.rows === 2 && JSON.stringify(res.plots) === JSON.stringify(["temp", "flux", "err"]) && !res.deformed && /°C/.test(res.unit) && res.wide <= 0 && res.assume.length > 40 && t1.plot.shown && t1.plot.kind === "temp" && ru.length === 0,
+      `thermal 1.651: 8 W made in a bar whose top face is held at 30 °C: the far side is P·t / (2·k·A) hotter, the face takes all the heat away, the passes stop once the temperatures settle; translated (${JSON.stringify({ noFaces, set, error: t1.error, thermal: t1.thermal, passes: t1.passes.length, res, ru })})`);
+    // convection on a side face as well: the results go out of date, then part of the heat leaves that way
+    await tp.click('#sim-tools [data-s="conv"]');
+    p = await at("f1:side:s1l2");
+    await tp.mouse.click(p.x, p.y);
+    await tp.waitForTimeout(200);
+    await tp.selectOption('#sim-pm [data-k="film"]', "3000");
+    const film = await tp.evaluate(() => document.querySelector('#sim-pm [data-q="hc"]').value);
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    const stale = (await sim()).stale;
+    await tp.fill('#sim-tree [data-k="ambient"]', "20");
+    await tp.press('#sim-tree [data-k="ambient"]', "Tab");
+    await settle();
+    await tp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t2 = await sim();
+    check(film === "3000" && stale && !t2.error && t2.thermal.out.length === 2 && t2.thermal.out[1] > 0.5 && Math.abs(t2.thermal.out[0] + t2.thermal.out[1] - 8) < 0.01 && t2.thermal.min < 30 && t2.thermal.min > 20,
+      `thermal 1.651: flowing water at 20 °C on a side face takes part of the heat; what the two conditions take adds up to the heat put in (${JSON.stringify({ film, stale, error: t2.error, thermal: t2.thermal })})`);
+    // a structural command starts a static study of its own; the switch goes back to the thermal one; undo removes it
+    await tp.click('#sim-tools [data-s="mode-structural"]');
+    await tp.waitForTimeout(150);
+    const b2 = await bar(), k2 = (await sim()).kind;
+    await tp.click('#sim-tools [data-s="fixed"]');
+    await tp.waitForSelector("#sim-pm .pm-ok");
+    p = await at("f1:end");
+    await tp.mouse.click(p.x, p.y);
+    await tp.waitForTimeout(200);
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    const t3 = await sim(), b3 = await bar();
+    await tp.click('#sim-tools [data-s="mode-thermal"]');
+    await settle();
+    const t4 = await sim(), b4 = await bar();
+    check(b2.on === "mode-structural" && b2.ids.includes("force") && k2 === "thermal" && t3.kind === "static" && b3.on === "mode-structural" && t4.kind === "thermal" && b4.on === "mode-thermal" && b4.ids.includes("heat") && !b4.ids.includes("force"),
+      `thermal 1.651: Structural shows the structural commands, Fixed then makes a static study, and Thermal goes back to the thermal study (${JSON.stringify({ b2: b2.on, k2, k3: t3.kind, b3: b3.on, k4: t4.kind, b4: b4.on })})`);
     await ctx.close();
   }
 
