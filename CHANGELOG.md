@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.614.0] - 2026-11-21
+
+### Added
+- Structural analysis: **hot spots**. The Study tab and the report list the highest stress peaks of a solved study with their places; the stress plot labels the highest one, and a click on a row labels that peak too. Other plots label their highest (and lowest) value. **Highest and lowest values** in the legend turns the labels off.
+- Structural analysis: **stress singularities** are found and marked. A peak that keeps rising with every pass while the strain energy has settled (a sharp inside corner, a point load, the edge of a fixed face) is marked ⚠ "Stress singularity: value depends on refinement" in the list, on the plot and in the report. The Study tab then also shows the highest stress away from singularities, and the safety factor uses it.
+
 ## [1.613.0] - 2026-11-21
 
 ### Added
@@ -3943,7 +3949,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.613.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.614.0...HEAD
+[1.614.0]: https://github.com/kothf/step-viewer/compare/v1.613.0...v1.614.0
 [1.613.0]: https://github.com/kothf/step-viewer/compare/v1.612.0...v1.613.0
 [1.612.0]: https://github.com/kothf/step-viewer/compare/v1.611.0...v1.612.0
 [1.611.0]: https://github.com/kothf/step-viewer/compare/v1.610.0...v1.611.0

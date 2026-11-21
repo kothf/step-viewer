@@ -16,6 +16,7 @@ import type { Part, Viewer } from "../viewer/Viewer";
 import type { EdgeInfo } from "../topology";
 import { SIM_STOPPED, SimClient } from "./client";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
+import { hotSpots, type HotSpot } from "./hotspots";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, studyProblem, type PassResult, type SimBody } from "./run";
 import { GRAVITY, LOAD_LABEL, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyLoad, type StudySupport, type SupportType } from "./types";
@@ -91,7 +92,13 @@ export class SimController {
   private error: string | null = null;
   /** Item id → problem text, from the last Solve. */
   private problems = new Map<string, string>();
-  private plot: { kind: PlotKind; deformed: boolean; scale: number; on: boolean } = { kind: "vm", deformed: true, scale: 0, on: true };
+  private plot: { kind: PlotKind; deformed: boolean; scale: number; on: boolean; marks: boolean } = { kind: "vm", deformed: true, scale: 0, on: true, marks: true };
+  /** Hot spots of the results, found once per pass. */
+  private hot: { res: Results; n: number; list: HotSpot[] } | null = null;
+  /** The hot spot picked in the list (its label is drawn on the model). */
+  private hotSel = -1;
+  /** What the labels on the plot stand on: a plot-mesh triangle and the weights of the point in it. */
+  private pins: { i: number[]; w: number[] }[] = [];
   private client = new SimClient();
   private docId: string | null = null;
   private marks = new THREE.Group();
@@ -164,6 +171,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), report: this.lastReport,
+      hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
     };
   }
 
@@ -357,7 +365,7 @@ export class SimController {
     }
     const part = this.host.viewer.parts[0];
     if (!part) { toast(t("The part has no body yet."), "warn"); return; }
-    this.running = true; this.error = null; this.res = null; this.problems.clear(); this.probes = [];
+    this.running = true; this.error = null; this.res = null; this.problems.clear(); this.probes = []; this.hot = null; this.hotSel = -1;
     this.clearPlot();
     this.progress = t("Reading the geometry…");
     this.renderAll();
@@ -587,10 +595,41 @@ export class SimController {
     return k === "vm" ? ["MPa", 1] : k === "sf" ? ["", 1] : k === "err" ? ["%", 1] : [units.current, UNITS[units.current].f];
   }
 
-  /** Labels of the pinned probes, kept on their points as the view moves. */
+  /** The hot spots of the last pass: the highest stress peaks, likely singularities flagged. */
+  private hotList(): HotSpot[] {
+    const r = this.res;
+    if (!r || !r.passes.length) return [];
+    if (this.hot?.res !== r || this.hot.n !== r.passes.length) this.hot = { res: r, n: r.passes.length, list: hotSpots(r.mesh.pos, r.mesh.index, r.passes, this.host.viewer.modelSize / 12) };
+    return this.hot.list;
+  }
+
+  /** Labels of the highest and lowest values, and of the hot spots on a stress plot. */
+  private peakLabels(): { v: number; html: string }[] {
+    const a = this.vals;
+    if (!a || !this.plot.marks) return [];
+    const [unit, f] = this.plotUnit(), val = (x: number) => `${sig(x * f)}${unit ? ` ${esc(unit)}` : ""}`;
+    const out: { v: number; html: string }[] = [];
+    const sing = esc(t("Stress singularity: value depends on refinement"));
+    let lo = 0, hi = 0;
+    for (let i = 1; i < a.length; i++) { if (a[i] < a[lo]) lo = i; if (a[i] > a[hi]) hi = i; }
+    const label = (cls: string, key: string, text: string, v: number, warn = false) => out.push({ v, html: `<div class="sim-probe sim-peak ${cls}${warn ? " warn" : ""}" data-peak="${key}"${warn ? ` title="${sing}"` : ""}><i></i><span>${warn ? "⚠ " : ""}${text}</span></div>` });
+    if (this.plot.kind === "vm") {
+      const hs = this.hotList(), top = hs.findIndex(h => !h.singular);
+      hs.forEach((h, i) => { if (h.singular || i === top || i === this.hotSel) label("hot", `h${i}`, `<b>${i + 1}</b> <span translate="no">${val(h.vm)}</span>`, h.v, h.singular); });
+      if (!hs.length) label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[hi])}</span>`, hi);
+    } else if (this.plot.kind === "sf") label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
+    else {
+      label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[hi])}</span>`, hi);
+      if (a[lo] < 0) label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
+    }
+    return out;
+  }
+
+  /** Labels on the plot (pinned probes, highest and lowest values, hot spots), kept on their points as the view moves. */
   private drawProbes() {
-    const show = !!this.saved && !!this.overlay && this.probes.length > 0;
-    if (!show) { this.probeLayer?.replaceChildren(); return; }
+    const peaks = this.saved && this.overlay ? this.peakLabels() : [];
+    const show = !!this.saved && !!this.overlay && this.probes.length + peaks.length > 0;
+    if (!show) { this.probeLayer?.replaceChildren(); this.pins = []; return; }
     if (!this.probeLayer) {
       const el = this.probeLayer = document.createElement("div");
       el.id = "sim-probes";
@@ -603,7 +642,8 @@ export class SimController {
     }
     const [unit, f] = this.plotUnit();
     this.probeLayer.innerHTML = this.probes.map((p, i) => `<div class="sim-probe" data-probe="${i}"><i></i><span translate="no">${sig(this.probeValue(p) * f)}${unit ? ` ${esc(unit)}` : ""}</span>`
-      + `<button data-rm="${i}" title="${esc(t("Remove probe"))}" aria-label="${esc(t("Remove probe"))}">×</button></div>`).join("");
+      + `<button data-rm="${i}" title="${esc(t("Remove probe"))}" aria-label="${esc(t("Remove probe"))}">×</button></div>`).join("") + peaks.map(p => p.html).join("");
+    this.pins = [...this.probes, ...peaks.map(p => ({ i: [p.v], w: [1] }))];
     this.placeProbes();
   }
 
@@ -612,11 +652,11 @@ export class SimController {
     if (!el || !ov || !el.childElementCount) return;
     const v = this.host.viewer, c = v.renderer.domElement, pa = ov.geometry.getAttribute("position");
     const q = new THREE.Vector3(), s = new THREE.Vector3();
-    this.probes.forEach((p, k) => {
+    this.pins.forEach((p, k) => {
       const d = el.children[k] as HTMLElement | undefined;
       if (!d) return;
       s.set(0, 0, 0);
-      for (let j = 0; j < 3; j++) s.addScaledVector(q.fromBufferAttribute(pa, p.i[j]), p.w[j]);
+      for (let j = 0; j < p.i.length; j++) s.addScaledVector(q.fromBufferAttribute(pa, p.i[j]), p.w[j]);
       ov.localToWorld(s).project(v.camera);
       d.style.left = `${c.offsetLeft + ((s.x + 1) / 2) * c.clientWidth}px`;
       d.style.top = `${c.offsetTop + ((1 - s.y) / 2) * c.clientHeight}px`;
@@ -764,8 +804,11 @@ export class SimController {
     })] });
     blocks.push({ kind: "h", text: t("Results") });
     const f = (v: number[]) => sig(Math.hypot(v[0], v[1], v[2]));
-    const rows: string[][] = [[t("Max von Mises stress"), `${sig(last.maxVm)} MPa`], [t("Max displacement"), this.lenText(last.maxU)]];
-    if (m?.sy && last.maxVm > 0) rows.push([t("Lowest safety factor (yield)"), sig(m.sy / last.maxVm)]);
+    const hs = this.hotList(), singular = hs.some(h => h.singular), real = singular ? hs.find(h => !h.singular) : undefined, peak = real?.vm ?? last.maxVm;
+    const rows: string[][] = [[t("Max von Mises stress"), `${sig(last.maxVm)} MPa${singular ? ` (${t("Stress singularity: value depends on refinement")})` : ""}`]];
+    if (real) rows.push([t("Highest stress away from singularities"), `${sig(real.vm)} MPa`]);
+    rows.push([t("Max displacement"), this.lenText(last.maxU)]);
+    if (m?.sy && peak > 0) rows.push([t("Lowest safety factor (yield)"), sig(m.sy / peak)]);
     const errs = last.errors, eLast = errs.at(-1), eBefore = errs.length > 1 ? errs[errs.length - 2] : null;
     if (eLast != null) rows.push([t("Estimated error"), `≈ ${sig(eLast)} %`]);
     else if (eBefore != null) rows.push([t("Estimated error"), `< ${sig(eBefore)} %`]);
@@ -780,6 +823,12 @@ export class SimController {
     if (this.probes.length && this.saved) {
       const [unit, uf] = this.plotUnit(), label = t(PLOTS.find(p => p[0] === this.plot.kind)![1]);
       blocks.push({ kind: "table", widths: [2, 3], rows: [[t("Probe"), `${label}${unit ? `, ${unit}` : ""}`], ...this.probes.map((p, i) => [String(i + 1), sig(this.probeValue(p) * uf)])] });
+    }
+    if (hs.length) {
+      const uf = UNITS[units.current].f;
+      blocks.push({ kind: "h", text: t("Hot spots") });
+      blocks.push({ kind: "table", widths: [1, 3, 4, 5], rows: [["#", `${t("von Mises stress")}, MPa`, `X, Y, Z, ${units.current}`, t("Note")],
+        ...hs.map((h, i) => [String(i + 1), sig(h.vm), h.at.map(x => String(Number((x * uf).toFixed(3)))).join(", "), h.singular ? t("Stress singularity: value depends on refinement") : ""])] });
     }
     blocks.push({ kind: "h", text: t("Convergence") });
     blocks.push({ kind: "table", widths: [1, 2, 2, 2, 2], rows: [[t("Pass"), t("Unknowns"), t("Energy change"), t("Est. error"), t("Time")],
@@ -898,9 +947,13 @@ export class SimController {
     if (!r || !last) return html || `<p class="sim-note muted">${esc(t("Not solved yet."))}</p><button class="btn small" data-a="solve">${esc(t("Solve"))}</button>`;
     if (this.stale()) html += `<p class="sim-prob">${esc(t("Out of date: the model or the study changed."))} <button class="btn small" data-a="solve">${esc(t("Solve"))}</button></p>`;
     const f = (v: number[]) => sig(Math.hypot(v[0], v[1], v[2]));
-    html += `<dl class="sim-kv"><dt>${esc(t("Max von Mises stress"))}</dt><dd>${sig(last.maxVm)} MPa</dd><dt>${esc(t("Max displacement"))}</dt><dd>${esc(this.lenText(last.maxU))}</dd>`;
+    const hs = this.hotList(), singular = hs.some(h => h.singular), real = singular ? hs.find(h => !h.singular) : undefined, peak = real?.vm ?? last.maxVm;
+    const warn = `<span class="sim-warn" title="${esc(t("Stress singularity: value depends on refinement"))}">⚠</span>`;
+    html += `<dl class="sim-kv"><dt>${esc(t("Max von Mises stress"))}</dt><dd data-v="maxvm">${sig(last.maxVm)} MPa${singular ? ` ${warn}` : ""}</dd>`;
+    if (real) html += `<dt>${esc(t("Highest stress away from singularities"))}</dt><dd data-v="realvm">${sig(real.vm)} MPa</dd>`;
+    html += `<dt>${esc(t("Max displacement"))}</dt><dd>${esc(this.lenText(last.maxU))}</dd>`;
     const sy = this.host.doc()?.material?.sy;
-    if (sy && last.maxVm > 0) html += `<dt>${esc(t("Lowest safety factor (yield)"))}</dt><dd${sy / last.maxVm < 1 ? ' class="sim-low"' : ""}>${sig(sy / last.maxVm)}</dd>`;
+    if (sy && peak > 0) html += `<dt>${esc(t("Lowest safety factor (yield)"))}</dt><dd data-v="sf"${sy / peak < 1 ? ' class="sim-low"' : ""}>${sig(sy / peak)}</dd>`;
     const errs = last.errors, eLast = errs.at(-1), eBefore = errs.length > 1 ? errs[errs.length - 2] : null;
     if (eLast != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">≈ ${sig(eLast)} %</dd>`;
     else if (eBefore != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">&lt; ${sig(eBefore)} %</dd>`;
@@ -910,6 +963,12 @@ export class SimController {
       + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 ? "≈ " : ""}${sig(errs[i]!)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
       + chartSvg(errs, t("Estimated error per pass"));
     for (const line of this.localNotes(r.passes)) html += `<p class="sim-note muted sim-local">${esc(line)}</p>`;
+    if (hs.length) {
+      const uf = UNITS[units.current].f;
+      html += `<h5 class="sim-sub">${esc(t("Hot spots"))}</h5><table class="sim-hot"><thead><tr><th>#</th><th>${esc(t("von Mises stress"))}</th><th>X, Y, Z, ${esc(units.current)}</th></tr></thead><tbody>`
+        + hs.map((h, i) => `<tr data-a="hot" data-hot="${i}" tabindex="0" class="${h.singular ? "sing" : ""}${i === this.hotSel ? " sel" : ""}"><td>${i + 1}</td><td>${sig(h.vm)} MPa${h.singular ? ` ${warn}` : ""}</td><td>${h.at.map(x => String(Number((x * uf).toFixed(3)))).join(", ")}</td></tr>`).join("") + `</tbody></table>`;
+      if (singular) html += `<p class="sim-note sim-sing">⚠ ${esc(t("Stress singularity: value depends on refinement"))}. ${esc(real ? t("The safety factor uses the highest stress away from singularities.") : "")}</p>`;
+    }
     if (!this.running) {
       html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(this.study()?.settings.energyTol ?? 2), n: sig(last.change) })
@@ -977,6 +1036,7 @@ export class SimController {
       + (k === "err" ? `<p class="ana-note">${esc(t("Where the last pass still changed the solution: the places that would gain most from more accuracy."))}</p>` : "")
       + `<label class="chk"><input type="checkbox" data-k="deformed"${this.plot.deformed ? " checked" : ""} />${esc(t("Deformed shape"))}</label>`
       + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "")
+      + `<label class="chk"><input type="checkbox" data-k="marks"${this.plot.marks ? " checked" : ""} />${esc(t("Highest and lowest values"))}</label>`
       + `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the plot to read the value at a point"))}">${esc(t("Probe"))}</button>`
       + (this.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button>` : "") + `</div>`;
     $("#viewport").classList.toggle("sim-probing", this.probing);
@@ -993,6 +1053,13 @@ export class SimController {
     else if (a === "mat") void this.pickMat();
     else if (a === "solve") void this.solve();
     else if (a === "report") void this.report();
+    else if (a === "hot") {
+      const i = Number(b.dataset.hot);
+      this.hotSel = this.hotSel === i ? -1 : i;
+      if (this.plot.kind !== "vm" || !this.plot.on) { this.plot.kind = "vm"; this.plot.on = true; this.showPlot(); }
+      else this.drawProbes();
+      this.renderAll();
+    }
     else if (a === "stop") this.client.cancel();
     else if (a === "edit" && id) this.editItem(id);
     else if (a === "del" && id && st) {
@@ -1079,6 +1146,7 @@ export class SimController {
     const k = el.dataset.k;
     if (k === "kind") this.plot.kind = el.value as PlotKind;
     else if (k === "deformed") this.plot.deformed = el.checked;
+    else if (k === "marks") this.plot.marks = el.checked;
     else if (k === "scale") { const v = num(el.value); this.plot.scale = el.value.trim() && v != null && v > 0 ? v : 0; }
     else return;
     this.showPlot();

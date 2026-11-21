@@ -16272,7 +16272,7 @@ try {
     p = await at("f1:end");
     await mp.mouse.click(p.x, p.y);
     await mp.waitForTimeout(150);
-    const pr = await mp.evaluate(() => ({ s: window.__sv.sim.state(), label: document.querySelector("#sim-probes .sim-probe span")?.textContent ?? "", clear: !!document.querySelector('#sim-legend [data-a="noprobes"]') }));
+    const pr = await mp.evaluate(() => ({ s: window.__sv.sim.state(), label: document.querySelector("#sim-probes [data-probe] span")?.textContent ?? "", clear: !!document.querySelector('#sim-legend [data-a="noprobes"]') }));
     await mp.keyboard.press("Escape");
     const prOff = (await sim()).probing;
     check(pr.s.probing && pr.s.probes.length === 1 && Math.abs(pr.s.probes[0] / (0.354 * r1.maxU) - 1) < 0.06 && /^0[.,]1\d* mm$/.test(pr.label) && pr.clear && !prOff && !!(await sim()).study,
@@ -16297,7 +16297,7 @@ try {
     await settle();
     const r3 = await sim();
     const planesBack = await planes();
-    const probesLeft = await mp.evaluate(() => document.querySelectorAll("#sim-probes .sim-probe").length);
+    const probesLeft = await mp.evaluate(() => document.querySelectorAll("#sim-probes [data-probe]").length);
     const stale = await mp.evaluate(() => ({ legend: !document.querySelector("#sim-legend").hidden, note: /Out of date/.test(document.querySelector("#sim-tree .sim-res")?.textContent ?? ""), mat: window.__sv.viewer.parts[0].mesh.material === window.__sv.viewer.parts[0].material }));
     check(r2.plot.kind === "u" && Math.abs(r2.plot.range[1] - r1.maxU) < 1e-6 && r2.plot.scale === 0 && r3.stale && !r3.plot.shown && !stale.legend && stale.note && stale.mat && planesBack === 3 && probesLeft === 0,
       `sim 1.608: displacement plot without the deformed shape; an undo marks the results out of date and restores the model (${JSON.stringify({ range: r2.plot.range, scale: r2.plot.scale, stale: r3.stale, shown: r3.plot.shown, planesBack, ...stale })})`);
@@ -16352,6 +16352,25 @@ try {
       && lp[4].energy >= lp[2].energy * (1 - 1e-9) && lShown.notes.length === 2 && /^Pass 4: accuracy raised in \d+ of \d+ cells\.$/.test(lShown.notes[0]) && lShown.rows === 5 && lShown.tol === 0 && lShown.opts === 6
       && Math.abs(lRes.reactions[0].force[2] - 1750) < 0.01,
       `sim 1.613: passes 4 and 5 refine locally: more unknowns in some cells only, the energy keeps rising, the Study tab says where (${JSON.stringify({ error: lRes.error, passes: lp.map(q => ({ p: q.p, raised: q.raised, cells: q.cells, dofs: q.dofs, change: q.change })), ...lShown })})`);
+    // 1.614.0: hot spots: the highest stress peaks are listed, labelled on the plot, and a row shows its own label.
+    await mp.selectOption('#sim-legend [data-k="kind"]', "vm");
+    await mp.waitForTimeout(200);
+    const hotOf = () => mp.evaluate(() => { const s = window.__sv.sim.state(); return { hot: s.hot, maxVm: s.maxVm, labels: s.labels, rows: document.querySelectorAll("#sim-tree .sim-hot tbody tr").length,
+      peaks: [...document.querySelectorAll("#sim-probes .sim-peak")].map(e => e.dataset.peak), sel: document.querySelectorAll("#sim-tree .sim-hot tr.sel").length, warn: document.querySelectorAll("#sim-tree .sim-hot tr.sing").length,
+      real: document.querySelector('#sim-tree [data-v="realvm"]')?.textContent ?? null, placed: [...document.querySelectorAll("#sim-probes .sim-peak")].every(e => e.style.left.endsWith("px")) }; });
+    const hot0 = await hotOf();
+    const lastRow = hot0.rows - 1;
+    await mp.click(`#sim-tree .sim-hot tr[data-hot="${lastRow}"]`);
+    await mp.waitForTimeout(200);
+    const hot1 = await hotOf();
+    await mp.uncheck('#sim-legend [data-k="marks"]');
+    await mp.waitForTimeout(200);
+    const hot2 = await hotOf();
+    await mp.check('#sim-legend [data-k="marks"]');
+    const hl = hot0.hot ?? [], nSing = hl.filter(h => h.singular).length;
+    check(hl.length >= 2 && hl.at(-1).vm > 0.1 * hl[0].vm && hl.length === hot0.rows && Math.abs(hl[0].vm - hot0.maxVm) < 1e-3 * hot0.maxVm && hl.every((h, i) => i === 0 || h.vm <= hl[i - 1].vm) && hot0.warn === nSing && (nSing > 0) === (hot0.real !== null)
+      && hot0.peaks.length === hot0.labels && hot0.peaks.length >= 1 && hot0.placed && hot1.sel === 1 && hot1.peaks.includes(`h${lastRow}`) && hot1.peaks.length >= hot0.peaks.length && hot2.peaks.length === 0 && hot2.labels === 0,
+      `sim 1.614: the hot spots are listed highest first, labelled on the stress plot, a clicked row gets its label, and the labels can be turned off (${JSON.stringify({ hot: hl.map(h => ({ vm: +h.vm.toFixed(1), s: h.singular, g: h.growth && +h.growth.toFixed(2) })), rows: hot0.rows, peaks: hot0.peaks, after: hot1.peaks, off: hot2.peaks, real: hot0.real })})`);
     // Without supports the solve says so and nothing runs; the Russian UI has no English left in the Study tab.
     await mp.click('#sim-tree .sim-row [data-a="del"]');
     await settle();
