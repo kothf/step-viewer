@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Structural analysis of assemblies: **bolts** (FR-CON-020, FR-CON-021, FR-LOAD-010). A toolbox screw placed in an assembly is analysed as a bolt, not as a solid: an elastic beam between the face under its head and the face its nut presses on, or the wall of the tapped hole it is screwed into; washers on its axis go with it. The **Bolts** list in the Study tab shows every screw with what was found for it, its property class (4.6 to 12.9, A2-70, A4-80) and a preload, typed as a tension in N or as a tightening torque in N·m (nut factor 0.2). After a solve the results list each bolt's tension, shear, bending moment and its safety factor against the proof stress of its class; the report has the same table. A preload is left in the bolt exactly once the joint has settled under all the bolts together. Untick a screw to analyse it as a solid as before.
 
+### Fixed
+
+- Toolbox: a click beside a hole seen straight on (Top or Bottom view) now places the fastener on that hole; before, only a click on the hole's wall did.
+- Toolbox parts carry steel with its elastic constants, so a study no longer stops on a screw that is analysed as a solid.
+- Structural analysis: a long row in the Study tab no longer makes the whole tab scroll sideways.
+
 ## [1.636.0] - 2026-11-21
 
 ### Added

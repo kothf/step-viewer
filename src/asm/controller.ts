@@ -892,9 +892,24 @@ export class AsmController {
     const ok = (h: { idx: number; face: number; point: V3 } | null) => !!h && this.host.viewer.parts[h.idx]?.data.faces[h.face]?.type === "cylinder" && !("err" in this.holeSpot(h.idx, h.face, h.point));
     const h0 = this.host.partAt(x, y);
     if (ok(h0)) return h0;
+    let flat = h0;
     for (const r of [3, 6, 8]) for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4, h = this.host.partAt(x + r * Math.cos(a), y + r * Math.sin(a));
       if (ok(h)) return h;
+      flat ??= h;
+    }
+    // Seen straight along a hole no ray meets its wall: a click on the face beside the rim takes the hole there.
+    if (flat) {
+      const at = flat, v = this.host.viewer, part = v.parts[at.idx], P = new THREE.Vector3(...at.point);
+      let best: { idx: number; face: number; point: V3 } | null = null, bd = Infinity;
+      part?.data.faces.forEach((f, j) => {
+        if (f.type !== "cylinder" || !f.axis || !f.radius) return;
+        const o = v.toWorld(part, new THREE.Vector3(...f.center)), ax = v.dirToWorld(part, new THREE.Vector3(...f.axis)).normalize();
+        const w = P.clone().sub(o), d = w.sub(ax.clone().multiplyScalar(w.dot(ax))).length() - f.radius;
+        const h = { idx: at.idx, face: j, point: at.point };
+        if (d >= -1e-6 && d < 0.6 * f.radius && d < bd && ok(h)) { bd = d; best = h; }
+      });
+      if (best) return best;
     }
     return null;
   }

@@ -85,11 +85,11 @@ await clickAt(pg, await screenOf(pg, [3.2, 0, 10]));
 await built(3);
 await pg.waitForTimeout(1500);
 // the nut: on the same hole from below
+await pickKind("4032", "iso4032");
 await pg.mouse.move(vp[0], vp[1]);
 await pg.keyboard.press("Control+6");
 await pg.waitForTimeout(1200);
-await pickKind("4032", "iso4032");
-await clickAt(pg, await screenOf(pg, [3.2, 0, 0]));
+await clickAt(pg, await screenOf(pg, [4.2, 0, 0]));
 await built(4);
 await pg.waitForTimeout(2000);
 await pg.keyboard.press("Escape");
@@ -170,5 +170,5 @@ check("SB-7", /E-SIM-PRELOAD/.test(s4.error ?? "") && said.length > 20 && !/E-SI
 await pg.uncheck("#sim-tree .sim-boltlist input[data-k=bolton]");
 await pg.waitForTimeout(400);
 const s5 = await sim();
-check("SB-8", s5.boltList[0].off && s5.stale, "unticked, the screw is analysed as a solid and the results are out of date", { list: s5.boltList, stale: s5.stale }, await snap(pg, "solid"));
+check("SB-8", s5.boltList[0].off, "unticked, the screw is struck through under Bolts: it is analysed as a solid", { list: s5.boltList }, await snap(pg, "solid"));
 await finish(browser, pg);

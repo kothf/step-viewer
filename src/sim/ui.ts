@@ -712,8 +712,12 @@ export class SimController {
       let joined: { gap: number; links: { a: number; b: number; type: "sliding" | "none" }[] } | undefined;
       if (asm) {
         if (!bodies?.length) throw new Error("E-SIM-NOBODY");
+        const steelParts = new Set(this.host.comps().filter(c => c.fastener).map(c => c.id));
         regions = bodies.map(b => {
-          const sc = st.comps?.[compOf(b.key)], q = sc?.material ?? b.mat;
+          const sc = st.comps?.[compOf(b.key)];
+          let q = sc?.material ?? b.mat;
+          // a toolbox part made before its steel had elastic constants
+          if (q && !q.E && steelParts.has(compOf(b.key))) q = { ...q, E: 210, nu: 0.3 };
           // a rigid component needs no elastic constants: only its density counts (weight, spinning)
           if (sc?.rigid) return { tris: b.tris, mat: q ? { ...simMat(q), sy: undefined, su: undefined } : { name: "", E: 0, nu: 0.3, rho: 0, sy: undefined, su: undefined }, rigid: true };
           if (!q || !q.E || q.nu == null) throw new Error(`E-SIM-COMPMAT: ${b.name ?? b.key}`);

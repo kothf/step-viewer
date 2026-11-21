@@ -704,7 +704,7 @@ export function fastenerPart(std: FastenerKind, size: string, length?: number, o
   }
   if (detail) used.push(...detailFeatures(std, row, feats, v, val));
   pd.features = feats;
-  pd.material = { name: "Steel", density: 7.85 };
+  pd.material = { name: "Steel", density: 7.85, E: 210, nu: 0.3 };
   const vars = (r0: Row, len: number): GlobalVar[] => {
     const r = detail ? detailRow(std, r0, len) : r0;
     return used.map(k => ({ name: VAR_NAMES[k], expr: `${+(k === "L" ? len : r[k] ?? 0).toFixed(4)}`, kind: "length" }));
