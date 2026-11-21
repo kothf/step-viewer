@@ -16,6 +16,23 @@ export interface SimBody {
   hi: number[];
 }
 
+/** The body without the faces `drop` names: their triangles go and their names are blanked, so nothing can refer to them (face indices stay). */
+export function withoutFaces(body: SimBody, drop: (name: string) => boolean): SimBody {
+  const gone = body.names.map(drop), nt = body.face.length;
+  if (!gone.some(Boolean)) return body;
+  let n = 0;
+  for (let t = 0; t < nt; t++) if (!gone[body.face[t]]) n++;
+  const tris = new Float64Array(9 * n), face = new Int32Array(n);
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  let o = 0;
+  for (let t = 0; t < nt; t++) {
+    if (gone[body.face[t]]) continue;
+    for (let k = 0; k < 9; k++) { const v = body.tris[9 * t + k]; tris[9 * o + k] = v; if (v < lo[k % 3]) lo[k % 3] = v; if (v > hi[k % 3]) hi[k % 3] = v; }
+    face[o++] = body.face[t];
+  }
+  return { tris, face, names: body.names.map((s, i) => (gone[i] ? "" : s)), lo: n ? lo : [...body.lo], hi: n ? hi : [...body.hi] };
+}
+
 export interface SimMaterial { name: string; /** MPa */ E: number; nu: number; /** t/mm³ */ rho: number; /** MPa */ sy?: number; su?: number }
 
 export interface StudyProblem {

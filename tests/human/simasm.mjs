@@ -111,4 +111,26 @@ check("SAS-6", loadN > 0 && Math.abs(passN / loadN - 1) < 0.05 && Math.abs(parse
   "the connection's row shows the force it carries, equal to the load, and its moment", { loadN, passN, cf }, await snap(pg, "connection-force"));
 check("SAS-5", !r3.error && r3.links.length === 0 && r3.contacts.length === 1 && Math.abs(r3.maxU / r.maxU - 1) < 1e-6, "bonded again, the study solves as before", { error: r3.error, maxU: [r.maxU, r3.maxU] }, await snap(pg, "bonded-again"));
 
+// another material for one component, for this study only: the loaded block in aluminium gives more
+await pg.click('#sim-tree .sim-complist li:nth-child(1) [data-a="compmat"]');
+await pg.waitForSelector("#mat-dlg[open]");
+await pg.fill("#mat-q", "6061");
+await pg.click("#mat-dlg .mat-list li[data-i]");
+await pg.click("#mat-dlg [data-a=ok]");
+await pg.waitForSelector("#mat-dlg", { state: "detached" });
+await pg.waitForTimeout(400);
+const m1 = await sim();
+await pg.click('#sim-tools [data-s="solve"]');
+await solved();
+const m2 = await sim();
+check("SAS-8", m1.compList?.[0]?.own && m1.stale && !m2.error && m2.maxU > 1.05 * r3.maxU, "a component given aluminium for the study deforms more than in steel; the part keeps its own material", { list: m1.compList, error: m2.error, maxU: [r3.maxU, m2.maxU] }, await snap(pg, "component-material"));
+
+// left out: the component is a ghost, and what was put on it is named when solving
+await pg.uncheck('#sim-tree .sim-complist li:nth-child(2) [data-k="compon"]');
+await pg.waitForTimeout(400);
+await pg.click('#sim-tools [data-s="solve"]');
+await solved();
+const m3 = await sim();
+const said2 = await pg.evaluate(() => [...document.querySelectorAll(".toast")].map(x => x.textContent).join(" | "));
+check("SAS-9", m3.compList?.[1]?.off && /E-SIM-REF/.test(m3.error ?? "") && /left out of the study/.test(said2), "a component left out is struck through in the list, and solving says which item still sits on it", { list: m3.compList, error: m3.error, said2 }, await snap(pg, "component-left-out"));
 await finish(browser, pg);
