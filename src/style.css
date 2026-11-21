@@ -1821,6 +1821,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-boltlist li.miss .sim-boltnote { color: var(--warn, #b45309); }
 .sim-boltnote { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
 .sim-boltset { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px; }
+.sim-boardset { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 0 0 2px 20px; font-size: 11px; }
+.sim-boardset label { gap: 4px; }
+.sim-boardset input { width: 44px; font-size: 11px; padding: 2px 4px; }
 .sim-boltset select, .sim-boltset input { font-size: 11px; min-width: 0; padding: 2px 4px; }
 .sim-boltall { display: grid; grid-template-columns: 1fr; gap: 2px; font-size: 12px; margin-top: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .sim-bolttable { table-layout: fixed; width: 100%; }

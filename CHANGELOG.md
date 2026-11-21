@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.656.0] - 2026-11-21
+
+### Added
+
+- **A circuit board conducts by its copper** (FRS-thermal TH3, FR-TBRD-010): in a thermal study of an assembly a component can be marked **Board**. Its conductivity then comes from its copper layers, not from a material: along the board the copper carries the heat (7.1 W/(m·K) for 1.6 mm with two layers of 35 µm at 40 % coverage), through it the laminate is in the way (0.31 W/(m·K)). The copper layers, their thickness in µm and the coverage are typed under the component, and both values are shown beside its name. A study made with Simulate from a board's thermal package marks the board by itself.
+- The thermal solver takes a conductivity for each axis of a body, so a board lying square to X, Y or Z is analysed by direction; a tilted board gets the in-plane value every way, and the app says so.
+
+### Changed
+
+- A board study made with Simulate now gives higher temperatures for parts that sit on the board than 1.655.0 did, since heat no longer crosses the board's thickness as easily as it spreads along it.
+
 ## [1.655.0] - 2026-11-21
 
 ### Added
@@ -4292,6 +4303,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.655.0...HEAD
+[1.656.0]: https://github.com/kothf/step-viewer/compare/v1.655.0...v1.656.0
 [1.655.0]: https://github.com/kothf/step-viewer/compare/v1.654.0...v1.655.0
 [1.654.0]: https://github.com/kothf/step-viewer/compare/v1.653.0...v1.654.0
 [1.653.0]: https://github.com/kothf/step-viewer/compare/v1.652.0...v1.653.0

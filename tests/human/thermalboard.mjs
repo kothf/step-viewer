@@ -16,9 +16,9 @@ await pg.waitForTimeout(1200);
 const made = await pg.evaluate(() => ({ comps: [...document.querySelectorAll("#sim-tree .sim-complist li")].map(li => li.textContent.replace(/\s+/g, " ").trim()),
   rows: [...document.querySelectorAll("#sim-tree .sim-row")].map(r => r.innerText.replace(/\s+/g, " ").trim()), ambient: document.querySelector('#sim-tree input[data-k="ambient"]')?.value,
   tabs: [...document.querySelectorAll("#doc-tabs [data-dt]")].map(e => e.textContent.trim()), mode: document.querySelector('#sim-tools [data-s="mode-thermal"]')?.getAttribute("aria-pressed") }));
-check("TB-1", made.comps.length === 7 && made.comps.some(c => /^PCB<1>.*7\.12 W\/\(m·K\).*PCB \(effective\)/.test(c)) && made.comps.some(c => /^Q2<1>.*Copper/.test(c)) && made.rows.some(r => /Heat from package 1.*6 parts/.test(r))
+check("TB-1", made.comps.length === 7 && made.comps.some(c => /^PCB<1>.*7\.12 \/ 0\.314 W\/\(m·K\).*Board/.test(c)) && made.comps.some(c => /^Q2<1>.*Copper/.test(c)) && made.rows.some(r => /Heat from package 1.*6 parts/.test(r))
   && made.rows.some(r => /Convection 1.*all open surfaces/.test(r)) && made.rows.some(r => /Radiation 1.*all open surfaces/.test(r)) && made.ambient === "40" && made.tabs.length === 2,
-  "Simulate makes an assembly named after the package's parts, with a board material and guessed part materials, and a thermal study: heat from the package, the package's ambient, convection and radiation from all open surfaces", made, await snap(pg, "board-study"));
+  "Simulate makes an assembly named after the package's parts, with the board marked as a circuit board (its conductivity along and through from its copper) and guessed part materials, and a thermal study: heat from the package, the package's ambient, convection and radiation from all open surfaces", made, await snap(pg, "board-study"));
 
 const sim = () => pg.evaluate(() => window.__sv.sim.state());
 const solved = async () => { await pg.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 600000 }); await pg.waitForTimeout(600); };
@@ -54,4 +54,17 @@ const q = n => (n.find(r => /^Q2</.test(r.name)) ?? {}).max;
 check("TB-3", picked === "1 face" && /3 K\/W/.test(row) && !s2.error && s2.thermal.out.length === 3 && s2.thermal.out[2] > 1 && q(t2) < q(t1) - 20 && Math.abs(s2.thermal.out.reduce((a, x) => a + x, 0) - 29.17) < 0.05,
   "a heatsink of 3 K/W on the transistor's top face takes part of the heat and the transistor runs much cooler", { picked, row, q2before: q(t1), q2after: q(t2), out: s2.thermal?.out, error: s2.error }, shot);
 await snap(pg, "board-with-heatsink");
+
+// TB-4: the board's copper: unticking Board analyses it as an ordinary body with one conductivity, and the parts' temperatures change.
+const pcb = await pg.evaluate(() => window.__sv.sim.state().compList.find(c => c.name === "PCB<1>").id);
+await pg.click(`#sim-tree .sim-complist li[data-comp="${pcb}"] [data-a="compboard"]`);
+await idle(pg);
+const plain = await pg.evaluate(id => document.querySelector(`#sim-tree .sim-complist li[data-comp="${id}"]`).textContent.replace(/\s+/g, " ").trim(), pcb);
+const shot4 = await snap(pg, "board-as-ordinary-body");
+await pg.click('#sim-tools [data-s="solve"]');
+await solved();
+const s3 = await sim(), t3 = await table();
+const of = (tb, n) => (tb.find(r => r.name.startsWith(n)) ?? {}).max;
+check("TB-4", /7\.12 W\/\(m·K\).*PCB \(effective\)/.test(plain) && !/0\.314/.test(plain) && !s3.error && Math.abs(of(t3, "C12") - of(t2, "C12")) > 0.5 && Math.abs(s3.thermal.out.reduce((a, x) => a + x, 0) - 29.17) < 0.05,
+  "with Board unticked the board is an ordinary body of one conductivity; the temperatures of the parts on it differ from the ones with the copper layers taken by direction", { plain, error: s3.error, board: [of(t2, "PCB"), of(t3, "PCB")], c12: [of(t2, "C12"), of(t3, "C12")], r14: [of(t2, "R14"), of(t3, "R14")] }, shot4);
 await finish(browser, pg);

@@ -2,6 +2,7 @@
 // Values are in the solver's units: N, MPa, mm/s², N·mm. Faces are named like everywhere else
 // (persistent face names), so a study follows the model through edits (FR-STU-020).
 
+import type { BoardStack } from "../thermal/study";
 import type { FaceRef, Num, V3 } from "../model/types";
 import type { MatRef } from "../tools/materials";
 
@@ -237,7 +238,11 @@ export interface Study {
 
 /** A component in a study: left out of the analysis (`off`), or analysed with another material than its part's. */
 /** `rigid`: the component moves as a body with its mass, without strain (FR-CON-001). */
-export interface StudyComp { off?: boolean; material?: MatRef; rigid?: boolean }
+export interface StudyComp {
+  off?: boolean; material?: MatRef; rigid?: boolean;
+  /** Thermal studies: the component is a circuit board with this copper (`t` = its thickness when known, mm); its conductivity comes from it, not from a material. */
+  board?: BoardStack & { t?: number };
+}
 /**
  * A bolt in a study, by its screw's component id: `off` = the fastener is analysed as a solid like any other
  * component, `cls` = property class (default 8.8), `preload` = tightening, N, or N·mm of torque with `torque`

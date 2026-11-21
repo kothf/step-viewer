@@ -17325,6 +17325,25 @@ try {
       && JSON.stringify(made.heat) === '[["pkgheat",6,true]]' && JSON.stringify(made.cool) === '[["conv",true],["rad",true]]' && made.cm === "simulation" && made.mode === "thermal" && made.tabs === 2
       && made.rows.some(r => /Heat from package 1.*6 parts.*29\.2 W/.test(r)) && made.rows.some(r => /Convection 1.*all open surfaces/.test(r)),
       `thermal 1.655: Simulate on a board's thermal map makes an assembly of its bodies, named after the package's parts and with guessed materials, and a thermal study with the package's heat, its ambient and cooling of every open surface (${JSON.stringify(made)})`);
+    // 1.656: the board conducts by its copper, along it far better than through it
+    const brd = () => bp.evaluate(() => { const c = window.__sv.sim.state().compList.find(x => x.name === "PCB<1>"), li = document.querySelector(`#sim-tree .sim-complist li[data-comp="${c.id}"]`);
+      return { board: c.board, k: li?.querySelector('[data-v="compk"]')?.textContent, on: li?.querySelector('[data-a="compboard"]')?.getAttribute("aria-pressed"), inputs: [...(li?.querySelectorAll(".sim-boardset input") ?? [])].map(i => i.value),
+        others: [...document.querySelectorAll('#sim-tree .sim-complist [data-a="compboard"][aria-pressed="true"]')].length, wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }; });
+    const bd0 = await brd();
+    await bp.fill('#sim-tree .sim-boardset input[data-k="blayers"]', "4");
+    await bp.press('#sim-tree .sim-boardset input[data-k="blayers"]', "Enter");
+    await bp.waitForTimeout(300);
+    const bd4 = await brd();
+    await bp.fill('#sim-tree .sim-boardset input[data-k="blayers"]', "0");
+    await bp.press('#sim-tree .sim-boardset input[data-k="blayers"]', "Enter");
+    await bp.waitForTimeout(300);
+    const bdBad = await brd();
+    await bp.keyboard.press("Control+z");
+    await bp.waitForTimeout(400);
+    const bd2 = await brd();
+    check(JSON.stringify(bd0.board) === '{"layers":2,"copper":35,"cover":0.4,"t":1.6}' && bd0.on === "true" && bd0.others === 1 && /^7\.12 \/ 0\.314 W/.test(bd0.k ?? "") && JSON.stringify(bd0.inputs) === '["2","35","40"]' && bd0.wide <= 0
+      && bd4.board.layers === 4 && /^13\.9 \/ 0\.329 W/.test(bd4.k ?? "") && bdBad.board.layers === 4 && bd2.board.layers === 2,
+      `thermal 1.656: the board of a study made from a package is marked as a circuit board: 2 layers of 35 µm copper give 7.12 W/(m·K) along it and 0.314 through it; 4 layers give more, a wrong count is refused, undo brings 2 back (${JSON.stringify({ bd0, bd4, bdBad, bd2 })})`);
     await bp.selectOption('#sim-tree select[data-k="passes"]', "1");
     await bp.click('#sim-tools [data-s="solve"]');
     await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 400000 });

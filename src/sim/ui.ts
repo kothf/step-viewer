@@ -35,10 +35,11 @@ import { compareRows, noteSummary, parseSummaries, type CompareRow, type Summary
 import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, type PathRow } from "./path";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { MEMORY_LIMIT } from "./static";
+import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardK, plateAxis, type BoardStack } from "../thermal/study";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
-import { DEFAULT_GAP, DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
+import { DEFAULT_GAP, DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 /** What a study needs of its document: a part's, or an assembly's (which has no material or bodies of its own). */
 export type SimDoc = Pick<PartDoc, "id" | "name"> & Partial<Pick<PartDoc, "studies" | "vars" | "material" | "bodies">>;
@@ -85,7 +86,7 @@ interface CaseResult { id: string; name: string; passes: PassResult[]; job: numb
 type BoltKept = { id: string; name: string; members: string[]; d: number; pitch: number; tapped: boolean };
 /** A bolt found among the fasteners, with the patches it joins. */
 interface BoltUse extends BoltKept { a: Float64Array; b: Float64Array; E: number }
-interface Results { /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K). */ k?: number }[] }
+interface Results { /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[] }
 const BOLT_NOTE = "Tension, shear and bending of each bolt as a beam. The safety factor compares their combined stress on the thread's stress area with the proof stress of the property class.";
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 /** Solve on change: how long after the last change the solve starts, ms. */
@@ -97,7 +98,7 @@ const RELIEF_NOTE = "The part is held by nothing: its supports are left out and 
 /** The most load cases a study has. */
 export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K). */ k?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
+interface Kept { welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
@@ -509,7 +510,7 @@ export class SimController {
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
       asm: this.host.asm(), comps: this.res?.comps?.map(c => c.name) ?? null, contacts: (last?.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, force: c.force ?? null, moment: c.moment ?? null, at: c.at ?? null })), links: this.study()?.links ?? [],
-      compList: this.host.asm() ? this.host.comps().map(c => { const o = this.study()?.comps?.[c.id]; return { id: c.id, name: c.name, off: !!o?.off, rigid: !!o?.rigid, material: o?.material?.name ?? c.material, own: !!o?.material }; }) : null, excluded: this.res?.off ?? [],
+      compList: this.host.asm() ? this.host.comps().map(c => { const o = this.study()?.comps?.[c.id]; return { id: c.id, name: c.name, off: !!o?.off, rigid: !!o?.rigid, board: o?.board ?? null, material: o?.material?.name ?? c.material, own: !!o?.material }; }) : null, excluded: this.res?.off ?? [],
       found: this.freshFound(this.study())?.list.map(c => ({ a: this.found!.comps[c.a]?.name ?? "", b: this.found!.comps[c.b]?.name ?? "", area: c.area, gap: c.gap, at: c.at })) ?? null, finding: this.finding, linkSel: this.linkSel,
       patches: this.marks.children.filter(o => o.userData.simPatch).map(o => ({ side: o.userData.simPatch as string, tris: ((o as THREE.Mesh).geometry.getAttribute("position")?.count ?? 0) / 3 })),
       conns: this.connRows(), connList: (this.study()?.connectors ?? []).map(c => ({ id: c.id, a: c.faces.length, b: c.faces2.length, kind: c.kind, k: c.k, kr: c.kr ?? null })), massList: (this.study()?.masses ?? []).map(m => ({ id: m.id, faces: m.faces.length, mass: m.mass })), connSide: this.connSide,
@@ -729,11 +730,12 @@ export class SimController {
    * A thermal study of a board made from its thermal package (FR-TBRD-001): the package's ambient, one Heat from
    * package load, and convection and radiation from every surface open to the air.
    */
-  boardStudy(spec: { ambient?: number; emissivity?: number; heat: PackageHeat[] }): string | null {
+  boardStudy(spec: { ambient?: number; emissivity?: number; heat: PackageHeat[]; board?: { comp: string; t: number } }): string | null {
     const doc = this.host.doc();
     if (!doc) return null;
     const st = newStudy(doc.studies ?? [], "thermal");
     if (spec.ambient !== undefined && Number.isFinite(spec.ambient)) st.settings.ambient = spec.ambient;
+    if (spec.board?.comp) st.comps = { [spec.board.comp]: { board: { ...DEFAULT_STACK, ...(spec.board.t > 0 ? { t: Math.round(spec.board.t * 1000) / 1000 } : {}) } } };
     st.loads.push({ id: "l1", name: itemName(st, "pkgheat"), type: "pkgheat", faces: [], parts: spec.heat });
     st.supports.push({ id: "s1", name: itemName(st, "conv"), type: "conv", faces: [], all: true, h: FILM_PRESETS[0][1] });
     const emis = spec.emissivity !== undefined && spec.emissivity > 0 && spec.emissivity <= 1 ? spec.emissivity : 0.9;
@@ -1109,7 +1111,10 @@ export class SimController {
       const bodies = asm ? (off.size ? got.regions?.filter(b => !off.has(compOf(b.key))) : got.regions) ?? [] : [];
       if (asm && !bodies.length) throw new Error("E-SIM-NOBODY");
       const mats = bodies.map(b => st.comps?.[compOf(b.key)]?.material ?? b.mat ?? null);
-      mats.forEach((q, i) => { if (!q?.k) throw new Error(`E-TH-COMPMAT: ${bodies[i].name ?? bodies[i].key}`); });
+      // a board conducts by its copper: along it far better than through it
+      const bks = bodies.map(b => { const bd = st.comps?.[compOf(b.key)]?.board; return bd ? boardK(b.tris, bd, bd.t) : null; });
+      mats.forEach((q, i) => { if (!bks[i] && !q?.k) throw new Error(`E-TH-COMPMAT: ${bodies[i].name ?? bodies[i].key}`); });
+      const kOf = (i: number) => bks[i]?.along ?? mats[i]!.k!, nameOf = (i: number) => (bks[i] ? BOARD_MATERIAL : mats[i]!.name);
       const at = new Map(bodies.map((b, i) => [b.key, i]));
       const links = (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) && (l.type === "none" || l.type === "resist" || l.type === "pad")
         ? [l.type === "none" ? { a: at.get(l.a)!, b: at.get(l.b)!, type: "none" as const } : { a: at.get(l.a)!, b: at.get(l.b)!, type: "resistance" as const, h: linkConductance(l) }] : []));
@@ -1140,14 +1145,14 @@ export class SimController {
       }
       const mesh = refineMesh(p0, n0, idx, plotTarget(meshArea(p0, idx), size / 70));
       const total = Math.max(1, Math.min(THERMAL_PASSES, Math.round(st.settings.passes)));
-      const res: Results = { study: st.id, key, passes: [], ids: setup.sinkIds, ms: 0, mesh, ...(asm ? { comps: this.comps, bodyMats: mats.map(q => ({ name: q!.name, sy: 0, k: q!.k! })) } : {}), ...(off.size ? { off: [...off] } : {}) };
+      const res: Results = { study: st.id, key, passes: [], ids: setup.sinkIds, ms: 0, mesh, ...(asm ? { comps: this.comps, bodyMats: bodies.map((_b, i) => ({ name: nameOf(i), sy: 0, k: kOf(i), ...(bks[i]?.k3 ? { kz: bks[i]!.through } : {}) })) } : {}), ...(off.size ? { off: [...off] } : {}) };
       this.progress = t("Pass {n} of {m}…", { n: 1, m: total });
       this.renderAll();
       await this.client.solve({
         body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] }, passes: total, energyTol: st.settings.energyTol, pos: mesh.pos, nrm: mesh.nrm, ...(memLimit() ? { memory: memLimit() } : {}),
-        mat: { name: asm ? mats[0]!.name : m!.name, E: 0, nu: 0, rho: 0 },
-        ...(asm ? { regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: mats[i]!.name, E: 0, nu: 0, rho: 0 } })) } : {}),
-        thermal: asm ? { k: mats[0]!.k! * 1e-3, setup, ks: mats.map(q => q!.k! * 1e-3), gap: st.settings.gap ?? DEFAULT_GAP, links } : { k: m!.k! * 1e-3, setup },
+        mat: { name: asm ? nameOf(0) : m!.name, E: 0, nu: 0, rho: 0 },
+        ...(asm ? { regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: nameOf(i), E: 0, nu: 0, rho: 0 } })) } : {}),
+        thermal: asm ? { k: kOf(0) * 1e-3, setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s: bks.map(q => (q?.k3 ? q.k3.map(v => v * 1e-3) : null)), gap: st.settings.gap ?? DEFAULT_GAP, links } : { k: m!.k! * 1e-3, setup },
       }, p => {
         res.passes.push(p);
         res.ms = performance.now() - t0;
@@ -1183,9 +1188,18 @@ export class SimController {
     if (thermal) return `<div class="sim-sec sim-comps"><h4>${esc(t("Components"))}</h4>`
       + `<p class="sim-note muted">${esc(t("A component is analysed with its part's material unless another is picked here: the analysis needs each one's thermal conductivity. Untick a component to leave it out of the study."))}</p>`
       + `<ul class="sim-complist">` + list.map(c => {
-        const o = st.comps?.[c.id], own = o?.material, name = own?.name ?? c.material, k = own ? own.k : c.k;
-        return `<li data-comp="${esc(c.id)}" class="${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
-          + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Thermal conductivity"))}">${k ? `${sig(k)} W/(m·K)` : ""}</span>`
+        const o = st.comps?.[c.id], own = o?.material, name = own?.name ?? c.material, k = own ? own.k : c.k, bd = o?.board;
+        const brd = `<button class="btn small sim-crigid${bd ? " on" : ""}" data-a="compboard" data-c="${esc(c.id)}" aria-pressed="${bd ? "true" : "false"}" title="${esc(t("Circuit board: it conducts by its copper layers, along it far better than through it"))}"${dis || (o?.off ? " disabled" : "")}>${esc(t("Board"))}</button>`;
+        if (bd) {
+          const bk = boardConductivity(bd.t ?? 1.6, bd), off = dis || (o?.off ? " disabled" : "");
+          return `<li data-comp="${esc(c.id)}" class="${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
+            + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Thermal conductivity along the board / through it"))}">${sig(bk.along)} / ${sig(bk.through)} W/(m·K)</span>${brd}`
+            + `<span class="sim-boardset"><label>${esc(t("Copper layers"))} <input type="text" inputmode="numeric" data-k="blayers" data-c="${esc(c.id)}" value="${bd.layers}"${off} /></label>`
+            + `<label>${esc(t("Copper"))}, µm <input type="text" inputmode="decimal" data-k="bcopper" data-c="${esc(c.id)}" value="${sig(bd.copper)}"${off} /></label>`
+            + `<label>${esc(t("Coverage"))}, % <input type="text" inputmode="decimal" data-k="bcover" data-c="${esc(c.id)}" value="${sig(bd.cover * 100)}"${off} /></label></span></li>`;
+        }
+        return `<li data-comp="${esc(c.id)}" class="th ${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
+          + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Thermal conductivity"))}">${k ? `${sig(k)} W/(m·K)` : ""}</span>${brd}`
           + `<button class="btn small${own ? " own" : ""}${name && k ? "" : " sim-warn"}" data-a="compmat" data-c="${esc(c.id)}" title="${esc(!name ? t("Pick a material") : !k ? t("This material has no thermal conductivity") : own ? t("Material picked for this study") : t("The part's material"))}"${dis}>${name ? `<span translate="no">${esc(name)}</span>` : esc(t("No material"))}</button></li>`;
       }).join("") + `</ul></div>`;
     return `<div class="sim-sec sim-comps"><h4>${esc(t("Components"))}</h4>`
@@ -1319,6 +1333,44 @@ export class SimController {
     if (!ref) toast(t("The component is analysed with its part's material again."), "info");
   }
 
+  /** A thermal study: the component is a circuit board (its conductivity from its copper), or an ordinary body again. */
+  private toggleBoard(id: string) {
+    const st = this.study();
+    if (!st || this.running) return;
+    const on = !st.comps?.[id]?.board, thick = on ? this.compThickness(id) : null;
+    this.host.change(on ? t("Circuit board") : t("Ordinary component"), d => {
+      const s = d.studies?.find(x => x.id === st.id);
+      if (!s) return;
+      const c = { ...(s.comps?.[id] ?? {}) };
+      if (on) c.board = { ...DEFAULT_STACK, ...(thick ? { t: thick } : {}) }; else delete c.board;
+      this.setComp(s, id, c);
+    });
+    if (on && !thick) toast(t("The component is not a flat plate square to an axis: it is analysed with the board's in-plane conductivity in every direction."), "info");
+  }
+
+  /** The thickness of a component that is a flat plate square to an axis, mm, from the shown model. */
+  private compThickness(id: string): number | null {
+    const m = this.host.model() as AsmModel | null;
+    if (!m?.names) return null;
+    const g = m.geometry, pa = g.getAttribute("position"), idx = g.getIndex()?.array ?? null, tris: number[] = [];
+    m.faces.forEach((f, i) => {
+      if (compOf(m.names[i] ?? "") !== id) return;
+      for (let q = 3 * f.triStart; q < 3 * (f.triStart + f.triCount); q++) { const v = idx ? idx[q] : q; tris.push(pa.getX(v), pa.getY(v), pa.getZ(v)); }
+    });
+    const pl = plateAxis(tris);
+    return pl ? Math.round(pl.t * 1000) / 1000 : null;
+  }
+
+  private setBoard(id: string, key: keyof BoardStack, v: number) {
+    const st = this.study();
+    if (!st) return;
+    this.host.change(t("Board copper"), d => {
+      const s = d.studies?.find(x => x.id === st.id), b = s?.comps?.[id]?.board;
+      if (!s || !b) return;
+      this.setComp(s, id, { ...s.comps![id], board: { ...b, [key]: v } });
+    });
+  }
+
   /** Makes a component rigid in this study, or elastic again. */
   private toggleRigid(id: string) {
     const st = this.study();
@@ -1333,9 +1385,9 @@ export class SimController {
     });
   }
 
-  private setComp(s: Study, id: string, c: { off?: boolean; material?: MatRef; rigid?: boolean }) {
+  private setComp(s: Study, id: string, c: StudyComp) {
     const all = { ...(s.comps ?? {}) };
-    if (c.off || c.material || c.rigid) all[id] = c; else delete all[id];
+    if (c.off || c.material || c.rigid || c.board) all[id] = c; else delete all[id];
     if (Object.keys(all).length) s.comps = all; else delete s.comps;
   }
 
@@ -2673,7 +2725,7 @@ export class SimController {
       ...(res.comps ? [] : [[t("Material"), m?.name ?? "–"], [t("Thermal conductivity"), `${sig(m?.k ?? 0)} W/(m·K)`]])]);
     if (res.comps && res.bodyMats) {
       blocks.push({ kind: "h", text: t("Components") });
-      blocks.push({ kind: "table", widths: [3, 3, 2], rows: [[t("Component"), t("Material"), `${t("Thermal conductivity")}, W/(m·K)`], ...res.comps.map((c, i) => [c.name, res.bodyMats![i]?.name ?? "–", sig(res.bodyMats![i]?.k ?? 0)])] });
+      blocks.push({ kind: "table", widths: [3, 3, 2], rows: [[t("Component"), t("Material"), `${t("Thermal conductivity")}, W/(m·K)`], ...res.comps.map((c, i) => [c.name, res.bodyMats![i]?.name ?? "–", res.bodyMats![i]?.kz ? `${sig(res.bodyMats![i].k ?? 0)} / ${sig(res.bodyMats![i].kz!)}` : sig(res.bodyMats![i]?.k ?? 0)])] });
     }
     blocks.push({ kind: "h", text: t("Heat sources") });
     if (!st.loads.length) blocks.push({ kind: "p", text: t("None.") });
@@ -3266,6 +3318,7 @@ export class SimController {
       });
     }
     else if (a === "comprigid") this.toggleRigid(b.dataset.c ?? "");
+    else if (a === "compboard") this.toggleBoard(b.dataset.c ?? "");
     else if (a === "link") {
       if ((e.target as HTMLElement).closest("select")) return;
       const k = b.dataset.link ?? "";
@@ -3367,6 +3420,12 @@ export class SimController {
       if (v == null || v < 0) { toast(t("Type the preload as a number."), "warn"); this.renderTree(); return; }
       if (el.dataset.c === "*" && el.dataset.k === "boltby" && !v) return;
       this.setBolt(el.dataset.c ?? "", t("Bolt preload"), b => { if (v > 0) { b.preload = tq ? v * 1000 : v; if (tq) b.torque = true; else delete b.torque; } else delete b.preload; });
+    }
+    else if (el.dataset.k === "blayers" || el.dataset.k === "bcopper" || el.dataset.k === "bcover") {
+      const k = el.dataset.k, v = num(el.value);
+      const ok = v != null && (k === "blayers" ? Number.isInteger(v) && v >= 1 && v <= 32 : k === "bcopper" ? v > 0 && v <= 500 : v >= 0 && v <= 100);
+      if (!ok) { toast(k === "blayers" ? t("Type the copper layers as a whole number from 1 to 32.") : k === "bcopper" ? t("Type the copper thickness in µm, up to 500.") : t("Type the copper coverage as a percentage from 0 to 100."), "warn"); this.renderTree(); return; }
+      this.setBoard(el.dataset.c ?? "", k === "blayers" ? "layers" : k === "bcopper" ? "copper" : "cover", k === "bcover" ? v! / 100 : v!);
     }
     else if (el.dataset.k === "compon") {
       const id = el.dataset.c ?? "", on = el.checked;

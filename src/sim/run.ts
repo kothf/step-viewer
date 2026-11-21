@@ -598,7 +598,7 @@ export interface RunInput {
    * Assemblies: `ks` = each region's conductivity (the regions are then solved as bodies joined where they
    * touch, within `gap`, as `links` say).
    */
-  thermal?: { k: number; setup: ThermalSetup; ks?: number[]; gap?: number; links?: ThermalLink[] };
+  thermal?: { k: number; setup: ThermalSetup; ks?: number[]; /** Per region: conductivity along X, Y, Z when they differ (a board), else null. */ k3s?: (number[] | null)[]; gap?: number; links?: ThermalLink[] };
   /** A modal study: this many modes; loads are not used. */
   modal?: {
     count: number;
@@ -895,7 +895,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const R = T.ks && inp.regions && inp.regions.length > 1 ? inp.regions : null;
   if (R ? T.ks!.some(v => !(v > 0)) : !((T.ks?.[0] ?? T.k) > 0)) throw new Error("E-TH-NOK");
   if (!set.sinks.length) throw new Error("E-TH-NOSINK");
-  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], tris: r.tris }));
+  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), tris: r.tris }));
   // nothing brings heat and nothing differs: every point would just sit at the one temperature
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
