@@ -80,6 +80,33 @@ export interface Load {
   hydro?: { p: ArrayLike<number>; down: ArrayLike<number>; gamma: number };
 }
 
+/**
+ * A bolt (FR-CON-020): an elastic beam of round section between the motion of two patches, each averaged
+ * over its triangles (mean displacement and mean rotation). The fastener itself is not one of the solids.
+ */
+export interface Bolt {
+  /** Triangles under the head, and those the nut (or the thread) holds. */
+  a: ArrayLike<number>;
+  b: ArrayLike<number>;
+  /** Shank diameter, mm, and Young's modulus, MPa. */
+  d: number;
+  E: number;
+  nu?: number;
+  /** Tension the tightening leaves in the bolt before the loads act, N. */
+  preload?: number;
+}
+
+export interface BoltResult {
+  /** Tension (pulling the two patches together), N; with a preload it starts from it. */
+  axial: number;
+  /** Shear force, N, the larger end bending moment and the twisting moment, N·mm. */
+  shear: number;
+  moment: number;
+  torsion: number;
+  /** Centres of the two patches and the beam's length between them, mm. */
+  a: number[]; b: number[]; length: number;
+}
+
 export interface Reaction {
   /** Force of the support on the body, N. */
   force: [number, number, number];
@@ -112,6 +139,7 @@ export interface StaticProblem {
   links?: { a: number; b: number; type: "sliding" | "none" }[];
   fixed: Support[];
   loads: Load[];
+  bolts?: Bolt[];
   /** Gravity, mm/s² (needs `mat.rho`). */
   gravity?: ArrayLike<number>;
   /**
@@ -189,6 +217,8 @@ export interface StaticResult {
   applied: Reaction;
   /** With `domains`: the pairs found touching, the area they share (mm²) and how they are joined. */
   contacts?: Contact[];
+  /** Per bolt, in the order given (static solves). */
+  bolts?: BoltResult[];
   /** Inertia relief: the acceleration the loads give the free body (mm/s², rad/s²), its centre of mass (mm) and mass (t). */
   accel?: { a: number[]; alpha: number[]; com: number[]; mass: number };
   /**
@@ -489,6 +519,92 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     }
     return -1;
   };
+  // bolts: each patch's mean displacement and rotation as rows over the unknowns of the elements it lies on
+  type Patch = { c: number[]; dom: number; W: Map<number, Float64Array>; pts: number[] };
+  const patchOf = (tris: ArrayLike<number>): Patch => {
+    const pts: number[] = [], c = [0, 0, 0];
+    let area = 0, dom = 0, first = true;
+    located(tris, (e, x, y, z, w) => {
+      pts.push(e, x, y, z, w); area += w; c[0] += w * x; c[1] += w * y; c[2] += w * z;
+      if (first) { dom = domE[e]; first = false; }
+    });
+    if (!(area > 0)) throw new Error("E-SIM-BOLT");
+    for (let i = 0; i < 3; i++) c[i] /= area;
+    const J = new Float64Array(9);
+    for (let o = 0; o < pts.length; o += 5) {
+      const r = [pts[o + 1] - c[0], pts[o + 2] - c[1], pts[o + 3] - c[2]], r2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2], w = pts[o + 4];
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) J[3 * i + j] += w * ((i === j ? r2 : 0) - r[i] * r[j]);
+    }
+    const det = J[0] * (J[4] * J[8] - J[5] * J[7]) - J[1] * (J[3] * J[8] - J[5] * J[6]) + J[2] * (J[3] * J[7] - J[4] * J[6]);
+    if (!(Math.abs(det) > 1e-12 * Math.abs(J[0] + J[4] + J[8]) ** 3)) throw new Error("E-SIM-BOLT");
+    const Ji = [J[4] * J[8] - J[5] * J[7], J[2] * J[7] - J[1] * J[8], J[1] * J[5] - J[2] * J[4], J[5] * J[6] - J[3] * J[8], J[0] * J[8] - J[2] * J[6], J[2] * J[3] - J[0] * J[5],
+      J[3] * J[7] - J[4] * J[6], J[1] * J[6] - J[0] * J[7], J[0] * J[4] - J[1] * J[3]].map(v => v / det);
+    const W = new Map<number, Float64Array>();
+    for (let o = 0; o < pts.length; o += 5) {
+      const e = pts[o], E = grid.elems[e], w = pts[o + 4], ne = nbs[e], me = 3 * ne;
+      const r = [pts[o + 1] - c[0], pts[o + 2] - c[1], pts[o + 3] - c[2]];
+      // θ = J⁻¹ ∫ r × u: column k of J⁻¹ [r]×
+      const X = [0, -r[2], r[1], r[2], 0, -r[0], -r[1], r[0], 0], JX = new Float64Array(9);
+      for (let i = 0; i < 3; i++) for (let k = 0; k < 3; k++) JX[3 * i + k] = Ji[3 * i] * X[k] + Ji[3 * i + 1] * X[3 + k] + Ji[3 * i + 2] * X[6 + k];
+      let We = W.get(e);
+      if (!We) { We = new Float64Array(6 * me); W.set(e, We); }
+      bas.eval(pts[o + 1], pts[o + 2], pts[o + 3], E.c, E.s);
+      for (let a = 0; a < ne; a++) {
+        const q = w * bas.v[a];
+        for (let k = 0; k < 3; k++) {
+          We[k * me + 3 * a + k] += q / area;
+          for (let i = 0; i < 3; i++) We[(3 + i) * me + 3 * a + k] += q * JX[3 * i + k];
+        }
+      }
+    }
+    return { c, dom, W, pts };
+  };
+  const boltSet = (pb.bolts ?? []).map(B => {
+    const pa = patchOf(B.a), pc = patchOf(B.b);
+    const t = [pc.c[0] - pa.c[0], pc.c[1] - pa.c[1], pc.c[2] - pa.c[2]];
+    let L = Math.hypot(t[0], t[1], t[2]);
+    if (!(L > 1e-9)) throw new Error("E-SIM-BOLT");
+    for (let i = 0; i < 3; i++) t[i] /= L;
+    L = Math.max(L, B.d / 4);
+    const K = beamStiffness(B.E, B.nu ?? 0.3, B.d, L, t);
+    // the 12 rows (patch a, then b) over each element either patch lies on
+    const W = new Map<number, Float64Array>();
+    for (const [P, r0] of [[pa, 0], [pc, 6]] as [Patch, number][]) for (const [e, We] of P.W) {
+      const me = 3 * nbs[e];
+      let Q = W.get(e);
+      if (!Q) { Q = new Float64Array(12 * me); W.set(e, Q); }
+      Q.set(We, r0 * me);
+    }
+    return { B, pa, pc, t, L, K, W, kax: B.E * Math.PI * B.d * B.d / 4 / L, g: null as Float64Array | null, f0: 0 };
+  });
+  for (const b of boltSet) {
+    const els = [...b.W.keys()];
+    const KW = new Map<number, Float64Array>();
+    for (const e of els) {
+      const me = 3 * nbs[e], We = b.W.get(e)!, R = new Float64Array(12 * me);
+      for (let i = 0; i < 12; i++) for (let j = 0; j < 12; j++) { const k = b.K[12 * i + j]; if (k) for (let q = 0; q < me; q++) R[i * me + q] += k * We[j * me + q]; }
+      KW.set(e, R);
+    }
+    for (const e1 of els) for (const e2 of els) {
+      const m1 = 3 * nbs[e1], m2 = 3 * nbs[e2], W1 = b.W.get(e1)!, R2 = KW.get(e2)!, Kb = A.block(e1, e2);
+      for (let i = 0; i < 12; i++) for (let q = 0; q < m1; q++) { const w = W1[i * m1 + q]; if (w) for (let r = 0; r < m2; r++) Kb[q * m2 + r] += w * R2[i * m2 + r]; }
+    }
+    // a unit of tightening: patch a pulled towards b, b towards a
+    if ((b.B.preload ?? 0) > 0 && !pb.modal) {
+      const g = new Float64Array(A.size);
+      for (const e of els) {
+        const me = 3 * nbs[e], We = b.W.get(e)!;
+        for (let q = 0; q < me; q++) g[off[e] + q] += b.t[0] * (We[q] - We[6 * me + q]) + b.t[1] * (We[me + q] - We[7 * me + q]) + b.t[2] * (We[2 * me + q] - We[8 * me + q]);
+      }
+      b.g = g;
+    }
+  }
+  /** The 12 mean motions of a bolt's two patches for the unknowns `v`. */
+  const boltMotion = (b: (typeof boltSet)[number], v: Float64Array) => {
+    const q = new Float64Array(12);
+    for (const [e, We] of b.W) { const me = 3 * nbs[e]; for (let i = 0; i < 12; i++) { let s2 = 0; for (let k = 0; k < me; k++) s2 += We[i * me + k] * v[off[e] + k]; q[i] += s2; } }
+    return q;
+  };
   const gl = gauss(Math.max(2, p + 1));
   /** Gauss points along segments (9 numbers each), cut at the grid planes: cell, point, weight (length). */
   const onLines = (S: ArrayLike<number>, fn: (c: number, x: number, y: number, z: number, w: number) => void) => {
@@ -557,6 +673,13 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         put(d, S[o], S[o + 1], S[o + 2], l / 6); put(d, S[o + 3], S[o + 4], S[o + 5], l / 6); put(d, mx, my, mz, 2 * l / 3);
       }
       if (Q) for (let o = 0; o + 5 < Q.length; o += 6) put(domAt(Q[o] + eps * Q[o + 3], Q[o + 1] + eps * Q[o + 4], Q[o + 2] + eps * Q[o + 5]), Q[o], Q[o + 1], Q[o + 2], rL * rL);
+    }
+    const PI = Float64Array.from([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    for (const b of boltSet) {
+      if (b.pa.dom === b.pc.dom) continue;
+      const r = new RigidSet(b.pa.dom, b.pc.dom, rc, rL);
+      for (const P of [b.pa, b.pc]) for (let o = 0; o < P.pts.length; o += 5) r.add(PI, P.pts[o + 1], P.pts[o + 2], P.pts[o + 3], P.pts[o + 4]);
+      sets.push(r);
     }
     const fb = freeBodies(sets, doms.length);
     free = fb.free;
@@ -870,13 +993,41 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   }
   const t2 = now();
   let xs: Float64Array, t3: number, iterations = 0;
+  // tightening: the pair of forces on each preloaded bolt that leaves its preload in it once the joint has
+  // given way under all of them (one solve per bolt, then a small system), added to the loads
+  const tighten = (solve: (b: Float64Array) => Float64Array) => {
+    const pre = boltSet.filter(b => b.g), n = pre.length;
+    if (!n) return;
+    const T = new Float64Array(n * n), rhs = pre.map(b => b.B.preload!);
+    pre.forEach((bj, j) => {
+      const xj = solve(bj.g!);
+      pre.forEach((bi, i) => {
+        const q = boltMotion(bi, xj), t = bi.t;
+        T[i * n + j] = (i === j ? 1 : 0) + bi.kax * (t[0] * (q[6] - q[0]) + t[1] * (q[7] - q[1]) + t[2] * (q[8] - q[2]));
+      });
+    });
+    // Gauss elimination with pivoting
+    for (let k = 0; k < n; k++) {
+      let piv = k;
+      for (let i = k + 1; i < n; i++) if (Math.abs(T[i * n + k]) > Math.abs(T[piv * n + k])) piv = i;
+      if (piv !== k) { for (let j = 0; j < n; j++) { const v = T[k * n + j]; T[k * n + j] = T[piv * n + j]; T[piv * n + j] = v; } const v = rhs[k]; rhs[k] = rhs[piv]; rhs[piv] = v; }
+      const d = T[k * n + k];
+      // nothing but the bolt itself resists its tightening: the parts it clamps are not joined where they touch
+      if (!(Math.abs(d) > 1e-6)) throw new Error("E-SIM-PRELOAD");
+      for (let i = k + 1; i < n; i++) { const m2 = T[i * n + k] / d; if (!m2) continue; for (let j = k; j < n; j++) T[i * n + j] -= m2 * T[k * n + j]; rhs[i] -= m2 * rhs[k]; }
+    }
+    for (let k = n - 1; k >= 0; k--) { let v = rhs[k]; for (let j = k + 1; j < n; j++) v -= T[k * n + j] * rhs[j]; rhs[k] = v / (T[k * n + k] || 1); }
+    pre.forEach((b, k) => { b.f0 = rhs[k]; for (let i = 0; i < f.length; i++) f[i] += rhs[k] * b.g![i]; });
+  };
   const useCg = pb.solver === "pcg" || (pb.solver !== "direct" && p >= 2 && A.size > DIRECT_LIMIT);
   if (modalRun) {
     t3 = t2;
     xs = modalRun();
   } else if (useCg) {
-    const S = pcgSolver(A, { coarse: 3 * basisSize(1), tol: pb.tol ?? 1e-8 }), r = S.solve(f);
-    xs = r.x; iterations = r.iterations;
+    const S = pcgSolver(A, { coarse: 3 * basisSize(1), tol: pb.tol ?? 1e-8 });
+    tighten(b => { const r = S.solve(b); iterations += r.iterations; return r.x; });
+    const r = S.solve(f);
+    xs = r.x; iterations += r.iterations;
     t3 = t2 + S.setup;
     if (reliefM) {
       const y = new Float64Array(f.length);
@@ -888,6 +1039,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   } else {
     const L = new Envelope(A);
     t3 = now();
+    tighten(b => L.solve(b));
     xs = L.solve(f);
     if (reliefM) { const y = new Float64Array(f.length); reliefM(xs, y); for (let i = 0; i < y.length; i++) y[i] += f[i]; xs = L.solve(y); }
   }
@@ -945,6 +1097,17 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     });
     return R;
   });
+
+  // bolts: the beam's end forces from the two patches' mean motions
+  const bolts: BoltResult[] | undefined = boltSet.length && !modal ? boltSet.map(b => {
+    const q = boltMotion(b, xs), F = new Float64Array(12), t = b.t;
+    for (let i = 0; i < 12; i++) for (let j = 0; j < 12; j++) F[i] += b.K[12 * i + j] * q[j];
+    const perp = (o: number) => { const a = F[o] * t[0] + F[o + 1] * t[1] + F[o + 2] * t[2]; return Math.hypot(F[o] - a * t[0], F[o + 1] - a * t[1], F[o + 2] - a * t[2]); };
+    return {
+      axial: b.f0 + F[6] * t[0] + F[7] * t[1] + F[8] * t[2], shear: perp(6), moment: Math.max(perp(3), perp(9)),
+      torsion: Math.abs(F[9] * t[0] + F[10] * t[1] + F[11] * t[2]), a: b.pa.c, b: b.pc.c, length: b.L,
+    };
+  }) : undefined;
 
   // connection forces: the flux the joining terms carry, ½(σ_a + σ_b) n − γ (u_a − u_b), is what b does to a
   if (!modal && joins.length) {
@@ -1022,7 +1185,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     }
   }
   // with an enforced displacement f·x / 2 is not the strain energy: the integral is
-  if (pb.fixed.some(q => q.value)) energy = strain;
+  if (pb.fixed.some(q => q.value) || boltSet.some(b => b.g)) energy = strain;
   let etaSum = 0;
   for (let e = 0; e < nel; e++) etaSum += eta[e];
   const prevError = !prev ? null : strain > 0 ? 100 * Math.sqrt(etaSum / strain) : 0;
@@ -1042,6 +1205,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     ms: { grid: t1 - t0, assemble: t2 - t1, factor: t3 - t2, solve: t4 - t3 },
     reactions, applied, eta, prevError, accel,
     ...(doms ? { contacts } : {}),
+    ...(bolts ? { bolts } : {}),
     modes, space, mass: modal ? mass : undefined,
     use(k) { const v = modes?.[k]; if (v) x = v.x; },
     sample(pos, nrm, hits) {
@@ -1206,6 +1370,34 @@ export function triBox(T: ArrayLike<number>) {
  * What one support holds of a domain (`b` = −1), or what a joint shares between two: sums over its points of
  * the held part of the six rigid motions (C) and of all of them (F), about `c` in lengths of L.
  */
+/**
+ * Stiffness (12 × 12, row-major, global axes; ends a then b: displacement, rotation) of a round beam of
+ * diameter `d` and length `L` along the unit `t`, with shear deformation.
+ */
+export function beamStiffness(E: number, nu: number, d: number, L: number, t: number[]): Float64Array {
+  const Ar = Math.PI * d * d / 4, I = Math.PI * d ** 4 / 64, G = E / (2 * (1 + nu));
+  const phi = 12 * E * I / (0.9 * G * Ar * L * L);
+  const a = 12 * E * I / (L ** 3 * (1 + phi)), b = 6 * E * I / (L * L * (1 + phi)), c = (4 + phi) * E * I / (L * (1 + phi)), e = (2 - phi) * E * I / (L * (1 + phi));
+  const k = new Float64Array(144), set = (ix: number[], v: number[]) => { for (let i = 0; i < ix.length; i++) for (let j = 0; j < ix.length; j++) k[12 * ix[i] + ix[j]] += v[i * ix.length + j]; };
+  const ka = E * Ar / L, kt = G * 2 * I / L;
+  set([0, 6], [ka, -ka, -ka, ka]);
+  set([3, 9], [kt, -kt, -kt, kt]);
+  set([1, 5, 7, 11], [a, b, -a, b, b, c, -b, e, -a, -b, a, -b, b, e, -b, c]);
+  set([2, 4, 8, 10], [a, -b, -a, -b, -b, c, b, e, -a, b, a, b, -b, e, b, c]);
+  // local axes: x along the beam, y and z across
+  const s = Math.abs(t[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  let y = [t[1] * s[2] - t[2] * s[1], t[2] * s[0] - t[0] * s[2], t[0] * s[1] - t[1] * s[0]];
+  const yl = Math.hypot(y[0], y[1], y[2]);
+  y = y.map(v => v / yl);
+  const z = [t[1] * y[2] - t[2] * y[1], t[2] * y[0] - t[0] * y[2], t[0] * y[1] - t[1] * y[0]];
+  const R = [t, y, z], T = new Float64Array(144);
+  for (let q = 0; q < 4; q++) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) T[12 * (3 * q + i) + 3 * q + j] = R[i][j];
+  const kT = new Float64Array(144), out = new Float64Array(144);
+  for (let i = 0; i < 12; i++) for (let j = 0; j < 12; j++) { let v = 0; for (let l = 0; l < 12; l++) v += k[12 * i + l] * T[12 * l + j]; kT[12 * i + j] = v; }
+  for (let i = 0; i < 12; i++) for (let j = 0; j < 12; j++) { let v = 0; for (let l = 0; l < 12; l++) v += T[12 * l + i] * kT[12 * l + j]; out[12 * i + j] = v; }
+  return out;
+}
+
 export class RigidSet {
   C = new Float64Array(36);
   F = new Float64Array(36);

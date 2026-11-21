@@ -1698,7 +1698,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sk-textedit { position: absolute; z-index: 5; pointer-events: auto; height: 28px; padding: 2px 6px; font: 600 14px var(--sans, sans-serif); border: 2px solid #f08c00; border-radius: 4px; background: var(--panel, #fff); color: var(--text, #111); box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 
 /* Structural analysis (FRS-structural, SA1): Study side tab and result legend */
-.sim-tree { padding: 6px 10px 12px; font-size: 12px; display: grid; gap: 10px; align-content: start; }
+.sim-tree { padding: 6px 10px 12px; font-size: 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; }
 .sim-empty { display: grid; gap: 8px; justify-items: start; color: var(--muted); }
 .sim-empty p { margin: 0; }
 .sim-head { display: flex; align-items: center; gap: 8px; }
@@ -1798,10 +1798,25 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-complist li.off .sim-cname { opacity: .55; text-decoration: line-through; }
 .sim-complist .btn { max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .sim-complist .btn.own { border-color: var(--accent); }
+.sim-boltlist { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px; }
+.sim-boltlist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 4px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.sim-boltlist label { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.sim-boltlist .sim-cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-boltlist li.off .sim-cname { opacity: .55; text-decoration: line-through; }
+.sim-boltlist li.miss .sim-boltnote { color: var(--warn, #b45309); }
+.sim-boltnote { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
+.sim-boltset { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px; }
+.sim-boltset select, .sim-boltset input { font-size: 11px; min-width: 0; padding: 2px 4px; }
+.sim-boltall { display: grid; grid-template-columns: 1fr; gap: 2px; font-size: 12px; margin-top: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.sim-bolttable { table-layout: fixed; width: 100%; }
+.sim-bolttable th:first-child { width: 36%; }
+.sim-bolttable th:first-child, .sim-bolttable td:first-child { text-align: left; }
+.sim-bolttable td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-bolttable tr.bad td[data-v=bsf] { color: var(--danger, #c92a2a); font-weight: 600; }
 .sim-contacts { width: 100%; border-collapse: collapse; font-size: 11px; }
 .sim-contacts th, .sim-contacts td { padding: 2px 3px; text-align: left; border-bottom: 1px solid var(--line); }
 .sim-contacts th { color: var(--muted); font: 500 11px inherit; }
-.sim-contacts select { max-width: 96px; font-size: 11px; }
+.sim-contacts select { max-width: 80px; font-size: 11px; }
 .sim-find { margin: 2px 0 6px; }
 .sim-lfilter { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
 .sim-lfilter select { flex: 1 1 100px; min-width: 0; max-width: 100%; font-size: 11px; }

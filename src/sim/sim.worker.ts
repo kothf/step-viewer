@@ -4,17 +4,20 @@
 // (results on section planes, FR-RES-030).
 
 import { findConnections, type Connection } from "./connect";
+import { findBolts, type FastenerBody } from "./bolts";
 import { runModal, runStatic, sampleAt, type PassResult, type RunInput, type SampleResult, type Sampler } from "./run";
 
 export type SimRequest =
   | { id: number; type: "static" | "modal"; input: RunInput; /** Keep the solutions of the solves before (the other load cases). */ more?: boolean }
   | { id: number; type: "connect"; bodies: Float64Array[]; gap: number }
+  | { id: number; type: "bolts"; bodies: Float64Array[]; fast: FastenerBody[] }
   | { id: number; type: "sample"; of: number; pos: Float32Array; scale: number; solid?: boolean };
 export type SimReply =
   | { id: number; pass: PassResult }
   | { id: number; done: true }
   | { id: number; sample: SampleResult | null }
   | { id: number; found: Connection[] }
+  | { id: number; bolts: ReturnType<typeof findBolts> }
   | { id: number; error: string };
 
 const post = (m: SimReply, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(m, transfer);
@@ -32,6 +35,11 @@ self.onmessage = (e: MessageEvent<SimRequest>) => {
     if (r.type === "connect") {
       const found = findConnections(r.bodies, r.gap);
       post({ id: r.id, found }, found.flatMap(f => [f.pa.buffer, f.pb.buffer]));
+      return;
+    }
+    if (r.type === "bolts") {
+      const bolts = findBolts(r.bodies, r.fast);
+      post({ id: r.id, bolts }, bolts.bolts.flatMap(b => [b.a.buffer, b.b.buffer]));
       return;
     }
     if (!r.more) kept.clear();

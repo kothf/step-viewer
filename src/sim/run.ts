@@ -2,7 +2,7 @@
 // Pure: runs in the solver worker and in node tests.
 
 import { MeshBody, insideOf } from "./body";
-import { solveStatic, momentField, triArea, triNormals, type Contact, type Load, type Reaction, type Support } from "./static";
+import { solveStatic, momentField, triArea, triNormals, type Bolt, type BoltResult, type Contact, type Load, type Reaction, type Support } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { GRAVITY, MAX_REFINE, type Study, type StudyEdge, type StudyPoint } from "./types";
@@ -343,6 +343,8 @@ export interface PassResult {
   energy: number;
   /** An assembly: the pairs of components found joined (by region index), with the area they share, mm². */
   contacts?: Contact[];
+  /** Per bolt of the input, in its order. */
+  bolts?: BoltResult[];
   /** Change of the energy from the pass before, %, null on the first. */
   change: number | null;
   ms: number;
@@ -402,6 +404,8 @@ export interface RunInput {
    * the others where they touch or come within `gap` mm (bonded unless `links` says otherwise, by region index).
    */
   asm?: { gap: number; links?: { a: number; b: number; type: "sliding" | "none" }[] };
+  /** Bolts between the regions (FR-CON-020): beams between two patches of their surfaces. */
+  bolts?: Bolt[];
   problem: StudyProblem;
   passes: number;
   /** Energy change target, %. */
@@ -550,7 +554,7 @@ export function sampleAt(sample: Sampler, pos: ArrayLike<number>, scale = 0, ins
  */
 export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number, y: number, z: number) => boolean) => void): Generator<PassResult> {
   if (inp.problem.problems.length) throw new Error(`${inp.problem.problems[0].code}: ${inp.problem.problems[0].id}`);
-  if (!inp.problem.loads.length && !inp.problem.gravity && !inp.problem.spin?.omega && !inp.problem.spin?.alpha && !inp.problem.fixed.some(s => s.value)) throw new Error("E-SIM-NOLOAD");
+  if (!inp.problem.loads.length && !inp.problem.gravity && !inp.problem.spin?.omega && !inp.problem.spin?.alpha && !inp.problem.fixed.some(s => s.value) && !inp.bolts?.some(b => (b.preload ?? 0) > 0)) throw new Error("E-SIM-NOLOAD");
   if (!inp.problem.fixed.length && !inp.problem.relief) throw new Error("E-SIM-FREE: 6");
   const domains = domainsOf(inp);
   if (inp.problem.relief && !(domains ? domains.every(d => d.mat.rho > 0) : inp.mat.rho > 0)) throw new Error("E-SIM-DENSITY");
@@ -586,7 +590,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
       for (let e = 0; e < degrees.length; e++) p = Math.max(p, degrees[e]);
     }
     const r = solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains, gap: inp.asm?.gap, links: inp.asm?.links,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin, relief: inp.problem.relief,
     });
@@ -606,7 +610,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     const change = k ? (Math.abs(r.energy - last) / Math.abs(r.energy || 1)) * 100 : null;
     last = r.energy;
     const converged = change != null && change <= inp.energyTol;
-    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), ...(r.contacts ? { contacts: r.contacts } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
+    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), ...(dom ? { dom } : {}), ...(r.contacts ? { contacts: r.contacts } : {}), ...(r.bolts ? { bolts: r.bolts } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
     if (converged) return;
   }
 }
@@ -630,7 +634,7 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now(), p = k + 2;
     const solve = () => solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains, gap: inp.asm?.gap, links: inp.asm?.links,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: [], modal: { count, start },
     });
