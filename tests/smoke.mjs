@@ -16703,6 +16703,21 @@ try {
       && JSON.stringify(rfRow.set) === JSON.stringify([[1, 2]]) && !n5.error && n5.passes[0].p === 4 && n4.passes[0].p === 2 && n5.passes[0].dofs > 1.2 * n4.passes[0].dofs && n5.passes[0].cells === n4.passes[0].cells
       && Math.abs(n5.applied.force[1] / 50 - 1) < 1e-6 && rfRu.length === 0,
       `sim 1.624: local accuracy on a face starts the solution two degrees higher there, with more unknowns in the first pass; the panel is translated (${JSON.stringify({ rfPanel, rfRow, e5: n5.error, p: [n4.passes[0]?.p, n5.passes[0]?.p], dofs: [n4.passes[0]?.dofs, n5.passes[0]?.dofs], rfRu })})`);
+    // 1.625: with a section plane on, the cut face shows the result inside the part (read from the solver's kept solution).
+    await mp.click('#hud [data-hud="section"]');
+    await mp.waitForFunction(() => window.__sv.sim.state().caps.painted > 0, null, { timeout: 30000 }).catch(() => {});
+    await mp.waitForTimeout(300);
+    const capOn = await mp.evaluate(() => {
+      const s = window.__sv.sim.state(), caps = [];
+      window.__sv.viewer.scene.traverse(o => { if (o.userData.sectionCap) caps.push({ sim: !!o.userData.simCap, colors: !!o.material.vertexColors, pts: o.geometry.getAttribute("position").count }); });
+      return { caps: s.caps, shown: s.plot.shown, kind: s.plot.kind, range: s.plot.range, meshes: caps };
+    });
+    await mp.evaluate(() => window.__sv.section.clear());
+    await mp.waitForTimeout(200);
+    const capOff = await mp.evaluate(() => window.__sv.sim.state().caps);
+    check(capOn.shown && capOn.caps.n === 1 && capOn.caps.painted === 1 && capOn.caps.hit > 100 && capOn.caps.max > 0 && capOn.caps.max < 2 * capOn.range[1] && capOn.caps.min >= 0
+      && capOn.meshes.length === 1 && capOn.meshes[0].sim && capOn.meshes[0].colors && capOn.meshes[0].pts > 10000 && capOff.n === 0 && capOff.painted === 0,
+      `sim 1.625: a section plane's cut face is coloured by the shown result inside the part (${JSON.stringify({ capOn, capOff })})`);
     await mp.selectOption('#sim-tree [data-k="study"]', "st2");
     await settle();
     // 1.620: a second body on the end of the bar is analysed bonded to it (one bar 260 long: 421 × (200 / 260)² = 249 Hz);

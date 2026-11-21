@@ -2312,6 +2312,7 @@ const showLeftTab = bindTabs($(".tabs"), tab => { $$(".tab").forEach(t => t.clas
 // Structural analysis (FRS-structural, SA1): the Simulation tab and the Study side tab of a part.
 const sim = new SimController({
   viewer,
+  section,
   ...modeller.simAccess(),
   faceAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();

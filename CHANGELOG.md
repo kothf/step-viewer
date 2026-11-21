@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.625.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **results on section planes**. With a section plane on, the cut face of a static study is coloured by the shown result (stress, displacement, safety factor or error estimate) inside the part, on the same scale as the plot, and follows the plane as it is dragged and the deformed shape.
+
 ## [1.624.0] - 2026-11-21
 
 ### Added
@@ -4027,7 +4033,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.624.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.625.0...HEAD
+[1.625.0]: https://github.com/kothf/step-viewer/compare/v1.624.0...v1.625.0
 [1.624.0]: https://github.com/kothf/step-viewer/compare/v1.623.0...v1.624.0
 [1.623.0]: https://github.com/kothf/step-viewer/compare/v1.622.0...v1.623.0
 [1.622.0]: https://github.com/kothf/step-viewer/compare/v1.621.0...v1.622.0
