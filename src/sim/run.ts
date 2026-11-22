@@ -3,10 +3,10 @@
 
 import { outputTimes, profileBreaks, profileFactor, profileStep, type PowerProfile } from "./transient";
 import { MeshBody, insideOf } from "./body";
-import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support } from "./static";
+import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support, type TempField } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
-import { DEFAULT_AMBIENT, enclosureFactor, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { DEFAULT_AMBIENT, DEFAULT_REF, enclosureFactor, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch } from "../thermal/study";
 import { solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource } from "./thermal";
 
@@ -49,7 +49,7 @@ export interface StudyProblem {
    * E-SIM-SPRING (an elastic support without stiffness), E-SIM-AXIS (a centrifugal load's faces have no one axis),
    * E-SIM-ONESPIN (a second centrifugal load), E-SIM-BEARING (a bearing load whose force lies along the axis).
    */
-  problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-SIM-HINGE" | "E-SIM-SPRING" | "E-SIM-AXIS" | "E-SIM-ONESPIN" | "E-SIM-BEARING" }[];
+  problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-SIM-HINGE" | "E-SIM-SPRING" | "E-SIM-AXIS" | "E-SIM-ONESPIN" | "E-SIM-BEARING" | "E-SIM-ONETEMP" }[];
   /** Local accuracy (FR-SOL-012): the elements meeting these triangles start `level` degrees higher. */
   refine?: { tris: Float64Array; level: number }[];
   /** Inertia relief: no supports, the loads are balanced by the body's inertia. */
@@ -60,6 +60,12 @@ export interface StudyProblem {
   connectors?: Connector[];
   connectorIds?: string[];
   masses?: FaceMass[];
+  /**
+   * Thermal expansion (FR-LOAD-011): the stress-free temperature °C, a uniform temperature (else a thermal
+   * study's result, given in `RunInput.temp`), and the surface its traction acts on: every face but those whose
+   * motion fixed, sliding, hinge, held-direction and displacement supports hold.
+   */
+  thermo?: { ref: number; uniform?: number; from?: string; tris: Float64Array; id: string };
 }
 
 const oneName = new WeakMap<SimBody, Int32Array>();
@@ -307,6 +313,18 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
   for (const l of st.loads) {
     if (off.has(l.id) || isThermalType(l.type)) continue;
     const comp = (l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(c => c.v);
+    if (l.type === "temperature") {
+      if (out.thermo) { out.problems.push({ id: l.id, code: "E-SIM-ONETEMP" }); continue; }
+      const held = new Set<number>(), face = faceOf(b);
+      for (const s of st.supports) {
+        if (off.has(s.id) || relief || isThermalType(s.type) || s.type === "elastic" || s.on) continue;
+        for (const f of s.faces) { const i = b.names.indexOf(f.name); if (i >= 0) held.add(i); }
+      }
+      const kept: number[] = [];
+      for (let t = 0; t < face.length; t++) if (!held.has(face[t])) for (let k = 0; k < 9; k++) kept.push(b.tris[9 * t + k]);
+      out.thermo = { ref: l.ref ?? DEFAULT_REF, tris: Float64Array.from(kept), id: l.id, ...(l.from ? { from: l.from } : { uniform: l.value?.v ?? DEFAULT_REF }) };
+      continue;
+    }
     if (l.type === "gravity") {
       out.gravity = (out.gravity ?? [0, 0, 0]).map((v, i) => v + comp[i]);
       continue;
@@ -674,6 +692,11 @@ export interface RunInput {
    * Assemblies: `ks` = each region's conductivity (the regions are then solved as bodies joined where they
    * touch, within `gap`, as `links` say).
    */
+  /**
+   * Thermal expansion: the material's α, 1/K, and for a temperature load from a thermal study, that study's
+   * run input (solved here first; its last pass gives the temperatures).
+   */
+  temp?: { alpha: number; thermal?: RunInput };
   thermal?: { k: number; setup: ThermalSetup; ks?: number[]; /** Per region: conductivity along X, Y, Z when they differ (a board), else null. */ k3s?: (number[] | null)[]; gap?: number; links?: ThermalLink[];
     /**
      * A transient study (FR-TSOL-006): volumetric heat capacity ρ·cp, J/(mm³·K) (`rcs` per region), start
@@ -818,9 +841,42 @@ export function sampleAt(sample: Sampler, pos: ArrayLike<number>, scale = 0, ins
  * then local passes that raise the degree by one only in the elements holding most of the error estimate.
  * `keep` gets each pass's solution, to be read later at other points.
  */
+/**
+ * The temperatures of a temperature load: uniform, or the last pass of the thermal study in `inp.temp.thermal`
+ * (solved here; the gradient is −flux / k). A point the thermal solution has no cell for takes the nearest
+ * value found a little further in, else the mean.
+ */
+export function tempField(inp: RunInput): TempField {
+  const th = inp.problem.thermo!;
+  if (!inp.temp || !(inp.temp.alpha > 0)) throw new Error("E-TH-ALPHA");
+  if (th.uniform != null) { const u = th.uniform; return pts => ({ t: new Float64Array(pts.length / 3).fill(u) }); }
+  const ti = inp.temp.thermal;
+  if (!ti?.thermal) throw new Error("E-TH-NOFIELD");
+  let sampler: Sampler | null = null, last: PassResult | undefined;
+  for (const p of runThermal(ti, s => { sampler = s; })) last = p;
+  if (!sampler || !last) throw new Error("E-TH-NOFIELD");
+  const s: Sampler = sampler, k = ti.thermal.k, mean = (last.thermal!.min + last.thermal!.max) / 2;
+  const c = [(inp.body.lo[0] + inp.body.hi[0]) / 2, (inp.body.lo[1] + inp.body.hi[1]) / 2, (inp.body.lo[2] + inp.body.hi[2]) / 2];
+  return (pts, grad) => {
+    const n = pts.length / 3, r = s(pts, undefined, true), t = Float64Array.from(r.vm), g = grad ? new Float64Array(3 * n) : undefined;
+    const miss: number[] = [];
+    for (let i = 0; i < n; i++) if (!r.hit?.[i] || !Number.isFinite(t[i])) miss.push(i);
+    if (miss.length) {
+      // a little towards the middle of the body
+      const q = new Float64Array(3 * miss.length);
+      miss.forEach((i, j) => { for (let a = 0; a < 3; a++) q[3 * j + a] = pts[3 * i + a] + 1e-4 * (c[a] - pts[3 * i + a]); });
+      const r2 = s(q, undefined, true);
+      miss.forEach((i, j) => { t[i] = r2.hit?.[j] ? r2.vm[j] : mean; if (g) for (let a = 0; a < 3; a++) r.u[3 * i + a] = r2.hit?.[j] ? r2.u[3 * j + a] : 0; });
+    }
+    if (g) for (let i = 0; i < 3 * n; i++) g[i] = -r.u[i] / k;
+    return { t, g };
+  };
+}
+
 export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number, y: number, z: number) => boolean) => void): Generator<PassResult> {
   if (inp.problem.problems.length) throw new Error(`${inp.problem.problems[0].code}: ${inp.problem.problems[0].id}`);
-  if (!inp.problem.loads.length && !inp.problem.gravity && !inp.problem.spin?.omega && !inp.problem.spin?.alpha && !inp.problem.fixed.some(s => s.value) && !inp.bolts?.some(b => (b.preload ?? 0) > 0)) throw new Error("E-SIM-NOLOAD");
+  const field = inp.problem.thermo ? tempField(inp) : undefined;
+  if (!inp.problem.loads.length && !inp.problem.thermo && !inp.problem.gravity && !inp.problem.spin?.omega && !inp.problem.spin?.alpha && !inp.problem.fixed.some(s => s.value) && !inp.bolts?.some(b => (b.preload ?? 0) > 0)) throw new Error("E-SIM-NOLOAD");
   if (!inp.problem.fixed.length && !inp.problem.relief) throw new Error("E-SIM-FREE: 6");
   const domains = domainsOf(inp);
   if (inp.problem.relief && !(domains ? domains.every(d => d.mat.rho > 0) : inp.mat.rho > 0)) throw new Error("E-SIM-DENSITY");
@@ -859,6 +915,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
       lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts, welds: inp.welds, connectors: inp.problem.connectors, masses: inp.problem.masses,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin, relief: inp.problem.relief, memory: inp.memory,
+      ...(field ? { thermo: { alpha: inp.temp!.alpha, ref: inp.problem.thermo!.ref, field, tris: inp.problem.thermo!.tris } } : {}),
     });
     grid = r.grid;
     prev = r.x;

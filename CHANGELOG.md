@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.663.0] - 2026-11-22
+
+### Added
+
+- Thermal stress. Loads ▸ Temperature in a static study of a part makes it expand with heat: one temperature everywhere, or the temperatures a thermal study of the same part finds (solved again with the static study, so its results go out of date when the thermal study changes). The stress-free temperature is 20 °C unless you type another; the material needs a thermal expansion coefficient. Where the supports stop the part growing, it is stressed.
+
 ## [1.662.0] - 2026-11-22
 
 ### Added
@@ -4351,7 +4357,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.662.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.663.0...HEAD
+[1.663.0]: https://github.com/kothf/step-viewer/compare/v1.662.0...v1.663.0
 [1.662.0]: https://github.com/kothf/step-viewer/compare/v1.661.0...v1.662.0
 [1.661.0]: https://github.com/kothf/step-viewer/compare/v1.660.0...v1.661.0
 [1.660.0]: https://github.com/kothf/step-viewer/compare/v1.659.0...v1.660.0

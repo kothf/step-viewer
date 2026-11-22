@@ -10,7 +10,8 @@ import type { MatRef } from "../tools/materials";
 /** `temp`, `conv` and `rad` are a thermal study's surface conditions: a fixed temperature, convection to air, radiation to the surroundings. */
 export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp" | "temp" | "conv" | "rad";
 /** `heat` (W) and `hflux` (W/m²) are a thermal study's heat sources. */
-export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote" | "heat" | "hflux" | "pkgheat";
+/** `temperature` (structural): thermal expansion from a uniform temperature (`value` °C) or a thermal study's result (`from`). */
+export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote" | "heat" | "hflux" | "pkgheat" | "temperature";
 export const THERMAL_SUPPORTS: SupportType[] = ["temp", "conv", "rad"];
 export const THERMAL_LOADS: LoadType[] = ["heat", "hflux", "pkgheat"];
 /** Whether a support or load type belongs to thermal studies. */
@@ -117,7 +118,14 @@ export interface StudyLoad {
   split?: boolean;
   /** Transient thermal studies: how the power changes with time (FR-TLOAD-005); absent = constant. */
   profile?: PowerProfile;
+  /** Temperature load (FR-LOAD-011): the thermal study whose last result gives the temperatures; absent = `value` °C everywhere. */
+  from?: string;
+  /** Temperature load: the temperature at which the part is free of stress, °C (default `DEFAULT_REF`). */
+  ref?: number;
 }
+
+/** A temperature load's stress-free temperature, °C. */
+export const DEFAULT_REF = 20;
 
 /** Local accuracy (FR-SOL-012): the solution starts `level` degrees higher where it meets these faces. */
 /**
@@ -361,7 +369,7 @@ export function nextId(st: Study, prefix: "s" | "l" | "r" | "w" | "k" | "m"): st
 }
 
 export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement", temp: "Fixed temperature", conv: "Convection", rad: "Radiation" };
-export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure", remote: "Remote load", heat: "Heat power", hflux: "Heat flux", pkgheat: "Heat from package" };
+export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure", remote: "Remote load", heat: "Heat power", hflux: "Heat flux", pkgheat: "Heat from package", temperature: "Temperature" };
 
 export const REFINE_LABEL = "Local accuracy";
 
