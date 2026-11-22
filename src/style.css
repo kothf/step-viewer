@@ -1934,3 +1934,4 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .th-table tbody tr.sel { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .th-table tr.miss td:first-child { color: var(--muted); font-style: italic; }
 .th-set .ana-row input { width: 72px; }
+.sim-xtable th, .sim-xtable td { overflow-wrap: anywhere; }

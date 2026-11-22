@@ -5,7 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.665.0] - 2026-11-22
+## [1.666.0] - 2026-11-22
+
+### Added
+
+- Radiation between faces in thermal studies. Cooling ▸ Radiation between faces takes two sets of faces, picked by clicking (first faces, then second faces), and an emissivity for each side. The view factor between them is found by ray sampling, with other faces of the model blocking the view, and the heat is exchanged as between two grey surfaces. A valve bulb shining on the board under it, or a heater on a wall, can now be modelled; a part that only radiates to another counts as connected to it. The results list each exchange with its view factor, the heat it carries and the mean temperatures of both sides, also in the report. Steady and transient studies both use it.
+
+### Changed
+
+- When nothing takes the heat from a component, the message now suggests radiation between faces as well.
+
+ - 2026-11-22
 
 ### Added
 
@@ -4374,7 +4384,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.665.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.666.0...HEAD
+[1.666.0]: https://github.com/kothf/step-viewer/compare/v1.665.0...v1.666.0
 [1.665.0]: https://github.com/kothf/step-viewer/compare/v1.664.0...v1.665.0
 [1.664.0]: https://github.com/kothf/step-viewer/compare/v1.663.0...v1.664.0
 [1.663.0]: https://github.com/kothf/step-viewer/compare/v1.662.0...v1.663.0

@@ -17115,7 +17115,7 @@ try {
     const b1 = await bar();
     const empty = await tp.evaluate(() => !!document.querySelector('#sim-tree .sim-empty [data-a="newthermal"]'));
     check(b0.on === "mode-structural" && b0.ids.includes("force") && b0.ids.includes("fixed") && !b0.ids.includes("heat") && b0.checked === 1 && !b0.wide && b0.words === 2
-      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "hflux", "temp", "conv", "rad", "solve", "results", "report"]) && empty,
+      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "hflux", "temp", "conv", "rad", "radx", "solve", "results", "report"]) && empty,
       `thermal 1.651: the Simulation bar has a Structural | Thermal switch; Thermal shows the thermal study's commands in place of supports and loads (${JSON.stringify({ b0, b1, empty })})`);
     // 8 W made in the whole bar (a thermal study is made on the way), the top face held at 30 °C
     await tp.click('#sim-tools [data-s="heat"]');
@@ -17687,6 +17687,118 @@ try {
       && /^E-TH-COMPALPHA/.test(u3.error ?? "") && /Bar<2>/.test(said) && /thermal expansion/.test(said)
       && !u4.error && u4.maxU > grow * 0.95 && u4.maxU < grow * 1.12 && ru.length === 0,
       `thermal stress 1.664: two steel bars held end to end and warmed by 100 K are pushed by E α ΔT, the contact passing σ A; with one of aluminium both carry one force; a component with no α is named; from the assembly's thermal study the freed bars grow by α ΔT L; translated (${JSON.stringify({ tempOn, sig, s2, grow, p1: u1.probes, f1: u1.contacts[0]?.force, e1: u1.error, p2: u2.probes, e2: u2.error, mats: u2.bodyMats, e3: u3.error, said, e4: u4.error, u4: u4.maxU, ru })})`);
+    await ctx.close();
+  }
+
+  // --- radiation between faces 1.666 (FRS-thermal FR-TBC-007): heat crossing a gap only by radiation ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const ap = await ctx.newPage();
+    ap.on("pageerror", e => errors.push(e.message));
+    ap.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await ap.goto(`${origin}/index.html?debug`);
+    await ap.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await ap.goto(`${origin}/index.html?debug`);
+    await ap.waitForFunction(() => window.__sv);
+    await ap.click("#new-part");
+    await ap.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // a 20 × 20 bar, 100 long along Y, k = 50 W/(m·K)
+    await ap.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50 };
+    }));
+    await ap.waitForTimeout(150);
+    await ap.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await ap.click("#new-more");
+    await ap.click("#new-asm-part");
+    const built = n => ap.waitForFunction(k => window.__sv.asm.doc?.components.length === k && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await built(1);
+    // a second bar beside it along X, 40 mm away: nothing touches
+    await ap.evaluate(() => window.__sv.asm.change(d => { const c = d.components[0], tf = [...c.tf]; tf[3] += 60; d.components.push({ ...c, id: "c2", name: "Bar<2>", tf, fixed: true }); }));
+    await ap.waitForTimeout(300);
+    await built(2);
+    await ap.waitForTimeout(600);
+    const sim = () => ap.evaluate(() => window.__sv.sim.state());
+    const solved = async () => { await ap.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await ap.waitForTimeout(400); };
+    const look = d => ap.evaluate(d => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(...d).normalize(), false); v.fit(false); v.invalidate(); }, d);
+    const at = (i, axis, sign) => ap.evaluate(([i, axis, sign]) => {
+      const v = window.__sv.viewer, part = v.parts[i];
+      let best = null, top = -Infinity;
+      for (const f of part.data.faces) { const w = v.toWorld(part, f.center), q = sign * w.getComponent(axis); if (q > top) { top = q; best = w.clone(); } }
+      const s = best.project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, [i, axis, sign]);
+    await look([-1, 0.2, 0.6]);
+    await ap.waitForTimeout(300);
+    await ap.click("#cm-t-simulation");
+    await ap.waitForTimeout(300);
+    await ap.click('#sim-tools [data-s="mode-thermal"]');
+    await ap.waitForTimeout(200);
+    // the far side of the first bar held at 20 °C; 0.5 W made throughout the second
+    await ap.click('#sim-tools [data-s="temp"]');
+    let p = await at(0, 0, -1);
+    await ap.mouse.click(p.x, p.y);
+    await ap.fill('#sim-pm [data-q="temp"]', "20");
+    await ap.keyboard.press("Tab");
+    await ap.click("#sim-pm .pm-ok");
+    await ap.waitForTimeout(400);
+    await ap.click('#sim-tools [data-s="heat"]');
+    p = await at(1, 2, 1);
+    await ap.mouse.click(p.x, p.y);
+    await ap.waitForTimeout(200);
+    await ap.check('#sim-pm [data-k="body"]');
+    await ap.fill('#sim-pm [data-n="value"]', "0.5");
+    await ap.keyboard.press("Tab");
+    await ap.click("#sim-pm .pm-ok");
+    await ap.waitForTimeout(400);
+    // nothing cools the second bar yet: it is named
+    await ap.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t0 = await sim();
+    // radiation between the second bar's face towards the first and the first bar's face towards it
+    const tools = await ap.evaluate(() => [...document.querySelectorAll("#sim-tools [data-s]")].map(b => b.dataset.s));
+    await ap.click('#sim-tools [data-s="radx"]');
+    await ap.waitForTimeout(200);
+    p = await at(1, 0, -1);
+    await ap.mouse.click(p.x, p.y);
+    await ap.waitForTimeout(200);
+    await ap.click("#sim-pm .pm-ok");
+    await ap.waitForTimeout(200);
+    const asked = await ap.evaluate(() => ({ side: document.querySelector('#sim-pm [data-side="2"]')?.getAttribute("aria-pressed"), boxes: [...document.querySelectorAll("#sim-pm .sim-faces")].map(b => b.textContent) }));
+    await look([1, 0.2, 0.6]);
+    await ap.waitForTimeout(300);
+    p = await at(0, 0, 1);
+    await ap.mouse.click(p.x, p.y);
+    await ap.waitForTimeout(200);
+    await ap.fill('#sim-pm [data-q="emis2"]', "0.8");
+    await ap.keyboard.press("Tab");
+    const panel = await ap.evaluate(() => ({ boxes: [...document.querySelectorAll("#sim-pm .sim-faces")].map(b => b.textContent), emis: document.querySelector('#sim-pm [data-q="emis"]')?.value }));
+    await ap.click("#lang-btn");
+    const ruPm = await ap.evaluate(() => [...document.querySelectorAll("#sim-pm *")].filter(e => !e.children.length && !e.closest("[translate=no]") && e.tagName !== "INPUT").map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await ap.click("#lang-btn");
+    await ap.click("#sim-pm .pm-ok");
+    await ap.waitForTimeout(400);
+    const item = await ap.evaluate(() => { const s = window.__sv.asm.doc.studies.at(-1).supports.find(x => x.type === "radx"); return { a: s?.faces.map(f => f.name), b: s?.faces2?.map(f => f.name), e: [s?.emis, s?.emis2], row: [...document.querySelectorAll("#sim-tree .sim-row")].map(r => r.textContent).find(x => /⇌/.test(x)) ?? "" }; });
+    await ap.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t1 = await sim();
+    const res = await ap.evaluate(() => ({ rows: [...document.querySelectorAll("#sim-tree .sim-xtable tbody tr")].map(tr => [...tr.children].map(td => td.textContent)), wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await ap.click("#lang-btn");
+    const ru = await ap.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-xtable *, #tab-sim [data-v=xnote]")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await ap.click("#lang-btn");
+    // the view factor of two parallel 100 × 20 rectangles 40 mm apart, and the grey-body exchange it gives
+    const X = 100 / 40, Y = 20 / 40;
+    const F = (2 / (Math.PI * X * Y)) * (Math.log(Math.sqrt(((1 + X * X) * (1 + Y * Y)) / (1 + X * X + Y * Y))) + X * Math.sqrt(1 + Y * Y) * Math.atan(X / Math.sqrt(1 + Y * Y)) + Y * Math.sqrt(1 + X * X) * Math.atan(Y / Math.sqrt(1 + X * X)) - X * Math.atan(X) - Y * Math.atan(Y));
+    const x1 = t1.thermal?.exchanges?.[0];
+    const R = (0.1 / 0.9) / 2000 + 1 / (2000 * (x1?.f ?? 1)) + (0.2 / 0.8) / 2000;
+    const law = x1 ? 5.670374419e-14 * ((x1.ta + 273.15) ** 4 - (x1.tb + 273.15) ** 4) / R : 0;
+    check(/E-TH-LOOSE/.test(t0.error ?? "") && tools.includes("radx") && asked.side === "true" && /1 face/.test(asked.boxes[0] ?? "") && panel.boxes.length === 2 && /1 face/.test(panel.boxes[1] ?? "") && panel.emis === "0.9" && ruPm.length === 0
+      && item.a?.length === 1 && /^c2@/.test(item.a[0]) && item.b?.length === 1 && !/^c2@/.test(item.b[0]) && item.e[0] === 0.9 && item.e[1] === 0.8 && /ε 0\.9 \/ 0\.8/.test(item.row)
+      && !t1.error && x1 && Math.abs(x1.f - F) < 0.02 && Math.abs(x1.heat - 0.5) < 0.01 && Math.abs(t1.thermal.out[0] - 0.5) < 0.01 && Math.abs(law - 0.5) < 0.01 && x1.ta > x1.tb + 20
+      && res.rows.length === 1 && res.wide <= 0 && ru.length === 0,
+      `radiation between faces 1.666: a bar heated by 0.5 W and cooled only by radiation to a held bar 40 mm away; the view factor matches the closed form and the grey-body law holds; translated (${JSON.stringify({ t0: t0.error, tools, asked, panel, ruPm, item, error: t1.error, x1, F, law, out: t1.thermal?.out, res, ru })})`);
     await ctx.close();
   }
 
