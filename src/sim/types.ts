@@ -346,7 +346,7 @@ export function glueStiffness(l: { t?: number; E?: number }): [number, number] {
 /** Assemblies: components are joined across gaps up to this wide, mm, when the study sets none (FR-CON-003). */
 export const DEFAULT_GAP = 0.1;
 
-export type PlotKind = "vm" | "u" | "ux" | "uy" | "uz" | "sf" | "err" | "temp" | "flux";
+export type PlotKind = "vm" | "u" | "ux" | "uy" | "uz" | "sf" | "err" | "temp" | "rise" | "flux";
 
 export const DEFAULT_SETTINGS: StudySettings = { passes: 3, energyTol: 2 };
 export const GRAVITY = 9806.65;

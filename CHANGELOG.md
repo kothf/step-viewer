@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.669.0] - 2026-11-22
+
+### Added
+
+- Temperature rise and heat flow arrows on thermal results. The plot list of a thermal result has Temperature rise: how much hotter than the study's ambient each place is, in K, with the highest and lowest marked. Heat flow arrows (a box under the colour scale) draws arrows spread over the surface that show which way the heat flows, longest where the heat flux is highest; they go with any thermal plot and come off when the box is unticked.
+
 ## [1.668.0] - 2026-11-22
 
 ### Added
@@ -4400,7 +4406,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.668.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.669.0...HEAD
+[1.669.0]: https://github.com/kothf/step-viewer/compare/v1.668.0...v1.669.0
 [1.668.0]: https://github.com/kothf/step-viewer/compare/v1.667.0...v1.668.0
 [1.667.0]: https://github.com/kothf/step-viewer/compare/v1.666.0...v1.667.0
 [1.666.0]: https://github.com/kothf/step-viewer/compare/v1.665.0...v1.666.0

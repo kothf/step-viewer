@@ -17877,6 +17877,24 @@ try {
       && item.f?.speed === 3 && JSON.stringify(item.f?.dir) === "[0,1,0]" && !item.f?.fan && item.all && /3 m\/s \+Y/.test(item.row)
       && !r.error && Math.abs(r.thermal.out[0] - 2) < 0.02 && Math.abs(max - want) < 0.04 * (want - 25) && Math.abs(r.thermal.flows[0].h * 1e6 - mean) < 0.02 * mean && /W\/\(m²·K\)/.test(hnat),
       `forced air 1.667: a 2 W bar blown at 3 m/s along its length by a Forced air item; the film coefficients follow the flat plate correlation and the fan's flow gives its speed; translated (${JSON.stringify({ icons, tools, fresh, fan, ruPm, item, error: r.error, out: r.thermal?.out, max, want, h: r.thermal?.flows?.[0]?.h, mean, hnat })})`);
+    // --- thermal plots 1.669 (FR-TRES-001): temperature rise above ambient and heat flow arrows on the same result ---
+    if (!(await fp.evaluate(() => window.__sv.sim.state().plot.shown))) { await fp.click('#sim-tools [data-s="results"]'); await fp.waitForTimeout(300); }
+    const kinds = await fp.evaluate(() => [...document.querySelectorAll('#sim-legend select[data-k="kind"] option')].map(o => o.value));
+    await fp.selectOption('#sim-legend select[data-k="kind"]', "rise");
+    await fp.waitForTimeout(300);
+    const rise = await fp.evaluate(() => { const s = window.__sv.sim.state(); return { kind: s.plot.kind, range: s.plot.range, min: s.thermal?.min, max: s.thermal?.max, unit: document.querySelector("#sim-legend .ana-scale")?.textContent ?? "" }; });
+    await fp.check('#sim-legend input[data-k="vectors"]');
+    await fp.waitForTimeout(300);
+    const arrows = await fp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.simArrows) n += o.userData.simArrows; }); return { n, st: window.__sv.sim.state().plot.arrows }; });
+    await fp.click("#lang-btn");
+    const ruLeg = await fp.evaluate(() => [...document.querySelectorAll("#sim-legend *")].filter(e => !e.children.length && !e.closest("[translate=no]") && e.tagName !== "INPUT").map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await fp.click("#lang-btn");
+    await fp.uncheck('#sim-legend input[data-k="vectors"]');
+    await fp.waitForTimeout(300);
+    const gone = await fp.evaluate(() => window.__sv.sim.state().plot.arrows);
+    check(JSON.stringify(kinds.slice(0, 3)) === '["temp","rise","flux"]' && rise.kind === "rise" && Math.abs(rise.range[1] - (rise.max - 25)) < 1e-3 && Math.abs(rise.range[0] - (rise.min - 25)) < 1e-3 && /K/.test(rise.unit)
+      && arrows.n > 20 && arrows.n === arrows.st && gone === 0 && ruLeg.length === 0,
+      `thermal plots 1.669: the plot list has Temperature rise (temperature less the ambient, in K), and Heat flow arrows draws arrows on the surface and takes them off again; translated (${JSON.stringify({ kinds, rise, arrows, gone, ruLeg })})`);
     await ctx.close();
   }
 
