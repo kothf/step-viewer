@@ -50,6 +50,11 @@ export interface VaultHost {
   added?(id: string): Promise<void>;
   /** A small PNG of the live document's view (the explorer's preview), or null when nothing is shown. */
   thumb?(): Promise<Uint8Array | null>;
+  /**
+   * A board's thermal package (a ZIP) found beside the model file just opened (FRS-thermal FR-TPKG-006): shown on
+   * that model. True when it was a package and went on.
+   */
+  pair?(name: string, data: Uint8Array): Promise<boolean>;
   /** A vault file was just opened: File ▸ recent documents remembers it with its vault. */
   recent?(name: string, data: Uint8Array, ref: RecentVault): void;
 }
@@ -591,12 +596,40 @@ export class VaultPanel {
           toast(r.changed.length ? t("Opened with newer versions of: {files}", { files: r.changed.join(", ") }) : t("The parts are already the versions the assembly was checked in with."));
         }
       }
-      await this.app.open(version ? name.replace(/(\.[^.]+)$/, ` (v${version})$1`) : name, data, replace && !version);
+      // FR-TPKG-006: a board's thermal package opens with the STEP beside it, whichever of the two was opened
+      const step = !version && !replace ? this.pairedStep(f) : null;
+      if (step) await this.app.open(step.path.split("/").pop()!, await this.bytesOf(step));
+      else await this.app.open(version ? name.replace(/(\.[^.]+)$/, ` (v${version})$1`) : name, data, replace && !version);
+      const pkg = !version ? (step ? f : this.pairedPackage(f)) : null;
+      if (pkg && this.app.pair) await this.app.pair(pkg.path.split("/").pop()!, pkg === f ? data : await this.bytesOf(pkg));
+      if (step) return;
       // A part, assembly or drawing opened from the vault saves back into it (an old version is a loose copy).
       const d = this.app.doc();
       if (!version && d && d.kind === f.kind) { this.shown.set(id, v.latest(f).n); d.setVault(this.tie(id)); setTimeout(() => void this.keepThumb(id), 4000); }
       if (!version) { const ref = this.recentRef(id); if (ref) this.app.recent?.(name, data, ref); }
     } catch (e) { toast(errText(e), true); }
+  }
+
+  /** A file's working copy (when checked out here) or latest version. */
+  private async bytesOf(f: FileRec): Promise<Uint8Array> {
+    const v = this.vault!;
+    return await v.working(f.path) ?? await v.versionBytes(f.id, v.latest(f).n);
+  }
+
+  /** The thermal package beside a model file: `<stem>-thermal.zip` (or `<stem>.zip`) in the same folder. */
+  private pairedPackage(f: FileRec): FileRec | null {
+    const m = /^(.*)\.(step|stp|iges|igs|brep)$/i.exec(f.path);
+    if (!m) return null;
+    const want = [`${m[1]}-thermal.zip`, `${m[1]}.zip`].map(x => x.toLowerCase());
+    return this.files.find(x => !x.deleted && want.includes(x.path.toLowerCase())) ?? null;
+  }
+
+  /** The board's STEP beside a thermal package `<stem>-thermal.zip` in the same folder. */
+  private pairedStep(f: FileRec): FileRec | null {
+    const m = /^(.*)-thermal\.zip$/i.exec(f.path);
+    if (!m) return null;
+    const want = ["step", "stp"].map(e => `${m[1]}.${e}`.toLowerCase());
+    return this.files.find(x => !x.deleted && want.includes(x.path.toLowerCase())) ?? null;
   }
 
   /** What File ▸ recent documents keeps for a file of the open vault, so it opens through the vault again. */
