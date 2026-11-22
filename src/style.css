@@ -440,6 +440,12 @@ details > :last-child { margin-bottom: 12px; }
 .st-hint { color: var(--muted); min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
 .st-hint b { color: var(--text); font-weight: 600; }
 #app.sketching .st-hint, #app.mc-cmd .st-hint { display: none; }
+.st-thermal { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; flex: 0 0 auto; }
+.st-thermal[hidden] { display: none; }
+.st-thermal .st-link { background: none; border: 0; padding: 0 2px; color: var(--accent-text); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.st-thermal .st-x { background: none; border: 0; padding: 0 4px; color: var(--muted); font: inherit; cursor: pointer; line-height: 1; }
+.st-thermal .st-x:hover { color: var(--text); }
+#app.model .st-thermal, #app.asm .st-thermal, #app.gerber .st-thermal { display: none; }
 .st-units { border: 1px solid transparent; background: none; color: var(--text); font: inherit; padding: 1px 6px; border-radius: 4px; cursor: pointer; min-height: 20px; }
 .st-units:hover, .st-units[aria-expanded="true"] { border-color: var(--line); background: var(--panel-2); }
 .st-units-menu { gap: 2px; min-width: 180px; }

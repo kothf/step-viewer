@@ -13,6 +13,7 @@ import { byMargin, DEFAULT_LIMITS, partMargin, partStats, partTemp, problems, su
 import type { ThermalReply } from "./thermal.worker";
 import ThermalWorker from "./thermal.worker?worker";
 import { ThermalError } from "./vtu";
+import { looksLikeBoard } from "./study";
 
 export interface ThermalHost {
   viewer: Viewer;
@@ -58,6 +59,12 @@ interface Attached {
 
 interface Prefs { palette: PaletteName; labels: boolean; rise: boolean; life: number; board: number; folded: boolean }
 const PREFS_KEY = "mc:thermalMap";
+/** Model files that were shown the "looks like a board" hint (FR-TPKG-005): once per file. */
+const HINT_KEY = "mc:thermalHint";
+const HINT_MAX = 200;
+function hintedFiles(): string[] {
+  try { const j = JSON.parse(localStorage.getItem(HINT_KEY) ?? "[]"); return Array.isArray(j) ? j.filter(x => typeof x === "string") : []; } catch { return []; }
+}
 /** Opacity of the other parts while one is isolated. */
 const ISO_FADE = 0.18;
 const DEFAULT_PREFS: Prefs = { palette: "heat", labels: true, rise: false, life: DEFAULT_LIMITS.life, board: DEFAULT_LIMITS.board, folded: false };
@@ -186,6 +193,12 @@ export class ThermalMaps {
     lg.addEventListener("click", e => this.legendClick(e));
     lg.addEventListener("change", e => this.legendChange(e));
     $("#th-summary").addEventListener("click", e => this.summaryClick(e));
+    $("#st-thermal").addEventListener("click", e => {
+      const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
+      if (!a) return;
+      this.hideHint();
+      if (a === "thadd") this.host.addMap();
+    });
     const vp = $("#viewport");
     vp.addEventListener("pointermove", e => { if (!this.active() || e.buttons) { this.hideCard(); return; } this.hoverAt = { x: e.clientX, y: e.clientY }; if (!this.hoverQueued) { this.hoverQueued = true; requestAnimationFrame(() => { this.hoverQueued = false; this.hover(); }); } });
     vp.addEventListener("pointerleave", () => { this.hoverAt = null; this.hideCard(); });
@@ -248,6 +261,7 @@ export class ThermalMaps {
   attach(pkg: ThermalPackage, own = false, ask = true) {
     const key = this.host.key();
     if (!key) return false;
+    this.hideHint();
     const had = this.maps.get(key);
     if (ask && had && !had.own && !own && !had.pkg.sourcesOnly && !pkg.sourcesOnly) { void this.second(pkg); return true; }
     const stats = partStats(pkg.mesh);
@@ -325,9 +339,31 @@ export class ThermalMaps {
     this.probing = false;
     this.host.changed();
     this.renderAll();
+    // after the caller has had its turn: a STEP opened with its package gets the map, not the hint
+    setTimeout(() => this.boardHint(), 0);
   }
   /** The model is going away (another document takes the view). */
-  modelGone() { this.clear(); this.probing = false; this.renderAll(); }
+  modelGone() { this.clear(); this.probing = false; this.hideHint(); this.renderAll(); }
+
+  /**
+   * A model that looks like a circuit board and has no map gets a status-bar hint with an Add thermal map… link
+   * (FR-TPKG-005, UX-6), once per file.
+   */
+  private boardHint() {
+    const key = this.host.key();
+    if (!key || this.cur()) { this.hideHint(); return; }
+    const seen = hintedFiles();
+    if (seen.includes(key) || !looksLikeBoard(this.bodies())) { this.hideHint(); return; }
+    try { localStorage.setItem(HINT_KEY, JSON.stringify([...seen, key].slice(-HINT_MAX))); } catch { /* private mode */ }
+    const el = $("#st-thermal");
+    el.innerHTML = `<span>${esc(t("This looks like a circuit board."))}</span> <button type="button" class="st-link" data-a="thadd">${esc(t("Add thermal map…"))}</button>`
+      + `<button type="button" class="st-x" data-a="thx" aria-label="${esc(t("Close"))}" title="${esc(t("Close"))}">×</button>`;
+    el.title = t("Open the board's thermal package (temperatures from the board design app) to see them on the model");
+    el.hidden = false;
+  }
+  private hideHint() { const el = $("#st-thermal"); el.hidden = true; el.innerHTML = ""; }
+  /** Whether the board hint is on screen (tests). */
+  hintShown() { return !$("#st-thermal").hidden; }
   /** A model file was closed for good: its map is dropped. */
   forget(key: string) { const a = this.maps.get(key); if (a?.picture) URL.revokeObjectURL(a.picture); this.maps.delete(key); }
 
