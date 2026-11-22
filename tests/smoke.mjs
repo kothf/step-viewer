@@ -10,6 +10,7 @@
  * Set CHROMIUM_PATH to use a specific browser binary, SMOKE_SHARD=i/n to run one shard (see inShard).
  */
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { readFile, readdir } from "node:fs/promises";
 import { crc32, deflateRawSync } from "node:zlib";
 import { extname, join, resolve, sep } from "node:path";
@@ -17987,6 +17988,50 @@ try {
     const sat = c => Math.max(...c) - Math.min(...c);
     check(/\.png$/.test(dl.suggestedFilename()) && px.type === "image/png" && px.k >= 2 && sat(px.mid) > 60 && sat(px.low) > 30 && px.low.reduce((x, y) => x + y) + 200 < px.high.reduce((x, y) => x + y),
       `thermal picture 1.660: Save picture writes a PNG with the colour scale drawn in bottom left (${JSON.stringify({ name: dl.suggestedFilename(), ...px })})`);
+    await ctx.close();
+  }
+
+  // --- thermal package 1.668 (FRS-thermal FR-TREP-010): a board study's result saved as a thermal package and opened again ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const kp = await ctx.newPage();
+    kp.on("pageerror", e => errors.push(e.message));
+    kp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal");
+    await kp.goto(`${origin}/index.html?debug`);
+    await kp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await kp.goto(`${origin}/index.html?debug`);
+    await kp.waitForFunction(() => window.__sv);
+    await kp.setInputFiles("#file-input", [join(thx, "amp.step"), join(thx, "amp-thermal.zip")]);
+    await kp.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    await kp.waitForTimeout(700);
+    await kp.click('#th-tools [data-th="simulate"]');
+    await kp.waitForFunction(() => window.__sv.asm.doc?.components.length === 7 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 7, null, { timeout: 180000 });
+    await kp.waitForTimeout(800);
+    await kp.selectOption('#sim-tree select[data-k="passes"]', "1");
+    await kp.click('#sim-tools [data-s="solve"]');
+    await kp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 400000 });
+    await kp.waitForTimeout(500);
+    const btn = await kp.evaluate(() => document.querySelector('#sim-tree [data-a="tpkg"]')?.textContent ?? null);
+    const [pdl] = await Promise.all([kp.waitForEvent("download"), kp.click('#sim-tree [data-a="tpkg"]')]);
+    const pkgPath = join(tmpdir(), `sv-smoke-${process.pid}-${pdl.suggestedFilename().replace(/[^\w.-]+/g, "_")}`);
+    await pdl.saveAs(pkgPath);
+    const kept = await kp.evaluate(() => { const s = window.__sv.sim.state(); return { pkg: s.pkg, comps: s.thermal?.comps?.map(c => [c.name, c.max, c.power]), max: s.thermal?.max, plot: s.plot?.kind ?? null }; });
+    const r14 = kept.pkg?.parts.find(x => x.designator === "R14"), r14c = kept.comps?.find(c => c[0] === "R14<1>");
+    check(btn === "Thermal package" && /-thermal\.zip$/.test(pdl.suggestedFilename()) && kept.pkg?.files.length === 5 && kept.pkg.files.some(f => /-thermal\.vtu$/.test(f)) && kept.pkg.files.some(f => /-heat-sources\.csv$/.test(f)) && kept.pkg.files.some(f => /-thermal\.png$/.test(f)) && kept.pkg.files.includes("README-thermal.txt")
+      && kept.pkg.parts.length === 6 && r14 && r14c && Math.abs(r14.t - r14c[1]) < 1e-9 && Math.abs(r14.p - 3.1) < 1e-6 && Math.abs(kept.pkg.parts.reduce((a, x) => a + x.p, 0) - 29.17) < 1e-6,
+      `thermal package 1.668: the study's Thermal package button saves a zip of the package layout (mesh, heat sources, picture, manifest, README) with one part per package part, its power and its hottest temperature (${JSON.stringify({ btn, name: pdl.suggestedFilename(), kept })})`);
+    // the package opens alone as a thermal map, its parts named as in the study
+    const op = await ctx.newPage();
+    op.on("pageerror", e => errors.push(e.message));
+    await op.goto(`${origin}/index.html?debug&nokernel`);
+    await op.waitForFunction(() => window.__sv);
+    await op.setInputFiles("#file-input", [pkgPath]);
+    await op.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    await op.waitForTimeout(500);
+    const back = await op.evaluate(() => { const s = window.__sv.thermal.state(); return { format: s.format ?? s.manifest?.format ?? null, parts: [...document.querySelectorAll("#th-side table.th-table tr[data-part]")].map(r => r.innerText.replace(/\s+/g, " ").trim()), src: document.querySelector("#th-side .th-src")?.textContent?.replace(/\s+/g, " ").trim() }; });
+    check(back.parts.length === 6 && back.parts.some(r => /R14/.test(r)) && /MöbiusCAD/.test(back.src ?? ""),
+      `thermal package 1.668: the saved package opens on its own as a board thermal map with the study's parts, saying it came from MöbiusCAD (${JSON.stringify(back)})`);
     await ctx.close();
   }
 
