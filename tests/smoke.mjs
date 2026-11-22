@@ -17390,6 +17390,59 @@ try {
     await ctx.close();
   }
 
+  // --- thermal isolate and picture 1.660 (FRS-thermal FR-TMAP-020/042): one part alone; a PNG with the colour scale drawn in ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const ip = await ctx.newPage();
+    ip.on("pageerror", e => errors.push(e.message));
+    ip.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal");
+    await ip.goto(`${origin}/index.html?debug&nokernel`);
+    await ip.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await ip.goto(`${origin}/index.html?debug&nokernel`);
+    await ip.waitForFunction(() => window.__sv);
+    await ip.setInputFiles("#file-input", [join(thx, "amp.step"), join(thx, "amp-thermal.zip")]);
+    await ip.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    await ip.waitForTimeout(700);
+    const all = (await ip.evaluate(() => window.__sv.thermal.state())).tris;
+    const isoBtn0 = await ip.evaluate(() => document.querySelector('#th-tools [data-th="isolate"]')?.disabled);
+    await ip.click('#th-side tr[data-part="2"]');
+    await ip.dblclick('#th-side tr[data-part="2"]');
+    await ip.waitForTimeout(500);
+    const i1 = await ip.evaluate(() => { const s = window.__sv.thermal.state(); return { iso: s.iso, tris: s.tris, faded: s.faded, note: document.querySelector('#th-legend [data-v="iso"]')?.textContent, pressed: document.querySelector('#th-tools [data-th="isolate"]')?.getAttribute("aria-pressed"),
+      peaks: [...document.querySelectorAll("#th-labels [data-peak]")].map(e => e.dataset.peak), board: (() => { const q = window.__sv.thermal.screenOf([20, 20, 1.6]); return q && window.__sv.thermal.valueAt(q.x, q.y); })(), picture: s.picture }; });
+    check(isoBtn0 === true && i1.iso === 2 && i1.tris > 0 && i1.tris + i1.faded === all && i1.faded > i1.tris && /R14/.test(i1.note ?? "") && i1.pressed === "true" && i1.peaks.join() === "2" && i1.board === null && i1.picture.lines.some(l => /R14/.test(l)),
+      `thermal isolate 1.660: a double-click on a part's row shows it alone, the rest see-through and not picked; the legend and the labels name only it (${JSON.stringify({ all, isoBtn0, ...i1 })})`);
+    await ip.click('#th-legend [data-a="unisolate"]');
+    const i2 = await ip.evaluate(() => { const s = window.__sv.thermal.state(); return { iso: s.iso, tris: s.tris, faded: s.faded }; });
+    // a double-click on the part in the view, then Esc
+    const top = await ip.evaluate(() => { const q = window.__sv.thermal.screenOf([45, 30, 8.5]); return [q.x, q.y]; });
+    await ip.mouse.dblclick(top[0], top[1]);
+    await ip.waitForTimeout(400);
+    const i3 = (await ip.evaluate(() => window.__sv.thermal.state())).iso;
+    await ip.mouse.move(700, 880);
+    await ip.keyboard.press("Escape");
+    const i4 = (await ip.evaluate(() => window.__sv.thermal.state())).iso;
+    check(i2.iso === null && i2.tris === all && i2.faded === 0 && i3 === 2 && i4 === null,
+      `thermal isolate 1.660: Show all parts brings every part back; a double-click on a part in the view isolates it and Esc ends it (${JSON.stringify({ i2, i3, i4 })})`);
+    // Save picture: the PNG holds the colour scale bottom left
+    await ip.evaluate(() => { window.__blobs = []; const o = URL.createObjectURL; URL.createObjectURL = b => { window.__blobs.push(b); return o.call(URL, b); }; });
+    const [dl] = await Promise.all([ip.waitForEvent("download"), ip.click('#th-tools [data-th="png"]')]);
+    const px = await ip.evaluate(async () => {
+      const b = window.__blobs.at(-1), im = await createImageBitmap(b), c = document.createElement("canvas");
+      c.width = im.width; c.height = im.height;
+      const g = c.getContext("2d"); g.drawImage(im, 0, 0);
+      const s = window.__sv.thermal.state(), v = window.__sv.viewer, k = im.width / v.size.x, L = s.picture.lines.length;
+      const height = 10 * k + 16 * k + 12 * k + 16 * k + L * 15 * k + 10 * k, y0 = im.height - 14 * k - height, ry = Math.round(y0 + 10 * k + 18 * k + 6 * k);
+      const at = f => [...g.getImageData(Math.round(14 * k + 10 * k + f * 220 * k), ry, 1, 1).data].slice(0, 3);
+      return { w: im.width, k, low: at(0.03), mid: at(0.5), high: at(0.97), type: b.type };
+    });
+    const sat = c => Math.max(...c) - Math.min(...c);
+    check(/\.png$/.test(dl.suggestedFilename()) && px.type === "image/png" && px.k >= 2 && sat(px.mid) > 60 && sat(px.low) > 30 && px.low.reduce((x, y) => x + y) + 200 < px.high.reduce((x, y) => x + y),
+      `thermal picture 1.660: Save picture writes a PNG with the colour scale drawn in bottom left (${JSON.stringify({ name: dl.suggestedFilename(), ...px })})`);
+    await ctx.close();
+  }
+
   // --- thermal compare 1.659 (FRS-thermal FR-TMAP-030/031): a second package of the same board compared with the first ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.660.0] - 2026-11-22
+
+### Added
+
+- Isolate a part of a thermal map. A double-click on a part in the Parts list or on the model (or Isolate on the Thermal bar) shows that part alone in colour with the rest of the board see-through; the legend says which part is shown, its hot spot label stays, and Esc or Show all parts brings everything back.
+- Save picture on the Thermal bar, and File ▸ Export PNG while a thermal map is shown, draw the colour scale, the board's name, the hottest part, how many parts are over their limits, the accuracy, the ambient temperature and the hot spot labels into the PNG.
+
 ## [1.659.0] - 2026-11-22
 
 ### Added
@@ -4330,7 +4337,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.659.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.660.0...HEAD
+[1.660.0]: https://github.com/kothf/step-viewer/compare/v1.659.0...v1.660.0
 [1.659.0]: https://github.com/kothf/step-viewer/compare/v1.658.0...v1.659.0
 [1.658.0]: https://github.com/kothf/step-viewer/compare/v1.657.0...v1.658.0
 [1.657.0]: https://github.com/kothf/step-viewer/compare/v1.656.0...v1.657.0

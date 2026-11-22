@@ -105,6 +105,7 @@ const thermal = new ThermalMaps({
   showTab: () => { if (!$("#t-thermal").hidden) showLeftTab("thermal"); },
   addMap: () => openPicker(),
   simulate: (pkg, match, bodies) => { void simulateBoard(pkg, match, bodies); },
+  savePicture: () => { void exportPng(false, parseInt($<HTMLSelectElement>("#png-scale").value) || 2); },
 });
 /**
  * Simulate in MöbiusCAD (FRS-thermal J5): the board's STEP becomes an assembly, one component per body with a
@@ -3611,6 +3612,8 @@ function bgColor() { return getComputedStyle(document.documentElement).getProper
 function exportPng(transparent: boolean, scale: number) {
   if (!viewer.parts.length) { nothingToExport(); return Promise.resolve(); }
   const c = snapshot(viewer, annotations, { scale, transparent, background: bgColor() });
+  // a thermal map brings its colour scale, hottest part and accuracy into the picture (FR-TMAP-042)
+  if (thermal.active()) thermal.decorate(c);
   const name = `${baseName()}${transparent ? "-transparent" : ""}.png`;
   return new Promise<void>(res => c.toBlob(b => { if (b) { download(b, name); toast(t("Saved {name}", { name }), "success"); } res(); }, "image/png"));
 }

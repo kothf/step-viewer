@@ -6084,4 +6084,9 @@ export const RU: Record<string, string> = {
   "Each part's board share enters the board under the part as a fixed power, and a chassis share leaves the model; the rest is made in the part.": "Доля платы каждой детали входит в плату под деталью как заданная мощность, доля шасси уходит из модели; остальное выделяется в детали.",
   "Off: all the heat is made in the parts and goes where the conductances send it.": "Выключено: всё тепло выделяется в деталях и идёт туда, куда его направляют теплопроводности.",
   "It takes heat in from the board": "Получает тепло от платы",
+  "Show the selected part alone, the others see-through (double-click a part)": "Показать выбранную деталь отдельно, остальные полупрозрачными (двойной щелчок по детали)",
+  "Save picture": "Сохранить снимок",
+  "Save the view as a PNG with the colour scale, the hottest part and the accuracy drawn in": "Сохранить вид в PNG со шкалой цветов, самой горячей деталью и точностью",
+  "Showing {name} only": "Показана только {name}",
+  "Show all parts": "Показать все детали",
 };
