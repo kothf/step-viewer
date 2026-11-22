@@ -3487,7 +3487,7 @@ export class SimController {
     const auto = `<label class="chk sim-auto" title="${esc(t("After every change to the model or to the study, the study is solved again by itself"))}"><input type="checkbox" data-k="auto"${st.auto ? " checked" : ""} />${esc(t("Solve on change"))}</label>`;
     // load cases (static) or power cases (steady thermal): sets of the loads solved in one go
     const casesHtml = () => {
-      if (modal || (thermal && st.settings.transient) || !(st.loads.length > 1 || st.cases?.length)) return "";
+      if (st.kind === "modal" || (thermal && st.settings.transient) || !(st.loads.length > 1 || st.cases?.length)) return "";
       const cs = st.cases ?? [];
       return `<div class="sim-sec sim-cases"><h4>${esc(thermal ? t("Power cases") : t("Load cases"))}</h4>`
         + cs.map(c => `<div class="sim-case" data-c="${c.id}"><div class="sim-case-h"><input type="text" data-k="cname" value="${esc(c.name)}" aria-label="${esc(t("Name"))}" translate="no" spellcheck="false" /><button class="sim-ib" data-a="rmcase" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">×</button></div>`
