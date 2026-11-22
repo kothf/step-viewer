@@ -17835,6 +17835,7 @@ try {
     await fp.click("#sim-pm .pm-ok");
     await fp.waitForTimeout(300);
     const tools = await fp.evaluate(() => [...document.querySelectorAll("#sim-tools [data-s]")].map(b => b.dataset.s));
+    const icons = await fp.evaluate(() => [...document.querySelectorAll("#sim-tools .mc-i")].filter(i => !i.textContent.trim() || /undefined/.test(i.textContent)).map(i => i.closest("[data-s]")?.dataset.s));
     await fp.click('#sim-tools [data-s="fan"]');
     await fp.waitForTimeout(200);
     const fresh = await fp.evaluate(() => ({ film: document.querySelector('#sim-pm [data-k="film"]')?.value, speed: document.querySelector('#sim-pm [data-q="speed"]')?.value, flow: document.querySelector('#sim-pm [data-k="flow"]')?.value }));
@@ -17871,10 +17872,10 @@ try {
     const h = L => { const re = 3 * L * 1e-3 / 1.57e-5; return 0.664 * Math.sqrt(re) * Math.cbrt(0.71) * 0.0262 / (L * 1e-3); };
     const G = (h(100) * 4 * 2000 + h(20) * 2 * 400) * 1e-6, mean = G * 1e6 / 8800, want = 25 + 2 / G;
     const max = r.thermal?.max ?? 0;
-    check(tools.includes("fan") && tools.indexOf("fan") === tools.indexOf("conv") + 1 && fresh.film === "fan" && fresh.speed === "2" && fresh.flow === "+X" && /^2 m\/s/.test(fan) && ruPm.length === 0
+    check(icons.length === 0 && tools.includes("fan") && tools.indexOf("fan") === tools.indexOf("conv") + 1 && fresh.film === "fan" && fresh.speed === "2" && fresh.flow === "+X" && /^2 m\/s/.test(fan) && ruPm.length === 0
       && item.f?.speed === 3 && JSON.stringify(item.f?.dir) === "[0,1,0]" && !item.f?.fan && item.all && /3 m\/s \+Y/.test(item.row)
       && !r.error && Math.abs(r.thermal.out[0] - 2) < 0.02 && Math.abs(max - want) < 0.04 * (want - 25) && Math.abs(r.thermal.flows[0].h * 1e6 - mean) < 0.02 * mean && /W\/\(m²·K\)/.test(hnat),
-      `forced air 1.667: a 2 W bar blown at 3 m/s along its length by a Forced air item; the film coefficients follow the flat plate correlation and the fan's flow gives its speed; translated (${JSON.stringify({ tools, fresh, fan, ruPm, item, error: r.error, out: r.thermal?.out, max, want, h: r.thermal?.flows?.[0]?.h, mean, hnat })})`);
+      `forced air 1.667: a 2 W bar blown at 3 m/s along its length by a Forced air item; the film coefficients follow the flat plate correlation and the fan's flow gives its speed; translated (${JSON.stringify({ icons, tools, fresh, fan, ruPm, item, error: r.error, out: r.thermal?.out, max, want, h: r.thermal?.flows?.[0]?.h, mean, hnat })})`);
     await ctx.close();
   }
 
