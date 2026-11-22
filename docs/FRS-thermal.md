@@ -389,7 +389,7 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 
 ### 12.1 Results
 
-- **FR-TRES-001** (TH2, M) Plots: temperature (default), temperature rise above ambient, heat flux magnitude, heat flux vectors (arrows on a sampled set of surface points), error estimate.
+- **FR-TRES-001** (TH2, M) Plots: temperature (default), temperature rise above ambient, heat flux magnitude, heat flux vectors (arrows on a sampled set of surface points), error estimate. Built in 1.669.0: Temperature rise (K above the study's ambient) in the plot list, Heat flow arrows checkbox under the colour scale (temperature, heat flux and error plots were built in 1.651.0).
 - **FR-TRES-002** (TH2, M) The summary card (FR-TMAP-006) for studies: hottest point and body, coolest, heat balance, error estimate, and for boards the TH1 lines.
 - **FR-TRES-003** (TH2, M) Probes, paths (temperature along a line, CSV), section caps with interior temperatures, iso-clipping, hot-spot list (local maxima; temperatures have no singular points, so no singularity marks; heat flux at sharp corners is marked as structural stress is), legend probe label — all as structural results.
 - **FR-TRES-004** (TH2, M) Heat balance table: every load and every way out with its W; the imbalance in %.

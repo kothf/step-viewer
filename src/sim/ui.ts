@@ -43,6 +43,7 @@ import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxi
 import { shownValue, typedValue } from "./values";
 import { DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
 import { BOARD_RC, SERIES_COLORS, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
+import { fluxArrows } from "./arrows";
 import { parseKTable, kTableText, ktFactors, type KTable } from "./ktable";
 import { DEFAULT_GAP, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
@@ -150,9 +151,9 @@ const TIP: Record<string, string> = {
   ambient: "Ambient temperature: the surroundings that convection and radiation give heat to",
 };
 /** What a thermal study plots. */
-const THERMAL_PLOTS: PlotKind[] = ["temp", "flux", "err"];
+const THERMAL_PLOTS: PlotKind[] = ["temp", "rise", "flux", "err"];
 const THERMAL_ASSUMPTIONS = "Steady heat conduction with constant material properties. Results are estimates for design and depend on the heat sources and the cooling chosen: film coefficients above all are rough figures. They do not replace a validated analysis where one is required.";
-const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"], ["sf", "Safety factor"], ["temp", "Temperature"], ["flux", "Heat flux"], ["err", "Error estimate"]];
+const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"], ["sf", "Safety factor"], ["temp", "Temperature"], ["rise", "Temperature rise"], ["flux", "Heat flux"], ["err", "Error estimate"]];
 /** Safety factors above this are drawn as this (lightly loaded regions would hide the rest of the scale). */
 const SF_TOP = 10;
 /** What a mode shape can be coloured by. */
@@ -207,7 +208,9 @@ export class SimController {
   private error: string | null = null;
   /** Item id → problem text, from the last Solve. */
   private problems = new Map<string, string>();
-  private plot: { kind: PlotKind; deformed: boolean; scale: number; on: boolean; marks: boolean } = { kind: "vm", deformed: true, scale: 0, on: true, marks: true };
+  private plot: { kind: PlotKind; deformed: boolean; scale: number; on: boolean; marks: boolean; vectors: boolean } = { kind: "vm", deformed: true, scale: 0, on: true, marks: true, vectors: false };
+  /** Heat flux arrows drawn on the plot (thermal results). */
+  private arrows = 0;
   /** Which analysis the command bar shows the commands of; it follows the open study's kind (`modeFor` = the study it was last set from). */
   private mode: "structural" | "thermal" = "structural";
   /** Transient results: the output time shown (index), and the playback timer. */
@@ -612,7 +615,7 @@ export class SimController {
       passes: this.res?.passes.map(p => ({ p: p.p, raised: p.raised ?? null, cells: p.cells, dofs: p.dofs, energy: p.energy, change: p.change, ms: p.ms, memory: p.memory ?? null })) ?? [], errors: last?.errors ?? [], capped: last?.capped ?? null, auto: !!this.study()?.auto, autoRuns: this.autoRuns,
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
-      plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
+      plot: { ...this.plot, arrows: this.arrows, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
       compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
@@ -2084,9 +2087,13 @@ export class SimController {
     return sy && peak > 0 ? sy / peak : null;
   }
 
+  /** The study's ambient temperature (°C): what a temperature rise is measured from. */
+  private ambient(): number { return this.study()?.settings.ambient ?? DEFAULT_AMBIENT; }
+
   private values(r: PassResult, kind: PlotKind): Float32Array {
     if (kind === "vm" || kind === "temp") return r.vm;
     if (kind === "err") return r.err;
+    if (kind === "rise") { const amb = this.ambient(); return Float32Array.from(r.vm, v => v - amb); }
     if (kind === "sf") {
       const out = new Float32Array(r.vm.length);
       for (let i = 0; i < out.length; i++) { const sy = this.yieldAt(r, i); out[i] = sy > 0 ? Math.min(SF_TOP, sy / Math.max(r.vm[i], 1e-9)) : SF_TOP; }
@@ -2298,6 +2305,7 @@ export class SimController {
     const k = this.plot.kind;
     if (this.res?.passes.at(-1)?.modes) return ["", 1];
     if (k === "temp") return ["°C", 1];
+    if (k === "rise") return ["K", 1];
     if (k === "flux") return ["W/m²", 1e6];
     return k === "vm" ? ["MPa", 1] : k === "sf" ? ["", 1] : k === "err" ? ["%", 1] : [units.current, UNITS[units.current].f];
   }
@@ -2381,7 +2389,7 @@ export class SimController {
     } else if (this.plot.kind === "sf") label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
     else {
       label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[hi])}</span>`, hi);
-      if (a[lo] < 0 || this.plot.kind === "temp") label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
+      if (a[lo] < 0 || this.plot.kind === "temp" || this.plot.kind === "rise") label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
     }
     return out;
   }
@@ -2427,13 +2435,43 @@ export class SimController {
 
   private disposePlot() {
     if (this.anim) { cancelAnimationFrame(this.anim.raf); this.anim = null; }
-    if (this.overlay) { this.overlay.removeFromParent(); this.overlay.geometry.dispose(); this.overlay = null; }
+    if (this.overlay) {
+      for (const c of this.overlay.children) if (c.userData.simArrows) (c as THREE.LineSegments).geometry.dispose();
+      this.overlay.removeFromParent(); this.overlay.geometry.dispose(); this.overlay = null;
+    }
+    this.arrows = 0;
     for (const m of this.mats) m.dispose();
     this.mats = [];
     this.mask = null;
     this.posed = null;
     this.partOf = null;
     this.pose = { key: "", tfs: [], off: [], moved: 0 };
+  }
+
+  /**
+   * Heat flux arrows (FR-TRES-001) on the drawn triangles of the plot, as a child of the overlay so they go with it;
+   * a transient result keeps the flux of its last time.
+   */
+  private drawArrows() {
+    const ov = this.overlay, last = this.res?.passes.at(-1), pm = this.res?.mesh;
+    for (const c of [...(ov?.children ?? [])]) if (c.userData.simArrows) { c.removeFromParent(); (c as THREE.LineSegments).geometry.dispose(); }
+    this.arrows = 0;
+    if (!ov || !last?.thermal || !pm || !this.plot.vectors || last.u.length !== pm.pos.length) return;
+    const ix = ov.geometry.getIndex();
+    if (!ix) return;
+    const a = fluxArrows(pm.pos, pm.nrm, last.u, ix.array as ArrayLike<number>);
+    if (!a.at.length) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(a.lines, 3));
+    const mat = new THREE.LineBasicMaterial({ color: 0x14181f });
+    mat.clippingPlanes = this.host.viewer.clipPlanes;
+    this.mats.push(mat);
+    const lines = new THREE.LineSegments(geo, mat);
+    lines.userData.simArrows = a.at.length;
+    lines.raycast = () => {};
+    ov.add(lines);
+    this.arrows = a.at.length;
+    this.host.viewer.invalidate();
   }
 
   /** A result plot is on the model. */
@@ -2558,7 +2596,7 @@ export class SimController {
     const r = this.res;
     if (!r?.tr?.transient) return;
     this.useFrame(r, i);
-    if (paint && this.overlay && this.plot.kind === "temp" && !this.iso.on && !this.mask) this.paintFrame();
+    if (paint && this.overlay && (this.plot.kind === "temp" || this.plot.kind === "rise") && !this.iso.on && !this.mask) this.paintFrame();
     else if (this.plot.on) this.showPlot();
     this.probeKey = "";
     this.syncProbes();
@@ -2572,9 +2610,10 @@ export class SimController {
     const ov = this.overlay, last = this.res?.passes.at(-1);
     if (!ov || !last) return;
     const col = ov.geometry.getAttribute("color") as THREE.BufferAttribute, arr = col.array as Float32Array, [lo, hi] = this.range, span = hi - lo || 1;
-    for (let i = 0; i < last.vm.length; i++) ramp((last.vm[i] - lo) / span, arr, 3 * i);
+    const v = this.values(last, this.plot.kind === "rise" ? "rise" : "temp");
+    for (let i = 0; i < v.length; i++) ramp((v[i] - lo) / span, arr, 3 * i);
     col.needsUpdate = true;
-    this.vals = last.vm;
+    this.vals = v;
     this.host.redraw();
   }
 
@@ -2674,7 +2713,7 @@ export class SimController {
     if (r0.modes && !MODE_PLOTS.includes(this.plot.kind)) this.plot.kind = "u";
     // thermal results: temperature and heat flux, never a deformed shape
     if (r0.thermal) { if (!THERMAL_PLOTS.includes(this.plot.kind)) this.plot.kind = "temp"; this.plot.deformed = false; }
-    else if (this.plot.kind === "temp" || this.plot.kind === "flux") this.plot.kind = "vm";
+    else if (this.plot.kind === "temp" || this.plot.kind === "rise" || this.plot.kind === "flux") this.plot.kind = "vm";
     // the safety factor needs a yield strength: without one the plot falls back to stress
     if (this.plot.kind === "sf" && !this.hasYield()) this.plot.kind = "vm";
     // the error estimate compares two passes
@@ -2689,7 +2728,7 @@ export class SimController {
     if (!Number.isFinite(lo)) { lo = 0; hi = 0; }
     // a transient result keeps one colour scale over the whole run, so the slider shows the part warming
     const run = res.tr?.transient;
-    if (run && this.plot.kind === "temp" && !mask) { lo = Math.min(...run.min); hi = Math.max(...run.max); }
+    if (run && (this.plot.kind === "temp" || this.plot.kind === "rise") && !mask) { const d = this.plot.kind === "rise" ? this.ambient() : 0; lo = Math.min(...run.min) - d; hi = Math.max(...run.max) - d; }
     if (this.plot.kind === "vm" || this.plot.kind === "u" || this.plot.kind === "err" || this.plot.kind === "flux") lo = 0;
     this.range = [lo, hi];
     this.vals = val;
@@ -2735,6 +2774,7 @@ export class SimController {
     this.overlay.raycast = () => {};
     part.frame.add(this.overlay);
     this.overlay.updateMatrixWorld(true);
+    this.drawArrows();
     // an assembly's plot goes where its components are shown
     this.pose = { key: "", tfs: [], off: [], moved: 0 };
     this.posed = null;
@@ -2887,7 +2927,7 @@ export class SimController {
     if (!src.width || !src.height) return null;
     this.stopPlay();
     this.recording = true;
-    const was = this.frame, n = T.times.length, k = Math.min(1, maxW / src.width), temp = this.plot.kind === "temp" && !this.iso.on && !this.mask;
+    const was = this.frame, n = T.times.length, k = Math.min(1, maxW / src.width), temp = (this.plot.kind === "temp" || this.plot.kind === "rise") && !this.iso.on && !this.mask;
     const c = document.createElement("canvas");
     c.width = Math.max(2, Math.round(src.width * k)); c.height = Math.max(2, Math.round(src.height * k));
     const g = c.getContext("2d", { willReadFrequently: true })!, frames: Uint8ClampedArray[] = [];
@@ -3864,6 +3904,7 @@ export class SimController {
       + (thermal ? "" : `<label class="chk"><input type="checkbox" data-k="deformed"${this.plot.deformed ? " checked" : ""} />${esc(t("Deformed shape"))}</label>`)
       + (this.plot.deformed && !thermal ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "")
       + (modes ? (this.plot.deformed ? `<label class="chk"><input type="checkbox" data-k="animate"${this.animate ? " checked" : ""} />${esc(t("Animate"))}</label><label class="ana-row"><span>${esc(t("Speed"))}</span><select data-k="speed">${[0.25, 0.5, 1, 2, 4].map(x => `<option value="${x}"${x === this.speed ? " selected" : ""}>×${x}</option>`).join("")}</select></label><button class="btn small" data-a="gif" title="${esc(t("Save one swing of this mode shape as an animated GIF of the current view"))}">${esc(t("Record GIF"))}</button>` : "") + `<p class="ana-note">${esc(t("Mode shapes have no scale: only the pattern of the motion is meaningful."))}</p>` : "")
+      + (thermal ? `<label class="chk" title="${esc(t("Arrows on the surface show which way the heat flows; the longest is where the heat flux is highest"))}"><input type="checkbox" data-k="vectors"${this.plot.vectors ? " checked" : ""} />${esc(t("Heat flow arrows"))}</label>` : "")
       + (modes ? "" : `<label class="chk"><input type="checkbox" data-k="marks"${this.plot.marks ? " checked" : ""} />${esc(t("Highest and lowest values"))}</label>`)
       + (modes ? "" : `<label class="chk"><input type="checkbox" data-k="iso"${this.iso.on ? " checked" : ""} />${esc(t("Show only a range of values"))}</label>`
         + (this.iso.on ? `<div class="ana-row"><select data-k="isoside" aria-label="${esc(t("Show only a range of values"))}"><option value="above"${this.iso.below ? "" : " selected"}>${esc(t("At or above"))}</option><option value="below"${this.iso.below ? " selected" : ""}>${esc(t("At or below"))}</option></select><input type="text" inputmode="decimal" data-k="isoval" value="${sig(this.isoValue() * f)}" aria-label="${esc(t("Value"))}" /></div>` : ""))
@@ -4324,6 +4365,7 @@ export class SimController {
     if (k === "kind") { this.plot.kind = el.value as PlotKind; this.iso.value = null; }
     else if (k === "deformed") this.plot.deformed = el.checked;
     else if (k === "marks") this.plot.marks = el.checked;
+    else if (k === "vectors") this.plot.vectors = el.checked;
     else if (k === "iso") { this.iso.on = el.checked; if (el.checked && this.iso.value == null) this.iso.below = this.plot.kind === "sf"; }
     else if (k === "isoside") this.iso.below = el.value === "below";
     else if (k === "isoval") { const v = num(el.value), fu = this.plotUnit()[1]; this.iso.value = el.value.trim() && v != null ? v / fu : null; }

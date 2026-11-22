@@ -5993,6 +5993,8 @@ export const RU: Record<string, string> = {
   "Shortest capacitor life, h": "Наименьший срок службы конденсатора, ч",
   "Highest board temperature, °C": "Наибольшая температура платы, °C",
   "Temperature rise": "Перегрев",
+  "Heat flow arrows": "Стрелки теплового потока",
+  "Arrows on the surface show which way the heat flows; the longest is where the heat flux is highest": "Стрелки на поверхности показывают, куда идёт тепло; самая длинная там, где тепловой поток наибольший",
   "Hide the map": "Скрыть карту",
   "Ambient {v} °C": "Среда {v} °C",
   "The map is older than the model: {n} part changed|The map is older than the model: {n} parts changed": "Карта старше модели: изменена {n} деталь|Карта старше модели: изменено {n} детали|Карта старше модели: изменено {n} деталей",

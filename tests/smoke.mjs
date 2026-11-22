@@ -17151,7 +17151,7 @@ try {
     check(noFaces && set.kind === "Thermal" && set.heads.includes("Heat sources") && set.heads.includes("Cooling and fixed temperatures") && !set.heads.includes("Loads") && !set.heads.includes("Supports") && /50 W/.test(set.k) && /whole body · 8 W/.test(set.metas[0]) && /1 face · 30 °C/.test(set.metas[1])
       && JSON.stringify(set.studies) === JSON.stringify([["Thermal 1", "thermal", [["heat", true, 8]], [["temp", 30]]]])
       && !t1.error && t1.kind === "thermal" && t1.barMode === "thermal" && Math.abs(t1.thermal.min - 30) < 0.01 && Math.abs((t1.thermal.max - 30) / rise - 1) < 0.02 && Math.abs(t1.thermal.applied - 8) < 1e-6 && Math.abs(t1.thermal.out[0] - 8) < 0.01 && t1.passes.length === 2
-      && /30\.4 °C/.test(res.tmax) && /8 W/.test(res.heat) && /8 W/.test(res.flow) && res.rows === 2 && JSON.stringify(res.plots) === JSON.stringify(["temp", "flux", "err"]) && !res.deformed && /°C/.test(res.unit) && res.wide <= 0 && res.assume.length > 40 && t1.plot.shown && t1.plot.kind === "temp" && ru.length === 0,
+      && /30\.4 °C/.test(res.tmax) && /8 W/.test(res.heat) && /8 W/.test(res.flow) && res.rows === 2 && JSON.stringify(res.plots) === JSON.stringify(["temp", "rise", "flux", "err"]) && !res.deformed && /°C/.test(res.unit) && res.wide <= 0 && res.assume.length > 40 && t1.plot.shown && t1.plot.kind === "temp" && ru.length === 0,
       `thermal 1.651: 8 W made in a bar whose top face is held at 30 °C: the far side is P·t / (2·k·A) hotter, the face takes all the heat away, the passes stop once the temperatures settle; translated (${JSON.stringify({ noFaces, set, error: t1.error, thermal: t1.thermal, passes: t1.passes.length, res, ru })})`);
     // convection on a side face as well: the results go out of date, then part of the heat leaves that way
     await tp.click('#sim-tools [data-s="conv"]');
@@ -17877,6 +17877,24 @@ try {
       && item.f?.speed === 3 && JSON.stringify(item.f?.dir) === "[0,1,0]" && !item.f?.fan && item.all && /3 m\/s \+Y/.test(item.row)
       && !r.error && Math.abs(r.thermal.out[0] - 2) < 0.02 && Math.abs(max - want) < 0.04 * (want - 25) && Math.abs(r.thermal.flows[0].h * 1e6 - mean) < 0.02 * mean && /W\/\(m²·K\)/.test(hnat),
       `forced air 1.667: a 2 W bar blown at 3 m/s along its length by a Forced air item; the film coefficients follow the flat plate correlation and the fan's flow gives its speed; translated (${JSON.stringify({ icons, tools, fresh, fan, ruPm, item, error: r.error, out: r.thermal?.out, max, want, h: r.thermal?.flows?.[0]?.h, mean, hnat })})`);
+    // --- thermal plots 1.669 (FR-TRES-001): temperature rise above ambient and heat flow arrows on the same result ---
+    if (!(await fp.evaluate(() => window.__sv.sim.state().plot.shown))) { await fp.click('#sim-tools [data-s="results"]'); await fp.waitForTimeout(300); }
+    const kinds = await fp.evaluate(() => [...document.querySelectorAll('#sim-legend select[data-k="kind"] option')].map(o => o.value));
+    await fp.selectOption('#sim-legend select[data-k="kind"]', "rise");
+    await fp.waitForTimeout(300);
+    const rise = await fp.evaluate(() => { const s = window.__sv.sim.state(); return { kind: s.plot.kind, range: s.plot.range, min: s.thermal?.min, max: s.thermal?.max, unit: document.querySelector("#sim-legend .ana-scale")?.textContent ?? "" }; });
+    await fp.check('#sim-legend input[data-k="vectors"]');
+    await fp.waitForTimeout(300);
+    const arrows = await fp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.simArrows) n += o.userData.simArrows; }); return { n, st: window.__sv.sim.state().plot.arrows }; });
+    await fp.click("#lang-btn");
+    const ruLeg = await fp.evaluate(() => [...document.querySelectorAll("#sim-legend *")].filter(e => !e.children.length && !e.closest("[translate=no]") && e.tagName !== "INPUT").map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await fp.click("#lang-btn");
+    await fp.uncheck('#sim-legend input[data-k="vectors"]');
+    await fp.waitForTimeout(300);
+    const gone = await fp.evaluate(() => window.__sv.sim.state().plot.arrows);
+    check(JSON.stringify(kinds.slice(0, 3)) === '["temp","rise","flux"]' && rise.kind === "rise" && Math.abs(rise.range[1] - (rise.max - 25)) < 1e-3 && Math.abs(rise.range[0] - (rise.min - 25)) < 1e-3 && /K/.test(rise.unit)
+      && arrows.n > 20 && arrows.n === arrows.st && gone === 0 && ruLeg.length === 0,
+      `thermal plots 1.669: the plot list has Temperature rise (temperature less the ambient, in K), and Heat flow arrows draws arrows on the surface and takes them off again; translated (${JSON.stringify({ kinds, rise, arrows, gone, ruLeg })})`);
     await ctx.close();
   }
 
