@@ -17519,6 +17519,22 @@ try {
     const hp2 = await bp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, applied: s.thermal?.applied, paths: s.thermal?.paths, note: document.querySelector('#sim-tree [data-v="pathnote"]')?.textContent }; });
     check(!hp2.error && hp2.paths.length === 5 && hp2.paths.some(x => x.name === "R14" && Math.abs(x.board - 1.6) < 0.05) && hp2.paths.some(x => x.name === "R20" && Math.abs(x.board - 1.9) < 0.05) && /kept/.test(hp2.note ?? "") && hp2.applied > 5 && hp2.applied <= 10.98,
       `thermal 1.657: with the package's split kept the study solves again and says so under the Heat paths table (${JSON.stringify(hp2)})`);
+    // 1.675 (FR-TBRD-020): the board's copper read from its Gerber files; the conductivity then follows it cell by cell
+    const max0 = await bp.evaluate(() => window.__sv.sim.state().thermal?.max);
+    const gdir = new URL("./fixtures/thermal/amp-gerber/", import.meta.url).pathname;
+    const [gfc] = await Promise.all([bp.waitForEvent("filechooser"), bp.click('#sim-tree [data-a="bgerber"]')]);
+    await gfc.setFiles(["amp-F_Cu.gbr", "amp-B_Cu.gbr", "amp-Edge_Cuts.gbr", "amp-PTH.drl"].map(f => gdir + f));
+    await bp.waitForFunction(() => !!document.querySelector('#sim-tree [data-v="bmapinfo"]'), null, { timeout: 30000 });
+    const gm = await bp.evaluate(() => { const d = window.__sv.asm.doc, st = d.studies.find(x => x.kind === "thermal"), bd = Object.values(st.comps ?? {}).find(c => c.board)?.board;
+      return { info: document.querySelector('#sim-tree [data-v="bmapinfo"]')?.textContent, img: document.querySelector('#sim-tree [data-v="bmap"]')?.naturalWidth ?? 0, k: document.querySelector('#sim-tree .sim-comps li:has([data-v="bmap"]) [data-v="compk"]')?.textContent,
+        map: bd?.map ? [bd.map.nu, bd.map.nv, bd.map.cell, bd.map.holes, bd.map.means.map(v => Math.round(v * 1000) / 1000)] : null, layers: bd?.layers, stale: window.__sv.sim.state().stale }; });
+    await bp.click('#sim-tools [data-s="solve"]');
+    await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 400000 });
+    await bp.waitForTimeout(500);
+    const g1 = await bp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, max: s.thermal?.max, reused: !!document.querySelector('#sim-tree [data-v="reused"]') }; });
+    check(gm.map && gm.map[0] === 120 && gm.map[1] === 80 && gm.map[2] === 1 && gm.map[3] === 12 && Math.abs(gm.map[4][0] - 0.503) < 0.01 && Math.abs(gm.map[4][1] - 0.833) < 0.01 && gm.layers === 2 && /50 %.*83 %.*12/.test(gm.info ?? "") && gm.img === 120 && gm.stale
+      && !g1.error && !g1.reused && Math.abs(g1.max - max0) > 0.05,
+      `thermal 1.675: Copper from Gerber reads the board's two copper layers (50 % and 83 % copper) and 12 plated holes onto 1 mm cells, shows the map, and the study solves again with the board's conductivity following its copper (${JSON.stringify({ gm, max0, g1 })})`);
     await ctx.close();
   }
 

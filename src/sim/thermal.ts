@@ -95,6 +95,39 @@ export interface ThermalDomain {
   /** Conductivity changing with temperature (FR-TMAT-004): [°C, factor on `k`/`k3`, °C, factor, …], ends held. */
   kt?: number[];
   tris: ArrayLike<number>;
+  /** A board's conductivity varying over it (FR-TBRD-020): taken per element as the mean over its footprint; replaces `k3`. */
+  kmap?: KMap;
+}
+
+/**
+ * Conductivity over a board lying square to world axis `axis`: a grid of `nu` × `nv` cells of `cell` mm from (`u0`, `v0`)
+ * along the world axes `ua` and `va`; per cell the conductivity along the board and through it, W/(mm·K).
+ */
+export interface KMap {
+  axis: number; ua: number; va: number;
+  u0: number; v0: number; cell: number; nu: number; nv: number;
+  along: ArrayLike<number>; through: ArrayLike<number>;
+}
+
+/** A map's mean conductivity along and through the board over a box (half size `s` about `c`); the cells it overlaps, by area. */
+export function kmapMean(m: KMap, c: ArrayLike<number>, s: number): [number, number] {
+  const u0 = (c[m.ua] - s - m.u0) / m.cell, u1 = (c[m.ua] + s - m.u0) / m.cell, v0 = (c[m.va] - s - m.v0) / m.cell, v1 = (c[m.va] + s - m.v0) / m.cell;
+  const i0 = Math.max(0, Math.floor(u0)), i1 = Math.min(m.nu - 1, Math.ceil(u1) - 1), j0 = Math.max(0, Math.floor(v0)), j1 = Math.min(m.nv - 1, Math.ceil(v1) - 1);
+  let w = 0, a = 0, t = 0;
+  for (let j = j0; j <= j1; j++) {
+    const wv = Math.min(j + 1, v1) - Math.max(j, v0);
+    if (!(wv > 0)) continue;
+    for (let i = i0; i <= i1; i++) {
+      const wu = Math.min(i + 1, u1) - Math.max(i, u0);
+      if (!(wu > 0)) continue;
+      const q = wu * wv, k = j * m.nu + i;
+      w += q; a += q * m.along[k]; t += q * m.through[k];
+    }
+  }
+  if (w > 0) return [a / w, t / w];
+  // off the map: the nearest cell
+  const i = Math.min(m.nu - 1, Math.max(0, Math.floor((c[m.ua] - m.u0) / m.cell))), j = Math.min(m.nv - 1, Math.max(0, Math.floor((c[m.va] - m.v0) / m.cell)));
+  return [m.along[j * m.nu + i], m.through[j * m.nu + i]];
 }
 
 /**
@@ -800,7 +833,10 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   for (let e = 0; e < nel; e++) {
     const d = doms ? doms[dom[e]] : null, k = d ? d.k : pb.k;
     const m = scale ? scale[e] : 1;
-    for (let a = 0; a < 3; a++) k3[3 * e + a] = (d?.k3 ? d.k3[a] : k) * m;
+    if (d?.kmap) {
+      const E = grid.elems[e], [al, th] = kmapMean(d.kmap, E.c, E.s);
+      for (let a = 0; a < 3; a++) k3[3 * e + a] = (a === d.kmap.axis ? th : al) * m;
+    } else for (let a = 0; a < 3; a++) k3[3 * e + a] = (d?.k3 ? d.k3[a] : k) * m;
     // the penalty goes by the best-conducting direction
     ke[e] = Math.max(k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]);
   }

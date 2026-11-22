@@ -4,6 +4,7 @@
 
 import type { PowerProfile, TransientSettings } from "./transient";
 import type { BoardStack } from "../thermal/study";
+import type { CopperMap } from "../thermal/copper";
 import type { FaceRef, Num, V3 } from "../model/types";
 import type { MatRef } from "../tools/materials";
 
@@ -303,7 +304,7 @@ export interface Study {
 export interface StudyComp {
   off?: boolean; material?: MatRef; rigid?: boolean;
   /** Thermal studies: the component is a circuit board with this copper (`t` = its thickness when known, mm); its conductivity comes from it, not from a material. */
-  board?: BoardStack & { t?: number };
+  board?: BoardStack & { t?: number; /** Its copper from the Gerber set (FR-TBRD-020): the conductivity then varies over it. */ map?: CopperMap };
 }
 /**
  * A bolt in a study, by its screw's component id: `off` = the fastener is analysed as a solid like any other
