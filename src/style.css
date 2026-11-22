@@ -1904,6 +1904,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .th-list li:hover, .th-list li:focus-visible { background: var(--panel-2); }
 .th-list li.miss, .th-list li.chg { color: var(--muted); }
 .th-tablewrap { overflow-x: auto; min-width: 0; }
+.th-ctable tr.up td[data-v=dt] { color: var(--danger, #e03131); font-weight: 600; }
+.th-ctable tr.down td[data-v=dt] { color: var(--accent, #1c7ed6); font-weight: 600; }
+.th-ctable tr[data-cpart] { cursor: pointer; }
 .th-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .th-table th { text-align: right; font-weight: 600; color: var(--muted); padding: 3px 3px; font-size: 11px; white-space: nowrap; cursor: pointer; user-select: none; border-bottom: 1px solid var(--line); }
 .th-probes .th-table th { cursor: default; }
