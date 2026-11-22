@@ -26,6 +26,8 @@ export interface ThermalHost {
   addMap(): void;
   /** Makes an assembly of the model with a thermal study from the package (Simulate in MöbiusCAD). */
   simulate(pkg: ThermalPackage, match: PartMatch, bodies: ModelBody[]): void;
+  /** Saves the view as a PNG (File ▸ Export PNG), which draws the map's legend in through `decorate`. */
+  savePicture(): void;
 }
 
 type V3 = [number, number, number];
@@ -42,6 +44,8 @@ interface Attached {
   on: boolean;
   probes: Probe[];
   sel: number | null;
+  /** The part shown alone, the others faded (FR-TMAP-020), or null. */
+  iso: number | null;
   /** Fixed colour range (°C), or null = automatic. */
   range: [number, number] | null;
   sort: { col: SortCol; up: boolean };
@@ -54,6 +58,8 @@ interface Attached {
 
 interface Prefs { palette: PaletteName; labels: boolean; rise: boolean; life: number; board: number; folded: boolean }
 const PREFS_KEY = "mc:thermalMap";
+/** Opacity of the other parts while one is isolated. */
+const ISO_FADE = 0.18;
 const DEFAULT_PREFS: Prefs = { palette: "heat", labels: true, rise: false, life: DEFAULT_LIMITS.life, board: DEFAULT_LIMITS.board, folded: false };
 function loadPrefs(): Prefs {
   try {
@@ -89,6 +95,8 @@ const ICON: Record<string, string> = {
   parts: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>`,
   add: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>`,
   remove: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`,
+  isolate: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="6" height="6" rx="1" fill="currentColor" stroke="none"/><path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3" opacity=".6"/></svg>`,
+  png: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="M2.5 12l4-4 3 3 2-2 2.5 2.5"/></svg>`,
   csv: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13.5h10"/></svg>`,
 };
 
@@ -134,6 +142,8 @@ export class ThermalMaps {
   private maps = new Map<string, Attached>();
   private prefs = loadPrefs();
   private overlay: THREE.Mesh | null = null;
+  /** The other parts, see-through, while one is isolated. */
+  private fade: THREE.Mesh | null = null;
   private mats: THREE.Material[] = [];
   private saved: { mesh: THREE.Mesh; mat: THREE.Material }[] = [];
   /** Package triangle of each drawn triangle. */
@@ -180,7 +190,18 @@ export class ThermalMaps {
         this.setView(this.cur()!.cmp!.view === "b" ? "a" : "b");
       }
     }, true);
-    window.addEventListener("keydown", e => { if (e.key === "Escape" && this.active()) { const a = this.cur()!; if (this.probing) { this.probing = false; this.renderAll(); } else if (a.sel !== null) { a.sel = null; this.renderAll(); } } });
+    vp.addEventListener("dblclick", e => {
+      // a double-click on a part shows it alone; on the board or empty space, everything again (FR-TMAP-020)
+      const a = this.cur();
+      if (!a || !this.active() || this.probing || (e.target as HTMLElement).tagName !== "CANVAS") return;
+      const h = this.hit(e.clientX, e.clientY), id = h && h.part > 0 ? h.part : null;
+      this.isolate(id !== null && id !== a.iso ? id : null);
+    });
+    window.addEventListener("keydown", e => {
+      if (e.key !== "Escape" || !this.active()) return;
+      const a = this.cur()!;
+      if (this.probing) { this.probing = false; this.renderAll(); } else if (a.iso !== null) this.isolate(null); else if (a.sel !== null) { a.sel = null; this.renderAll(); }
+    });
   }
 
   // ---------- state ----------
@@ -216,7 +237,7 @@ export class ThermalMaps {
     if (ask && had && !had.own && !own) { void this.second(pkg); return true; }
     const stats = partStats(pkg.mesh);
     const match = matchParts(pkg.manifest.parts, stats, this.bodies());
-    const a: Attached = { pkg, stats, match, fitted: false, own, on: true, probes: [], sel: null, range: null, sort: { col: "margin", up: true }, filter: "", top: true };
+    const a: Attached = { pkg, stats, match, fitted: false, own, on: true, probes: [], sel: null, iso: null, range: null, sort: { col: "margin", up: true }, filter: "", top: true };
     if (pkg.picture) a.picture = URL.createObjectURL(new Blob([pkg.picture as BlobPart], { type: "image/png" }));
     const old = this.maps.get(key);
     if (old?.picture) URL.revokeObjectURL(old.picture);
@@ -315,6 +336,7 @@ export class ThermalMaps {
   private clear() {
     for (const s of this.saved) s.mesh.material = s.mat;
     this.saved = [];
+    if (this.fade) { this.fade.removeFromParent(); this.fade.geometry.dispose(); this.fade = null; }
     if (this.overlay) { this.overlay.removeFromParent(); (this.overlay.geometry as THREE.BufferGeometry & { disposeBoundsTree?: () => void }).disposeBoundsTree?.(); this.overlay.geometry.dispose(); this.overlay = null; }
     for (const m of this.mats) m.dispose();
     this.mats = [];
@@ -343,14 +365,12 @@ export class ThermalMaps {
     const off = new Set<number>();
     const vis = this.visibility(a);
     for (const s of vis.split(",")) if (s) off.add(Number(s));
-    let index = m.tri, drawn: Uint32Array;
-    if (off.size) {
-      const keep: number[] = [];
-      for (let k = 0; k < m.part.length; k++) if (!off.has(m.part[k])) keep.push(k);
-      drawn = Uint32Array.from(keep);
-      index = new Uint32Array(keep.length * 3);
-      keep.forEach((k, j) => { index[j * 3] = m.tri[k * 3]; index[j * 3 + 1] = m.tri[k * 3 + 1]; index[j * 3 + 2] = m.tri[k * 3 + 2]; });
-    } else { drawn = new Uint32Array(m.part.length); for (let k = 0; k < drawn.length; k++) drawn[k] = k; }
+    // an isolated part is drawn alone (and picked alone); the rest goes into a see-through mesh
+    const iso = a.iso !== null && a.stats.has(a.iso) && !off.has(a.iso) ? a.iso : null;
+    const keep: number[] = [], rest: number[] = [];
+    for (let k = 0; k < m.part.length; k++) { const id = m.part[k]; if (off.has(id)) continue; (iso === null || id === iso ? keep : rest).push(k); }
+    const indexOf = (ks: number[]) => { const ix = new Uint32Array(ks.length * 3); ks.forEach((k, j) => { ix[j * 3] = m.tri[k * 3]; ix[j * 3 + 1] = m.tri[k * 3 + 1]; ix[j * 3 + 2] = m.tri[k * 3 + 2]; }); return ix; };
+    const drawn = Uint32Array.from(keep), index = keep.length === m.part.length ? m.tri : indexOf(keep);
     const geo = new THREE.BufferGeometry();
     geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -372,6 +392,21 @@ export class ThermalMaps {
     this.overlay.userData.thermalMap = true;
     this.overlay.raycast = () => {};
     v.modelRoot.add(this.overlay);
+    if (rest.length) {
+      const fg = new THREE.BufferGeometry();
+      fg.setIndex(new THREE.BufferAttribute(indexOf(rest), 1));
+      fg.setAttribute("position", geo.getAttribute("position"));
+      fg.setAttribute("normal", geo.getAttribute("normal"));
+      fg.setAttribute("color", geo.getAttribute("color"));
+      const fm = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.8, side: THREE.DoubleSide, transparent: true, opacity: ISO_FADE, depthWrite: false });
+      fm.clippingPlanes = v.clipPlanes;
+      this.mats.push(fm);
+      this.fade = new THREE.Mesh(fg, fm);
+      this.fade.userData.thermalFade = true;
+      this.fade.raycast = () => {};
+      this.fade.renderOrder = 1;
+      v.modelRoot.add(this.fade);
+    }
     this.drawn = drawn;
     this.visKey = vis;
     this.colour();
@@ -535,12 +570,13 @@ export class ThermalMaps {
       const sm = summary(a!.pkg, a!.stats);
       const hot = sm.hottest?.id ?? sm.peak.id;
       const done = new Set<number>();
+      if (a!.iso !== null) { done.add(a!.iso); peak(a!.iso, over.includes(a!.iso)); over.length = 0; done.add(hot); done.add(0); }
       for (const id of over) { done.add(id); peak(id, true); }
       if (!done.has(hot)) { done.add(hot); peak(hot, false); }
       if (a!.stats.has(0) && !done.has(0)) { done.add(0); peak(0, (a!.stats.get(0)!.max) > this.prefs.board); }
       if (a!.sel !== null && !done.has(a!.sel)) peak(a!.sel, false);
       // comparing: the parts that changed most
-      if (a!.cmp && a!.cmp.view !== "a") {
+      if (a!.iso === null && a!.cmp && a!.cmp.view !== "a") {
         const rs = a!.cmp.changes.rows, up = rs.reduce<PartChange | null>((m, r) => (r.d > 0 && (!m || r.d > m.d) ? r : m), null);
         for (const r of [...(up ? [up] : []), ...rs.slice(0, 5)]) if (!done.has(r.ia)) { done.add(r.ia); peak(r.ia, false); }
       }
@@ -588,10 +624,11 @@ export class ThermalMaps {
     el.innerHTML = group(t("Thermal map"), btn("map", t("Map"), t("Show or hide the temperatures on the model"), { on: a.on })
       + btn("flip", a.top ? t("Bottom") : t("Top"), t("Turn the view to the board's other face"), { dis: !a.on })
       + btn("labels", t("Hot spots"), t("Labels on the hottest point and on every part over its limit"), { on: this.prefs.labels, dis: !a.on })
-      + btn("probe", t("Probe"), t("Click the map to read the temperature at a point"), { on: this.probing, dis: !a.on }))
+      + btn("probe", t("Probe"), t("Click the map to read the temperature at a point"), { on: this.probing, dis: !a.on })
+      + btn("isolate", t("Isolate"), t("Show the selected part alone, the others see-through (double-click a part)"), { on: a.iso !== null, dis: !a.on || (a.sel === null && a.iso === null) }))
       + sep + group(t("Parts"), btn("parts", t("Parts"), t("The parts of the map with their power, temperature and margin")))
       + sep + group(t("Study"), btn("simulate", t("Simulate"), a.own ? t("Open the board's STEP to measure it or simulate it.") : t("Simulate in MöbiusCAD: an assembly of the board's parts with a thermal study from this package, where you can add a heatsink or change the cooling"), { dis: a.own }))
-      + sep + group(t("Package"), btn("add", t("Another map"), t("Open another thermal package for this model: put it in place of this one, or compare the two")) + btn("remove", t("Remove map"), t("Take the thermal map off this model")));
+      + sep + group(t("Package"), btn("png", t("Save picture"), t("Save the view as a PNG with the colour scale, the hottest part and the accuracy drawn in"), { dis: !a.on }) + btn("add", t("Another map"), t("Open another thermal package for this model: put it in place of this one, or compare the two")) + btn("remove", t("Remove map"), t("Take the thermal map off this model")));
   }
 
   private barClick(e: Event) {
@@ -602,6 +639,8 @@ export class ThermalMaps {
     else if (k === "flip") { a.top = !a.top; this.host.viewer.viewFrom(new THREE.Vector3(0, 0, a.top ? 1 : -1)); this.renderBar(); }
     else if (k === "labels") { this.prefs.labels = !this.prefs.labels; this.savePrefs(); this.renderAll(); }
     else if (k === "probe") { this.probing = !this.probing; this.renderAll(); }
+    else if (k === "isolate") this.isolate(a.iso !== null ? null : a.sel);
+    else if (k === "png") this.host.savePicture();
     else if (k === "parts") this.host.showTab();
     else if (k === "simulate") this.host.simulate(a.pkg, a.match, this.bodies());
     else if (k === "add") this.host.addMap();
@@ -614,6 +653,17 @@ export class ThermalMaps {
     if (!a || a.on === on) return;
     a.on = on;
     if (!on) this.probing = false;
+    this.show();
+    this.renderAll();
+  }
+
+  /** Shows one part alone, the others faded (FR-TMAP-020), or every part again (null). */
+  isolate(id: number | null) {
+    const a = this.cur();
+    if (!a || a.iso === id) return;
+    a.iso = id;
+    if (id !== null) a.sel = id;
+    if (!a.on) a.on = true;
     this.show();
     this.renderAll();
   }
@@ -717,6 +767,13 @@ export class ThermalMaps {
     }
     const sort = tg.closest<HTMLElement>("[data-sort]");
     if (sort && !dbl) { const col = sort.dataset.sort as SortCol; a.sort = { col, up: a.sort.col === col ? !a.sort.up : col === "name" || col === "margin" || col === "life" }; this.renderSide(); return; }
+    if (dbl) return;
+    if ((e as MouseEvent).detail === 2) {
+      // a second click on a row: that part alone (FR-TMAP-020). Counted on the click, since the first click
+      // redraws the table and a dblclick then has no row to land on.
+      const r = tg.closest<HTMLElement>("tr[data-part], tr[data-cpart]");
+      if (r) { const id = Number(r.dataset.part ?? r.dataset.cpart); if (id > 0) { this.isolate(a.iso === id ? null : id); return; } }
+    }
     const crow = tg.closest<HTMLElement>("tr[data-cpart]");
     if (crow) { if (!a.on) this.setOn(true); this.zoomTo(a, Number(crow.dataset.cpart)); return; }
     const row = tg.closest<HTMLElement>("tr[data-part]");
@@ -756,6 +813,7 @@ export class ThermalMaps {
     el.innerHTML = `<div class="ana-head"><strong>${esc(dl ? t("Temperature change") : rise ? t("Temperature rise") : t("Temperature"))}</strong>`
       + `<button class="sim-ib" data-a="close" title="${esc(t("Hide the map"))}" aria-label="${esc(t("Hide the map"))}">×</button></div>`
       + (cmp ? `<label class="ana-row" title="${esc(t("B flips between the two maps"))}"><span>${esc(t("Show"))}</span><select data-k="show"><option value="a"${cmp.view === "a" ? " selected" : ""}>A: ${esc(nm(a!.pkg))}</option><option value="b"${cmp.view === "b" ? " selected" : ""}>B: ${esc(nm(cmp.pkg))}</option><option value="d"${dl ? " selected" : ""}>${esc(t("Change (B − A)"))}</option></select></label>` : "")
+      + (a!.iso !== null ? `<p class="ana-note" data-v="iso">${esc(t("Showing {name} only", { name: "\u0001" })).replace("\u0001", `<b translate="no">${esc(this.nameOf(a!, a!.iso))}</b>`)}</p><button class="btn small" data-a="unisolate">${esc(t("Show all parts"))}</button>` : "")
       + `<div class="ana-ramp" style="background:${paletteCss(dl ? "diverging" : this.prefs.palette)}"></div>`
       + (dl ? `<div class="ana-scale"><span data-v="min" translate="no">${esc(this.here(a!, lo).replace(" K", ""))}</span><span>K</span><span data-v="max" translate="no">${esc(this.here(a!, hi).replace(" K", ""))}</span></div>`
         : `<div class="ana-scale"><span data-v="min" translate="no">${mr[0] < lo - 1e-6 ? "▼ " : ""}${rise ? "+" : ""}${esc(deg(lo - off))}</span><span>°C</span><span data-v="max" translate="no">${mr[1] > hi + 1e-6 ? "▲ " : ""}${rise ? "+" : ""}${esc(deg(hi - off))}</span></div>`)
@@ -784,6 +842,7 @@ export class ThermalMaps {
     else if (k === "probecsv") this.probeCsv(a);
     else if (k === "fit") { a.fitted = true; this.show(); this.renderAll(); }
     else if (k === "uncompare") this.uncompare();
+    else if (k === "unisolate") this.isolate(null);
   }
 
   private legendChange(e: Event) {
@@ -837,6 +896,79 @@ export class ThermalMaps {
     this.host.showTab();
   }
 
+  // ---------- picture (FR-TMAP-042) ----------
+
+  /** What a saved picture says beside the colours: the scale's title and ends, and the lines under it. */
+  pictureText() {
+    const a = this.cur();
+    if (!a || !this.active()) return null;
+    const [lo, hi] = this.rangeOf(a), amb = this.ambient(a), mf = a.pkg.manifest, cmp = a.cmp, dl = cmp?.view === "d";
+    const rise = !dl && this.prefs.rise && amb !== undefined, off = rise ? amb! : 0;
+    const nm = (x: ThermalPackage) => x.manifest.design || x.name;
+    const title = dl ? t("Temperature change") : rise ? t("Temperature rise") : t("Temperature");
+    const end = (v: number) => (dl ? this.here(a, v).replace(" K", "") : `${rise ? "+" : ""}${deg(v - off)}`);
+    const sm = summary(a.pkg, a.stats), hot = sm.hottest ?? { id: sm.peak.id, t: sm.peak.t };
+    const over = this.problemsOf(a).filter(p => p.kind === "over").length;
+    const lines: string[] = [];
+    if (cmp) lines.push(cmp.view === "a" ? `A: ${nm(a.pkg)}` : cmp.view === "b" ? `B: ${nm(cmp.pkg)}` : `${t("Change (B − A)")}: ${nm(a.pkg)} → ${nm(cmp.pkg)}`);
+    else lines.push(nm(a.pkg));
+    if (a.iso !== null) lines.push(t("Showing {name} only", { name: this.nameOf(a, a.iso) }));
+    lines.push(`${t("Hottest")} ${this.nameOf(a, hot.id)} ${this.shown(a, hot.t)} · ${over ? t("{n} part over its limit|{n} parts over their limits", { n: over }) : t("No part is over its limit.")}`);
+    if (mf.accuracy !== undefined) lines.push(t("Estimate ±{v} °C", { v: deg(mf.accuracy) }));
+    if (amb !== undefined) lines.push(t("Ambient {v} °C", { v: deg(amb) }));
+    return { title, lo: end(lo), hi: end(hi), unit: dl ? "K" : "°C", palette: (dl ? "diverging" : this.prefs.palette) as PaletteName, lines };
+  }
+
+  /** Draws the hot-spot labels, probes and the colour scale with its lines into a snapshot of the view. */
+  decorate(c: HTMLCanvasElement) {
+    const a = this.cur(), ov = this.overlay, txt = this.pictureText();
+    if (!a || !ov || !txt) return;
+    const v = this.host.viewer, g = c.getContext("2d")!, k = c.width / Math.max(1, v.size.x), sh = this.shiftOf(a), q = new THREE.Vector3();
+    const font = (px: number, bold = false) => `${bold ? "600 " : ""}${px * k}px "DejaVu Sans", system-ui, sans-serif`;
+    g.save();
+    g.textBaseline = "middle";
+    // labels where they are on screen
+    for (const pin of this.pins) {
+      q.set(pin.p[0] + sh[0], pin.p[1] + sh[1], pin.p[2] + sh[2]);
+      ov.localToWorld(q).project(v.camera);
+      if (q.z > 1 || q.z < -1) continue;
+      const x = (q.x * 0.5 + 0.5) * c.width, y = (-q.y * 0.5 + 0.5) * c.height;
+      const text = (pin.el.querySelector("span")?.textContent ?? "").replace(/\s+/g, " ").trim();
+      const warn = pin.el.classList.contains("warn");
+      g.fillStyle = warn ? "#c92a2a" : "#1f2937";
+      g.beginPath(); g.arc(x, y, 3.5 * k, 0, 2 * Math.PI); g.fill();
+      if (!text) continue;
+      g.font = font(11, true);
+      const w = g.measureText(text).width + 10 * k, h = 18 * k, bx = x + 8 * k, by = y - h - 4 * k;
+      g.fillStyle = "rgba(255,255,255,0.94)"; g.fillRect(bx, by, w, h);
+      g.strokeStyle = warn ? "#c92a2a" : "#9ca3af"; g.lineWidth = k; g.strokeRect(bx, by, w, h);
+      g.fillStyle = warn ? "#c92a2a" : "#111827"; g.textAlign = "left"; g.fillText(text, bx + 5 * k, by + h / 2);
+    }
+    // the colour scale and its lines, bottom left
+    const pad = 10 * k, bw = 220 * k, bh = 12 * k, lh = 15 * k;
+    g.font = font(11);
+    const width = Math.max(bw, ...txt.lines.map(l => g.measureText(l).width)) + 2 * pad;
+    const height = pad + 16 * k + bh + 16 * k + txt.lines.length * lh + pad;
+    const x0 = 14 * k, y0 = c.height - 14 * k - height;
+    g.fillStyle = "rgba(255,255,255,0.94)"; g.fillRect(x0, y0, width, height);
+    g.strokeStyle = "#d1d5db"; g.lineWidth = k; g.strokeRect(x0, y0, width, height);
+    let y = y0 + pad + 8 * k;
+    g.fillStyle = "#111827"; g.font = font(12, true); g.textAlign = "left"; g.fillText(txt.title, x0 + pad, y);
+    y += 10 * k;
+    const gr = g.createLinearGradient(x0 + pad, 0, x0 + pad + bw, 0), rgb = new Float32Array(3);
+    for (let i = 0; i <= 16; i++) { paletteColor(txt.palette, i / 16, rgb, 0); gr.addColorStop(i / 16, `rgb(${Math.round(rgb[0] * 255)},${Math.round(rgb[1] * 255)},${Math.round(rgb[2] * 255)})`); }
+    g.fillStyle = gr; g.fillRect(x0 + pad, y, bw, bh);
+    y += bh + 9 * k;
+    g.fillStyle = "#111827"; g.font = font(11);
+    g.textAlign = "left"; g.fillText(txt.lo, x0 + pad, y);
+    g.textAlign = "center"; g.fillText(txt.unit, x0 + pad + bw / 2, y);
+    g.textAlign = "right"; g.fillText(txt.hi, x0 + pad + bw, y);
+    g.textAlign = "left";
+    y += 7 * k;
+    for (const l of txt.lines) { y += lh; g.fillText(l, x0 + pad, y - lh / 2); }
+    g.restore();
+  }
+
   // ---------- debug (window.__sv.thermal) ----------
 
   state() {
@@ -847,7 +979,7 @@ export class ThermalMaps {
       name: a.pkg.name, on: a.on, own: a.own, drawn: !!this.overlay, tris: this.overlay ? this.overlay.geometry.getIndex()!.count / 3 : 0,
       range: this.rangeOf(a), parts: a.pkg.manifest.parts.length, matched: a.match.bodies.size, missing: a.match.missing, changed: a.match.changed, off: a.match.off, fitted: a.fitted,
       hidden: this.saved.length, problems: this.problemsOf(a).map(p => ({ kind: p.kind, id: p.id, value: p.value })), hottest: sm.hottest, peak: sm.peak, power: sm.power,
-      sel: a.sel, probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
+      sel: a.sel, iso: a.iso, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
       compare: a.cmp ? { name: a.cmp.pkg.name, view: a.cmp.view, rows: a.cmp.changes.rows.map(r => ({ name: r.name, a: r.a, b: r.b, d: r.d })), onlyA: a.cmp.changes.onlyA, onlyB: a.cmp.changes.onlyB } : null,
     };
   }
