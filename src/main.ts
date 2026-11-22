@@ -56,7 +56,7 @@ import type { ModelBody, PartMatch } from "./thermal/match";
 import { findMaterial, toRef, type MatRef } from "./tools/materials";
 import { BOARD_MATERIAL, boardConductivity, boardPlan } from "./thermal/study";
 import { unzipLimited, zip as zipFiles } from "./model/zip";
-import { bindModal, bindTabs, busy, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast, trapFocus } from "./ui";
+import { bindModal, bindTabs, busy, fitTabStrip, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast, trapFocus } from "./ui";
 import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
 import { bindCommandBar, onCmTab, relabelCmTabs, selectCmTab, setCmTabs, type CmTabId } from "./commandBar";
 import { renderHelp } from "./help";
@@ -2530,7 +2530,8 @@ $("#m-clear").addEventListener("click", async () => {
 $("#m-json").addEventListener("click", () => state.measurements.length ? measurementsJson(state.measurements, state.fileName) : toast(t("No measurements yet")));
 $("#m-csv").addEventListener("click", () => state.measurements.length ? measurementsCsv(state.measurements, state.fileName) : toast(t("No measurements yet")));
 
-const showLeftTab = bindTabs($(".tabs"), tab => { $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)); if (tab === "vault") void vaultPanel.render(); });
+fitTabStrip($("#left-tabs"), onLangChange);
+const showLeftTab = bindTabs($("#left-tabs"), tab => { $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)); if (tab === "vault") void vaultPanel.render(); });
 // Structural analysis (FRS-structural, SA1): the Simulation tab and the Study side tab of a part.
 const partSim = modeller.simAccess(), asmSim = asm.simAccess();
 // An assembly's study is drawn on its shown components joined into one model (made again when the view's parts are).
