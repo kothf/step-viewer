@@ -140,6 +140,22 @@ export interface ThermalLink {
   b: number;
   type: "none" | "resistance";
   h?: number;
+  /** An air layer this many mm thick (FR-TCON-002): `h` = air's conductivity at the joint's mean temperature / it. */
+  air?: number;
+}
+
+/** Thinnest air layer taken, mm: a touching pair set to Air gap still passes a finite heat. */
+export const AIR_MIN = 0.01;
+/** Dry air's conductivity at `T` °C, W/(mm·K): 0.0243 W/(m·K) at 0 °C, 0.0314 at 100 °C, 0.0386 at 200 °C. */
+export function airK(T: number): number { return (0.0243 + 7.15e-5 * Math.max(-50, Math.min(600, T))) * 1e-3; }
+/** The links with each air layer's conductance at the temperature `T(link)` gives. */
+function airLinks(links: ThermalLink[], T: (l: ThermalLink) => number): ThermalLink[] {
+  return links.map(l => (l.air !== undefined ? { ...l, type: "resistance" as const, h: airK(T(l)) / Math.max(l.air, AIR_MIN) } : l));
+}
+/** The mean of the problem's fixed and ambient temperatures, °C: where temperature-dependent values start. */
+function startTemp(pb: ThermalProblem): number {
+  const temps = pb.sinks.map(s => s.temp ?? s.ambient ?? 0);
+  return temps.length ? temps.reduce((a, v) => a + v, 0) / temps.length : 20;
 }
 
 export interface ThermalContact {
@@ -251,6 +267,8 @@ export interface ThermalResult {
   iterations: number;
   /** Solves made again with the conductivity at the temperatures found (FR-TMAT-004); 0 when it is constant. */
   kSteps?: number;
+  /** Solves made again with air layers' k at the joints' temperatures (FR-TCON-002). */
+  airSteps?: number;
   /** Solved with the kept factorisation of the solve before (FR-TSOL-021). */
   reused?: boolean;
   eta: Float64Array;
@@ -1039,6 +1057,25 @@ function ktScale(dom: Uint8Array, nb: number, tab: (dom: number) => number[] | u
 const KT_STEPS = 30, KT_TOL = 0.005;
 
 export function solveThermal(pb: ThermalProblem): ThermalResult {
+  if (!(pb.links ?? []).some(l => l.air !== undefined)) return solveLinked(pb);
+  // FR-TCON-002: an air layer conducts by air's k at the joint's mean temperature: solved again until no layer's conductance changes by more than 0.5 %
+  const t0 = startTemp(pb), raw = pb.links!;
+  const meanOf = (r: ThermalResult, l: ThermalLink) => {
+    const C = r.contacts?.find(c => (c.a === l.a && c.b === l.b) || (c.a === l.b && c.b === l.a));
+    return C && C.area > 0 && Number.isFinite(C.ta + C.tb) ? (C.ta + C.tb) / 2 : t0;
+  };
+  let links = airLinks(raw, () => t0), r = solveLinked({ ...pb, links, reuse: undefined }), steps = 1;
+  while (steps < KT_STEPS) {
+    const next = airLinks(raw, l => meanOf(r, l));
+    if (next.every((l, i) => raw[i].air === undefined || Math.abs(l.h! / links[i].h! - 1) <= KT_TOL)) break;
+    links = next;
+    r = solveLinked({ ...pb, links, grid: r.grid, reuse: undefined });
+    steps++;
+  }
+  return { ...r, airSteps: steps };
+}
+
+function solveLinked(pb: ThermalProblem): ThermalResult {
   const tab = ktOf(pb);
   const linear = !tab && !(pb.exchanges ?? []).length && !pb.sinks.some(s => s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural));
   if (pb.reuse && linear) {
@@ -1053,8 +1090,7 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   }
   if (!tab) return solveOnce(pb, build(pb), 0);
   // FR-TMAT-004: solved again with each element's k at the temperatures found until no k changes by more than 0.5 %
-  const temps = pb.sinks.map(s => s.temp ?? s.ambient ?? 0);
-  const t0 = temps.length ? temps.reduce((a, v) => a + v, 0) / temps.length : 20;
+  const t0 = startTemp(pb);
   let scale = new Float64Array(0);
   let b = build(pb, dom => (scale = ktScale(dom, basisSize(pb.p), tab, null, t0)));
   let r = solveOnce(pb, b, 1);
@@ -1194,6 +1230,8 @@ const MAX_STEPS = 2000, MIN_STEPS = 20;
 export function transientThermal(pb: ThermalProblem, run: TransientRun): TransientResult {
   // a conductivity that changes with temperature is taken at the element temperatures, again whenever they moved more than the step allowance
   const tab = ktOf(pb);
+  // an air layer is taken at the run's starting temperature
+  if ((pb.links ?? []).some(l => l.air !== undefined)) pb = { ...pb, links: airLinks(pb.links!, () => run.t0) };
   let b = build(pb, tab ? dom => ktScale(dom, basisSize(pb.p), tab, null, run.t0) : null), c = b.c;
   const { nb, nel, grid } = c;
   const { C, total } = capacity(c, run.rc);

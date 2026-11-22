@@ -474,7 +474,7 @@ export interface PassResult {
    * `ThermalSetup.sinkIds`), and how many solves the pass took (radiation is solved step by step).
    */
   thermal?: {
-    min: number; max: number; applied: number; flows: SinkFlow[]; solves: number; /** Solves made again with k at the temperatures found (FR-TMAT-004). */ kSteps?: number; /** Solved with the matrix of the solve before (FR-TSOL-021). */ reused?: boolean;
+    min: number; max: number; applied: number; flows: SinkFlow[]; solves: number; /** Solves made again with k at the temperatures found (FR-TMAT-004). */ kSteps?: number; /** Solved with the matrix of the solve before (FR-TSOL-021). */ reused?: boolean; /** Solves made again with air layers' k at the joints' temperatures (FR-TCON-002). */ airSteps?: number;
     /** Assemblies: where the components touch and the heat passing there; each one's temperatures and the heat made in it. */
     contacts?: ThermalContact[];
     /** Radiation between face sets, in the order of `ThermalSetup.exchangeIds`. */
@@ -1196,7 +1196,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, ...(capped ? { capped } : {}), energy: r.energy, change, ms: Date.now() - t0, reactions: [], applied: none,
       u: s.flux, vm: s.temp, err: s.err, errors: [...known, passError(known)], maxU, maxVm: max, converged, done: converged || capped > 0 || k === passes - 1,
       ...(s.dom ? { dom: s.dom } : {}),
-      thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations, ...(r.kSteps ? { kSteps: r.kSteps } : {}), ...(r.reused ? { reused: true } : {}), ...(domains ? { contacts: r.contacts, comps } : {}), ...(r.exchanges ? { exchanges: r.exchanges } : {}) },
+      thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations, ...(r.kSteps ? { kSteps: r.kSteps } : {}), ...(r.reused ? { reused: true } : {}), ...(r.airSteps ? { airSteps: r.airSteps } : {}), ...(domains ? { contacts: r.contacts, comps } : {}), ...(r.exchanges ? { exchanges: r.exchanges } : {}) },
     };
     if (converged || capped) return;
   }

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.676.0] - 2026-11-22
+
+### Added
+
+- Air gaps and an interface material library in thermal studies. A contact in the Connections table can now be an Air gap: an air layer of a typed thickness (the gap Find connections measured, or 0.1 mm for parts that touch) that conducts by air's conductivity at the joint's own temperature, found by solving again until it settles. Pad or paste now has a Material list of common interface materials (gap pads, thermal grease, phase-change pad, graphite sheet, mica washer, polyimide film) that fills in thickness and conductivity, which stay editable.
+
 ## [1.675.0] - 2026-11-22
 
 ### Added
@@ -4442,7 +4448,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.675.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.676.0...HEAD
+[1.676.0]: https://github.com/kothf/step-viewer/compare/v1.675.0...v1.676.0
 [1.675.0]: https://github.com/kothf/step-viewer/compare/v1.674.0...v1.675.0
 [1.674.0]: https://github.com/kothf/step-viewer/compare/v1.673.0...v1.674.0
 [1.673.0]: https://github.com/kothf/step-viewer/compare/v1.672.0...v1.673.0

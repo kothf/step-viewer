@@ -43,7 +43,7 @@ import { boardMap, gerberName, mapPicture, stackK, type CopperMap } from "../the
 import { copperFromGerber } from "../thermal/copperRaster";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
-import { BOLTED_TCC, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
+import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
 import { BOARD_RC, SERIES_COLORS, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
 import { fluxArrows } from "./arrows";
 import { parseKTable, kTableText, ktFactors, type KTable } from "./ktable";
@@ -1166,7 +1166,7 @@ export class SimController {
         const at = new Map(bodies.map((b, i) => [b.key, i]));
         // the pairs with their gaps and patches are found beside the solve, for the Connections table
         if (!this.freshFound(st)) void this.findFrom(bodies, st.settings.gap ?? DEFAULT_GAP, this.foundKey(st)).then(() => { this.renderAll(); this.drawMarks(); }).catch(() => {});
-        joined = { gap: st.settings.gap ?? DEFAULT_GAP, links: (st.links ?? []).flatMap(l => (l.type !== "resist" && l.type !== "pad" && l.type !== "bolted" && l.type !== "perfect" && at.has(l.a) && at.has(l.b) ? [{ a: at.get(l.a)!, b: at.get(l.b)!, type: l.type, ...(l.type === "adhesive" ? { kn: glueStiffness(l)[0], kt: glueStiffness(l)[1] } : {}) }] : [])) };
+        joined = { gap: st.settings.gap ?? DEFAULT_GAP, links: (st.links ?? []).flatMap(l => (l.type !== "resist" && l.type !== "pad" && l.type !== "bolted" && l.type !== "perfect" && l.type !== "air" && at.has(l.a) && at.has(l.b) ? [{ a: at.get(l.a)!, b: at.get(l.b)!, type: l.type, ...(l.type === "adhesive" ? { kn: glueStiffness(l)[0], kt: glueStiffness(l)[1] } : {}) }] : [])) };
       } else if (m && bodies && bodies.length > 1 && bodies.some(b => this.bodyMatOf(doc, b.key))) {
         regions = bodies.map(b => {
           const q = this.bodyMatOf(doc, b.key) ?? m;
@@ -1310,6 +1310,13 @@ export class SimController {
    * A thermal study's bodies and set-up on the geometry `got` (one solid for a part; an assembly's components, less
    * those the study leaves out, each with its conductivity, joined where they touch as its links say).
    */
+  /** The found gap between two components, mm (rounded, at least 0.01), else the default air layer. */
+  private pairGap(st: Study, a: string, b: string): number {
+    const f = this.freshFound(st), ia = f?.comps.findIndex(c => c.key === a) ?? -1, ib = f?.comps.findIndex(c => c.key === b) ?? -1;
+    const c = f?.list.find(x => (x.a === ia && x.b === ib) || (x.a === ib && x.b === ia));
+    return c && c.gap > 0.005 ? Math.max(0.01, Math.round(c.gap * 100) / 100) : DEFAULT_AIR_GAP;
+  }
+
   private thermalParts(st: Study, got: Awaited<ReturnType<SimHost["simGeo"]>>, bolted: Set<string> = new Set()) {
     const asm = this.host.asm();
     // an assembly: every component is its own body with its material's conductivity, joined where they touch
@@ -1325,8 +1332,9 @@ export class SimController {
     mats.forEach((q, i) => { if (!bks[i] && !q?.k) throw new Error(`E-TH-COMPMAT: ${bodies[i].name ?? bodies[i].key}`); });
     const kOf = (i: number) => bks[i]?.along ?? mats[i]!.k!, nameOf = (i: number) => (bks[i] ? BOARD_MATERIAL : mats[i]!.name);
     const at = new Map(bodies.map((b, i) => [b.key, i]));
-    const links = (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) && (l.type === "none" || l.type === "resist" || l.type === "pad" || l.type === "bolted")
-      ? [l.type === "none" ? { a: at.get(l.a)!, b: at.get(l.b)!, type: "none" as const } : { a: at.get(l.a)!, b: at.get(l.b)!, type: "resistance" as const, h: linkConductance(l) }] : []));
+    const links = (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) && (l.type === "none" || l.type === "resist" || l.type === "pad" || l.type === "bolted" || l.type === "air")
+      ? [l.type === "none" ? { a: at.get(l.a)!, b: at.get(l.b)!, type: "none" as const }
+        : { a: at.get(l.a)!, b: at.get(l.b)!, type: "resistance" as const, h: linkConductance(l), ...(l.type === "air" ? { air: l.t ?? DEFAULT_AIR_GAP } : {}) }] : []));
     // pairs a bolt clamps pass heat by a bolted joint's conductance unless a type is typed for them (FR-TCON-003)
     if (bolted.size) {
       const typed = new Set((st.links ?? []).filter(l => THERMAL_LINK_TYPES.has(l.type) || l.type === "none").map(l => pairKey(l.a, l.b)));
@@ -1832,8 +1840,10 @@ export class SimController {
     for (const l of typed.values()) if (!at.has(key(l.a, l.b))) rows.push({ a: l.a, b: l.b, area: null });
     const heats = rows.some(r => r.heat != null), f = UNITS[units.current].f, dis = this.running ? " disabled" : "";
     const opt = (v: string, label: string, cur: string) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(t(label))}</option>`;
+    const padOpts = (pt: number, pk: number) => { const i = padEntry(pt, pk);
+      return `<option value=""${i < 0 ? " selected" : ""}>${esc(t("Typed values"))}</option>` + PAD_LIBRARY.map((p, j) => `<option value="${j}"${j === i ? " selected" : ""}>${esc(t(p.name))}</option>`).join(""); };
     let html = `<div class="sim-sec sim-links sim-tlinks"><h4>${esc(t("Connections"))}</h4>`
-      + `<p class="sim-note muted">${esc(t("Components that touch, or come within the gap, pass heat to each other. A contact is perfect unless a pad, a contact resistance or no contact is set for it."))}</p>`
+      + `<p class="sim-note muted">${esc(t("Components that touch, or come within the gap, pass heat to each other. A contact is perfect unless a pad, a contact resistance, an air gap or no contact is set for it."))}</p>`
       + `<label class="sim-kv2">${esc(t("Gap tolerance"))} <input type="number" data-k="gap" min="0" step="0.05" value="${sig((st.settings.gap ?? DEFAULT_GAP) * f)}" aria-label="${esc(t("Gap tolerance"))}" /> ${esc(units.current)}</label>`
       + `<button class="btn small sim-find" data-a="findlinks"${this.finding || this.running ? " disabled" : ""}>${esc(this.finding ? t("Finding the connections…") : t("Find connections"))}</button>`;
     if (!rows.length) return html + `<p class="sim-note muted" data-v="nolinks">${esc(res || pre ? t("No components touch.") : t("Find connections lists the pairs that touch; a solve lists them too."))}</p></div>`;
@@ -1844,10 +1854,12 @@ export class SimController {
         const ab = `data-a="${esc(r.a)}" data-b="${esc(r.b)}"`;
         return `<tr data-link="${esc(k)}"${patch ? ` data-a="link" tabindex="0"` : ""} class="${k === this.linkSel ? "sel" : ""}"><td><span translate="no">${esc(names.get(r.a) ?? r.a)} – ${esc(names.get(r.b) ?? r.b)}</span><br /><span class="muted" data-v="carea">${r.area == null ? "" : sig(r.area * f * f)}</span></td>`
           + (heats ? `<td><span data-v="cheat">${r.heat == null ? "" : sig(Math.abs(r.heat))}</span><br /><span data-v="cdrop">${r.drop == null ? "" : pct(Math.abs(r.drop))}</span></td>` : "")
-          + `<td><select data-k="tlink" ${ab} aria-label="${esc(t("Contact"))}"${dis}>${opt("perfect", "Perfect", cur)}${bt ? opt("bolted", "Bolted joint", cur) : ""}${opt("pad", "Pad or paste", cur)}${opt("resist", "Contact resistance", cur)}${opt("none", "No contact", cur)}</select></td></tr>`
-          + (cur === "pad" ? `<tr class="sim-glue" data-tpad="${esc(k)}"><td colspan="${heats ? 3 : 2}"><label title="${esc(t("Thickness of the pad or paste layer"))}">${esc(t("Thickness"))} <input type="number" data-k="padt" ${ab} min="0" step="0.05" value="${trim(l?.t ?? DEFAULT_PAD.t)}"${dis} /> mm</label> <label title="${esc(t("Thermal conductivity of the pad or paste"))}">k <input type="number" data-k="padk" ${ab} min="0" step="0.5" value="${trim(l?.k ?? DEFAULT_PAD.k)}"${dis} /> W/(m·K)</label></td></tr>` : "")
+          + `<td><select data-k="tlink" ${ab} aria-label="${esc(t("Contact"))}"${dis}>${opt("perfect", "Perfect", cur)}${bt ? opt("bolted", "Bolted joint", cur) : ""}${opt("pad", "Pad or paste", cur)}${opt("resist", "Contact resistance", cur)}${opt("air", "Air gap", cur)}${opt("none", "No contact", cur)}</select></td></tr>`
+          + (cur === "pad" ? `<tr class="sim-glue" data-tpad="${esc(k)}"><td colspan="${heats ? 3 : 2}"><label>${esc(t("Material"))} <select data-k="padlib" ${ab}${dis}>${padOpts(l?.t ?? DEFAULT_PAD.t, l?.k ?? DEFAULT_PAD.k)}</select></label> <label title="${esc(t("Thickness of the pad or paste layer"))}">${esc(t("Thickness"))} <input type="number" data-k="padt" ${ab} min="0" step="0.05" value="${trim(l?.t ?? DEFAULT_PAD.t)}"${dis} /> mm</label> <label title="${esc(t("Thermal conductivity of the pad or paste"))}">k <input type="number" data-k="padk" ${ab} min="0" step="0.5" value="${trim(l?.k ?? DEFAULT_PAD.k)}"${dis} /> W/(m·K)</label></td></tr>` : "")
+          + (cur === "air" ? `<tr class="sim-glue" data-tair="${esc(k)}"><td colspan="${heats ? 3 : 2}"><label title="${esc(t("Thickness of the air layer between the two faces"))}">${esc(t("Air layer"))} <input type="number" data-k="airt" ${ab} min="0.01" step="0.05" value="${trim(l?.t ?? DEFAULT_AIR_GAP)}"${dis} /> mm</label></td></tr>` : "")
           + (cur === "resist" || cur === "bolted" ? `<tr class="sim-glue" data-tres="${esc(k)}"><td colspan="${heats ? 3 : 2}"><label title="${esc(t("Heat passed per area and per degree of difference between the two surfaces"))}">${esc(t("Contact conductance"))} <input type="number" data-k="tcch" ${ab} min="0" step="500" value="${trim(l?.h ?? (cur === "bolted" ? BOLTED_TCC : DEFAULT_TCC))}"${dis} /> W/(m²·K)</label></td></tr>` : "");
       }).join("") + `</tbody></table>`;
+    if (rows.some(r => typed.get(key(r.a, r.b))?.type === "air")) html += `<p class="sim-note muted" data-v="airnote">${esc(t("An air gap conducts only through the air (no convection or radiation across it), with air's conductivity at the joint's mean temperature."))}</p>`;
     if (rows.some(r => isBolted(r.a, r.b))) html += `<p class="sim-note muted" data-v="boltnote">${esc(t("A pair a toolbox bolt clamps is a bolted joint: it passes heat by a contact conductance of {h} W/(m²·K) unless you set another.", { h: String(BOLTED_TCC) }))}</p>`;
     if (heats) html += `<p class="sim-note muted" data-v="cheatnote">${esc(t("Heat: what passes through the contact. ΔT: the temperature difference between its two sides."))}</p>`;
     if (pre?.list.length) html += `<p class="sim-note muted" data-v="cpatchnote">${esc(t("Click a row to show the contact: orange on the first component, blue on the second."))}</p>`;
@@ -3825,6 +3837,7 @@ export class SimController {
       + chartSvg(errs, t("Estimated error per pass"));
     html += this.cappedNote(last);
     if (r.passes.length && r.passes.every(q => q.thermal?.reused)) html += `<p class="sim-note muted" data-v="reused">${esc(t("Only powers or temperatures changed: solved again on the same grid and matrix, so it took a fraction of the time."))}</p>`;
+    if (T.airSteps) html += `<p class="sim-note muted" data-v="airsteps">${esc(t("Air gaps conduct by air's k at their temperature: the last pass was solved {n} times until it settled.", { n: T.airSteps }))}</p>`;
     if (T.kSteps) html += `<p class="sim-note muted" data-v="ksteps">${esc(t("Conductivity changes with temperature: the last pass was solved {n} times until k settled.", { n: T.kSteps }))}</p>`;
     if (T.solves > 1) html += `<p class="sim-note muted sim-radnote">${esc(t("Radiation depends on the surface temperature itself: the last pass was solved {n} times until the temperatures settled.", { n: T.solves }))}</p>`;
     html += this.probesHtml();
@@ -4302,9 +4315,25 @@ export class SimController {
         if (v === "none") rest.push({ a, b, type: v });
         else if (v === "pad") rest.push({ a, b, type: v, ...DEFAULT_PAD });
         else if (v === "resist") rest.push({ a, b, type: v, h: DEFAULT_TCC });
+        else if (v === "air") rest.push({ a, b, type: v, t: this.pairGap(st, a, b) });
         else if (v === "perfect" && bt) rest.push({ a, b, type: v });
         else if (v === "bolted" && !bt) rest.push({ a, b, type: v, h: BOLTED_TCC });
         if (rest.length) s2.links = rest; else delete s2.links;
+      });
+    } else if (el.dataset.k === "padlib") {
+      const a = el.dataset.a!, b = el.dataset.b!, p = PAD_LIBRARY[Number(el.value)];
+      if (el.value === "" || !p) return;
+      this.host.change(t("Pad material"), d => {
+        const l = d.studies?.find(x => x.id === st.id)?.links?.find(l => l.type === "pad" && ((l.a === a && l.b === b) || (l.a === b && l.b === a)));
+        if (l) { l.t = p.t; l.k = p.k; }
+      });
+    } else if (el.dataset.k === "airt") {
+      const a = el.dataset.a!, b = el.dataset.b!, v = Number(el.value);
+      el.setAttribute("aria-invalid", String(!(v > 0)));
+      if (!(v > 0)) return;
+      this.host.change(t("Air layer"), d => {
+        const l = d.studies?.find(x => x.id === st.id)?.links?.find(l => l.type === "air" && ((l.a === a && l.b === b) || (l.a === b && l.b === a)));
+        if (l) l.t = v;
       });
     } else if (el.dataset.k === "padt" || el.dataset.k === "padk" || el.dataset.k === "tcch") {
       const a = el.dataset.a!, b = el.dataset.b!, v = Number(el.value), k = el.dataset.k;
