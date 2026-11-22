@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.681.0] - 2026-11-22
+
+### Added
+
+- Board layers under a thermal map. **Board layers** on the Thermal bar opens the board's Gerber set (files or a zip) and draws its copper, silkscreen and drilled holes under the temperatures, so tracks and silkscreen stay readable on the map. The layers are laid on the board by the outline's box (turned a quarter turn when the sizes fit better that way), each face shows its own side, and the legend has a slider for how strongly they show, an offset in mm for an outline that is not centred on the board, another Gerber set and Remove layers. The button hides and shows them.
+
 ## [1.680.0] - 2026-11-22
 
 ### Added
@@ -4472,7 +4478,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.680.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.681.0...HEAD
+[1.681.0]: https://github.com/kothf/step-viewer/compare/v1.680.0...v1.681.0
 [1.680.0]: https://github.com/kothf/step-viewer/compare/v1.679.0...v1.680.0
 [1.679.0]: https://github.com/kothf/step-viewer/compare/v1.678.0...v1.679.0
 [1.678.0]: https://github.com/kothf/step-viewer/compare/v1.677.0...v1.678.0
