@@ -5868,6 +5868,7 @@ export const RU: Record<string, string> = {
   "This material has no thermal conductivity": "У этого материала нет теплопроводности",
   "Components that touch, or come within the gap, pass heat to each other. A contact is perfect unless a pad, a contact resistance or no contact is set for it.": "Компоненты, которые касаются или находятся в пределах зазора, передают тепло друг другу. Контакт идеальный, если для него не заданы прокладка, контактное сопротивление или отсутствие контакта.",
   "Contact": "Контакт",
+  "Only powers or temperatures changed: solved again on the same grid and matrix, so it took a fraction of the time.": "Изменились только мощности или температуры: расчёт повторён на той же сетке и матрице, поэтому занял лишь малую часть времени.",
   "Bolted joint": "Болтовое соединение",
   "A pair a toolbox bolt clamps is a bolted joint: it passes heat by a contact conductance of {h} W/(m²·K) unless you set another.": "Пара деталей, стянутая болтом из библиотеки, считается болтовым соединением: она передаёт тепло с контактной проводимостью {h} Вт/(м²·К), если не задано другое значение.",
   "Perfect": "Идеальный",

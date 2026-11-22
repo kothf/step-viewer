@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.674.0] - 2026-11-22
+
+### Changed
+
+- Thermal studies solve again much faster when only powers, ambient or fixed temperatures change. The study keeps its grid, matrix and factorisation from the solve before, so only the load is made again: on a test block a re-solve took 56 ms instead of 390 ms. The results say when this happened. It applies when nothing depends on the temperatures (no radiation, natural convection or conductivity table); a change to faces, materials, film coefficients or contacts builds everything again.
+
 ## [1.673.0] - 2026-11-22
 
 ### Added
@@ -4430,7 +4436,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.673.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.674.0...HEAD
+[1.674.0]: https://github.com/kothf/step-viewer/compare/v1.673.0...v1.674.0
 [1.673.0]: https://github.com/kothf/step-viewer/compare/v1.672.0...v1.673.0
 [1.672.0]: https://github.com/kothf/step-viewer/compare/v1.671.0...v1.672.0
 [1.671.0]: https://github.com/kothf/step-viewer/compare/v1.670.0...v1.671.0

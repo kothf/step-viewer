@@ -175,6 +175,11 @@ export interface ThermalProblem {
   tol?: number;
   beta?: number;
   memory?: number;
+  /**
+   * FR-TSOL-021: a key of everything but the fixed temperatures, ambients and powers. A linear solve with the key of
+   * the last one at the same degree reuses its grid, matrix and factorisation (only the load is made again).
+   */
+  reuse?: string;
 }
 
 export interface SinkFlow {
@@ -213,6 +218,8 @@ export interface ThermalResult {
   iterations: number;
   /** Solves made again with the conductivity at the temperatures found (FR-TMAT-004); 0 when it is constant. */
   kSteps?: number;
+  /** Solved with the kept factorisation of the solve before (FR-TSOL-021). */
+  reused?: boolean;
   eta: Float64Array;
   prevError: number | null;
   volume: number;
@@ -516,17 +523,17 @@ function faceTerms(c: Ctx, A: BlockMatrix) {
 }
 
 /** A fixed temperature g on boundary points (Nitsche): K += −N_a M_b − M_a N_b + 2γ N_a N_b, f += (−M_a + 2γ N_a) g. */
-function heldTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, g: number) {
+function heldTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Array, g: number) {
   const { grid, nb, bas, gam } = c, M = new Float64Array(nb);
   for (let o = 0; o < L.length; o += 8) {
-    const e = L[o], E = grid.elems[e], w = L[o + 4], K = A.block(e, e), g2 = 2 * gam[e], fo = e * nb;
+    const e = L[o], E = grid.elems[e], w = L[o + 4], K = A?.block(e, e), g2 = 2 * gam[e], fo = e * nb;
     const kx = c.k3[3 * e] * L[o + 5], ky = c.k3[3 * e + 1] * L[o + 6], kz = c.k3[3 * e + 2] * L[o + 7];
     bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s);
     for (let a = 0; a < nb; a++) M[a] = bas.g[3 * a] * kx + bas.g[3 * a + 1] * ky + bas.g[3 * a + 2] * kz;
     for (let a = 0; a < nb; a++) {
       const na = bas.v[a], r = a * nb;
       f[fo + a] += w * (g2 * na - M[a]) * g;
-      for (let b = 0; b < nb; b++) K[r + b] += w * (-na * M[b] - M[a] * bas.v[b] + g2 * na * bas.v[b]);
+      if (K) for (let b = 0; b < nb; b++) K[r + b] += w * (-na * M[b] - M[a] * bas.v[b] + g2 * na * bas.v[b]);
     }
   }
 }
@@ -535,10 +542,10 @@ function heldTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, g: 
  * A film on boundary points: K += h w N_a N_b, f += h w T∞ N_a. `rad` > 0 makes it radiation of that emissivity,
  * linearised about the temperatures `x` (°C): q = εσ(T⁴ − Ts⁴) ≈ q(T₀) + 4εσT₀³ (T − T₀).
  */
-function filmTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, h: number | ArrayLike<number>, amb: number, rad: number, x: Float64Array | null) {
+function filmTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Array, h: number | ArrayLike<number>, amb: number, rad: number, x: Float64Array | null) {
   const { grid, nb, bas } = c;
   for (let o = 0; o < L.length; o += 8) {
-    const e = L[o], E = grid.elems[e], w = L[o + 4], K = A.block(e, e), fo = e * nb, hp = typeof h === "number" ? h : h[o / 8];
+    const e = L[o], E = grid.elems[e], w = L[o + 4], K = A?.block(e, e), fo = e * nb, hp = typeof h === "number" ? h : h[o / 8];
     bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s);
     let hh = hp, rhs = hp * amb;
     if (rad > 0) {
@@ -551,7 +558,7 @@ function filmTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, h: 
     for (let a = 0; a < nb; a++) {
       const na = w * bas.v[a], r = a * nb;
       f[fo + a] += na * rhs;
-      for (let b = 0; b < nb; b++) K[r + b] += hh * na * bas.v[b];
+      if (K) for (let b = 0; b < nb; b++) K[r + b] += hh * na * bas.v[b];
     }
   }
 }
@@ -823,19 +830,45 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
     const loose = looseDomains(c, contacts, at, ex);
     if (loose.length) throw new Error(`E-TH-LOOSE: ${loose.join(",")}`);
   }
-  pb.sinks.forEach((s, i) => {
-    if (s.temp !== undefined) heldTerms(c, A, f, at[i], s.temp);
-    else if (s.forced) filmTerms(c, A, f, at[i], lens[i]!, s.ambient ?? 0, 0, null);
-    else if (!s.natural && (s.h ?? 0) > 0) filmTerms(c, A, f, at[i], s.h!, s.ambient ?? 0, 0, null);
-  });
+  sinkLoad(c, A, f, at, lens);
   let volume = 0;
   const volumes = new Array<number>(doms ? doms.length : 1).fill(0);
   for (const cl of grid.cells) { const v = cl.pts.weight(); volume += v; volumes[doms ? cl.dom : 0] += v; }
   const fs: Float64Array[] = [], put: number[] = [];
   for (const s of pb.sources) { const r = sourceLoad(c, s, tq, volume, volumes); fs.push(r.f); put.push(r.put); }
   const rads = pb.sinks.map((s, i) => (s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural) ? i : -1)).filter(i => i >= 0);
-  const temps = pb.sinks.map(s => s.temp ?? s.ambient ?? 0), t0 = temps.reduce((a2, v) => a2 + v, 0) / Math.max(1, temps.length);
-  return { c, A, f, fs, put, at, lens, rads, contacts, joins, volume, volumes, memory, ex, t0 };
+  return { c, A, f, fs, put, at, lens, rads, contacts, joins, volume, volumes, memory, ex, t0: meanTemp(pb) };
+}
+
+const meanTemp = (pb: ThermalProblem) => { const temps = pb.sinks.map(s => s.temp ?? s.ambient ?? 0); return temps.reduce((a, v) => a + v, 0) / Math.max(1, temps.length); };
+
+/** The fixed temperatures and films: their matrix terms into `A` (none = the load alone) and their load into `f`. */
+function sinkLoad(c: Ctx, A: BlockMatrix | null, f: Float64Array, at: Float64Array[], lens: (Float64Array | undefined)[]) {
+  c.pb.sinks.forEach((s, i) => {
+    if (s.temp !== undefined) heldTerms(c, A, f, at[i], s.temp);
+    else if (s.forced) filmTerms(c, A, f, at[i], lens[i]!, s.ambient ?? 0, 0, null);
+    else if (!s.natural && (s.h ?? 0) > 0) filmTerms(c, A, f, at[i], s.h!, s.ambient ?? 0, 0, null);
+  });
+}
+
+/**
+ * FR-TSOL-021: the grid, matrix and factorisation of the last linear solve at each degree, kept while only
+ * temperatures, ambients and powers change (`ThermalProblem.reuse` = the caller's key of everything else).
+ */
+const kept = { key: "", byP: new Map<number, { b: Built; solver: Solver }>() };
+/** What the kept matrices may take, bytes (the factorisation about as much again). */
+const REUSE_BYTES = 800 * 2 ** 20;
+/** Solves answered from a kept factorisation (for tests). */
+export let reusedSolves = 0;
+export function dropReuse() { kept.key = ""; kept.byP.clear(); }
+
+/** A kept build with this problem's loads: the sinks' load and each source's again on the same grid. */
+function reloaded(b: Built, pb: ThermalProblem): Built {
+  const c = { ...b.c, pb }, tq = Math.max(2, c.p + 1), f = new Float64Array(b.f.length);
+  sinkLoad(c, null, f, b.at, b.lens);
+  const fs: Float64Array[] = [], put: number[] = [];
+  for (const s of pb.sources) { const r = sourceLoad(c, s, tq, b.volume, b.volumes); fs.push(r.f); put.push(r.put); }
+  return { ...b, c, f, fs, put, t0: meanTemp(pb) };
 }
 
 /** One source's load vector at its full power and the heat it puts in, W. */
@@ -971,6 +1004,17 @@ const KT_STEPS = 30, KT_TOL = 0.005;
 
 export function solveThermal(pb: ThermalProblem): ThermalResult {
   const tab = ktOf(pb);
+  const linear = !tab && !(pb.exchanges ?? []).length && !pb.sinks.some(s => s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural));
+  if (pb.reuse && linear) {
+    if (kept.key !== pb.reuse) dropReuse();
+    const hit = kept.byP.get(pb.p);
+    if (hit && (!pb.grid || pb.grid === hit.b.c.grid)) { reusedSolves++; return { ...solveOnce(pb, reloaded(hit.b, pb), 0, hit.solver), reused: true }; }
+    const b = build(pb), solver = factorSystem(b.c, b.A);
+    let bytes = 2 * b.memory;
+    for (const k of kept.byP.values()) bytes += 2 * k.b.memory;
+    if (bytes <= REUSE_BYTES) { kept.key = pb.reuse; kept.byP.set(pb.p, { b, solver }); }
+    return solveOnce(pb, b, 0, solver);
+  }
   if (!tab) return solveOnce(pb, build(pb), 0);
   // FR-TMAT-004: solved again with each element's k at the temperatures found until no k changes by more than 0.5 %
   const temps = pb.sinks.map(s => s.temp ?? s.ambient ?? 0);
@@ -990,14 +1034,14 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   return r;
 }
 
-function solveOnce(pb: ThermalProblem, b: Built, kSteps: number): ThermalResult {
+function solveOnce(pb: ThermalProblem, b: Built, kSteps: number, solver?: Solver): ThermalResult {
   const { c, A } = b, { grid, p, nel, nb } = c;
   const f = Float64Array.from(b.f);
   for (const fs of b.fs) for (let i = 0; i < f.length; i++) f[i] += fs[i];
   const applied = b.put.reduce((a, v) => a + v, 0);
   // radiation and natural convection depend on the temperatures: linearised about the last answer and solved again until they settle
   let x: Float64Array, iterations = 1;
-  if (!b.rads.length && !b.ex.some(X => Number.isFinite(X.R))) x = solveSystem(c, A, f, null);
+  if (!b.rads.length && !b.ex.some(X => Number.isFinite(X.R))) x = solver ? solver.solve(f, null) : solveSystem(c, A, f, null);
   else {
     let last: Float64Array | null = null;
     x = f;
@@ -1021,10 +1065,12 @@ function solveOnce(pb: ThermalProblem, b: Built, kSteps: number): ThermalResult 
   const local = new Float32Array(nel);
   for (let e = 0; e < nel; e++) local[e] = prev && energy > 0 ? 100 * Math.sqrt((eta[e] * nel) / energy) : 0;
   const flows = pb.sinks.map((s, i) => flowOf(c, s, b.at[i], x, b.lens[i]));
-  contactFlows(c, b.contacts, b.joins, x);
+  // fresh contact records: a kept build's are read again by the next solve
+  const contacts = b.contacts.map(C => ({ ...C, ta: 0, tb: 0, heat: 0 }));
+  contactFlows(c, contacts, b.joins, x);
   const sm = samplerOf(c, x, local);
   const exchanges = b.ex.length ? exchangeFlows(b, x) : undefined;
-  return { grid, p, dofs: A.size, memory: b.memory, x, energy, applied, flows, iterations, ...(kSteps ? { kSteps } : {}), eta, prevError, volume: b.volume, contacts: b.contacts, volumes: b.volumes, ...(exchanges ? { exchanges } : {}), sample: sm.sample, temp: sm.temp };
+  return { grid, p, dofs: A.size, memory: b.memory, x, energy, applied, flows, iterations, ...(kSteps ? { kSteps } : {}), eta, prevError, volume: b.volume, contacts, volumes: b.volumes, ...(exchanges ? { exchanges } : {}), sample: sm.sample, temp: sm.temp };
 }
 
 /** What each radiation exchange passes at the temperatures `x` (the exchanges left out by a zero view factor are absent from `b.ex`). */

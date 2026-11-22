@@ -17171,6 +17171,16 @@ try {
     const t2 = await sim();
     check(film === "3000" && stale && !t2.error && t2.thermal.out.length === 2 && t2.thermal.out[1] > 0.5 && Math.abs(t2.thermal.out[0] + t2.thermal.out[1] - 8) < 0.01 && t2.thermal.min < 30 && t2.thermal.min > 20,
       `thermal 1.651: flowing water at 20 °C on a side face takes part of the heat; what the two conditions take adds up to the heat put in (${JSON.stringify({ film, stale, error: t2.error, thermal: t2.thermal })})`);
+    // FR-TSOL-021 (1.674.0): only the ambient changed: solved again on the kept matrix, said so, and the heat still balances
+    const before = await tp.evaluate(() => !!document.querySelector('#sim-tree [data-v="reused"]'));
+    await tp.fill('#sim-tree [data-k="ambient"]', "25");
+    await tp.press('#sim-tree [data-k="ambient"]', "Tab");
+    await settle();
+    await tp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t2b = await sim(), again = await tp.evaluate(() => document.querySelector('#sim-tree [data-v="reused"]')?.textContent ?? "");
+    check(!before && !t2b.error && /same grid and matrix/.test(again) && Math.abs(t2b.thermal.out[0] + t2b.thermal.out[1] - 8) < 0.01 && t2b.thermal.min > t2.thermal.min,
+      `thermal 1.674: with only the ambient changed the study is solved again on the same matrix, says so, and the heat still balances (${JSON.stringify({ before, again, error: t2b.error, thermal: t2b.thermal })})`);
     // a structural command starts a static study of its own; the switch goes back to the thermal one; undo removes it
     await tp.click('#sim-tools [data-s="mode-structural"]');
     await tp.waitForTimeout(150);
