@@ -71,6 +71,8 @@ export interface ThermalDomain {
   k: number;
   /** Conductivity along the world X, Y and Z axes when they differ (a board: copper layers along it, laminate through it). */
   k3?: number[];
+  /** Conductivity changing with temperature (FR-TMAT-004): [°C, factor on `k`/`k3`, °C, factor, …], ends held. */
+  kt?: number[];
   tris: ArrayLike<number>;
 }
 
@@ -105,6 +107,8 @@ export interface ThermalProblem {
   p: number;
   /** Conductivity, W/(mm·K) (not used with `domains`). */
   k: number;
+  /** Its change with temperature (not used with `domains`): [°C, factor, …] as `ThermalDomain.kt`. */
+  kt?: number[];
   /** Several bodies, joined where they touch (within `gap` mm) as `links` say. */
   domains?: ThermalDomain[];
   gap?: number;
@@ -155,6 +159,8 @@ export interface ThermalResult {
   flows: SinkFlow[];
   /** Solves it took (more than one with radiation). */
   iterations: number;
+  /** Solves made again with the conductivity at the temperatures found (FR-TMAT-004); 0 when it is constant. */
+  kSteps?: number;
   eta: Float64Array;
   prevError: number | null;
   volume: number;
@@ -623,7 +629,7 @@ interface Built {
   memory: number;
 }
 
-function build(pb: ThermalProblem): Built {
+function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) => Float64Array) | null): Built {
   const p = pb.p;
   const doms = pb.domains && pb.domains.length > 1 ? pb.domains : null;
   if (doms ? doms.some(d => !(d.k > 0) || (d.k3 && !(d.k3.length === 3 && d.k3.every(v => v > 0)))) : !(pb.k > 0)) throw new Error("E-TH-NOK");
@@ -636,9 +642,11 @@ function build(pb: ThermalProblem): Built {
   if (memory > (pb.memory ?? MEMORY_LIMIT)) throw new Error(`E-SIM-MEMORY: ${memoryMb(memory)}`);
   const g1 = grid, dom = Uint8Array.from(grid.elems, E => (doms ? g1.cells[E.cells[0]].dom : 0));
   const k3 = new Float64Array(3 * nel), ke = new Float64Array(nel);
+  const scale = typeof scaleBy === "function" ? scaleBy(dom) : scaleBy;
   for (let e = 0; e < nel; e++) {
     const d = doms ? doms[dom[e]] : null, k = d ? d.k : pb.k;
-    for (let a = 0; a < 3; a++) k3[3 * e + a] = d?.k3 ? d.k3[a] : k;
+    const m = scale ? scale[e] : 1;
+    for (let a = 0; a < 3; a++) k3[3 * e + a] = (d?.k3 ? d.k3[a] : k) * m;
     // the penalty goes by the best-conducting direction
     ke[e] = Math.max(k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]);
   }
@@ -763,8 +771,58 @@ function samplerOf(c: Ctx, x: Float64Array, local: Float32Array | null) {
   return { sample, temp };
 }
 
+/** A conductivity table's factor at a temperature: linear between the rows, the ends held. */
+export function ktFactor(kt: ArrayLike<number>, t: number): number {
+  const n = kt.length >> 1;
+  if (!n) return 1;
+  if (!(t > kt[0])) return kt[1];
+  for (let i = 1; i < n; i++) {
+    const t1 = kt[2 * i];
+    if (t <= t1) { const t0 = kt[2 * i - 2], u = t1 > t0 ? (t - t0) / (t1 - t0) : 1; return kt[2 * i - 1] + u * (kt[2 * i + 1] - kt[2 * i - 1]); }
+  }
+  return kt[2 * n - 1];
+}
+
+/** The table of each element's body, or null when no body's conductivity changes with temperature. */
+function ktOf(pb: ThermalProblem): ((dom: number) => number[] | undefined) | null {
+  const doms = pb.domains && pb.domains.length > 1 ? pb.domains : null;
+  if (doms) return doms.some(d => d.kt && d.kt.length >= 2) ? i => doms[i].kt : null;
+  return pb.kt && pb.kt.length >= 2 ? () => pb.kt : null;
+}
+
+/** Each element's conductivity factor at its mean temperature in `x` (its constant coefficient). */
+function ktScale(dom: Uint8Array, nb: number, tab: (dom: number) => number[] | undefined, x: Float64Array | null, t0: number): Float64Array {
+  const s = new Float64Array(dom.length);
+  for (let e = 0; e < dom.length; e++) { const kt = tab(dom[e]); s[e] = kt ? ktFactor(kt, x ? x[e * nb] : t0) : 1; }
+  return s;
+}
+
+/** Most solves made again for a conductivity that changes with temperature, and the change in k they stop at. */
+const KT_STEPS = 30, KT_TOL = 0.005;
+
 export function solveThermal(pb: ThermalProblem): ThermalResult {
-  const b = build(pb), { c, A } = b, { grid, p, nel, nb } = c;
+  const tab = ktOf(pb);
+  if (!tab) return solveOnce(pb, build(pb), 0);
+  // FR-TMAT-004: solved again with each element's k at the temperatures found until no k changes by more than 0.5 %
+  const temps = pb.sinks.map(s => s.temp ?? s.ambient ?? 0);
+  const t0 = temps.length ? temps.reduce((a, v) => a + v, 0) / temps.length : 20;
+  let scale = new Float64Array(0);
+  let b = build(pb, dom => (scale = ktScale(dom, basisSize(pb.p), tab, null, t0)));
+  let r = solveOnce(pb, b, 1);
+  for (let it = 2; it <= KT_STEPS; it++) {
+    const next = ktScale(b.c.dom, b.c.nb, tab, r.x, t0);
+    let d = 0;
+    for (let e = 0; e < next.length; e++) d = Math.max(d, Math.abs(next[e] / scale[e] - 1));
+    if (d <= KT_TOL) break;
+    scale = next;
+    b = build({ ...pb, grid: b.c.grid }, scale);
+    r = solveOnce(pb, b, it);
+  }
+  return r;
+}
+
+function solveOnce(pb: ThermalProblem, b: Built, kSteps: number): ThermalResult {
+  const { c, A } = b, { grid, p, nel, nb } = c;
   const f = Float64Array.from(b.f);
   for (const fs of b.fs) for (let i = 0; i < f.length; i++) f[i] += fs[i];
   const applied = b.put.reduce((a, v) => a + v, 0);
@@ -796,7 +854,7 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   const flows = pb.sinks.map((s, i) => flowOf(c, s, b.at[i], x, b.lens[i]));
   contactFlows(c, b.contacts, b.joins, x);
   const sm = samplerOf(c, x, local);
-  return { grid, p, dofs: A.size, memory: b.memory, x, energy, applied, flows, iterations, eta, prevError, volume: b.volume, contacts: b.contacts, volumes: b.volumes, sample: sm.sample, temp: sm.temp };
+  return { grid, p, dofs: A.size, memory: b.memory, x, energy, applied, flows, iterations, ...(kSteps ? { kSteps } : {}), eta, prevError, volume: b.volume, contacts: b.contacts, volumes: b.volumes, sample: sm.sample, temp: sm.temp };
 }
 
 /**
@@ -874,7 +932,10 @@ const MAX_STEPS = 2000, MIN_STEPS = 20;
  * convection are linearised about the temperatures, again when they moved more than the step allowance since.
  */
 export function transientThermal(pb: ThermalProblem, run: TransientRun): TransientResult {
-  const b = build(pb), { c } = b, { nb, nel, grid } = c;
+  // a conductivity that changes with temperature is taken at the element temperatures, again whenever they moved more than the step allowance
+  const tab = ktOf(pb);
+  let b = build(pb, tab ? dom => ktScale(dom, basisSize(pb.p), tab, null, run.t0) : null), c = b.c;
+  const { nb, nel, grid } = c;
   const { C, total } = capacity(c, run.rc);
   if (!(total > 0)) throw new Error("E-TH-NOCP");
   const end = run.times[run.times.length - 1];
@@ -887,9 +948,14 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
   for (let e = 0; e < nel; e++) y0[e * nb] = run.t0;
   const cache = new Map<string, { solve(f: Float64Array, x0: Float64Array): Float64Array }>();
   let made = 0;
-  let lin: Float64Array | null = b.rads.length ? Float64Array.from(y0) : null, linGen = 0, linG: Float64Array | null = null, linB: BlockMatrix | null = null;
-  const relinearise = () => { if (!lin) return; const r = linearised(b, lin); linB = r.B; linG = r.g; linGen++; };
-  relinearise();
+  let lin: Float64Array | null = b.rads.length || tab ? Float64Array.from(y0) : null, linGen = 0, linG: Float64Array | null = null, linB: BlockMatrix | null = null;
+  const relinearise = (rebuild: boolean) => {
+    if (!lin) return;
+    if (rebuild && tab) { const at = lin; b = build({ ...pb, grid }, dom => ktScale(dom, nb, tab, at, run.t0)); c = b.c; }
+    if (b.rads.length) { const r = linearised(b, lin); linB = r.B; linG = r.g; } else { linB = null; linG = null; }
+    linGen++;
+  };
+  relinearise(false);
   const solverFor = (a: number, key: string) => {
     const k = `${key}|${linGen}`, had = cache.get(k);
     if (had) return had;
@@ -954,7 +1020,7 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
     if (lin) {
       let d = 0;
       for (let e = 0; e < nel; e++) d = Math.max(d, Math.abs(mean(y0, e) - mean(lin, e)));
-      if (d > allow) { lin = Float64Array.from(y0); relinearise(); }
+      if (d > allow) { lin = Float64Array.from(y0); relinearise(true); }
     }
     quiet = moved < allow / 4 ? quiet + 1 : 0;
     if (quiet >= 2 && k > kMin) { k--; quiet = 0; }

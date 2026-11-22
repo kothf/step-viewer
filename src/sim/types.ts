@@ -265,6 +265,11 @@ export interface Study {
   masses?: StudyMass[];
   /** Parts: materials of this study only (FR-SMAT-003), by Bodies folder key; "" = the part's. The part keeps its own. */
   mats?: Record<string, MatRef>;
+  /**
+   * Thermal studies: conductivity changing with temperature (FR-TMAT-004), rows [°C, W/(m·K)], by "" (the part) or
+   * an assembly's component id. Without one the material's k holds at every temperature.
+   */
+  kt?: Record<string, [number, number][]>;
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
   /** Static studies: load cases (FR-LOAD-022), each solved on its own with the same supports. None = one case with every load. */
