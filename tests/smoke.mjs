@@ -17574,7 +17574,7 @@ try {
   }
 
   // --- bolted joints 1.673 (FRS-thermal FR-TCON-003): plates a toolbox bolt clamps pass heat by a bolted joint's conductance ---
-  if (inShard(3)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
@@ -17681,6 +17681,25 @@ try {
     const j4 = await pair();
     check(j3.sel === "bolted" && j3.links === null && j4.sel === "bolted" && JSON.stringify(j4.links) === JSON.stringify([{ a: j1.ab[0], b: j1.ab[1], type: "bolted", h: 20000 }]),
       `bolted joints 1.673: undo brings the bolted default back; a typed conductance is kept on the bolted joint (${JSON.stringify({ j3, j4 })})`);
+    // 1.676 (FR-TCON-002): an air gap between the plates conducts by air's k at the joint's temperature; pads come from a library
+    const sel = `#sim-tree .sim-tlinks select[data-k=tlink][data-a="${j1.ab[0]}"][data-b="${j1.ab[1]}"]`;
+    await bp.selectOption(sel, "air");
+    await bp.waitForTimeout(300);
+    const a1 = await bp.evaluate(() => ({ links: window.__sv.asm.doc.studies.at(-1).links, airt: document.querySelector('#sim-tree input[data-k="airt"]')?.value, note: document.querySelector('#sim-tree [data-v="airnote"]')?.textContent }));
+    await bp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const j5 = await pair(), steps = await bp.evaluate(() => document.querySelector('#sim-tree [data-v="airsteps"]')?.textContent ?? "");
+    check(JSON.stringify(a1.links) === JSON.stringify([{ a: j1.ab[0], b: j1.ab[1], type: "air", t: 0.1 }]) && a1.airt === "0.1" && /air's conductivity/.test(a1.note ?? "")
+      && !j5.error && j5.c?.type === "resistance" && Math.abs(j5.c.drop) > 3 && j5.max > j1.max + 2 && /solved \d+ times/.test(steps),
+      `thermal 1.676: Air gap between the plates: a 0.1 mm air layer by default, solved until air's k settles at the joint's temperature, so the upper plate runs much hotter than when bolted (${JSON.stringify({ a1, j5, steps })})`);
+    await bp.selectOption(sel, "pad");
+    await bp.waitForTimeout(300);
+    await bp.selectOption(`#sim-tree select[data-k="padlib"][data-a="${j1.ab[0]}"][data-b="${j1.ab[1]}"]`, { label: "Thermal grease" });
+    await bp.waitForTimeout(300);
+    const a2 = await bp.evaluate(() => ({ links: window.__sv.asm.doc.studies.at(-1).links, t: document.querySelector('#sim-tree input[data-k="padt"]')?.value, k: document.querySelector('#sim-tree input[data-k="padk"]')?.value,
+      lib: document.querySelector('#sim-tree select[data-k="padlib"]')?.selectedOptions[0]?.textContent, n: document.querySelector('#sim-tree select[data-k="padlib"]')?.options.length }));
+    check(JSON.stringify(a2.links) === JSON.stringify([{ a: j1.ab[0], b: j1.ab[1], type: "pad", t: 0.05, k: 1 }]) && a2.t === "0.05" && a2.k === "1" && a2.lib === "Thermal grease" && a2.n >= 7,
+      `thermal 1.676: a pad's material picked from the library sets its thickness and conductivity (${JSON.stringify(a2)})`);
     await ctx.close();
   }
 

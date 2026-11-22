@@ -324,23 +324,45 @@ export const offComps = (st: Study | null | undefined) => new Set(Object.entries
 /** `adhesive` (FR-CON-025): bonded through a thin elastic layer `t` mm thick of modulus `E`, MPa. */
 /**
  * Thermal studies (FR-TCON-002): `resist` = a contact conductance `h`, W/(m²·K), between the two surfaces;
- * `pad` = an interface material `t` mm thick of conductivity `k`, W/(m·K); `none` = insulated. Without a link
+ * `pad` = an interface material `t` mm thick of conductivity `k`, W/(m·K); `air` = an air layer `t` mm thick,
+ * conducting by air's k at the joint's mean temperature; `none` = insulated. Without a link
  * the contact is perfect.
  */
 /**
  * Bolted joints (FR-TCON-003): a pair a toolbox bolt clamps passes heat by the contact conductance `h` of a
  * bolted joint unless another type is typed; `bolted` keeps that with a typed `h`, `perfect` turns it off.
  */
-export interface StudyLink { a: string; b: string; type: "sliding" | "none" | "adhesive" | "resist" | "pad" | "bolted" | "perfect"; t?: number; E?: number; h?: number; k?: number }
+export interface StudyLink { a: string; b: string; type: "sliding" | "none" | "adhesive" | "resist" | "pad" | "bolted" | "perfect" | "air"; t?: number; E?: number; h?: number; k?: number }
 /** Link types only thermal studies use (a structural solve leaves them out). */
-export const THERMAL_LINK_TYPES: ReadonlySet<string> = new Set(["resist", "pad", "bolted", "perfect"]);
+export const THERMAL_LINK_TYPES: ReadonlySet<string> = new Set(["resist", "pad", "bolted", "perfect", "air"]);
 /** A dry metal-to-metal contact under light pressure, W/(m²·K), and a silicone pad. */
 export const DEFAULT_TCC = 3000;
 /** A dry bolted metal joint, W/(m²·K): clamped harder than a resting contact (FR-TCON-003). */
 export const BOLTED_TCC = 5000;
 export const DEFAULT_PAD = { t: 0.5, k: 3 };
+/**
+ * Interface materials to pick from (FR-TCON-002): typical thickness, mm, and conductivity, W/(m·K), of common
+ * products' data sheets; the values stay editable.
+ */
+export const PAD_LIBRARY: readonly { name: string; t: number; k: number }[] = [
+  { name: "Silicone gap pad", t: 0.5, k: 3 },
+  { name: "Soft gap filler pad", t: 1, k: 1.5 },
+  { name: "Thermal grease", t: 0.05, k: 1 },
+  { name: "Phase-change pad", t: 0.1, k: 0.7 },
+  { name: "Graphite sheet", t: 0.13, k: 5 },
+  { name: "Mica washer", t: 0.05, k: 0.6 },
+  { name: "Polyimide film", t: 0.05, k: 0.12 },
+  { name: "Silicone insulator pad", t: 0.23, k: 1.6 },
+];
+/** The library entry a pad's values match, or -1. */
+export function padEntry(t: number, k: number): number { return PAD_LIBRARY.findIndex(p => Math.abs(p.t - t) < 1e-9 && Math.abs(p.k - k) < 1e-9); }
+/** An air gap's thickness when the pair's own gap is unknown, mm. */
+export const DEFAULT_AIR_GAP = 0.1;
+/** Air's conductivity at 25 °C, W/(m·K): an air gap's conductance shown before a solve. */
+export const AIR_K25 = 0.0261;
 /** What a thermal link passes per area and kelvin, W/(mm²·K). */
 export function linkConductance(l: { type: string; t?: number; h?: number; k?: number }): number {
+  if (l.type === "air") return (AIR_K25 * 1e-3) / Math.max(l.t && l.t > 0 ? l.t : DEFAULT_AIR_GAP, 0.01);
   if (l.type === "pad") return ((l.k && l.k > 0 ? l.k : DEFAULT_PAD.k) * 1e-3) / (l.t && l.t > 0 ? l.t : DEFAULT_PAD.t);
   return (l.h && l.h > 0 ? l.h : l.type === "bolted" ? BOLTED_TCC : DEFAULT_TCC) * 1e-6;
 }
