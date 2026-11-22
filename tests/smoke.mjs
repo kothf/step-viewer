@@ -12,7 +12,7 @@
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { readFile, readdir } from "node:fs/promises";
-import { crc32, deflateRawSync } from "node:zlib";
+import { crc32, deflateRawSync, inflateRawSync } from "node:zlib";
 import { extname, join, resolve, sep } from "node:path";
 import { chromium } from "playwright";
 import { createRequire } from "node:module";
@@ -20,6 +20,22 @@ import { createRequire } from "node:module";
 const root = resolve(process.argv[2] || "dist/step-viewer");
 const fixtures = resolve("node_modules/occt-import-js/test/testfiles");
 const pcbDir = resolve("tests/fixtures/pcb");
+
+/** The [name, bytes] entries of a zip (stored or deflate). */
+function unzipEntries(buf) {
+  const out = [];
+  let e = buf.length - 22;
+  while (e > 0 && buf.readUInt32LE(e) !== 0x06054b50) e--;
+  let p = buf.readUInt32LE(e + 16);
+  for (let i = 0; i < buf.readUInt16LE(e + 10); i++) {
+    const method = buf.readUInt16LE(p + 10), size = buf.readUInt32LE(p + 20), nl = buf.readUInt16LE(p + 28), xl = buf.readUInt16LE(p + 30), cl = buf.readUInt16LE(p + 32), at = buf.readUInt32LE(p + 42);
+    const name = buf.subarray(p + 46, p + 46 + nl).toString();
+    const start = at + 30 + buf.readUInt16LE(at + 26) + buf.readUInt16LE(at + 28), raw = buf.subarray(start, start + size);
+    out.push([name, method === 8 ? inflateRawSync(raw) : Buffer.from(raw)]);
+    p += 46 + nl + xl + cl;
+  }
+  return out;
+}
 
 /** A zip (deflate) of the given files, to test .zip Gerber sets. */
 function zip(files) {
@@ -17633,6 +17649,68 @@ try {
     const again = await bh.evaluate(() => window.__sv.thermal.hintShown());
     check(/looks like a circuit board/.test(h1.text) && /Add thermal map/.test(h1.text) && h1.seen === 1 && picked && gone && !again,
       `board hint 1.678: a board's STEP gets a status-bar hint whose Add thermal map… opens the file picker, shown once per file (${JSON.stringify({ h1, picked, gone, again })})`);
+    await ctx.close();
+  }
+
+  // --- board gerber 1.683 (FRS-thermal FR-TBRD-020): a board's Gerber set opened with its STEP, dropped on the board, in Pack and Go ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const gb = await ctx.newPage();
+    gb.on("pageerror", e => errors.push(e.message));
+    gb.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal"), gdir = join(thx, "amp-gerber"), gfiles = ["amp-F_Cu.gbr", "amp-B_Cu.gbr", "amp-Edge_Cuts.gbr", "amp-PTH.drl"];
+    await gb.goto(`${origin}/index.html?debug`);
+    await gb.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await gb.goto(`${origin}/index.html?debug`);
+    await gb.waitForFunction(() => window.__sv);
+    // the STEP and its Gerber set alone: the STEP opens (not the PCB view) and keeps the set
+    await gb.setInputFiles("#file-input", [join(thx, "amp.step"), ...gfiles.map(f => join(gdir, f))]);
+    await gb.waitForFunction(() => window.__sv.viewer.parts.length > 0 && /amp\.step/.test(window.__sv.state.fileKey), null, { timeout: 90000 });
+    const g0 = await gb.evaluate(() => ({ pcbMode: document.querySelector("#app").classList.contains("gerber"), toasts: [...document.querySelectorAll(".toast")].map(t => t.textContent).join(" | ") }));
+    // its thermal package added afterwards gets the layers under the map at once
+    await gb.setInputFiles("#file-input", [join(thx, "amp-thermal.zip")]);
+    await gb.waitForFunction(() => window.__sv.thermal.state()?.pcb?.textured, null, { timeout: 90000 });
+    const g1 = await gb.evaluate(() => ({ key: window.__sv.state.fileKey, pcb: window.__sv.thermal.state().pcb }));
+    check(!g0.pcbMode && /Gerber files kept with amp\.step/.test(g0.toasts) && /amp\.step/.test(g1.key) && g1.pcb.labels.length === 2 && g1.pcb.name === "amp",
+      `board gerber 1.683: a STEP opened with its Gerber files opens as the model and keeps them; its thermal map then gets the board layers under it (${JSON.stringify({ g0, g1 })})`);
+    // Pack and Go puts the Gerber set beside the STEP and the package
+    await gb.click("#file-btn");
+    await gb.click("#file-menu [data-f=pack]");
+    await gb.waitForSelector("#pack-dlg[open]");
+    await gb.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
+    const [dl] = await Promise.all([gb.waitForEvent("download"), gb.click("#pack-dlg [data-a=ok]")]);
+    const ztext = (await readFile(await dl.path())).toString("latin1");
+    check(ztext.includes("amp.step") && ztext.includes("amp-thermal.zip") && ztext.includes("amp-gerber.zip"), `board gerber 1.683: Pack and Go puts the board's Gerber set beside its STEP (${dl.suggestedFilename()})`);
+    // Simulate: the board study's board gets its copper from that set
+    await gb.click('#th-tools [data-th="simulate"]');
+    await gb.waitForFunction(() => { const d = window.__sv.asm.doc, st = d?.studies?.[0], pcb = d?.components.find(c => c.name === "PCB<1>"); return pcb && st?.comps?.[pcb.id]?.board?.map; }, null, { timeout: 180000 });
+    const g2 = await gb.evaluate(() => { const d = window.__sv.asm.doc, pcb = d.components.find(c => c.name === "PCB<1>"), m = d.studies[0].comps[pcb.id].board.map; return { id: pcb.id, name: m.name, layers: m.labels.length, holes: m.holes, boards: window.__sv.sim.boardComps() }; });
+    check(g2.name === "amp" && g2.layers === 2 && g2.holes > 0 && JSON.stringify(g2.boards) === JSON.stringify([g2.id]),
+      `board gerber 1.683: Simulate gives the board study's board its copper from the Gerber set that came with the STEP (${JSON.stringify(g2)})`);
+    // even copper, then the set dropped on the view goes back on the board
+    await gb.evaluate(id => window.__sv.sim.readGerber(id, null), g2.id);
+    await gb.waitForFunction(id => !window.__sv.asm.doc.studies[0].comps[id].board.map, g2.id);
+    const data = await Promise.all(gfiles.map(async f => [f, (await readFile(join(gdir, f))).toString("base64")]));
+    await gb.evaluate(fs => {
+      const dt = new DataTransfer();
+      for (const [n, b] of fs) dt.items.add(new File([Uint8Array.from(atob(b), c => c.charCodeAt(0))], n));
+      document.querySelector("#viewport").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, data);
+    await gb.waitForFunction(id => window.__sv.asm.doc.studies[0].comps[id].board.map, g2.id, { timeout: 30000 });
+    const g3 = await gb.evaluate(() => ({ pcbMode: document.querySelector("#app").classList.contains("gerber"), asm: document.querySelector("#app").classList.contains("asm") }));
+    check(!g3.pcbMode && g3.asm, `board gerber 1.683: Gerber files dropped on the view while a board study is open give its board copper instead of opening the PCB view (${JSON.stringify(g3)})`);
+    // a thermal package with the STEP and the Gerber set in its gerber/ folder: one file brings all three
+    const inner = unzipEntries(await readFile(join(thx, "amp-thermal.zip")));
+    const one = zip([...inner, ["amp.step", await readFile(join(thx, "amp.step"))], ...await Promise.all(gfiles.map(async f => [`gerber/${f}`, await readFile(join(gdir, f))]))]);
+    const p4 = await ctx.newPage();
+    p4.on("pageerror", e => errors.push(e.message));
+    await p4.goto(`${origin}/index.html?debug&nokernel`);
+    await p4.waitForFunction(() => window.__sv);
+    await p4.setInputFiles("#file-input", [{ name: "amp-all-thermal.zip", mimeType: "application/zip", buffer: one }]);
+    await p4.waitForFunction(() => window.__sv.thermal.state()?.pcb?.textured, null, { timeout: 90000 });
+    const g4 = await p4.evaluate(() => ({ key: window.__sv.state.fileKey, own: window.__sv.thermal.state().own, pcb: window.__sv.thermal.state().pcb.labels }));
+    check(/amp\.step/.test(g4.key) && !g4.own && g4.pcb.length === 2, `board gerber 1.683: a thermal package holding the STEP and a gerber/ folder opens the STEP with the map and the board layers under it (${JSON.stringify(g4)})`);
+    await gb.evaluate(() => localStorage.removeItem("mc:thermalMap"));
     await ctx.close();
   }
 

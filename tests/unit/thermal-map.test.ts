@@ -77,6 +77,14 @@ const CSV = `part_id,designator,step_bodies,part,heat_path,mount,x_mm,y_mm,z_mm,
 4,C12,C12;C12-2,47u 450V,air,standing,60,55,18,16,16,32,6400,0.05,0,0.05,0,71,case,105,34,19000,dc,y
 `;
 
+test("manifest: the board's copper stack and Gerber folder (1.683.0), bad values left out", () => {
+  const m = readManifest(JSON.stringify({ ...MANIFEST, files: { ...MANIFEST.files, gerber: "gerber" }, board: { layers: 4, copper_um: 70, coverage: 0.55 } }));
+  assert.deepEqual(m.board, { layers: 4, copper: 70, cover: 0.55 });
+  assert.equal(m.files.gerber, "gerber");
+  assert.deepEqual(readManifest(JSON.stringify({ ...MANIFEST, board: { layers: 0, copper_um: -1, coverage: 2 } })).board, undefined);
+  assert.equal(readManifest(JSON.stringify(MANIFEST)).board, undefined);
+});
+
 test("manifest: read, unknown keys ignored, other formats and broken JSON refused", () => {
   const m = readManifest(JSON.stringify(MANIFEST));
   assert.equal(m.format, "tubecad-thermal");

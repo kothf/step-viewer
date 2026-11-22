@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.683.0] - 2026-11-22
+
+### Added
+
+- A board's Gerber set travels with its STEP. Open the STEP together with its Gerber files (or a zip of them) and the STEP opens as the model and keeps the set. Its thermal map then gets the board layers under the temperatures at once, **Simulate** gives the board study's board its copper from the set, and Pack and Go puts the set beside the STEP. Gerber files dropped on the view while a board's thermal map or a board study is open go on that board instead of opening the PCB view. In a vault, a `<name>-gerber.zip` in the STEP's folder comes along when the STEP is opened. A thermal package may also carry the set itself in a `gerber/` folder, and its manifest may give the board's copper stack (`board`: layers, copper thickness, coverage), which **Simulate** uses for the board.
+
 ## [1.682.0] - 2026-11-22
 
 ### Added
@@ -4484,7 +4490,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.682.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.683.0...HEAD
+[1.683.0]: https://github.com/kothf/step-viewer/compare/v1.682.0...v1.683.0
 [1.682.0]: https://github.com/kothf/step-viewer/compare/v1.681.0...v1.682.0
 [1.681.0]: https://github.com/kothf/step-viewer/compare/v1.680.0...v1.681.0
 [1.680.0]: https://github.com/kothf/step-viewer/compare/v1.679.0...v1.680.0

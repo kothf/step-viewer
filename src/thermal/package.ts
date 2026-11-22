@@ -49,8 +49,10 @@ export interface ThermalManifest {
   app: string;
   created: string;
   design: string;
-  files: { mesh?: string; sources?: string; picture?: string; step?: string };
+  files: { mesh?: string; sources?: string; picture?: string; step?: string; gerber?: string };
   settings: ThermalSettings;
+  /** The board's copper stack, when the writer gives it (`board` {layers, copper_um, coverage}). */
+  board?: { layers?: number; copper?: number; cover?: number };
   /** ± °C the writer states. */
   accuracy?: number;
   range?: [number, number];
@@ -138,10 +140,17 @@ export function readManifest(text: string): ThermalManifest {
     ambient: num(s.ambient_C), enclosure: str(s.enclosure) || undefined, orientation: str(s.orientation) || undefined,
     operatingPoint: str(s.operating_point) || undefined, grid: num(s.grid_mm), emissivity: num(s.emissivity),
   };
+  const b = (j.board && typeof j.board === "object" ? j.board : {}) as Record<string, unknown>;
+  const layers = num(b.layers), copper = num(b.copper_um), cover = num(b.coverage);
+  const board = {
+    ...(layers !== undefined && layers >= 1 && layers <= 64 ? { layers: Math.round(layers) } : {}),
+    ...(copper !== undefined && copper > 0 && copper <= 500 ? { copper } : {}),
+    ...(cover !== undefined && cover >= 0 && cover <= 1 ? { cover } : {}),
+  };
   return {
     format, version, newer: version > VERSION, app: str(j.app), created: str(j.created), design: str(j.design),
-    files: { mesh: str(files.mesh) || undefined, sources: str(files.sources) || undefined, picture: str(files.picture) || undefined, step: str(files.step) || undefined },
-    settings, accuracy: num(j.accuracy_C), range, parts,
+    files: { mesh: str(files.mesh) || undefined, sources: str(files.sources) || undefined, picture: str(files.picture) || undefined, step: str(files.step) || undefined, gerber: str(files.gerber) || undefined },
+    settings, accuracy: num(j.accuracy_C), range, parts, ...(Object.keys(board).length ? { board } : {}),
   };
 }
 
