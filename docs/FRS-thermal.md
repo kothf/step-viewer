@@ -333,7 +333,7 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 | FR-TBC-004 | TH2 | M | **Natural convection (auto)** | faces (default: all free faces) | h per face from its orientation (vertical, facing up, facing down) and size by the standard laminar plate correlations, evaluated at the face's current temperature and iterated; enclosure factor (open frame 1.0, vented chassis 0.8, closed chassis 0.55, editable). |
 | FR-TBC-005 | TH2 | S | **Forced air** | faces | Air speed (m/s) along the faces → h from the laminar/turbulent flat-plate correlation with the face's length in the flow direction; or a fan's speed typed as a number. |
 | FR-TBC-006 | TH2 | M | **Radiation to surroundings** | faces (default: all free faces) | εσ(T⁴ − T_s⁴), ε from the material or typed, T_s = ambient by default; linearised and iterated. |
-| FR-TBC-007 | TH5 | C | **Radiation between faces** | two face sets | Exchange by view factor computed by ray sampling (e.g. a valve bulb onto the board under it, a heater onto a wall). |
+| FR-TBC-007 | TH5 | C | **Radiation between faces** | two face sets | Exchange by view factor computed by ray sampling (e.g. a valve bulb onto the board under it, a heater onto a wall). Built in 1.666.0. |
 | FR-TBC-008 | TH3 | M | **Heatsink** | faces of a component or of a part | Either a modelled heatsink body (its fins get the default convection) or a thermal resistance to ambient Rth (K/W) on the picked faces; the package's heatsink path maps here (FR-TBRD-004). |
 | FR-TBC-009 | TH3 | S | **Chassis wall** | faces | Fixed temperature or resistance to ambient for parts wired off the board (package `heat_path` = chassis). |
 

@@ -7,12 +7,12 @@ import type { BoardStack } from "../thermal/study";
 import type { FaceRef, Num, V3 } from "../model/types";
 import type { MatRef } from "../tools/materials";
 
-/** `temp`, `conv` and `rad` are a thermal study's surface conditions: a fixed temperature, convection to air, radiation to the surroundings. */
-export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp" | "temp" | "conv" | "rad";
+/** `temp`, `conv` and `rad` are a thermal study's surface conditions: a fixed temperature, convection to air, radiation to the surroundings; `radx` = radiation between two face sets. */
+export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp" | "temp" | "conv" | "rad" | "radx";
 /** `heat` (W) and `hflux` (W/m²) are a thermal study's heat sources. */
 /** `temperature` (structural): thermal expansion from a uniform temperature (`value` °C) or a thermal study's result (`from`). */
 export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote" | "heat" | "hflux" | "pkgheat" | "temperature";
-export const THERMAL_SUPPORTS: SupportType[] = ["temp", "conv", "rad"];
+export const THERMAL_SUPPORTS: SupportType[] = ["temp", "conv", "rad", "radx"];
 export const THERMAL_LOADS: LoadType[] = ["heat", "hflux", "pkgheat"];
 /** Whether a support or load type belongs to thermal studies. */
 export const isThermalType = (type: string) => (THERMAL_SUPPORTS as string[]).includes(type) || (THERMAL_LOADS as string[]).includes(type);
@@ -35,8 +35,11 @@ export interface StudySupport {
   temp?: number;
   /** Convection: film coefficient, W/(m²·K). */
   h?: number;
-  /** Radiation: emissivity, 0..1. */
+  /** Radiation: emissivity, 0..1 (between face sets: of the first set). */
   emis?: number;
+  /** Radiation between face sets (FR-TBC-007): the second set and its emissivity (absent = `emis`). */
+  faces2?: FaceRef[];
+  emis2?: number;
   /** Convection: natural convection, the film coefficient worked out per face from its tilt, size and temperature (`h` unused). */
   natural?: boolean;
   /** Convection and radiation: the temperature of the air or the surroundings, °C; absent = the study's ambient. */
@@ -373,7 +376,7 @@ export function nextId(st: Study, prefix: "s" | "l" | "r" | "w" | "k" | "m"): st
   return `${prefix}${n}`;
 }
 
-export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement", temp: "Fixed temperature", conv: "Convection", rad: "Radiation" };
+export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement", temp: "Fixed temperature", conv: "Convection", rad: "Radiation", radx: "Radiation between faces" };
 export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure", remote: "Remote load", heat: "Heat power", hflux: "Heat flux", pkgheat: "Heat from package", temperature: "Temperature" };
 
 export const REFINE_LABEL = "Local accuracy";

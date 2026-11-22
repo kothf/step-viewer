@@ -88,7 +88,7 @@ interface CaseResult { id: string; name: string; passes: PassResult[]; job: numb
 type BoltKept = { id: string; name: string; members: string[]; d: number; pitch: number; tapped: boolean };
 /** A bolt found among the fasteners, with the patches it joins. */
 interface BoltUse extends BoltKept { a: Float64Array; b: Float64Array; E: number }
-interface Results { /** Transient thermal studies: the last pass as solved (every output time); the last entry of `passes` is the time shown. */ tr?: PassResult; /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[] }
+interface Results { /** Transient thermal studies: the last pass as solved (every output time); the last entry of `passes` is the time shown. */ tr?: PassResult; /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; /** Thermal: radiation between face sets, in the order of `thermal.exchanges`. */ xids?: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[] }
 const BOLT_NOTE = "Tension, shear and bending of each bolt as a beam. The safety factor compares their combined stress on the thread's stress area with the proof stress of the property class.";
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 /** Solve on change: how long after the last change the solve starts, ms. */
@@ -100,7 +100,7 @@ const RELIEF_NOTE = "The part is held by nothing: its supports are left out and 
 /** The most load cases a study has. */
 export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
+interface Kept { xids?: string[]; welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
 
 /** A time in the UI's language. */
 const timeText = (s: number) => timeIn(s, { s: t("s"), min: t("min"), h: t("h") });
@@ -108,7 +108,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "remote", "hydro", "gravity", "centrifugal", "temperature"];
-const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", rad: "☼", transient: "◷", temperature: "ϑ" };
+const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", rad: "☼", radx: "⇌", transient: "◷", temperature: "ϑ" };
 const TIP: Record<string, string> = {
   temperature: "Temperature: the part expands as it warms, uniformly or as a thermal study found; held, it is stressed",
   fixed: "Fixed support: the faces cannot move",
@@ -132,6 +132,7 @@ const TIP: Record<string, string> = {
   temp: "Fixed temperature: the faces are held at a temperature, like a cold plate",
   conv: "Convection: the faces are cooled by air or a liquid",
   rad: "Radiation: the faces radiate heat to the surroundings",
+  radx: "Radiation between faces: two sets of faces exchange heat by radiation, like a valve bulb and the board under it",
   newthermal: "New thermal study: the temperatures of this part and where its heat goes",
   ambient: "Ambient temperature: the surroundings that convection and radiation give heat to",
 };
@@ -525,7 +526,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -607,7 +608,7 @@ export class SimController {
     const kept = await cacheGet<Kept>(await cacheKey("sim", key));
     const now = this.host.doc(), s2 = this.study();
     if (!kept?.passes?.length || !kept.mesh || this.res || this.running || now !== doc && now?.id !== doc.id || !s2 || s2.id !== st.id || !now || this.keyOf(now, s2) !== key) return;
-    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.comps ? { comps: kept.comps } : {}), ...(kept.off ? { off: kept.off } : {}), ...(kept.bolts ? { bolts: kept.bolts } : {}), ...(kept.welds ? { welds: kept.welds } : {}), ...(kept.conns ? { conns: kept.conns } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
+    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ...(kept.xids ? { xids: kept.xids } : {}), ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.comps ? { comps: kept.comps } : {}), ...(kept.off ? { off: kept.off } : {}), ...(kept.bolts ? { bolts: kept.bolts } : {}), ...(kept.welds ? { welds: kept.welds } : {}), ...(kept.conns ? { conns: kept.conns } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
       ...(kept.cases?.length ? { cases: kept.cases.map(c => ({ ...c, job: 0 })) } : {}) };
     this.caseSel = -1; this.compSel = -1;
     this.applyCase();
@@ -668,7 +669,8 @@ export class SimController {
     if (!st) return;
     if ((THERMAL_SUPPORTS as string[]).includes(c)) {
       const type = c as SupportType, amb = st.settings.ambient ?? DEFAULT_AMBIENT;
-      this.edit = { kind: "support", isNew: true, draft: { id: nextId(st, "s"), name: itemName(st, type), type, faces: [], ...(type === "temp" ? { temp: amb } : type === "conv" ? { h: FILM_PRESETS[0][1] } : { emis: 0.9 }) } };
+      this.connSide = 1;
+      this.edit = { kind: "support", isNew: true, draft: { id: nextId(st, "s"), name: itemName(st, type), type, faces: [], ...(type === "temp" ? { temp: amb } : type === "conv" ? { h: FILM_PRESETS[0][1] } : type === "radx" ? { faces2: [], emis: 0.9, emis2: 0.9 } : { emis: 0.9 }) } };
       this.renderAll(); this.drawMarks();
       return;
     }
@@ -797,7 +799,7 @@ export class SimController {
     const st = this.study();
     if (!st || !this.host.idle()) return;
     const s = st.supports.find(x => x.id === id), l = st.loads.find(x => x.id === id);
-    if (s) this.edit = { kind: "support", isNew: false, draft: structuredClone(s) };
+    if (s) { this.connSide = 1; this.edit = { kind: "support", isNew: false, draft: structuredClone(s) }; }
     else if (l) this.edit = { kind: "load", isNew: false, draft: structuredClone(l) };
     else {
       const r = st.refine?.find(x => x.id === id), w = st.welds?.find(x => x.id === id);
@@ -823,7 +825,7 @@ export class SimController {
       toast(on === "edges" ? t("Click the edges on the model first.") : on === "points" ? t("Click the corner points on the model first.") : t("Click the faces on the model first."), "warn");
       return;
     }
-    if (e.kind === "connector" && !e.draft.faces2.length) { this.connSide = 2; this.renderPanel(); toast(t("Click the faces of the second side on the model."), "warn"); return; }
+    if (this.twoSided(e) && !this.twoSided(e)!.faces2.length) { this.connSide = 2; this.renderPanel(); toast(t("Click the faces of the second side on the model."), "warn"); return; }
     if (e.kind === "mass" && !(e.draft.mass > 0)) { toast(t("Type a mass above 0."), "warn"); return; }
     const sid = st.id;
     const label = e.isNew ? t(e.kind === "refine" ? REFINE_LABEL : e.kind === "connector" ? CONNECTOR_LABEL : e.kind === "mass" ? MASS_LABEL : e.kind === "weld" ? (e.draft.on === "points" ? SPOT_LABEL : WELD_LABEL) : (SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]) : t("Edit {name}", { name: d.name ?? "" });
@@ -884,9 +886,10 @@ export class SimController {
     if (!hit || !name) return true;
     if (this.host.asm() && offComps(this.study()).has(compOf(name))) { toast(t("This component is left out of the study."), "warn"); return true; }
     const d = ed.draft;
-    if (ed.kind === "connector") {
+    const two = this.twoSided(ed);
+    if (two) {
       // a face is on one side only; the first click on side one moves on to side two once it has a face
-      const c = ed.draft, mine = this.connSide === 2 ? c.faces2 : c.faces, other = this.connSide === 2 ? c.faces : c.faces2;
+      const c = two, mine = this.connSide === 2 ? c.faces2 : c.faces, other = this.connSide === 2 ? c.faces : c.faces2;
       const j = mine.findIndex(f => f.name === name), o = other.findIndex(f => f.name === name);
       if (j >= 0) mine.splice(j, 1);
       else { if (o >= 0) other.splice(o, 1); mine.push({ name, hint: hit.point }); }
@@ -933,6 +936,13 @@ export class SimController {
 
   /** "3 faces", "2 edges", "1 point". */
   /** An item that takes no picks: heat throughout a part, cooling of every open surface, a package's heat. */
+  /** An item with two sets of faces (a connector, radiation between faces): its draft, else null. */
+  private twoSided(e: NonNullable<SimController["edit"]>): { faces: FaceRef[]; faces2: FaceRef[] } | null {
+    if (e.kind === "connector") return e.draft;
+    if (e.kind === "support" && e.draft.type === "radx") { const s = e.draft; s.faces2 ??= []; return s as { faces: FaceRef[]; faces2: FaceRef[] }; }
+    return null;
+  }
+
   private unpicked(d: { type: string; body?: boolean; all?: boolean }): boolean {
     return (d.type === "heat" && !!d.body && !this.host.asm()) || d.type === "pkgheat" || d.type === "temperature" || ((d.type === "conv" || d.type === "rad") && !!d.all);
   }
@@ -953,6 +963,7 @@ export class SimController {
 
   private pickText(it: StudySupport | StudyLoad | StudyRefine | StudyExtra): string {
     if ((it.type === "conv" || it.type === "rad") && (it as StudySupport).all) return t("all open surfaces");
+    if (it.type === "radx") return `${t("{n} face|{n} faces", { n: it.faces.length })} ⇌ ${t("{n} face|{n} faces", { n: (it as StudySupport).faces2?.length ?? 0 })}`;
     if (it.type === "pkgheat") return t("{n} part|{n} parts", { n: ((it as StudyLoad).parts ?? []).filter(x => !x.off && x.p >= PACKAGE_MIN_POWER && x.comps.length).length });
     const on = (it as StudyLoad).on, n = pickCount(it);
     return on === "edges" ? t("{n} edge|{n} edges", { n }) : on === "points" ? t("{n} point|{n} points", { n }) : t("{n} face|{n} faces", { n });
@@ -1269,7 +1280,7 @@ export class SimController {
       }
       const mesh = refineMesh(p0, n0, idx, plotTarget(meshArea(p0, idx), size / 70));
       const total = Math.max(1, Math.min(THERMAL_PASSES, Math.round(st.settings.passes)));
-      const res: Results = { study: st.id, key, passes: [], ids: setup.sinkIds, ms: 0, mesh, ...(asm ? { comps: this.comps, bodyMats: bodies.map((_b, i) => ({ name: nameOf(i), sy: 0, k: kOf(i), ...(bks[i]?.k3 ? { kz: bks[i]!.through } : {}) })) } : {}), ...(off.size ? { off: [...off] } : {}) };
+      const res: Results = { study: st.id, key, passes: [], ids: setup.sinkIds, ...(setup.exchangeIds?.length ? { xids: setup.exchangeIds } : {}), ms: 0, mesh, ...(asm ? { comps: this.comps, bodyMats: bodies.map((_b, i) => ({ name: nameOf(i), sy: 0, k: kOf(i), ...(bks[i]?.k3 ? { kz: bks[i]!.through } : {}) })) } : {}), ...(off.size ? { off: [...off] } : {}) };
       this.progress = t("Pass {n} of {m}…", { n: 1, m: total });
       this.frame = -1; this.stopPlay();
       this.renderAll();
@@ -1293,7 +1304,7 @@ export class SimController {
       res.job = this.client.solution;
       done = true;
       if ((this.res as Results | null) === res) { this.solved = res; this.running = false; this.capsSoon(); this.syncPath(); }
-      const keep: Kept = { passes: res.tr ? [...res.passes.slice(0, -1), res.tr] : res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}) };
+      const keep: Kept = { passes: res.tr ? [...res.passes.slice(0, -1), res.tr] : res.passes, ids: res.ids, ...(res.xids ? { xids: res.xids } : {}), ms: res.ms, mesh: res.mesh, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}) };
       void cacheKey("sim", key).then(k => cachePut(k, keep));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1756,7 +1767,7 @@ export class SimController {
       case "E-TH-NOCP": return rest ? t("Set a material with density and specific heat for {name} (needed for transient studies).", { name: rest }) : t("A transient study needs a material with a density and a specific heat.");
       case "E-TH-TIME": return t("Type an end time above zero.");
       case "E-TH-COMPMAT": return t("{name} has no material with a thermal conductivity. Pick one for it under Components, or leave the component out.", { name: rest });
-      case "E-TH-LOOSE": return t("Nothing takes the heat away from {names}: they touch no cooled component and have no cooling of their own. Add cooling, move them into contact or raise the gap tolerance.", { names: rest.split(",").map(i => this.comps[Number(i)]?.name ?? i).join(", ") });
+      case "E-TH-LOOSE": return t("Nothing takes the heat away from {names}: they touch no cooled component and have no cooling of their own. Add cooling or radiation between faces, move them into contact or raise the gap tolerance.", { names: rest.split(",").map(i => this.comps[Number(i)]?.name ?? i).join(", ") });
       case "E-TH-CONTACT": return t("A contact needs a conductance above 0.");
       case "E-TH-VALUE": return t("{name}: give a value above 0 (an emissivity is between 0 and 1).", { name });
       case "E-SIM-FREE": return rest.trim() === "6" && !this.study()?.supports.length ? t("Add a support first, or turn on Inertia relief for a part that nothing holds.") : t("The supports leave the part free to move ({n} free motions). Add or change the supports.", { n: rest.trim() });
@@ -1947,11 +1958,12 @@ export class SimController {
       for (const o of [lines, dots]) { o.renderOrder = 2962; o.userData.simBolt = bl.length; o.raycast = () => {}; this.marks.add(o); }
     }
     const ed = this.edit;
-    for (const s of st.supports) if (s.id !== ed?.draft.id && !off.has(s.id) && !plotted) draw(s, false, false);
+    for (const s of st.supports) if (s.id !== ed?.draft.id && !off.has(s.id) && !plotted) { draw(s, false, false); if (s.type === "radx" && s.faces2) draw({ ...s, faces: s.faces2 }, false, false); }
     for (const l of st.loads) if (l.id !== ed?.draft.id && !off.has(l.id) && !plotted) draw(l, true, false);
     for (const r of st.refine ?? []) if (r.id !== ed?.draft.id && !off.has(r.id) && !plotted) draw(r, false, false);
     for (const w of extrasOf(st)) if (w.id !== ed?.draft.id && !off.has(w.id) && !plotted) { draw(w, false, false); if (w.type === "connector") draw({ ...w, faces: w.faces2 }, false, false); }
-    if (ed?.kind === "connector") draw({ ...ed.draft, faces: this.connSide === 2 ? ed.draft.faces : ed.draft.faces2 }, false, false);
+    const two = ed ? this.twoSided(ed) : null;
+    if (ed && two) draw({ ...ed.draft, faces: this.connSide === 2 ? two.faces : two.faces2 } as typeof ed.draft, false, false);
     if (ed) draw(ed.draft, ed.kind === "load", true);
     this.host.viewer.invalidate();
   }
@@ -3126,6 +3138,7 @@ export class SimController {
     if (it.type === "conv" && it.natural) return `${t("natural convection")}, ${amb(it)}`;
     if (it.type === "conv") return `${sig(it.h ?? 0)} W/(m²·K), ${amb(it)}`;
     if (it.type === "rad") return `ε ${sig(it.emis ?? 0)}, ${amb(it)}`;
+    if (it.type === "radx") return `ε ${sig(it.emis ?? 0.9)} / ${sig(it.emis2 ?? it.emis ?? 0.9)}`;
     const prof = (l: StudyLoad) => (st.settings.transient && l.profile ? `, ${profileText(l.profile, t)}` : "");
     if (it.type === "heat") return `${sig(it.value?.v ?? 0)} W${prof(it)}`;
     if (it.type === "hflux") return `${sig(it.value?.v ?? 0)} W/m²${prof(it)}`;
@@ -3162,6 +3175,10 @@ export class SimController {
       const step = Math.max(1, Math.ceil(run.times.length / 12));
       blocks.push({ kind: "table", widths: [2, 2, 2, 2], rows: [[`${t("Time")}`, `${t("Hottest point")}, °C`, `${t("Heat put in")}, W`, `${t("Heat taken away")}, W`],
         ...run.times.flatMap((tm, i) => (i % step === 0 || i === run.times.length - 1 ? [[timeText(tm), sig(run.max[i]), sig(run.put[i]), sig(run.out[i])]] : []))] });
+    }
+    if (T.exchanges?.length) {
+      blocks.push({ kind: "h", text: t("Radiation between faces") });
+      blocks.push({ kind: "table", widths: [3, 2, 2, 3], rows: [[t("Name"), t("View factor"), `${t("Heat")}, W`, `${t("Mean temperatures")}, °C`], ...T.exchanges.map((x, i) => [this.nameOf(res.xids?.[i] ?? ""), sig(x.f), sig(x.heat), Number.isFinite(x.ta) ? `${sig(x.ta)} → ${sig(x.tb)}` : "–"])] });
     }
     if (res.comps && T.comps) blocks.push({ kind: "table", widths: [3, 2, 2, 2], rows: [[t("Component"), `${t("Max")}, °C`, `${t("Mean")}, °C`, `${t("Heat")}, W`], ...T.comps.map((c, i) => [res.comps![i]?.name ?? "", sig(c.max), sig(c.mean), c.power ? sig(c.power) : "–"])] });
     if (res.comps && T.contacts?.length) {
@@ -3513,8 +3530,18 @@ export class SimController {
     });
     if (T.flows.length > 1) html += `<dt>${esc(t("Heat taken away in total"))}</dt><dd data-v="heatout">${sig(out)} W</dd>`;
     if (off != null) html += `<dt title="${esc(t("How far the heat taken away is from the heat put in, as a share of it"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${off > 1 ? ' class="sim-low"' : ""}>${pct(off).replace("<", "&lt;")} %</dd>`;
-    html += `</dl>` + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
+    html += `</dl>` + this.exchangeHtml(r, last) + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
     return html + this.thermalPassesHtml(r, last);
+  }
+
+  /** Radiation between face sets: what each passes, from which mean temperature to which, and the view factor found. */
+  private exchangeHtml(r: Results, last: PassResult): string {
+    const X = last.thermal?.exchanges;
+    if (!X?.length) return "";
+    return `<table class="sim-comptable sim-xtable"><thead><tr><th>${esc(t("Radiation between faces"))}</th><th title="${esc(t("The share of the radiation leaving the first faces that reaches the second"))}">${esc(t("View factor"))}</th><th>${esc(t("Heat"))}, W</th><th title="${esc(t("Mean temperatures of the first and the second faces"))}">°C</th></tr></thead><tbody>`
+      + X.map((x, i) => `<tr data-x="${esc(r.xids?.[i] ?? "")}"><td translate="no">${esc(this.nameOf(r.xids?.[i] ?? ""))}</td><td data-v="xf">${sig(x.f)}</td><td data-v="xheat">${sig(x.heat)}</td><td data-v="xt">${Number.isFinite(x.ta) ? `${sig(x.ta)} → ${sig(x.tb)}` : "–"}</td></tr>`).join("")
+      + `</tbody></table><p class="sim-note muted" data-v="xnote">${esc(t("Heat from the first faces to the second; negative = the second faces are hotter and warm the first."))}</p>`
+      + (X.some(x => !(x.f > 0)) ? `<p class="sim-prob" data-v="xnone">${esc(t("Some of these face sets do not see each other (view factor 0): they exchange nothing. Check that the faces face each other."))}</p>` : "");
   }
 
   /** The passes table of a thermal result, its convergence chart and notes. */
@@ -3594,6 +3621,9 @@ export class SimController {
         + group(t("Type"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="ckind"><option value="rigid"${c.kind === "rigid" ? " selected" : ""}>${esc(t("Rigid"))}</option><option value="spring"${c.kind === "spring" ? " selected" : ""}>${esc(t("Spring"))}</option></select></label>`
           + (c.kind === "spring" ? kf("k0", t("Stiffness along X"), c.k[0], "N/mm") + kf("k1", t("Stiffness along Y"), c.k[1], "N/mm") + kf("k2", t("Stiffness along Z"), c.k[2], "N/mm") + kf("kr", t("Against turning"), c.kr === undefined ? undefined : c.kr * 1e-3, "N·m/rad", t("rigid")) : "")
           + `<p class="pm-help muted">${esc(c.kind === "spring" ? t("Each side moves as a whole. The spring acts between the two sides; leave Against turning empty to keep them from turning against each other.") : t("Each side moves as a whole, and the two sides move together as one rigid piece."))}</p>`);
+    } else if (d.type === "radx") {
+      const r = d as StudySupport, side = (k: 1 | 2, list: FaceRef[]) => `<div class="pm-box${this.connSide === k ? " focus" : ""} sim-faces" role="button" tabindex="0" data-side="${k}" aria-pressed="${this.connSide === k}">${list.length ? esc(t("{n} face|{n} faces", { n: list.length })) : esc(t("Click faces on the model"))}</div>`;
+      body += group(t("First faces"), side(1, r.faces)) + group(t("Second faces"), side(2, r.faces2 ?? []));
     } else if (d.type !== "gravity" && !this.unpicked(d)) {
       const on = (d as StudyLoad).on, n = pickCount(d);
       const ask = on === "edges" ? t("Click edges on the model") : on === "points" ? (e.kind === "weld" ? t("Click points on a face of the model") : t("Click corner points on the model")) : d.type === "hinge" || d.type === "torque" || d.type === "bearing" ? t("Click cylindrical faces on the model") : d.type === "centrifugal" ? t("Click a cylindrical face for the axis, or leave it empty and choose an axis below") : t("Click faces on the model");
@@ -3639,6 +3669,8 @@ export class SimController {
         + (nat ? `<p class="pm-help muted">${esc(t("Each face gets its own film coefficient from how it is tilted, how big it is and how much hotter it is than the air (plate correlations for still air), times the study's enclosure factor."))}</p>` : "")
         + (sink ? `<p class="pm-help muted">${esc(t("A heatsink that is not modelled: the picked faces pass their heat to the air through this thermal resistance, as its data sheet gives it."))}</p>` : "")
         + `<p class="pm-help muted">${esc(t("The faces give heat to the air or liquid around them: film coefficient × area × how much hotter they are than the surroundings. The presets are typical figures."))}</p>`);
+      if (s.type === "radx") body += group(t("Radiation"), q("emis", t("Emissivity of the first faces"), s.emis ?? 0.9, "0…1") + q("emis2", t("Emissivity of the second faces"), s.emis2 ?? s.emis ?? 0.9, "0…1")
+        + `<p class="pm-help muted">${esc(t("The two sets of faces exchange heat by radiation, in either direction: the hotter one warms the other. How much each sees of the other (the view factor) is found by casting rays, so other bodies in between shade it."))}</p>`);
       if (s.type === "rad") body += group(t("Radiation"), q("emis", t("Emissivity"), s.emis ?? 0.9, "0…1") + ambient
         + `<p class="pm-help muted">${esc(t("The faces radiate to surroundings at the ambient temperature. About 0.9 for paint, plastics and anodised aluminium, 0.05 to 0.1 for bare polished metal."))}</p>`);
       if (s.on) body += `<p class="pm-help muted">${esc(t("An edge or a point holds the part, but the stress right at it has no meaning: it grows with every pass."))}</p>`;
@@ -4047,7 +4079,7 @@ export class SimController {
   private panelClick(e: Event) {
     const k = (e.target as HTMLElement).closest<HTMLElement>("button[data-k]")?.dataset.k;
     const side = (e.target as HTMLElement).closest<HTMLElement>("[data-side]")?.dataset.side;
-    if (side && this.edit?.kind === "connector") { this.connSide = side === "2" ? 2 : 1; this.renderPanel(); this.drawMarks(); return; }
+    if (side && this.edit && this.twoSided(this.edit)) { this.connSide = side === "2" ? 2 : 1; this.renderPanel(); this.drawMarks(); return; }
     if (k === "ok") this.ok();
     else if (k === "cancel") this.cancel();
     else if (k === "pickat" && this.edit) { this.pickingAt = !this.pickingAt; this.renderPanel(); }
@@ -4124,7 +4156,7 @@ export class SimController {
       if (q === "tref") { const bad = v == null || v < -273.15; el.setAttribute("aria-invalid", String(bad)); if (!bad) { (e.draft as StudyLoad).ref = v!; this.renderTree(); } return; }
       if (q === "amb" && !el.value.trim()) { delete sup.ambient; el.setAttribute("aria-invalid", "false"); this.renderTree(); return; }
       if (q === "kr" && e.kind === "connector" && !el.value.trim()) { delete e.draft.kr; el.setAttribute("aria-invalid", "false"); return; }
-      const bad = v == null || ((q === "kn" || q === "kt" || q === "kr" || (e.kind === "connector" && q[0] === "k")) && v < 0) || ((q === "throat" || q === "mass" || q === "dia" || q === "hc" || q === "rth") && !(v > 0)) || (q === "emis" && !(v > 0 && v <= 1)) || ((q === "temp" || q === "amb") && v < -273.15);
+      const bad = v == null || ((q === "kn" || q === "kt" || q === "kr" || (e.kind === "connector" && q[0] === "k")) && v < 0) || ((q === "throat" || q === "mass" || q === "dia" || q === "hc" || q === "rth") && !(v > 0)) || ((q === "emis" || q === "emis2") && !(v > 0 && v <= 1)) || ((q === "temp" || q === "amb") && v < -273.15);
       el.setAttribute("aria-invalid", String(bad));
       if (bad) return;
       if (e.kind === "connector") { if (q === "kr") e.draft.kr = v * 1e3; else if (/^k[012]$/.test(q)) e.draft.k[Number(q[1])] = v; return; }
@@ -4132,7 +4164,7 @@ export class SimController {
       if (q === "dia") { (e.draft as StudyWeld).dia = v; this.drawMarks(); }
       else if (q === "throat") (e.draft as StudyWeld).throat = v;
       else if (q === "kn") sup.kn = v; else if (q === "kt") sup.kt = v;
-      else if (q === "temp") sup.temp = v; else if (q === "hc") sup.h = v; else if (q === "rth") sup.rth = v; else if (q === "emis") sup.emis = v; else if (q === "amb") sup.ambient = v;
+      else if (q === "temp") sup.temp = v; else if (q === "hc") sup.h = v; else if (q === "rth") sup.rth = v; else if (q === "emis") sup.emis = v; else if (q === "emis2") sup.emis2 = v; else if (q === "amb") sup.ambient = v;
       else if (q === "accel") (e.draft as StudyLoad).accel = v || undefined;
       else if (q === "level") (e.draft as StudyLoad).level = v;
       else if (q[0] === "a") { const l = e.draft as StudyLoad, a = [...(l.at ?? [0, 0, 0])] as [number, number, number]; a[Number(q[1])] = v; l.at = a; }

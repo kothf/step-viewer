@@ -12,6 +12,7 @@ import { pcgSolver } from "./pcg";
 import { makeGrid, refit, memoryBytes, type Grid } from "./grid";
 import { facePoints, fitFacePoints, gridTrianglePoints, type Inside, type Points } from "./quad";
 import { DIRECT_LIMIT, MEMORY_LIMIT, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
+import { exchangeResistance } from "./viewfactor";
 
 /** Stefan–Boltzmann constant, W/(mm²·K⁴). */
 export const SIGMA = 5.670374419e-14;
@@ -99,6 +100,35 @@ export interface ThermalContact {
   tb: number;
 }
 
+/**
+ * Radiation between two sets of faces (FR-TBC-007): a grey two-surface exchange of σ (Ta⁴ − Tb⁴) / R, R the
+ * resistance of `exchangeResistance` (viewfactor.ts) from the emissivities, areas and the view factor `f` from a to b,
+ * between the mean temperatures of the two sets. Each point of a set radiates by its own temperature to the other
+ * set's mean, so a hot spot sends more and the two sides' heats are equal and opposite; it is Newton-linearised about
+ * the mean temperatures, solved exactly (a rank-two update) and linearised again until it settles.
+ */
+export interface ThermalExchange {
+  a: ArrayLike<number>;
+  b: ArrayLike<number>;
+  ea: number;
+  eb: number;
+  f: number;
+}
+
+export interface ExchangeFlow {
+  /** Heat from a to b, W, and the mean temperature of each set, °C. */
+  heat: number;
+  ta: number;
+  tb: number;
+  areaA: number;
+  areaB: number;
+  /** The view factor from a to b it used. */
+  f: number;
+  /** With `domains`: the one holding most of each set's area. */
+  da?: number;
+  db?: number;
+}
+
 export interface ThermalProblem {
   lo: number[];
   hi: number[];
@@ -114,6 +144,8 @@ export interface ThermalProblem {
   gap?: number;
   links?: ThermalLink[];
   sinks: ThermalSink[];
+  /** Radiation between face sets (FR-TBC-007). */
+  exchanges?: ThermalExchange[];
   sources: ThermalSource[];
   grid?: Grid;
   depth?: number;
@@ -167,6 +199,8 @@ export interface ThermalResult {
   /** With `domains`: where they touch and what passes there, and each one's volume. */
   contacts: ThermalContact[];
   volumes: number[];
+  /** Radiation between face sets, in the order given (absent without any). */
+  exchanges?: ExchangeFlow[];
   sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): ThermalSample;
   temp(x: number, y: number, z: number): number;
 }
@@ -416,10 +450,16 @@ function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
 }
 
 /** The domains nothing takes heat from: no sink on them and none on anything they pass heat to. */
-function looseDomains(c: Ctx, contacts: ThermalContact[], at: Float64Array[]): number[] {
+function looseDomains(c: Ctx, contacts: ThermalContact[], at: Float64Array[], ex: ExBuilt[] = []): number[] {
   const nd = c.doms!.length, root = Array.from({ length: nd }, (_, i) => i);
   const find = (i: number): number => (root[i] === i ? i : (root[i] = find(root[i])));
   for (const C of contacts) root[find(C.a)] = find(C.b);
+  // radiation between face sets joins the bodies its faces are on
+  for (const X of ex) {
+    if (!Number.isFinite(X.R)) continue;
+    let d0 = -1;
+    for (const L of [X.La, X.Lb]) for (let o = 0; o < L.length; o += 8) { const d = c.dom[L[o]]; if (d0 < 0) d0 = d; else root[find(d)] = find(d0); }
+  }
   const held = new Set<number>();
   for (const L of at) for (let o = 0; o < L.length; o += 8) held.add(find(c.dom[L[o]]));
   const out: number[] = [];
@@ -547,10 +587,15 @@ function copyMatrix(A: BlockMatrix): BlockMatrix {
   return B;
 }
 
-function solveSystem(c: Ctx, A: BlockMatrix, f: Float64Array, x0: Float64Array | null): Float64Array {
+function factorSystem(c: Ctx, A: BlockMatrix): Solver {
   const pb = c.pb, useCg = pb.solver === "pcg" || (pb.solver !== "direct" && A.size > DIRECT_LIMIT);
-  if (useCg) return pcgSolver(A, { coarse: basisSize(1), tol: pb.tol ?? 1e-9 }).solve(f, x0 ?? undefined).x;
-  return new Envelope(A).solve(f);
+  if (useCg) { const P = pcgSolver(A, { coarse: basisSize(1), tol: pb.tol ?? 1e-9 }); return { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
+  const E = new Envelope(A);
+  return { solve: f => E.solve(f) };
+}
+
+function solveSystem(c: Ctx, A: BlockMatrix, f: Float64Array, x0: Float64Array | null, lr: LowRank | null = null): Float64Array {
+  return withLowRank(factorSystem(c, A), lr).solve(f, x0);
 }
 
 /** ∫ k |∇T|² and, with the pass before, the same of what this pass changed per element. */
@@ -627,7 +672,82 @@ interface Built {
   volume: number;
   volumes: number[];
   memory: number;
+  /** Radiation between face sets, and the temperature its first linearisation is taken at, °C. */
+  ex: ExBuilt[];
+  t0: number;
 }
+
+/** One radiation exchange set up: the points of each set, ∫N / area over each (mean temperature = u · x), areas, R. */
+interface ExBuilt {
+  La: Float64Array;
+  Lb: Float64Array;
+  ua: Float64Array;
+  ub: Float64Array;
+  aa: number;
+  ab: number;
+  R: number;
+  f: number;
+  da: number;
+  db: number;
+}
+
+/** The points of each set of an exchange and the vectors giving their mean temperatures. */
+function exchangeOf(c: Ctx, X: ThermalExchange, tq: number): ExBuilt {
+  const n = c.nel * c.nb, mean = (L: Float64Array) => {
+    const u = new Float64Array(n), by = new Float64Array(c.doms ? c.doms.length : 1);
+    let area = 0;
+    for (let o = 0; o < L.length; o += 8) {
+      const e = L[o], E = c.grid.elems[e], w = L[o + 4];
+      c.bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s);
+      for (let a = 0; a < c.nb; a++) u[e * c.nb + a] += w * c.bas.v[a];
+      area += w;
+      by[c.dom[e]] += w;
+    }
+    if (area > 0) for (let i = 0; i < n; i++) u[i] /= area;
+    let d = 0;
+    for (let i = 1; i < by.length; i++) if (by[i] > by[d]) d = i;
+    return { u, area, d };
+  };
+  const La = located(c, X.a, tq), Lb = located(c, X.b, tq), A = mean(La), B = mean(Lb);
+  return { La, Lb, ua: A.u, ub: B.u, aa: A.area, ab: B.area, R: exchangeResistance(X.ea, X.eb, A.area, B.area, X.f), f: X.f, da: A.d, db: B.d };
+}
+
+
+const dot = (u: Float64Array, v: Float64Array) => { let s = 0; for (let i = 0; i < u.length; i++) s += u[i] * v[i]; return s; };
+
+/** A low-rank change of a matrix: + U C Uᵀ, kept as U and C⁻¹ (m × m, row-major; C need not be symmetric). */
+interface LowRank { U: Float64Array[]; cinv: Float64Array }
+
+/** A solver of (A + U C Uᵀ) x = f from one of A (Woodbury): A⁻¹f − Z S⁻¹ Uᵀ A⁻¹f, Z = A⁻¹U, S = C⁻¹ + UᵀZ. */
+function withLowRank(s: Solver, lr: LowRank | null): Solver {
+  if (!lr || !lr.U.length) return s;
+  const m = lr.U.length, Z = lr.U.map(u => s.solve(u, null)), S = Float64Array.from(lr.cinv);
+  for (let i = 0; i < m; i++) for (let j = 0; j < m; j++) S[i * m + j] += dot(lr.U[i], Z[j]);
+  return {
+    solve(f, x0) {
+      const y = s.solve(f, x0), r = lr.U.map(u => dot(u, y)), c = denseSolve(S, r, m);
+      for (let j = 0; j < m; j++) { const z = Z[j], cj = c[j]; for (let i = 0; i < y.length; i++) y[i] -= cj * z[i]; }
+      return y;
+    },
+  };
+}
+
+/** A small dense solve with partial pivoting (S is m × m, row-major; not changed). */
+function denseSolve(S0: Float64Array, r0: number[], m: number): number[] {
+  const S = Float64Array.from(S0), r = r0.slice();
+  for (let k = 0; k < m; k++) {
+    let p = k;
+    for (let i = k + 1; i < m; i++) if (Math.abs(S[i * m + k]) > Math.abs(S[p * m + k])) p = i;
+    if (p !== k) { for (let j = 0; j < m; j++) { const t = S[k * m + j]; S[k * m + j] = S[p * m + j]; S[p * m + j] = t; } const t = r[k]; r[k] = r[p]; r[p] = t; }
+    const d = S[k * m + k] || 1e-300;
+    for (let i = k + 1; i < m; i++) { const q = S[i * m + k] / d; if (!q) continue; for (let j = k; j < m; j++) S[i * m + j] -= q * S[k * m + j]; r[i] -= q * r[k]; }
+  }
+  const x = new Array<number>(m).fill(0);
+  for (let k = m - 1; k >= 0; k--) { let v = r[k]; for (let j = k + 1; j < m; j++) v -= S[k * m + j] * x[j]; x[k] = v / (S[k * m + k] || 1e-300); }
+  return x;
+}
+
+interface Solver { solve(f: Float64Array, x0: Float64Array | null): Float64Array }
 
 function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) => Float64Array) | null): Built {
   const p = pb.p;
@@ -670,8 +790,9 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   measure(c, A, surf);
   faceTerms(c, A);
   const { contacts, joins } = doms ? joinTerms(c, A, tq) : { contacts: [] as ThermalContact[], joins: [] as number[] };
+  const ex = (pb.exchanges ?? []).map(X => exchangeOf(c, X, tq));
   if (doms) {
-    const loose = looseDomains(c, contacts, at);
+    const loose = looseDomains(c, contacts, at, ex);
     if (loose.length) throw new Error(`E-TH-LOOSE: ${loose.join(",")}`);
   }
   pb.sinks.forEach((s, i) => {
@@ -684,7 +805,8 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   const fs: Float64Array[] = [], put: number[] = [];
   for (const s of pb.sources) { const r = sourceLoad(c, s, tq, volume, volumes); fs.push(r.f); put.push(r.put); }
   const rads = pb.sinks.map((s, i) => (s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural) ? i : -1)).filter(i => i >= 0);
-  return { c, A, f, fs, put, at, lens, rads, contacts, joins, volume, volumes, memory };
+  const temps = pb.sinks.map(s => s.temp ?? s.ambient ?? 0), t0 = temps.reduce((a2, v) => a2 + v, 0) / Math.max(1, temps.length);
+  return { c, A, f, fs, put, at, lens, rads, contacts, joins, volume, volumes, memory, ex, t0 };
 }
 
 /** One source's load vector at its full power and the heat it puts in, W. */
@@ -724,14 +846,31 @@ function sourceLoad(c: Ctx, s: ThermalSource, tq: number, volume: number, volume
 }
 
 /** The matrix and load with the temperature-dependent sinks linearised about `last` (none = their first guess). */
-function linearised(b: Built, last: Float64Array | null): { B: BlockMatrix; g: Float64Array } {
+function linearised(b: Built, last: Float64Array | null): { B: BlockMatrix; g: Float64Array; lr: LowRank | null } {
   const B = copyMatrix(b.A), g = new Float64Array(b.f.length), pb = b.c.pb;
   for (const i of b.rads) {
     const s = pb.sinks[i];
     if (s.natural) naturalTerms(b.c, B, g, b.at[i], s, b.lens[i]!, last);
     else filmTerms(b.c, B, g, b.at[i], 0, s.ambient ?? 0, s.emissivity!, last);
   }
-  return { B, g };
+  // radiation between face sets, Newton-linearised about the last mean temperatures: Q ≈ Ga ta − Gb tb + q0
+  // (Ga = 4σTa³/R). Each point of a carries Ga/area·T, of b Gb/area·T; the other set's mean is the rank-two part.
+  const live = b.ex.filter(X => Number.isFinite(X.R));
+  if (!live.length) return { B, g, lr: null };
+  const U: Float64Array[] = [], m = 2 * live.length, cinv = new Float64Array(m * m), n = g.length;
+  live.forEach((X, k) => {
+    const ta = last ? dot(X.ua, last) : b.t0, tb = last ? dot(X.ub, last) : b.t0;
+    const A0 = Math.max(1, ta + KELVIN), B0 = Math.max(1, tb + KELVIN);
+    const Ga = (4 * SIGMA * A0 ** 3) / X.R, Gb = (4 * SIGMA * B0 ** 3) / X.R, q0 = (SIGMA * (A0 ** 4 - B0 ** 4)) / X.R - Ga * ta + Gb * tb;
+    filmTerms(b.c, B, g, X.La, Ga / X.aa, 0, 0, null);
+    filmTerms(b.c, B, g, X.Lb, Gb / X.ab, 0, 0, null);
+    for (let i = 0; i < n; i++) g[i] += q0 * (X.ub[i] - X.ua[i]);
+    U.push(X.ua, X.ub);
+    // C = [[0, −Gb], [−Ga, 0]] on (a, b), so U C Uᵀ = −Gb a bᵀ − Ga b aᵀ
+    cinv[2 * k * m + 2 * k + 1] = -1 / Ga;
+    cinv[(2 * k + 1) * m + 2 * k] = -1 / Gb;
+  });
+  return { B, g, lr: { U, cinv } };
 }
 
 /** Samples a solution at points (moved a little against their normals, so a surface point is read inside). */
@@ -828,14 +967,14 @@ function solveOnce(pb: ThermalProblem, b: Built, kSteps: number): ThermalResult 
   const applied = b.put.reduce((a, v) => a + v, 0);
   // radiation and natural convection depend on the temperatures: linearised about the last answer and solved again until they settle
   let x: Float64Array, iterations = 1;
-  if (!b.rads.length) x = solveSystem(c, A, f, null);
+  if (!b.rads.length && !b.ex.some(X => Number.isFinite(X.R))) x = solveSystem(c, A, f, null);
   else {
     let last: Float64Array | null = null;
     x = f;
     for (let it = 0; it < RAD_STEPS; it++) {
-      const { B, g } = linearised(b, last);
+      const { B, g, lr } = linearised(b, last);
       for (let i = 0; i < g.length; i++) g[i] += f[i];
-      x = solveSystem(c, B, g, last);
+      x = solveSystem(c, B, g, last, lr);
       iterations = it + 1;
       let d = 0, top = 0;
       if (last) for (let e = 0; e < nel; e++) { d = Math.max(d, Math.abs(x[e * nb] - last[e * nb])); top = Math.max(top, Math.abs(x[e * nb])); }
@@ -854,7 +993,16 @@ function solveOnce(pb: ThermalProblem, b: Built, kSteps: number): ThermalResult 
   const flows = pb.sinks.map((s, i) => flowOf(c, s, b.at[i], x, b.lens[i]));
   contactFlows(c, b.contacts, b.joins, x);
   const sm = samplerOf(c, x, local);
-  return { grid, p, dofs: A.size, memory: b.memory, x, energy, applied, flows, iterations, ...(kSteps ? { kSteps } : {}), eta, prevError, volume: b.volume, contacts: b.contacts, volumes: b.volumes, sample: sm.sample, temp: sm.temp };
+  const exchanges = b.ex.length ? exchangeFlows(b, x) : undefined;
+  return { grid, p, dofs: A.size, memory: b.memory, x, energy, applied, flows, iterations, ...(kSteps ? { kSteps } : {}), eta, prevError, volume: b.volume, contacts: b.contacts, volumes: b.volumes, ...(exchanges ? { exchanges } : {}), sample: sm.sample, temp: sm.temp };
+}
+
+/** What each radiation exchange passes at the temperatures `x` (the exchanges left out by a zero view factor are absent from `b.ex`). */
+function exchangeFlows(b: Built, x: Float64Array): ExchangeFlow[] {
+  return b.ex.map(X => {
+    const ta = X.aa > 0 ? dot(X.ua, x) : NaN, tb = X.ab > 0 ? dot(X.ub, x) : NaN, A = ta + KELVIN, B = tb + KELVIN;
+    return { heat: Number.isFinite(X.R) ? (SIGMA * (A ** 4 - B ** 4)) / X.R : 0, ta, tb, areaA: X.aa, areaB: X.ab, f: X.f, ...(b.c.doms ? { da: X.da, db: X.db } : {}) };
+  });
 }
 
 /**
@@ -946,13 +1094,13 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
   const n = nel * nb, mean = (y: Float64Array, e: number) => y[e * nb];
   let y0 = new Float64Array(n), yPrev: Float64Array | null = null;
   for (let e = 0; e < nel; e++) y0[e * nb] = run.t0;
-  const cache = new Map<string, { solve(f: Float64Array, x0: Float64Array): Float64Array }>();
+  const cache = new Map<string, Solver>();
   let made = 0;
-  let lin: Float64Array | null = b.rads.length || tab ? Float64Array.from(y0) : null, linGen = 0, linG: Float64Array | null = null, linB: BlockMatrix | null = null;
+  let lin: Float64Array | null = b.rads.length || b.ex.some(X => Number.isFinite(X.R)) || tab ? Float64Array.from(y0) : null, linGen = 0, linG: Float64Array | null = null, linB: BlockMatrix | null = null, linLr: LowRank | null = null;
   const relinearise = (rebuild: boolean) => {
     if (!lin) return;
     if (rebuild && tab) { const at = lin; b = build({ ...pb, grid }, dom => ktScale(dom, nb, tab, at, run.t0)); c = b.c; }
-    if (b.rads.length) { const r = linearised(b, lin); linB = r.B; linG = r.g; } else { linB = null; linG = null; }
+    if (b.rads.length || b.ex.length) { const r = linearised(b, lin); linB = r.B; linG = r.g; linLr = r.lr; } else { linB = null; linG = null; linLr = null; }
     linGen++;
   };
   relinearise(false);
@@ -962,9 +1110,10 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
     const B = copyMatrix(linB ?? b.A);
     for (let e = 0; e < nel; e++) { const K = B.block(e, e), Ce = C[e]; for (let i = 0; i < nb * nb; i++) K[i] += a * Ce[i]; }
     const pbx = c.pb, useCg = pbx.solver === "pcg" || (pbx.solver !== "direct" && B.size > DIRECT_LIMIT);
-    let s: { solve(f: Float64Array, x0: Float64Array): Float64Array };
-    if (useCg) { const P = pcgSolver(B, { coarse: basisSize(1), tol: pbx.tol ?? 1e-9 }); s = { solve: (f, x0) => P.solve(f, x0).x }; }
-    else { const E = new Envelope(B); s = { solve: f => E.solve(f) }; }
+    let s0: Solver;
+    if (useCg) { const P = pcgSolver(B, { coarse: basisSize(1), tol: pbx.tol ?? 1e-9 }); s0 = { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
+    else { const E = new Envelope(B); s0 = { solve: f => E.solve(f) }; }
+    const s = withLowRank(s0, linLr);
     // a new linearisation makes the older matrices useless
     for (const key2 of [...cache.keys()]) if (!key2.endsWith(`|${linGen}`)) cache.delete(key2);
     cache.set(k, s);
