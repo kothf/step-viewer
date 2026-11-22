@@ -38,7 +38,7 @@ import { MEMORY_LIMIT } from "./static";
 import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardK, plateAxis, type BoardStack } from "../thermal/study";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
-import { NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
+import { NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
 import { DEFAULT_GAP, DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 /** What a study needs of its document: a part's, or an assembly's (which has no material or bodies of its own). */
@@ -730,14 +730,17 @@ export class SimController {
    * A thermal study of a board made from its thermal package (FR-TBRD-001): the package's ambient, one Heat from
    * package load, and convection and radiation from every surface open to the air.
    */
-  boardStudy(spec: { ambient?: number; emissivity?: number; heat: PackageHeat[]; board?: { comp: string; t: number } }): string | null {
+  boardStudy(spec: { ambient?: number; emissivity?: number; enclosure?: "open" | "vented" | "closed"; down?: [number, number, number]; heat: PackageHeat[]; board?: { comp: string; t: number } }): string | null {
     const doc = this.host.doc();
     if (!doc) return null;
     const st = newStudy(doc.studies ?? [], "thermal");
-    if (spec.ambient !== undefined && Number.isFinite(spec.ambient)) st.settings.ambient = spec.ambient;
+    if (spec.enclosure) st.settings.enclosure = spec.enclosure;
+    // the package's ambient wins over the enclosure preset's
+    st.settings.ambient = spec.ambient !== undefined && Number.isFinite(spec.ambient) ? spec.ambient : ENCLOSURES.find(x => x.id === spec.enclosure)?.ambient ?? DEFAULT_AMBIENT;
+    if (spec.down) st.settings.down = spec.down;
     if (spec.board?.comp) st.comps = { [spec.board.comp]: { board: { ...DEFAULT_STACK, ...(spec.board.t > 0 ? { t: Math.round(spec.board.t * 1000) / 1000 } : {}) } } };
     st.loads.push({ id: "l1", name: itemName(st, "pkgheat"), type: "pkgheat", faces: [], parts: spec.heat, ...(spec.board?.comp ? { board: spec.board.comp } : {}) });
-    st.supports.push({ id: "s1", name: itemName(st, "conv"), type: "conv", faces: [], all: true, h: FILM_PRESETS[0][1] });
+    st.supports.push({ id: "s1", name: itemName(st, "conv"), type: "conv", faces: [], all: true, natural: true, h: FILM_PRESETS[0][1] });
     const emis = spec.emissivity !== undefined && spec.emissivity > 0 && spec.emissivity <= 1 ? spec.emissivity : 0.9;
     st.supports.push({ id: "s2", name: itemName(st, "rad"), type: "rad", faces: [], all: true, emis });
     this.setActive(st.id);
@@ -2740,11 +2743,24 @@ export class SimController {
   /** A centrifugal load without faces: its world axis. */
   private axisText(l: StudyLoad): string { return t("Axis {a} at the origin", { a: (l.axis ?? "z").toUpperCase() }); }
 
+  /** Where the model sits and which way is down: what natural convection goes by (FR-TBC-010/011). */
+  private enclosureHtml(st: Study): string {
+    const e = st.settings.enclosure ?? "open", d = st.settings.down ?? [0, 0, -1];
+    const dk = DOWNS.find(([, v]) => v.every((x, i) => x === d[i]))?.[0] ?? "";
+    return `<label class="pm-field" title="${esc(t("Natural convection is weaker in a chassis: its film coefficients are multiplied by this factor. A preset also sets the ambient temperature."))}"><span>${esc(t("Enclosure"))}</span><select data-k="enclosure">`
+      + ENCLOSURES.map(x => `<option value="${x.id}"${x.id === e ? " selected" : ""}>${esc(t(x.label))} (${sig(x.factor)})</option>`).join("")
+      + `<option value="custom"${e === "custom" ? " selected" : ""}>${esc(t("Custom"))}</option></select></label>`
+      + (e === "custom" ? `<label class="pm-field"><span>${esc(t("Convection factor"))}</span><input type="number" data-k="efactor" min="0.05" max="1" step="0.05" value="${sig(enclosureFactor(st.settings))}"></label>` : "")
+      + `<label class="pm-field" title="${esc(t("Gravity's direction: natural convection depends on which faces stand upright and which face up or down"))}"><span>${esc(t("Down"))}</span><select data-k="down">`
+      + DOWNS.map(([l]) => `<option value="${l}"${l === dk ? " selected" : ""}>${l}</option>`).join("") + (dk ? "" : `<option value="" selected>${esc(t("Custom"))}</option>`) + `</select></label>`;
+  }
+
   /** What a thermal item is set to, for the tree and the report. */
   private thermalText(it: StudySupport | StudyLoad, st: Study): string {
     const amb = (s: StudySupport) => `${sig(s.ambient ?? st.settings.ambient ?? DEFAULT_AMBIENT)} °C`;
     if (it.type === "temp") return `${sig(it.temp ?? 0)} °C`;
     if (it.type === "conv" && it.rth !== undefined && !it.all) return `${sig(it.rth)} K/W, ${amb(it)}`;
+    if (it.type === "conv" && it.natural) return `${t("natural convection")}, ${amb(it)}`;
     if (it.type === "conv") return `${sig(it.h ?? 0)} W/(m²·K), ${amb(it)}`;
     if (it.type === "rad") return `ε ${sig(it.emis ?? 0)}, ${amb(it)}`;
     if (it.type === "heat") return `${sig(it.value?.v ?? 0)} W`;
@@ -2759,7 +2775,7 @@ export class SimController {
     const kv = (rows: string[][]) => blocks.push({ kind: "table", rows: [[t("Property"), t("Value")], ...rows], widths: [2, 3] });
     const name = (it: StudySupport | StudyLoad) => (it.name ?? it.id) + (off.has(it.id) ? ` (${t("left out")})` : "");
     const on = (it: StudySupport | StudyLoad) => (it.type === "heat" && it.body ? (res.comps ? t("whole component") : t("whole body")) : this.pickText(it));
-    kv([[t("Document"), doc.name], [t("Study"), st.name], [t("Kind"), t("Thermal")], [t("Ambient temperature"), `${sig(st.settings.ambient ?? DEFAULT_AMBIENT)} °C`], [t("Passes"), `${res.passes.length} / ${Math.min(THERMAL_PASSES, st.settings.passes)}`],
+    kv([[t("Document"), doc.name], [t("Study"), st.name], [t("Kind"), t("Thermal")], [t("Ambient temperature"), `${sig(st.settings.ambient ?? DEFAULT_AMBIENT)} °C`], [t("Enclosure"), `${t(ENCLOSURES.find(x => x.id === (st.settings.enclosure ?? "open"))?.label ?? "Custom")} (${sig(enclosureFactor(st.settings))})`], [t("Passes"), `${res.passes.length} / ${Math.min(THERMAL_PASSES, st.settings.passes)}`],
       ...(res.comps ? [] : [[t("Material"), m?.name ?? "–"], [t("Thermal conductivity"), `${sig(m?.k ?? 0)} W/(m·K)`]])]);
     if (res.comps && res.bodyMats) {
       blocks.push({ kind: "h", text: t("Components") });
@@ -2773,7 +2789,7 @@ export class SimController {
     blocks.push({ kind: "h", text: t("Results") });
     const out = T.flows.reduce((a, f) => a + f.out, 0);
     kv([[t("Highest temperature"), `${sig(T.max)} °C`], [t("Lowest temperature"), `${sig(T.min)} °C`], [t("Heat put in"), `${sig(T.applied)} W`],
-      ...T.flows.map((f, i) => [`${f.out < 0 ? t("Heat brought in") : t("Heat taken away")}: ${this.nameOf(res.ids[i] ?? "")}`, `${sig(Math.abs(f.out))} W (${t("mean")} ${sig(f.mean)} °C)`]), [t("Heat taken away in total"), `${sig(out)} W`]]);
+      ...T.flows.map((f, i) => [`${f.out < 0 ? t("Heat brought in") : t("Heat taken away")}: ${this.nameOf(res.ids[i] ?? "")}`, `${sig(Math.abs(f.out))} W (${t("mean")} ${sig(f.mean)} °C${f.h !== undefined ? `, ${sig(f.h * 1e6)} W/(m²·K)` : ""})`]), [t("Heat taken away in total"), `${sig(out)} W`]]);
     if (res.comps && T.comps) blocks.push({ kind: "table", widths: [3, 2, 2, 2], rows: [[t("Component"), `${t("Max")}, °C`, `${t("Mean")}, °C`, `${t("Heat")}, W`], ...T.comps.map((c, i) => [res.comps![i]?.name ?? "", sig(c.max), sig(c.mean), c.power ? sig(c.power) : "–"])] });
     if (res.comps && T.contacts?.length) {
       blocks.push({ kind: "h", text: t("Connections") });
@@ -2918,6 +2934,7 @@ export class SimController {
       html += `<div class="sim-sec sim-heat"><h4>${esc(t("Heat sources"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`
         + `<div class="sim-sec sim-cool"><h4>${esc(t("Cooling and fixed temperatures"))}</h4><ul class="sim-list">${st.supports.map(x => row(x, false)).join("") || none(t("None yet: the heat needs a way out. Pick one in the Simulation tab."))}</ul>`
         + `<label class="pm-field"><span>${esc(t("Ambient temperature"))}, °C</span><input type="number" data-k="ambient" step="any" value="${sig(amb)}" title="${esc(t(TIP.ambient))}"></label>`
+        + this.enclosureHtml(st)
         + `<p class="sim-note muted">${esc(t("Faces with no condition are insulated: no heat crosses them."))}</p></div>`
         + `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: THERMAL_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === passes ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
         + `<label class="pm-field"><span>${esc(t("Stop at temperature change"))}, %</span><input type="number" data-k="tol" min="0" max="20" step="0.1" value="${sig(st.settings.energyTol)}"></label>`
@@ -3109,7 +3126,10 @@ export class SimController {
     if (eLast != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">${pct(eLast).startsWith("<") ? "" : "≈ "}${pct(eLast).replace("<", "&lt;")} %</dd>`;
     else if (eBefore != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">&lt; ${pct(eBefore).replace("< ", "")} %</dd>`;
     html += `<dt>${esc(t("Heat put in"))}</dt><dd data-v="heatin">${sig(T.applied)} W</dd>`;
-    T.flows.forEach((f, i) => { html += `<dt>${esc(f.out < 0 ? t("Heat brought in") : t("Heat taken away"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd data-v="flow" title="${esc(t("Mean temperature of the faces"))}: ${sig(f.mean)} °C">${sig(Math.abs(f.out))} W</dd>`; });
+    T.flows.forEach((f, i) => {
+      html += `<dt>${esc(f.out < 0 ? t("Heat brought in") : t("Heat taken away"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd data-v="flow" title="${esc(t("Mean temperature of the faces"))}: ${sig(f.mean)} °C">${sig(Math.abs(f.out))} W</dd>`;
+      if (f.h !== undefined) html += `<dt>${esc(t("Mean film coefficient"))}</dt><dd data-v="hnat" title="${esc(t("What natural convection came to over these faces"))}">${sig(f.h * 1e6)} W/(m²·K)</dd>`;
+    });
     if (T.flows.length > 1) html += `<dt>${esc(t("Heat taken away in total"))}</dt><dd data-v="heatout">${sig(out)} W</dd>`;
     if (off != null) html += `<dt title="${esc(t("How far the heat taken away is from the heat put in, as a share of it"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${off > 1 ? ' class="sim-low"' : ""}>${pct(off).replace("<", "&lt;")} %</dd>`;
     html += `</dl>` + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
@@ -3224,9 +3244,10 @@ export class SimController {
         + `<p class="pm-help muted">${esc(t("The faces are held at this temperature, like a cold plate or a mounting surface whose temperature is known."))}</p>`);
       if (s.type === "conv" || s.type === "rad") body += group(t("Surfaces"), chk("all", s.all, t("All surfaces open to the air"))
         + (s.all ? `<p class="pm-help muted">${esc(t("Every surface of the model, without the areas where components lie on each other."))}</p>` : ""));
-      const sink = s.rth !== undefined && !s.all;
-      if (s.type === "conv") body += group(t("Convection"), `<label class="pm-field"><span>${esc(t("Cooling by"))}</span><select data-k="film">${FILM_PRESETS.map(([l, v]) => `<option value="${v}"${!sink && s.h === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}${s.all ? "" : `<option value="rth"${sink ? " selected" : ""}>${esc(t("Heatsink (thermal resistance)"))}</option>`}<option value=""${sink || FILM_PRESETS.some(([, v]) => v === s.h) ? "" : " selected"}>${esc(t("Custom"))}</option></select></label>`
-        + (sink ? q("rth", t("Thermal resistance"), s.rth!, "K/W") : q("hc", t("Film coefficient"), s.h ?? FILM_PRESETS[0][1], "W/(m²·K)")) + ambient
+      const sink = s.rth !== undefined && !s.all && !s.natural, nat = !!s.natural;
+      if (s.type === "conv") body += group(t("Convection"), `<label class="pm-field"><span>${esc(t("Cooling by"))}</span><select data-k="film"><option value="nat"${nat ? " selected" : ""}>${esc(t("Natural convection (worked out)"))}</option>${FILM_PRESETS.map(([l, v]) => `<option value="${v}"${!sink && !nat && s.h === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}${s.all ? "" : `<option value="rth"${sink ? " selected" : ""}>${esc(t("Heatsink (thermal resistance)"))}</option>`}<option value=""${sink || nat || FILM_PRESETS.some(([, v]) => v === s.h) ? "" : " selected"}>${esc(t("Custom"))}</option></select></label>`
+        + (sink ? q("rth", t("Thermal resistance"), s.rth!, "K/W") : nat ? "" : q("hc", t("Film coefficient"), s.h ?? FILM_PRESETS[0][1], "W/(m²·K)")) + ambient
+        + (nat ? `<p class="pm-help muted">${esc(t("Each face gets its own film coefficient from how it is tilted, how big it is and how much hotter it is than the air (plate correlations for still air), times the study's enclosure factor."))}</p>` : "")
         + (sink ? `<p class="pm-help muted">${esc(t("A heatsink that is not modelled: the picked faces pass their heat to the air through this thermal resistance, as its data sheet gives it."))}</p>` : "")
         + `<p class="pm-help muted">${esc(t("The faces give heat to the air or liquid around them: film coefficient × area × how much hotter they are than the surroundings. The presets are typical figures."))}</p>`);
       if (s.type === "rad") body += group(t("Radiation"), q("emis", t("Emissivity"), s.emis ?? 0.9, "0…1") + ambient
@@ -3453,6 +3474,24 @@ export class SimController {
       if (!el.value.trim() || !Number.isFinite(v) || v < -273.15) { el.value = sig(st.settings.ambient ?? DEFAULT_AMBIENT); return; }
       this.host.change(t("Ambient temperature"), d => { const x = d.studies?.find(y => y.id === st.id); if (x) x.settings.ambient = v; });
     }
+    else if (el.dataset.k === "enclosure") {
+      const v = el.value as Enclosure, pre = ENCLOSURES.find(x => x.id === v);
+      this.host.change(t("Enclosure"), d => {
+        const x = d.studies?.find(y => y.id === st.id);
+        if (!x) return;
+        if (v === "custom") { x.settings.factor = enclosureFactor(x.settings); x.settings.enclosure = "custom"; }
+        else { x.settings.enclosure = v; delete x.settings.factor; if (pre) x.settings.ambient = pre.ambient; }
+      });
+    }
+    else if (el.dataset.k === "efactor") {
+      const v = Number(el.value);
+      if (!(v > 0 && v <= 1)) { el.value = sig(enclosureFactor(st.settings)); return; }
+      this.host.change(t("Convection factor"), d => { const x = d.studies?.find(y => y.id === st.id); if (x) x.settings.factor = v; });
+    }
+    else if (el.dataset.k === "down") {
+      const v = DOWNS.find(([l]) => l === el.value)?.[1];
+      if (v) this.host.change(t("Down"), d => { const x = d.studies?.find(y => y.id === st.id); if (x) x.settings.down = [...v]; });
+    }
     else if (el.dataset.k === "cumul") { this.cumul = el.checked; this.renderTree(); }
     else if (el.dataset.k === "bolton") {
       const on = el.checked;
@@ -3614,8 +3653,9 @@ export class SimController {
     else if (k === "pkon") { const x = (e.draft as StudyLoad).parts?.[Number(el.dataset.i)]; if (x) x.off = el.checked ? undefined : true; }
     else if (k === "film") {
       const sp = e.draft as StudySupport;
-      if (el.value === "rth") sp.rth ??= 10;
-      else { delete sp.rth; if (el.value) sp.h = Number(el.value); }
+      if (el.value === "nat") { sp.natural = true; delete sp.rth; }
+      else if (el.value === "rth") { sp.rth ??= 10; delete sp.natural; }
+      else { delete sp.rth; delete sp.natural; if (el.value) sp.h = Number(el.value); }
     }
     else if (k === "axis") (e.draft as StudyLoad).axis = el.value as "x" | "y" | "z";
     else if (k === "ckind" && e.kind === "connector") e.draft.kind = el.value === "spring" ? "spring" : "rigid";

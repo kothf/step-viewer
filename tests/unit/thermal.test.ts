@@ -1,7 +1,7 @@
 // Thermal analysis (FRS-thermal TH0/TH2, AT-TH0-1..4): steady conduction against closed-form answers.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { solveThermal, SIGMA, KELVIN } from "../../src/sim/thermal";
+import { solveThermal, naturalH, SIGMA, KELVIN } from "../../src/sim/thermal";
 import { MeshBody, insideOf } from "../../src/sim/body";
 
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
@@ -51,6 +51,32 @@ test("slab: radiation carries the flux away", () => {
   assert.ok(Math.abs(r.temp(40, 5, 5) - tR) < 1e-3, `${r.temp(40, 5, 5)} vs ${tR}`);
   assert.ok(Math.abs(r.flows[0].out - q * 100) < 1e-5);
   assert.ok(r.iterations > 1 && r.iterations < 20);
+});
+
+test("natural convection: plate correlations by tilt (FR-TBC-004)", () => {
+  // vertical 100 mm plate 20 K hotter: 1.42 (20 / 0.1)^¼ = 5.34 W/(m²·K)
+  assert.ok(Math.abs(naturalH(0, 20, 100, 30) * 1e6 - 1.42 * 200 ** 0.25) < 1e-9);
+  assert.ok(Math.abs(naturalH(1, 20, 100, 30) * 1e6 - 1.32 * (20 / 0.03) ** 0.25) < 1e-9);
+  assert.ok(Math.abs(naturalH(-1, 20, 100, 30) * 1e6 - 0.59 * (20 / 0.03) ** 0.25) < 1e-9);
+  // a cold face up behaves like a hot face down
+  assert.equal(naturalH(1, -20, 100, 30), naturalH(-1, 20, 100, 30));
+});
+
+test("slab: natural convection from a vertical end and a top face, with an enclosure factor", () => {
+  const q = 0.002, down = [0, 0, -1];
+  // the right end is vertical, 10 mm high: q = f · 1.42e-6 (ΔT / 0.01)^¼ ΔT
+  for (const factor of [1, 0.55]) {
+    const r = solveThermal({ lo, hi, inside: box, h: 10, p: 2, k, sinks: [{ tris: right, ambient: 25, natural: { factor, down, lv: [10, 10], lh: [5, 5] } }], sources: [{ tris: left, flux: q }] });
+    const dt = (q / (factor * 1.42e-6 * 100 ** 0.25)) ** 0.8;
+    assert.ok(Math.abs(r.temp(40, 5, 5) - (25 + dt)) < 1e-3 * dt, `${r.temp(40, 5, 5)} vs ${25 + dt}`);
+    assert.ok(Math.abs(r.flows[0].out - q * 100) < 1e-6 * q * 100, `out ${r.flows[0].out}`);
+    assert.ok(r.flows[0].h! > 0 && r.iterations > 1 && r.iterations < 15, `h ${r.flows[0].h}, ${r.iterations} solves`);
+  }
+  // a top face (hot side up, area / perimeter = 400 / 100 = 4 mm), heat in through the bottom: conduction through 10 mm
+  const top = rectFace(2, 10, lo, hi, true), bottom = rectFace(2, 0, lo, hi, false);
+  const r = solveThermal({ lo, hi, inside: box, h: 10, p: 2, k, sinks: [{ tris: top, ambient: 25, natural: { factor: 1, down, lv: [1, 1], lh: [4, 4] } }], sources: [{ tris: bottom, flux: q }] });
+  const dt = (q / (1.32e-6 * 250 ** 0.25)) ** 0.8;
+  assert.ok(Math.abs(r.temp(20, 5, 10) - (25 + dt)) < 1e-3 * dt, `${r.temp(20, 5, 10)} vs ${25 + dt}`);
 });
 
 test("no sink is refused", () => {

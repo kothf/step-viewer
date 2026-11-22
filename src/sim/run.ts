@@ -5,7 +5,7 @@ import { MeshBody, insideOf } from "./body";
 import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
-import { DEFAULT_AMBIENT, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { DEFAULT_AMBIENT, enclosureFactor, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch } from "../thermal/study";
 import { solveThermal, thermalMemory, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource } from "./thermal";
 
@@ -488,30 +488,72 @@ function surfaceArea(tris: ArrayLike<number>): number {
   return a;
 }
 
+/**
+ * Natural convection sizes per triangle of `idx` (FR-TBC-004): its face's height along `down` and area / perimeter,
+ * mm (at least 1 mm).
+ */
+export function faceSizes(b: SimBody, idx: number[], down: ArrayLike<number>): { lv: Float64Array; lh: Float64Array } {
+  const face = faceOf(b), by = new Map<number, number[]>();
+  for (const t of idx) { let g = by.get(face[t]); if (!g) by.set(face[t], (g = [])); g.push(t); }
+  const size = new Map<number, [number, number]>(), q = quantum(b), T = b.tris;
+  for (const [f, g] of by) {
+    let area = 0, lo = Infinity, hi = -Infinity;
+    const edges = new Map<string, number>();
+    for (const t of g) {
+      const o = 9 * t;
+      const ux = T[o + 3] - T[o], uy = T[o + 4] - T[o + 1], uz = T[o + 5] - T[o + 2], vx = T[o + 6] - T[o], vy = T[o + 7] - T[o + 1], vz = T[o + 8] - T[o + 2];
+      area += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+      const keys = [vkey(T, o, q), vkey(T, o + 3, q), vkey(T, o + 6, q)];
+      for (let k = 0; k < 3; k++) {
+        const d = T[o + 3 * k] * down[0] + T[o + 3 * k + 1] * down[1] + T[o + 3 * k + 2] * down[2];
+        lo = Math.min(lo, d); hi = Math.max(hi, d);
+        const a = keys[k], c = keys[(k + 1) % 3], key = a < c ? `${a}|${c}` : `${c}|${a}`;
+        const len = Math.hypot(T[o + 3 * ((k + 1) % 3)] - T[o + 3 * k], T[o + 3 * ((k + 1) % 3) + 1] - T[o + 3 * k + 1], T[o + 3 * ((k + 1) % 3) + 2] - T[o + 3 * k + 2]);
+        edges.set(key, edges.has(key) ? -1 : len);
+      }
+    }
+    let per = 0;
+    for (const v of edges.values()) if (v > 0) per += v;
+    size.set(f, [Math.max(1, hi - lo), Math.max(1, per > 0 ? area / per : Math.sqrt(area))]);
+  }
+  const lv = new Float64Array(idx.length), lh = new Float64Array(idx.length);
+  idx.forEach((t, i) => { const z = size.get(face[t])!; lv[i] = z[0]; lh[i] = z[1]; });
+  return { lv, lh };
+}
+
 /** The surface conditions and heat sources of a thermal study (FR-TLOAD, FR-TBC): W/m² and W/(m²·K) become per mm². */
 export function thermalSetup(st: Study, b: SimBody, regions?: string[]): ThermalSetup {
   const off = new Set(st.suppressed ?? []), amb = st.settings.ambient ?? DEFAULT_AMBIENT;
   const out: ThermalSetup = { sinks: [], sources: [], sinkIds: [], problems: [] };
-  const facesOf = (it: { id: string; faces: { name: string }[] }) => {
+  const idxOf = (it: { id: string; faces: { name: string }[] }) => {
     if (!it.faces.length) { out.problems.push({ id: it.id, code: "E-SIM-EMPTY" }); return null; }
-    const tris = trisOf(b, it.faces.map(f => f.name));
-    if (!tris) out.problems.push({ id: it.id, code: "E-SIM-REF" });
-    return tris;
+    const want = new Set<number>(), face = faceOf(b);
+    for (const f of it.faces) { const i = b.names.indexOf(f.name); if (i < 0) { out.problems.push({ id: it.id, code: "E-SIM-REF" }); return null; } want.add(i); }
+    const idx: number[] = [];
+    for (let t = 0; t < face.length; t++) if (want.has(face[t])) idx.push(t);
+    return idx;
   };
   // "all open surfaces": the whole surface without the faces a fixed temperature or another item of its kind is on
-  const openTris = (s: Study["supports"][number]) => {
+  const openIdx = (s: Study["supports"][number]) => {
     const taken = new Set<string>();
     for (const o of st.supports) if (o !== s && !off.has(o.id) && !o.all && (o.type === "temp" || o.type === s.type)) for (const f of o.faces) taken.add(f.name);
-    if (!taken.size) return b.tris;
     const gone = b.names.map(n => taken.has(n)), keep: number[] = [];
-    for (let i = 0; i < b.face.length; i++) if (!gone[b.face[i]]) for (let k = 0; k < 9; k++) keep.push(b.tris[9 * i + k]);
-    return Float64Array.from(keep);
+    for (let i = 0; i < b.face.length; i++) if (!gone[b.face[i]]) keep.push(i);
+    return keep;
   };
+  const gather = (idx: number[]) => {
+    const tris = new Float64Array(9 * idx.length);
+    idx.forEach((t, k) => { for (let j = 0; j < 9; j++) tris[9 * k + j] = b.tris[9 * t + j]; });
+    return tris;
+  };
+  const facesOf = (it: { id: string; faces: { name: string }[] }) => { const idx = idxOf(it); return idx ? gather(idx) : null; };
+  const down = st.settings.down ?? [0, 0, -1], factor = enclosureFactor(st.settings);
   for (const s of st.supports) {
     if (off.has(s.id) || !isThermalType(s.type)) continue;
     const open = !!s.all && s.type !== "temp";
-    const tris = open ? openTris(s) : facesOf(s);
-    if (!tris) continue;
+    const idx = open ? openIdx(s) : idxOf(s);
+    if (!idx) continue;
+    const tris = gather(idx);
     const free = open && regions ? { free: true } : {};
     if (s.type === "temp") out.sinks.push({ tris, temp: s.temp ?? amb });
     else if (s.type === "conv") {
@@ -520,6 +562,11 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
         const area = surfaceArea(tris);
         if (!(s.rth > 0) || !(area > 0)) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
         out.sinks.push({ tris, h: 1 / (s.rth * area), ambient: s.ambient ?? amb });
+        out.sinkIds.push(s.id);
+        continue;
+      }
+      if (s.natural) {
+        out.sinks.push({ tris, natural: { factor, down, ...faceSizes(b, idx, down) }, ambient: s.ambient ?? amb, ...free });
         out.sinkIds.push(s.id);
         continue;
       }

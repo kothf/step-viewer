@@ -35,6 +35,8 @@ export interface StudySupport {
   h?: number;
   /** Radiation: emissivity, 0..1. */
   emis?: number;
+  /** Convection: natural convection, the film coefficient worked out per face from its tilt, size and temperature (`h` unused). */
+  natural?: boolean;
   /** Convection and radiation: the temperature of the air or the surroundings, °C; absent = the study's ambient. */
   ambient?: number;
   /** Convection: a heatsink on the faces given by its thermal resistance to the air, K/W, instead of `h`. */
@@ -193,8 +195,28 @@ export interface StudySettings {
   relief?: boolean;
   /** Thermal studies: the temperature of the air and the surroundings, °C (default `DEFAULT_AMBIENT`). */
   ambient?: number;
+  /** Thermal studies: where the model sits (FR-TBC-010); its factor scales natural convection. Absent = open frame. */
+  enclosure?: Enclosure;
+  /** Thermal studies, `enclosure` "custom": the natural convection factor, 0..1. */
+  factor?: number;
+  /** Thermal studies: gravity's direction for natural convection (FR-TBC-011), a unit vector; absent = −Z. */
+  down?: [number, number, number];
 }
 export const DEFAULT_AMBIENT = 25;
+export type Enclosure = "open" | "vented" | "closed" | "custom";
+/** Enclosure presets (FR-TBC-010): natural convection factor and the ambient temperature a pick sets. */
+export const ENCLOSURES: { id: Exclude<Enclosure, "custom">; label: string; factor: number; ambient: number }[] = [
+  { id: "open", label: "Open frame", factor: 1, ambient: 25 },
+  { id: "vented", label: "Vented chassis", factor: 0.8, ambient: 35 },
+  { id: "closed", label: "Closed chassis", factor: 0.55, ambient: 40 },
+];
+/** The natural convection factor of a study's enclosure. */
+export function enclosureFactor(s: StudySettings): number {
+  if (s.enclosure === "custom") return s.factor !== undefined && s.factor > 0 ? Math.min(1, s.factor) : 1;
+  return ENCLOSURES.find(e => e.id === s.enclosure)?.factor ?? 1;
+}
+/** Gravity directions offered in the study (FR-TBC-011). */
+export const DOWNS: [string, [number, number, number]][] = [["−Z", [0, 0, -1]], ["+Z", [0, 0, 1]], ["−Y", [0, -1, 0]], ["+Y", [0, 1, 0]], ["−X", [-1, 0, 0]], ["+X", [1, 0, 0]]];
 /** Passes of a thermal study: degree 2, 3, 4 over the whole body. */
 export const THERMAL_PASSES = 3;
 /** Film coefficients people reach for, W/(m²·K). */

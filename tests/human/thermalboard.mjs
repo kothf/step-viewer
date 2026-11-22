@@ -90,4 +90,18 @@ const pathRow = (ps, n) => ps.find(r => r.name === n) ?? {};
 check("TB-5", p1.length === 6 && p1.every(r => /package's split/.test(r.title)) && pathRow(p1, "R14").board === "0" && parseInt(pathRow(p1, "V3").board) > 10
   && pathRow(p2, "R14").board === "52" && pathRow(p2, "R20").board === "56" && !s5.error && Math.abs(s5.thermal.applied - 29.17) < 0.01,
   "the Heat paths table shows each part's share into the board and off its own surface (R14 lies clear of the board, so none goes into it; the valve stands in it); with the package's split kept, R14 and R20 put the package's board shares into the board", { p1, p2, applied: s5.thermal?.applied, shot5 }, shot6);
+
+// TB-6: natural convection: the package's closed chassis is the study's enclosure; picking Open frame sets 25 °C and the parts run cooler.
+const enc = await pg.evaluate(() => ({ enc: document.querySelector('#sim-tree select[data-k="enclosure"]').value, down: document.querySelector('#sim-tree select[data-k="down"]').value, h: document.querySelector('#sim-tree [data-v="hnat"]')?.textContent ?? "" }));
+const max6 = (await sim()).thermal.max;
+await pg.locator('#sim-tree select[data-k="enclosure"]').scrollIntoViewIfNeeded();
+const shot7 = await snap(pg, "enclosure-closed");
+await pg.selectOption('#sim-tree select[data-k="enclosure"]', "open");
+await idle(pg);
+const amb6 = await pg.evaluate(() => document.querySelector('#sim-tree input[data-k="ambient"]').value);
+await pg.click('#sim-tools [data-s="solve"]');
+await solved();
+const s6 = await sim(), h6 = await pg.evaluate(() => document.querySelector('#sim-tree [data-v="hnat"]')?.textContent ?? "");
+check("TB-6", enc.enc === "closed" && enc.down === "−Z" && /W\/\(m²·K\)/.test(enc.h) && amb6 === "25" && !s6.error && s6.thermal.max < max6 - 20 && parseFloat(h6) > parseFloat(enc.h),
+  "natural convection: the study takes the package's closed chassis and lies with gravity along −Z; Open frame sets the ambient to 25 °C, raises the film coefficient and the parts run cooler", { enc, max6, amb6, max: s6.thermal?.max, h6, shot7 }, await snap(pg, "enclosure-open"));
 await finish(browser, pg);

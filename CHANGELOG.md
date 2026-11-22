@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.658.0] - 2026-11-22
+
+### Added
+
+- **Natural convection** (FRS-thermal FR-TBC-004): a Convection item can be set to *Natural convection (worked out)*. Each face then gets its own film coefficient from how it is tilted (upright, facing up, facing down), its size and how much hotter it is than the air, by the plate correlations for still air. The study is solved again until those coefficients settle, and the results show the mean film coefficient they came to.
+- **Enclosure** (FR-TBC-010): a thermal study sits in an *Open frame* (factor 1, 25 °C), a *Vented chassis* (0.8, 35 °C) or a *Closed chassis* (0.55, 40 °C), or a custom factor. Picking a preset also sets the ambient temperature. The factor scales natural convection.
+- **Down** (FR-TBC-011): gravity's direction for natural convection, −Z unless set otherwise.
+- A board study made from a thermal package cools by natural convection. It takes its enclosure and its ambient temperature from the package, and works out which way is down from the board's orientation (parts up, parts down or standing upright).
+
+### Fixed
+
+- Long item names and descriptions in the Study tab no longer run into each other.
+
 ## [1.657.0] - 2026-11-21
 
 ### Added
@@ -4310,7 +4323,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.655.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.658.0...HEAD
+[1.658.0]: https://github.com/kothf/step-viewer/compare/v1.657.0...v1.658.0
 [1.657.0]: https://github.com/kothf/step-viewer/compare/v1.656.0...v1.657.0
 [1.656.0]: https://github.com/kothf/step-viewer/compare/v1.655.0...v1.656.0
 [1.655.0]: https://github.com/kothf/step-viewer/compare/v1.654.0...v1.655.0

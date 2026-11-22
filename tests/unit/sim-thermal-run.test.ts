@@ -2,8 +2,8 @@
 // converge to the closed-form answers of a bar.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { thermalSetup, runThermal, studyProblem } from "../../src/sim/run";
-import { newStudy } from "../../src/sim/types";
+import { thermalSetup, runThermal, studyProblem, faceSizes } from "../../src/sim/run";
+import { newStudy, enclosureFactor } from "../../src/sim/types";
 import { typedValue, shownValue } from "../../src/sim/values";
 
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
@@ -237,4 +237,33 @@ test("heat paths of a board study: where a part's heat goes, and the package's s
   const cb = b.r.thermal!.comps!;
   assert.ok(Math.abs(cb[0].power - 1.2) < 1e-9 && Math.abs(cb[1].power - 0.3) < 1e-9);
   assert.ok(Math.abs(b.r.thermal!.applied - 1.5) < 0.01, `applied ${b.r.thermal!.applied}`);
+});
+
+test("thermal study: natural convection from every open surface, face sizes, enclosure and gravity (FR-TBC-004/010/011)", () => {
+  // the bar's faces: x ends 20 × 20, y sides 100 × 20, z faces 100 × 20
+  const all = Array.from({ length: body.face.length }, (_, i) => i);
+  const z = faceSizes(body, all, [0, 0, -1]);
+  const at = (f: string) => body.face.indexOf(names.indexOf(f));
+  assert.equal(z.lv[at("x0")], 20);
+  assert.ok(Math.abs(z.lh[at("x0")] - 400 / 80) < 1e-9);
+  assert.ok(Math.abs(z.lh[at("z1")] - 2000 / 240) < 1e-9);
+  // gravity along X: the y sides are 100 high now
+  assert.equal(faceSizes(body, all, [-1, 0, 0]).lv[at("y0")], 100);
+  assert.equal(enclosureFactor({ passes: 3, energyTol: 0 }), 1);
+  assert.equal(enclosureFactor({ passes: 3, energyTol: 0, enclosure: "closed" }), 0.55);
+  assert.equal(enclosureFactor({ passes: 3, energyTol: 0, enclosure: "custom", factor: 0.7 }), 0.7);
+  const st = newStudy([], "thermal");
+  st.loads.push({ id: "l1", type: "heat", faces: [], body: true, value: { v: 2 } });
+  st.supports.push({ id: "s1", type: "conv", faces: [], all: true, natural: true });
+  const set = thermalSetup(st, body);
+  assert.equal(set.problems.length, 0);
+  assert.ok(set.sinks[0].natural && set.sinks[0].natural.factor === 1);
+  const open = run(st).at(-1)!;
+  assert.ok(Math.abs(open.thermal!.flows[0].out - 2) < 1e-4, `out ${open.thermal!.flows[0].out}`);
+  const h = open.thermal!.flows[0].h! * 1e6;
+  assert.ok(h > 3 && h < 10, `mean h ${h}`);
+  // the same bar in a closed chassis runs hotter
+  st.settings.enclosure = "closed";
+  const closed = run(st).at(-1)!;
+  assert.ok(closed.thermal!.max > open.thermal!.max + 5, `${closed.thermal!.max} vs ${open.thermal!.max}`);
 });

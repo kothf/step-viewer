@@ -29,6 +29,25 @@ export interface ThermalSink {
   ambient?: number;
   /** With several domains: only the points of `tris` left open to the air, that is, not lying on another domain. */
   free?: boolean;
+  /**
+   * Natural convection (FR-TBC-004): the film coefficient of each point comes from its face's tilt and size and from
+   * how much hotter it is than `ambient`, by the laminar plate correlations for air (`naturalH`), times `factor`
+   * (the enclosure). `down` = gravity's direction (unit); `lv`/`lh` = per triangle of `tris`, the face's height
+   * along gravity and its area / perimeter, mm.
+   */
+  natural?: { factor: number; down: ArrayLike<number>; lv: ArrayLike<number>; lh: ArrayLike<number> };
+}
+
+/**
+ * Natural convection film coefficient for air, W/(mm²·K): the simplified laminar correlations (h = C (ΔT / L)^¼,
+ * L in m) for a vertical plate (C 1.42, L = height), a horizontal plate with the hot side up (1.32, L = area /
+ * perimeter) and with the hot side down (0.59). `up` = the normal's part along up (against gravity); a face cooler
+ * than the air behaves like a hot one turned over.
+ */
+export function naturalH(up: number, dt: number, lv: number, lh: number): number {
+  const d = Math.max(Math.abs(dt), 0.05), u = dt >= 0 ? up : -up;
+  const [C, L] = u > Math.SQRT1_2 ? [1.32, lh] : u < -Math.SQRT1_2 ? [0.59, lh] : [1.42, lv];
+  return 1e-6 * C * Math.sqrt(Math.sqrt(d / (Math.max(L, 1) * 1e-3)));
 }
 
 export interface ThermalSource {
@@ -106,6 +125,8 @@ export interface SinkFlow {
   area: number;
   /** Mean temperature of its faces, °C. */
   mean: number;
+  /** Natural convection: the mean film coefficient it came to, W/(mm²·K). */
+  h?: number;
 }
 
 export interface ThermalSample {
@@ -467,6 +488,51 @@ function filmTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, h: 
   }
 }
 
+/**
+ * Natural convection on boundary points: q = h(T)(T − T∞) with h ∝ |T − T∞|^¼, linearised about the temperatures
+ * in `x` (dq/dT = 1.25 h); none yet = a plain film taken 10 K hotter than the air.
+ */
+function naturalTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, s: ThermalSink, lens: Float64Array, x: Float64Array | null) {
+  const { grid, nb, bas } = c, nat = s.natural!, amb = s.ambient ?? 0, dn = nat.down;
+  for (let o = 0, i = 0; o < L.length; o += 8, i += 2) {
+    const e = L[o], E = grid.elems[e], w = L[o + 4], K = A.block(e, e), fo = e * nb;
+    bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s);
+    let t0 = amb + 10;
+    if (x) { t0 = 0; for (let a = 0; a < nb; a++) t0 += bas.v[a] * x[fo + a]; }
+    const up = -(L[o + 5] * dn[0] + L[o + 6] * dn[1] + L[o + 7] * dn[2]);
+    const h = nat.factor * naturalH(up, t0 - amb, lens[i], lens[i + 1]);
+    const hh = x ? 1.25 * h : h, rhs = x ? hh * t0 - h * (t0 - amb) : h * amb;
+    for (let a = 0; a < nb; a++) {
+      const na = w * bas.v[a], r = a * nb;
+      f[fo + a] += na * rhs;
+      for (let b = 0; b < nb; b++) K[r + b] += hh * na * bas.v[b];
+    }
+  }
+}
+
+/** The points of a natural convection sink, located face by face so each keeps its face's sizes (2 numbers per point). */
+function naturalPoints(c: Ctx, s: ThermalSink, q: number): { L: Float64Array; lens: Float64Array } {
+  const nat = s.natural!, n = Math.floor(s.tris.length / 9), groups = new Map<string, number[]>();
+  for (let t = 0; t < n; t++) {
+    const key = `${nat.lv[t]}|${nat.lh[t]}`;
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = []));
+    g.push(t);
+  }
+  const parts: Float64Array[] = [], lens: number[] = [];
+  for (const g of groups.values()) {
+    const sub = new Float64Array(9 * g.length);
+    g.forEach((t, k) => { for (let j = 0; j < 9; j++) sub[9 * k + j] = s.tris[9 * t + j]; });
+    const L = s.free && c.doms ? freePoints(c, sub, q) : located(c, sub, q);
+    parts.push(L);
+    for (let o = 0; o < L.length; o += 8) lens.push(nat.lv[g[0]], nat.lh[g[0]]);
+  }
+  const L = new Float64Array(parts.reduce((a, p) => a + p.length, 0));
+  let m = 0;
+  for (const p of parts) { L.set(p, m); m += p.length; }
+  return { L, lens: Float64Array.from(lens) };
+}
+
 function copyMatrix(A: BlockMatrix): BlockMatrix {
   const B = new BlockMatrix(A.nel, A.ms);
   for (const [key, blk] of A.blocks) { const a = Math.floor(key / A.nel); B.block(a, key - a * A.nel).set(blk); }
@@ -505,9 +571,9 @@ function energies(c: Ctx, x: Float64Array, prev: Float64Array | null) {
 }
 
 /** What a sink takes, W: the flux the terms above carry through its points. */
-function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array): SinkFlow {
-  const { grid, nb, bas, k3, gam } = c;
-  let out = 0, area = 0, sum = 0;
+function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?: Float64Array): SinkFlow {
+  const { grid, nb, bas, k3, gam } = c, nat = s.natural, amb = s.ambient ?? 0;
+  let out = 0, area = 0, sum = 0, hs = 0;
   for (let o = 0; o < L.length; o += 8) {
     const e = L[o], E = grid.elems[e], w = L[o + 4];
     bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s);
@@ -520,14 +586,19 @@ function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array): SinkF
     area += w; sum += w * t;
     if (s.temp !== undefined) out += w * (-dn + 2 * gam[e] * (t - s.temp));
     if (s.temp === undefined && s.emissivity) out += w * s.emissivity * SIGMA * ((t + KELVIN) ** 4 - ((s.ambient ?? 0) + KELVIN) ** 4);
-    if (s.temp === undefined) out += w * (s.h ?? 0) * (t - (s.ambient ?? 0));
+    if (s.temp === undefined && nat && lens) {
+      const o2 = o / 4, up = -(L[o + 5] * nat.down[0] + L[o + 6] * nat.down[1] + L[o + 7] * nat.down[2]);
+      const h = nat.factor * naturalH(up, t - amb, lens[o2], lens[o2 + 1]);
+      hs += w * h;
+      out += w * h * (t - amb);
+    } else if (s.temp === undefined) out += w * (s.h ?? 0) * (t - amb);
   }
-  return { out, area, mean: area > 0 ? sum / area : 0 };
+  return { out, area, mean: area > 0 ? sum / area : 0, ...(nat ? { h: area > 0 ? hs / area : 0 } : {}) };
 }
 
 export const thermalMemory = (grid: Grid, p: number) => memoryBytes(grid, () => basisSize(p));
 
-/** Most solves of a problem with radiation. */
+/** Most solves of a problem with radiation or natural convection. */
 const RAD_STEPS = 40;
 
 export function solveThermal(pb: ThermalProblem): ThermalResult {
@@ -558,7 +629,11 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   const tq = Math.max(2, p + 1);
   const A = new BlockMatrix(nel, nb), f = new Float64Array(A.size);
   volumeTerms(c, A);
-  const at = pb.sinks.map(s => (s.free && doms ? freePoints(c, s.tris, tq) : located(c, s.tris, tq)));
+  const lens: (Float64Array | undefined)[] = [];
+  const at = pb.sinks.map((s, i) => {
+    if (s.natural && s.temp === undefined) { const r = naturalPoints(c, s, tq); lens[i] = r.lens; return r.L; }
+    return s.free && doms ? freePoints(c, s.tris, tq) : located(c, s.tris, tq);
+  });
   // the penalty is measured on the fixed-temperature faces and, with several domains, on every domain's surface
   const surf = at.filter((_L, i) => pb.sinks[i].temp !== undefined);
   if (doms) doms.forEach((d, i) => surf.push(located(c, d.tris, tq, i)));
@@ -571,7 +646,7 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   }
   pb.sinks.forEach((s, i) => {
     if (s.temp !== undefined) heldTerms(c, A, f, at[i], s.temp);
-    else if ((s.h ?? 0) > 0) filmTerms(c, A, f, at[i], s.h!, s.ambient ?? 0, 0, null);
+    else if (!s.natural && (s.h ?? 0) > 0) filmTerms(c, A, f, at[i], s.h!, s.ambient ?? 0, 0, null);
   });
   // sources
   let applied = 0, volume = 0;
@@ -608,7 +683,8 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
       applied += s.power;
     }
   }
-  const rads = pb.sinks.map((s, i) => ((s.emissivity ?? 0) > 0 && s.temp === undefined ? i : -1)).filter(i => i >= 0);
+  // radiation and natural convection depend on the temperatures: solved again about the last answer until they settle
+  const rads = pb.sinks.map((s, i) => (s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural) ? i : -1)).filter(i => i >= 0);
   let x: Float64Array, iterations = 1;
   if (!rads.length) x = solveSystem(c, A, f, null);
   else {
@@ -619,7 +695,8 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
       const B = copyMatrix(A), g = Float64Array.from(f);
       for (const i of rads) {
         const s = pb.sinks[i];
-        filmTerms(c, B, g, at[i], 0, s.ambient ?? 0, s.emissivity!, last);
+        if (s.natural) naturalTerms(c, B, g, at[i], s, lens[i]!, last);
+        else filmTerms(c, B, g, at[i], 0, s.ambient ?? 0, s.emissivity!, last);
       }
       x = solveSystem(c, B, g, last);
       iterations = it + 1;
@@ -637,7 +714,7 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   const prevError = !prev ? null : energy > 0 ? 100 * Math.sqrt(etaSum / energy) : 0;
   const local = new Float32Array(nel);
   for (let e = 0; e < nel; e++) local[e] = prev && energy > 0 ? 100 * Math.sqrt((eta[e] * nel) / energy) : 0;
-  const flows = pb.sinks.map((s, i) => flowOf(c, s, at[i], x));
+  const flows = pb.sinks.map((s, i) => flowOf(c, s, at[i], x, lens[i]));
   contactFlows(c, contacts, joins, x);
   const g0 = grid, bas = c.bas;
   const elAt = (px: number, py: number, pz: number) => {

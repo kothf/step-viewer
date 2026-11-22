@@ -1,7 +1,7 @@
 // A thermal study from a board's STEP and its package (FRS-thermal J5, FR-TBRD-001/002/010/011): the plan.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BOARD_MATERIAL, DEFAULT_STACK, GUESS, K_FR4, boardConductivity, boardK, boardPlan, contactPatch, plateAxis, findBoard, guessMaterial } from "../../src/thermal/study";
+import { BOARD_MATERIAL, DEFAULT_STACK, GUESS, K_FR4, boardConductivity, boardK, boardPlan, contactPatch, plateAxis, findBoard, guessMaterial, boardDown } from "../../src/thermal/study";
 import type { ModelBody, PartMatch } from "../../src/thermal/match";
 import type { ThermalManifest, ThermalPart } from "../../src/thermal/package";
 import { findMaterial } from "../../src/tools/materials";
@@ -120,4 +120,19 @@ test("the patch of the board under a part (FR-TBRD-003)", () => {
   // nothing under a part beside the board; a block is no board
   assert.equal(contactPatch(board, box([100, 100, 1.6], [110, 110, 5])), null);
   assert.equal(contactPatch(box([0, 0, 0], [10, 10, 10]), box([0, 0, 10], [5, 5, 12])), null);
+});
+
+test("which way is down for a board, from the package's orientation (FR-TBC-011)", () => {
+  // a 100 × 60 × 1.6 board at z 0..1.6, one part above it
+  const bodies = [{ name: "PCB", box: [0, 0, 0, 100, 60, 1.6] as [number, number, number, number, number, number] }, { name: "U1", box: [10, 10, 1.6, 20, 20, 5] as [number, number, number, number, number, number] }];
+  assert.deepEqual(boardDown("horizontal-up", bodies, 0), [0, 0, -1]);
+  assert.deepEqual(boardDown("horizontal-down", bodies, 0), [0, 0, 1]);
+  // standing on its 60 mm edge: down is −Y
+  assert.deepEqual(boardDown("vertical", bodies, 0), [0, -1, 0]);
+  assert.equal(boardDown(undefined, bodies, 0), undefined);
+  assert.equal(boardDown("sideways", bodies, 0), undefined);
+  assert.equal(boardDown("horizontal-up", bodies, -1), undefined);
+  // parts under the board: lying "parts up" turns it over
+  const under = [bodies[0], { name: "U1", box: [10, 10, -4, 20, 20, 0] as [number, number, number, number, number, number] }];
+  assert.deepEqual(boardDown("horizontal-up", under, 0), [0, 0, 1]);
 });
