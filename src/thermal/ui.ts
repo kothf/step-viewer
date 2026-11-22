@@ -234,7 +234,7 @@ export class ThermalMaps {
     const key = this.host.key();
     if (!key) return false;
     const had = this.maps.get(key);
-    if (ask && had && !had.own && !own) { void this.second(pkg); return true; }
+    if (ask && had && !had.own && !own && !had.pkg.sourcesOnly && !pkg.sourcesOnly) { void this.second(pkg); return true; }
     const stats = partStats(pkg.mesh);
     const match = matchParts(pkg.manifest.parts, stats, this.bodies());
     const a: Attached = { pkg, stats, match, fitted: false, own, on: true, probes: [], sel: null, iso: null, range: null, sort: { col: "margin", up: true }, filter: "", top: true };
@@ -357,7 +357,8 @@ export class ThermalMaps {
   private show() {
     this.clear();
     const a = this.cur(), v = this.host.viewer;
-    if (!a || !a.on) return;
+    // a heat-source table alone has nothing to draw
+    if (!a || !a.on || a.pkg.sourcesOnly) return;
     const m = a.pkg.mesh, n = m.temp.length, sh = this.shiftOf(a);
     const pos = new Float32Array(m.pos.length);
     for (let i = 0; i < n; i++) { pos[i * 3] = m.pos[i * 3] + sh[0]; pos[i * 3 + 1] = m.pos[i * 3 + 1] + sh[1]; pos[i * 3 + 2] = m.pos[i * 3 + 2] + sh[2]; }
@@ -534,6 +535,11 @@ export class ThermalMaps {
     } else if (s) {
       const pad = Math.max(4, this.host.viewer.modelSize / 30);
       this.host.viewer.fit(true, new THREE.Box3(new THREE.Vector3(s.box[0] + sh[0] - pad, s.box[1] + sh[1] - pad, s.box[2] + sh[2] - pad), new THREE.Vector3(s.box[3] + sh[0] + pad, s.box[4] + sh[1] + pad, s.box[5] + sh[2] + pad)));
+    } else if (a.match.bodies.get(id)?.length) {
+      // no map (heat sources alone): the part's bodies in the model
+      const v = this.host.viewer, box = new THREE.Box3(), pad = Math.max(4, v.modelSize / 30);
+      for (const i of a.match.bodies.get(id)!) if (v.parts[i]) box.union(new THREE.Box3().setFromObject(v.parts[i].mesh));
+      if (!box.isEmpty()) v.fit(true, box.expandByScalar(pad));
     }
     this.renderAll();
   }
@@ -617,10 +623,18 @@ export class ThermalMaps {
     if (cmTab() !== "thermal") return;
     const a = this.cur();
     if (!a) { el.innerHTML = ""; return; }
+    const bare = !!a.pkg.sourcesOnly;
     const btn = (id: string, label: string, title: string, o: { on?: boolean; dis?: boolean } = {}) =>
       `<button class="mc-b${o.on ? " on" : ""}" data-th="${id}" title="${esc(title)}"${o.on != null ? ` aria-pressed="${!!o.on}"` : ""}${o.dis ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${ICON[id]}</span><span class="mc-l">${esc(label)}</span></button>`;
     const group = (label: string, inner: string) => `<div class="mc-g" role="group" aria-label="${esc(label)}">${inner}</div>`;
     const sep = `<div class="mc-sep"></div>`;
+    if (bare) {
+      // heat sources alone (FR-TPKG-015): no map to show, only the powers to simulate with
+      el.innerHTML = group(t("Parts"), btn("parts", t("Parts"), t("The heat sources with their power and limit")))
+        + sep + group(t("Study"), btn("simulate", t("Simulate"), t("Simulate in MöbiusCAD: an assembly of the board's parts with a thermal study whose heat comes from this table, where you can add a heatsink or change the cooling")))
+        + sep + group(t("Package"), btn("add", t("Thermal map"), t("Open a thermal package for this model in place of the heat sources")) + btn("remove", t("Remove heat sources"), t("Take the heat sources off this model")));
+      return;
+    }
     el.innerHTML = group(t("Thermal map"), btn("map", t("Map"), t("Show or hide the temperatures on the model"), { on: a.on })
       + btn("flip", a.top ? t("Bottom") : t("Top"), t("Turn the view to the board's other face"), { dis: !a.on })
       + btn("labels", t("Hot spots"), t("Labels on the hottest point and on every part over its limit"), { on: this.prefs.labels, dis: !a.on })
@@ -692,7 +706,7 @@ export class ThermalMaps {
         + `<td translate="no">${esc(watts(p.p))}</td><td data-v="t" translate="no">${esc(deg(tC))}</td><td translate="no">${esc(deg(p.limit))}</td><td data-v="margin" translate="no">${esc(deg(mg))}</td><td translate="no"${p.life !== undefined ? ` title="${esc(hours(p.life))}"` : ""}>${p.life !== undefined ? esc(kHours(p.life)) : ""}</td></tr>`;
     }).join("");
   }
-  private renderRows() { const a = this.cur(), tb = $("#th-side").querySelector("tbody[data-v=rows]"); if (a && tb) tb.innerHTML = this.rowsHtml(a); }
+  private renderRows() { const a = this.cur(), tb = $("#th-side").querySelector("tbody[data-v=rows]"); if (a && tb) tb.innerHTML = a.pkg.sourcesOnly ? this.sourceRows(a) : this.rowsHtml(a); }
 
   private problemText(a: Attached, p: ThermalProblem) {
     const name = this.nameOf(a, p.id);
@@ -704,6 +718,7 @@ export class ThermalMaps {
   private renderSide() {
     const el = $("#th-side"), a = this.cur();
     if (!a) { el.innerHTML = ""; return; }
+    if (a.pkg.sourcesOnly) { el.innerHTML = this.sourcesHtml(a); return; }
     const mf = a.pkg.manifest, s = mf.settings, sm = summary(a.pkg, a.stats);
     const probs = this.problemsOf(a);
     const total = a.pkg.manifest.parts.length + (a.stats.has(0) ? 1 : 0), found = total - a.match.missing.length;
@@ -739,6 +754,28 @@ export class ThermalMaps {
       + `<label class="ana-row"><span>${esc(t("Highest board temperature, °C"))}</span><input type="text" inputmode="decimal" data-k="board" value="${this.prefs.board}" /></label></div>`;
   }
 
+  private sourceRows(a: Attached) {
+    const miss = new Set(a.match.missing);
+    return this.sorted(a).map(p => `<tr data-part="${p.id}" tabindex="0" class="${[miss.has(p.id) ? "miss" : "", a.sel === p.id ? "sel" : ""].filter(Boolean).join(" ")}"><td><span translate="no">${esc(p.designator)}</span>${p.part ? ` <small translate="no">${esc(p.part)}</small>` : ""}</td><td translate="no">${esc(watts(p.p))}</td><td translate="no">${esc(deg(p.limit))}</td></tr>`).join("");
+  }
+
+  /** The side panel for a heat-source table alone (FR-TPKG-015): what was found in the model and the powers. */
+  private sourcesHtml(a: Attached) {
+    const mf = a.pkg.manifest, sm = summary(a.pkg, a.stats);
+    const total = mf.parts.length, found = total - a.match.missing.length;
+    const rows = this.sourceRows(a);
+    const th = (col: SortCol, label: string, title = "") => `<th data-sort="${col}" tabindex="0" role="columnheader" aria-sort="${a.sort.col === col ? (a.sort.up ? "ascending" : "descending") : "none"}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}${a.sort.col === col ? (a.sort.up ? " ▲" : " ▼") : ""}</th>`;
+    return `<div class="th-sec th-src"><h4 translate="no">${esc(a.pkg.name)}</h4>`
+      + `<p class="muted" data-v="sources">${esc(t("Heat sources alone: no temperature map. Simulate makes a thermal study with these powers."))}</p>`
+      + `<p class="${a.match.missing.length ? "th-note" : "muted"}" data-v="matched">${esc(t("{n} of {m} parts matched", { n: found, m: total }))}</p>`
+      + (a.match.missing.length ? `<ul class="th-list">${a.match.missing.map(id => `<li class="miss" data-goto="${id}">${esc(t("{name}: not in this model", { name: this.nameOf(a, id) }))}</li>`).join("")}</ul>` : "")
+      + `<button class="btn small primary" data-a="simulate">${esc(t("Simulate"))}</button></div>`
+      + `<div class="th-sec th-parts"><h4>${esc(t("Parts"))} <span class="pill">${total}</span></h4>`
+      + `<input type="search" data-k="filter" value="${esc(a.filter)}" placeholder="${esc(t("Filter by designator or value"))}" aria-label="${esc(t("Filter by designator or value"))}" />`
+      + `<div class="th-tablewrap"><table class="th-table th-stable"><thead><tr>${th("name", t("Part"))}${th("p", "W", t("Power"))}${th("limit", t("Limit"))}</tr></thead><tbody data-v="rows">${rows}</tbody></table></div></div>`
+      + `<div class="th-sec th-budget"><h4>${esc(t("Heat budget"))}</h4><dl class="sim-kv"><dt>${esc(t("Total power"))}</dt><dd data-v="power" translate="no">${esc(watts(sm.power))} W</dd></dl></div>`;
+  }
+
   /** The parts by how much their temperature changed between the two maps (FR-TMAP-030). */
   private compareHtml(a: Attached) {
     const c = a.cmp;
@@ -763,6 +800,7 @@ export class ThermalMaps {
       if (k === "fit") { a.fitted = true; this.show(); this.renderAll(); }
       else if (k === "rmprobe") { a.probes.splice(Number(act.dataset.i), 1); this.renderAll(); }
       else if (k === "probecsv") this.probeCsv(a);
+      else if (k === "simulate") this.host.simulate(a.pkg, a.match, this.bodies());
       return;
     }
     const sort = tg.closest<HTMLElement>("[data-sort]");
@@ -772,7 +810,7 @@ export class ThermalMaps {
       // a second click on a row: that part alone (FR-TMAP-020). Counted on the click, since the first click
       // redraws the table and a dblclick then has no row to land on.
       const r = tg.closest<HTMLElement>("tr[data-part], tr[data-cpart]");
-      if (r) { const id = Number(r.dataset.part ?? r.dataset.cpart); if (id > 0) { this.isolate(a.iso === id ? null : id); return; } }
+      if (r && !a.pkg.sourcesOnly) { const id = Number(r.dataset.part ?? r.dataset.cpart); if (id > 0) { this.isolate(a.iso === id ? null : id); return; } }
     }
     const crow = tg.closest<HTMLElement>("tr[data-cpart]");
     if (crow) { if (!a.on) this.setOn(true); this.zoomTo(a, Number(crow.dataset.cpart)); return; }
@@ -976,7 +1014,7 @@ export class ThermalMaps {
     if (!a) return null;
     const sm = summary(a.pkg, a.stats);
     return {
-      name: a.pkg.name, on: a.on, own: a.own, drawn: !!this.overlay, tris: this.overlay ? this.overlay.geometry.getIndex()!.count / 3 : 0,
+      name: a.pkg.name, on: a.on, own: a.own, sourcesOnly: !!a.pkg.sourcesOnly, drawn: !!this.overlay, tris: this.overlay ? this.overlay.geometry.getIndex()!.count / 3 : 0,
       range: this.rangeOf(a), parts: a.pkg.manifest.parts.length, matched: a.match.bodies.size, missing: a.match.missing, changed: a.match.changed, off: a.match.off, fitted: a.fitted,
       hidden: this.saved.length, problems: this.problemsOf(a).map(p => ({ kind: p.kind, id: p.id, value: p.value })), hottest: sm.hottest, peak: sm.peak, power: sm.power,
       sel: a.sel, iso: a.iso, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,

@@ -17512,6 +17512,41 @@ try {
     await ctx.close();
   }
 
+  // --- heat sources 1.672 (FRS-thermal FR-TPKG-015): a heat-source CSV alone gives a board's STEP its powers ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const hp = await ctx.newPage();
+    hp.on("pageerror", e => errors.push(e.message));
+    hp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal");
+    await hp.goto(`${origin}/index.html?debug`);
+    await hp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await hp.goto(`${origin}/index.html?debug`);
+    await hp.waitForFunction(() => window.__sv);
+    // alone, with nothing open, it says to open the STEP first
+    await hp.setInputFiles("#file-input", [join(thx, "amp-powers.csv")]);
+    await hp.waitForFunction(() => [...document.querySelectorAll(".toast")].some(t => /STEP first/.test(t.textContent)), null, { timeout: 20000 });
+    await hp.setInputFiles("#file-input", [join(thx, "amp.step"), join(thx, "amp-powers.csv")]);
+    await hp.waitForFunction(() => window.__sv.thermal.state()?.sourcesOnly, null, { timeout: 90000 });
+    await hp.waitForTimeout(500);
+    const hs = await hp.evaluate(() => { const s = window.__sv.thermal.state(); return { drawn: s.drawn, parts: s.parts, missing: s.missing, power: s.power, problems: s.problems.length,
+      bar: [...document.querySelectorAll("#th-tools [data-th]")].map(b => b.dataset.th), tab: !document.querySelector("#t-thermal").hidden,
+      rows: [...document.querySelectorAll("#th-side .th-stable tbody tr")].map(r => r.innerText.replace(/\s+/g, " ").trim()), miss: document.querySelectorAll("#th-side tr.miss").length,
+      note: document.querySelector('#th-side [data-v="sources"]')?.textContent, matched: document.querySelector('#th-side [data-v="matched"]')?.textContent,
+      wide: document.querySelector("#tab-thermal")?.scrollWidth - document.querySelector("#tab-thermal")?.clientWidth }; });
+    check(hs.drawn === false && hs.parts === 7 && JSON.stringify(hs.missing) === "[7]" && Math.abs(hs.power - 30.17) < 1e-9 && hs.problems === 0 && JSON.stringify(hs.bar) === '["parts","simulate","add","remove"]' && hs.tab
+      && hs.rows.length === 7 && hs.miss === 1 && /no temperature map/.test(hs.note ?? "") && /6 of 7/.test(hs.matched ?? "") && !(hs.wide > 0),
+      `heat sources 1.672: a heat-source CSV opened with the board's STEP lists its parts with power and limit, finds 6 of 7 in the model, draws no map and offers Simulate (${JSON.stringify(hs)})`);
+    await hp.click('#th-side [data-a="simulate"]');
+    await hp.waitForFunction(() => window.__sv.asm.doc?.components.length === 7 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden, null, { timeout: 180000 });
+    await hp.waitForTimeout(600);
+    const hm = await hp.evaluate(() => { const d = window.__sv.asm.doc, st = d.studies?.[0], l = st?.loads[0];
+      return { kind: st?.kind, type: l?.type, parts: l?.parts?.map(x => [x.name, x.p, x.comps.length]), names: d.components.map(c => c.name).sort() }; });
+    check(hm.kind === "thermal" && hm.type === "pkgheat" && hm.parts?.length === 7 && hm.parts.find(x => x[0] === "V3")?.[1] === 18.2 && hm.parts.find(x => x[0] === "V3")?.[2] === 1 && hm.parts.find(x => x[0] === "X9")?.[2] === 0 && hm.names.includes("PCB<1>"),
+      `heat sources 1.672: Simulate on the CSV's heat sources makes the board assembly and a thermal study with the table's powers (${JSON.stringify(hm)})`);
+    await ctx.close();
+  }
+
   // --- thermal stress 1.663 (FRS-thermal TH5, FR-LOAD-011): a Temperature load, uniform or from a thermal study ---
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

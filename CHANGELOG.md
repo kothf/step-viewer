@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.672.0] - 2026-11-22
+
+### Added
+
+- Heat sources from a CSV alone. A board design app that writes only powers can give a thermal study its heat: open the board's STEP with a heat-source table (a CSV with `designator` or `step_bodies` and `p_total_W`, `part_id` and `t_limit_C` optional), or add the table to an open STEP with File ▸ Add thermal map…. The Thermal tab lists the parts with their power and limit, says which ones are not in the model, and Simulate makes the board assembly and a thermal study with those powers, as it does from a full thermal package.
+
 ## [1.671.0] - 2026-11-22
 
 ### Added
@@ -4418,7 +4424,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.671.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.672.0...HEAD
+[1.672.0]: https://github.com/kothf/step-viewer/compare/v1.671.0...v1.672.0
 [1.671.0]: https://github.com/kothf/step-viewer/compare/v1.670.0...v1.671.0
 [1.670.0]: https://github.com/kothf/step-viewer/compare/v1.669.0...v1.670.0
 [1.669.0]: https://github.com/kothf/step-viewer/compare/v1.668.0...v1.669.0
