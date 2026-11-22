@@ -16348,7 +16348,10 @@ try {
     const repFacts = { name: dlH.suggestedFilename(), pdfName: dlP.suggestedFilename(), imgs: (repHtml.match(/<img src="data:image\/jpeg/g) ?? []).length, tables: (repHtml.match(/<table>/g) ?? []).length,
       statement: repHtml.includes("They do not replace a validated analysis"), force: repHtml.includes("1000 N"), probe: /<th>Probe<\/th>/.test(repHtml), pdf: repPdf.subarray(0, 5).toString(), pdfKb: Math.round(repPdf.length / 1024) };
     check(/-report\.html$/.test(repFacts.name) && /-report\.pdf$/.test(repFacts.pdfName) && repFacts.imgs === 3 && repFacts.tables >= 6 && repFacts.statement && repFacts.force && repFacts.probe
-      && repFacts.pdf === "%PDF-" && repFacts.pdfKb > 60 && repState?.kind === "pdf" && repState.images === 3 && afterRep.kind === "u" && afterRep.shown,
+      && repFacts.pdf === "%PDF-" && repFacts.pdfKb > 60 && repState?.kind === "pdf" && repState.images === 3 && afterRep.kind === "u" && afterRep.shown
+      // 1.679.0: every picture marks its highest value (a safety factor its lowest) and a table gives where it is
+      && repState.marks.length === 3 && repState.marks[0][0]?.max && repState.marks[1][0]?.max && repState.marks[1][0].at.length === 3 && repState.marks[2].every(e => !e.max)
+      && (repHtml.match(/X, Y, Z, mm/g) ?? []).length >= 3,
       `sim 1.611: the report as a web page and as a PDF holds the set-up, results, three pictures, the probe and the statement; the plot is as before (${JSON.stringify({ ...repFacts, repState, kind: afterRep.kind })})`);
     // the probe is an undo step of its own (1.615.0): the first undo takes it away and the results stay
     await mp.keyboard.press("Control+z");
