@@ -17593,6 +17593,103 @@ try {
     await ctx.close();
   }
 
+  // --- thermal stress in assemblies 1.664 (FRS-thermal TH5): each component expands by its own α, joined faces push ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const ap = await ctx.newPage();
+    ap.on("pageerror", e => errors.push(e.message));
+    ap.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await ap.goto(`${origin}/index.html?debug`);
+    await ap.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await ap.goto(`${origin}/index.html?debug`);
+    await ap.waitForFunction(() => window.__sv);
+    await ap.click("#new-part");
+    await ap.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // a 20 × 20 steel bar, 100 long along Y
+    await ap.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50, cp: 460, alpha: 12 };
+    }));
+    await ap.waitForTimeout(150);
+    await ap.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await ap.click("#new-more");
+    await ap.click("#new-asm-part");
+    const built = n => ap.waitForFunction(k => window.__sv.asm.doc?.components.length === k && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await built(1);
+    // a second bar end to end with the first, 0.05 mm away
+    await ap.evaluate(() => window.__sv.asm.change(d => { const c = d.components[0], tf = [...c.tf]; tf[7] += 100.05; d.components.push({ ...c, id: "c2", name: "Bar<2>", tf, fixed: true }); }));
+    await ap.waitForTimeout(300);
+    await built(2);
+    await ap.waitForTimeout(600);
+    const c1 = await ap.evaluate(() => window.__sv.asm.doc.components[0].id);
+    const sim = () => ap.evaluate(() => window.__sv.sim.state());
+    const solved = async () => { await ap.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await ap.waitForTimeout(400); };
+    await ap.click("#cm-t-simulation");
+    await ap.waitForTimeout(300);
+    await ap.click('#sim-tools [data-s="mode-structural"]');
+    await ap.waitForTimeout(200);
+    // a static study (made by the first command): the bars held at both far ends and on two sides; probes in each bar's middle
+    await ap.click('#sim-tools [data-s="sliding"]');
+    await ap.waitForTimeout(200);
+    await ap.keyboard.press("Escape");
+    await ap.waitForTimeout(200);
+    const tempOn = await ap.evaluate(() => !document.querySelector('#sim-tools [data-s="temperature"]')?.disabled);
+    await ap.evaluate(c1 => window.__sv.asm.change(d => {
+      const st = d.studies.at(-1), F = (c, f) => ({ name: `${c}@${f}` });
+      st.supports.push({ id: "s1", type: "sliding", faces: [F(c1, "f1:side:s1l1"), F("c2", "f1:side:s1l3"), F(c1, "f1:start"), F("c2", "f1:start"), F(c1, "f1:side:s1l4"), F("c2", "f1:side:s1l4")] });
+      st.probes = [[10, 50, 10], [10, 150.05, 10]];
+      d.studies.push({ id: "st9", name: "Thermal 1", kind: "thermal", supports: [{ id: "t1", type: "temp", faces: [F(c1, "f1:side:s1l1")], temp: 20 }, { id: "t2", type: "temp", faces: [F("c2", "f1:side:s1l3")], temp: 220 }], loads: [], settings: { ...st.settings, energyTol: 1, ambient: 25 } });
+    }), c1);
+    await ap.waitForTimeout(400);
+    // Loads ▸ Temperature: 120 °C everywhere, stress-free at 20 °C
+    await ap.click('#sim-tools [data-s="temperature"]');
+    await ap.waitForSelector("#sim-pm .pm-ok");
+    await ap.selectOption('#sim-pm [data-k="tfrom"]', "");
+    await ap.waitForTimeout(150);
+    await ap.fill('#sim-pm [data-n="value"]', "120");
+    await ap.keyboard.press("Tab");
+    await ap.click("#sim-pm .pm-ok");
+    await ap.waitForTimeout(300);
+    await ap.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const u1 = await sim();
+    const sig = 210000 * 12e-6 * 100;
+    // the second bar of aluminium: one force through both, σ = ΔT (αs + αa) L / (L/Es + L/Ea)
+    const alu = { name: "Test alu", density: 2.7, E: 70, nu: 0.3, sy: 100, k: 200, cp: 900, alpha: 23 };
+    await ap.evaluate(alu => window.__sv.asm.change(d => { const st = d.studies.find(x => x.kind === "static"); st.comps = { c2: { material: alu } }; }), alu);
+    await ap.waitForTimeout(300);
+    await ap.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const u2 = await sim();
+    const s2 = (100 * (12e-6 + 23e-6) * 100) / (100 / 210000 + 100 / 70000);
+    // a component whose material gives no α is named
+    await ap.evaluate(alu => window.__sv.asm.change(d => { const st = d.studies.find(x => x.kind === "static"); st.comps = { c2: { material: { ...alu, alpha: undefined } } }; }), alu);
+    await ap.waitForTimeout(300);
+    await ap.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const u3 = await sim();
+    const said = await ap.evaluate(() => [...document.querySelectorAll(".toast")].map(x => x.textContent).join(" | "));
+    // from the assembly's thermal study (20 to 220 °C over both bars), steel again and the far end let go: it grows by α · 100 K · 200 mm
+    await ap.evaluate(c1 => window.__sv.asm.change(d => { const st = d.studies.find(x => x.kind === "static"); delete st.comps; st.supports[0].faces = st.supports[0].faces.filter(f => f.name !== "c2@f1:side:s1l3"); st.loads[0].from = "st9"; }), c1);
+    await ap.waitForTimeout(300);
+    await ap.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const u4 = await sim();
+    const grow = 12e-6 * 100 * 200;
+    await ap.click("#lang-btn");
+    await ap.waitForTimeout(200);
+    const ru = await ap.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-loads *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await ap.click("#lang-btn");
+    check(tempOn && !u1.error && u1.probes.length === 2 && u1.probes.every(v => Math.abs(v / sig - 1) < 0.03) && Math.abs(Math.abs(u1.contacts[0]?.force?.[1] ?? 0) / (sig * 400) - 1) < 0.02
+      && !u2.error && u2.probes.every(v => Math.abs(v / s2 - 1) < 0.04) && u2.bodyMats?.join() === "Test steel,Test alu"
+      && /^E-TH-COMPALPHA/.test(u3.error ?? "") && /Bar<2>/.test(said) && /thermal expansion/.test(said)
+      && !u4.error && u4.maxU > grow * 0.95 && u4.maxU < grow * 1.12 && ru.length === 0,
+      `thermal stress 1.664: two steel bars held end to end and warmed by 100 K are pushed by E α ΔT, the contact passing σ A; with one of aluminium both carry one force; a component with no α is named; from the assembly's thermal study the freed bars grow by α ΔT L; translated (${JSON.stringify({ tempOn, sig, s2, grow, p1: u1.probes, f1: u1.contacts[0]?.force, e1: u1.error, p2: u2.probes, e2: u2.error, mats: u2.bodyMats, e3: u3.error, said, e4: u4.error, u4: u4.maxU, ru })})`);
+    await ctx.close();
+  }
+
   // --- thermal isolate and picture 1.660 (FRS-thermal FR-TMAP-020/042): one part alone; a PNG with the colour scale drawn in ---
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.664.0] - 2026-11-22
+
+### Added
+
+- Thermal stress in assemblies. Loads ▸ Temperature now works in a static study of an assembly, and in a part whose bodies have materials of their own: each component expands by its own material's thermal expansion coefficient, so a steel part bolted or bonded to an aluminium one pushes on it as both warm. The temperatures can be one value everywhere or come from a thermal study of the same assembly, with its components, contacts and boards. A component whose material has no expansion coefficient is named; a rigid component does not expand.
+- The Connections table of such a study gives the force each contact passes with the thermal push included.
+
 ## [1.663.0] - 2026-11-22
 
 ### Added
@@ -4357,7 +4364,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.663.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.664.0...HEAD
+[1.664.0]: https://github.com/kothf/step-viewer/compare/v1.663.0...v1.664.0
 [1.663.0]: https://github.com/kothf/step-viewer/compare/v1.662.0...v1.663.0
 [1.662.0]: https://github.com/kothf/step-viewer/compare/v1.661.0...v1.662.0
 [1.661.0]: https://github.com/kothf/step-viewer/compare/v1.660.0...v1.661.0
