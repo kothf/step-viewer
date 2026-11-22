@@ -5,7 +5,8 @@ import * as THREE from "three";
 import { cmTab, onCmTab } from "../commandBar";
 import { onLangChange, t } from "../i18n";
 import { download } from "../tools/exporters";
-import { toast } from "../ui";
+import { chooseModal, toast } from "../ui";
+import { deltaRange, mapOnto, partChanges, type PartChange } from "./compare";
 import type { Viewer } from "../viewer/Viewer";
 import { matchParts, misfit, paletteColor, paletteCss, PALETTE_NAMES, triWeights, type ModelBody, type PaletteName, type PartMatch } from "./match";
 import { byMargin, DEFAULT_LIMITS, partMargin, partStats, partTemp, problems, summary, type CheckLimits, type PartStat, type ThermalPackage, type ThermalPart, type ThermalProblem } from "./package";
@@ -47,6 +48,8 @@ interface Attached {
   filter: string;
   top: boolean;
   picture?: string;
+  /** A second map of the same model to compare with (FR-TMAP-030): B's temperatures at A's points, ΔT = B − A. */
+  cmp?: { pkg: ThermalPackage; stats: Map<number, PartStat>; tb: Float32Array; delta: Float32Array; changes: { rows: PartChange[]; onlyA: string[]; onlyB: string[] }; view: "a" | "b" | "d" };
 }
 
 interface Prefs { palette: PaletteName; labels: boolean; rise: boolean; life: number; board: number; folded: boolean }
@@ -168,6 +171,15 @@ export class ThermalMaps {
       if (!d || !this.active() || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4 || (e.target as HTMLElement).tagName !== "CANVAS") return;
       this.click(e);
     }, true);
+    window.addEventListener("keydown", e => {
+      const tg = e.target as HTMLElement;
+      if ((e.key === "b" || e.key === "B") && !e.ctrlKey && !e.metaKey && !e.altKey && this.active() && this.cur()?.cmp && !/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName) && !tg.isContentEditable) {
+        // B flips between the two maps (FR-TMAP-031)
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        this.setView(this.cur()!.cmp!.view === "b" ? "a" : "b");
+      }
+    }, true);
     window.addEventListener("keydown", e => { if (e.key === "Escape" && this.active()) { const a = this.cur()!; if (this.probing) { this.probing = false; this.renderAll(); } else if (a.sel !== null) { a.sel = null; this.renderAll(); } } });
   }
 
@@ -197,9 +209,11 @@ export class ThermalMaps {
   }
 
   /** Attaches a package to the model on screen (replacing its map). `own`: the model is the package's own mesh. */
-  attach(pkg: ThermalPackage, own = false) {
+  attach(pkg: ThermalPackage, own = false, ask = true) {
     const key = this.host.key();
     if (!key) return false;
+    const had = this.maps.get(key);
+    if (ask && had && !had.own && !own) { void this.second(pkg); return true; }
     const stats = partStats(pkg.mesh);
     const match = matchParts(pkg.manifest.parts, stats, this.bodies());
     const a: Attached = { pkg, stats, match, fitted: false, own, on: true, probes: [], sel: null, range: null, sort: { col: "margin", up: true }, filter: "", top: true };
@@ -212,6 +226,48 @@ export class ThermalMaps {
     this.renderAll();
     for (const n of pkg.notes) toast(t(n.text, n.params));
     return true;
+  }
+
+  /** A second package for a model that has a map: Replace, or Keep both and compare (FR-TPKG-004). */
+  private async second(pkg: ThermalPackage) {
+    const a = this.cur();
+    if (!a) return;
+    const k = await chooseModal(t("Second thermal map"), t("This model already has the map {a}. Compare {b} with it, or put {b} in its place?", { a: a.pkg.manifest.design || a.pkg.name, b: pkg.manifest.design || pkg.name }),
+      [{ key: "compare", label: t("Keep both and compare") }, { key: "replace", label: t("Replace") }]);
+    if (k === "compare") this.compare(pkg);
+    else if (k === "replace") this.attach(pkg, false, false);
+  }
+
+  /** Compares the map on screen with another package of the same model (FR-TMAP-030): ΔT = B − A. */
+  compare(pkg: ThermalPackage) {
+    const a = this.cur();
+    if (!a) return false;
+    const stats = partStats(pkg.mesh), tb = mapOnto(a.pkg.mesh, pkg.mesh), ta = a.pkg.mesh.temp;
+    const delta = new Float32Array(ta.length);
+    for (let i = 0; i < ta.length; i++) delta[i] = tb[i] - ta[i];
+    a.cmp = { pkg, stats, tb, delta, changes: partChanges(a.pkg.manifest.parts, a.stats, pkg.manifest.parts, stats), view: "d" };
+    a.range = null;
+    a.on = true;
+    this.show();
+    this.host.changed();
+    this.renderAll();
+    return true;
+  }
+
+  /** Stops comparing: map A alone again. */
+  uncompare() { const a = this.cur(); if (!a?.cmp) return; delete a.cmp; a.range = null; this.colour(); this.renderAll(); }
+
+  /** Which map shows: A, B or the change (B − A). */
+  setView(view: "a" | "b" | "d") { const a = this.cur(); if (!a?.cmp) return; a.cmp.view = view; this.colour(); this.renderAll(); }
+
+  /** The temperatures drawn now, one per point of map A. */
+  private tempOf(a: Attached): Float32Array { return !a.cmp || a.cmp.view === "a" ? a.pkg.mesh.temp : a.cmp.view === "b" ? a.cmp.tb : a.cmp.delta; }
+  private delta(a: Attached) { return a.cmp?.view === "d"; }
+
+  /** A value read off the map as shown: a temperature, or a change in K. */
+  private here(a: Attached, v: number) {
+    if (!this.delta(a)) return this.shown(a, v);
+    return `${v >= 0 ? "+" : "−"}${deg(Math.abs(v))} K`;
   }
 
   /** Removes the map of the model on screen. */
@@ -244,7 +300,14 @@ export class ThermalMaps {
   private shiftOf(a: Attached): V3 { return a.fitted ? a.match.shift : [0, 0, 0]; }
   /** Colour range in °C: fixed, else the package's own range, else what the mesh holds. */
   rangeOf(a: Attached): [number, number] {
+    if (a.cmp?.view === "d") return a.range ?? deltaRange(a.cmp.delta);
     if (a.range) return a.range;
+    if (a.cmp) {
+      // A and B on one range, so flipping between them compares like with like (FR-TMAP-031)
+      const r = a.pkg.manifest.range ?? a.pkg.mesh.range, q = a.cmp.pkg.manifest.range ?? a.cmp.pkg.mesh.range;
+      const lo = Math.min(r[0], q[0]), hi = Math.max(r[1], q[1]);
+      return hi > lo ? [lo, hi] : [lo, lo + 1];
+    }
     const r = a.pkg.manifest.range ?? a.pkg.mesh.range;
     return r[1] > r[0] ? [r[0], r[1]] : [r[0], r[0] + 1];
   }
@@ -326,9 +389,9 @@ export class ThermalMaps {
   private colour() {
     const a = this.cur(), ov = this.overlay;
     if (!a || !ov) return;
-    const [lo, hi] = this.rangeOf(a), span = hi - lo || 1, temp = a.pkg.mesh.temp;
+    const [lo, hi] = this.rangeOf(a), span = hi - lo || 1, temp = this.tempOf(a), pal = this.delta(a) ? "diverging" : this.prefs.palette;
     const at = ov.geometry.getAttribute("color") as THREE.BufferAttribute, arr = at.array as Float32Array;
-    for (let i = 0; i < temp.length; i++) paletteColor(this.prefs.palette, (temp[i] - lo) / span, arr, i * 3);
+    for (let i = 0; i < temp.length; i++) paletteColor(pal, (temp[i] - lo) / span, arr, i * 3);
     at.needsUpdate = true;
     this.host.viewer.invalidate();
   }
@@ -351,7 +414,7 @@ export class ThermalMaps {
     const q: V3 = [p.x - sh[0], p.y - sh[1], p.z - sh[2]];
     const c = (j: number): V3 => { const i = m.tri[k * 3 + j]; return [m.pos[i * 3], m.pos[i * 3 + 1], m.pos[i * 3 + 2]]; };
     const w = triWeights(q, c(0), c(1), c(2));
-    const tt = w[0] * m.temp[m.tri[k * 3]] + w[1] * m.temp[m.tri[k * 3 + 1]] + w[2] * m.temp[m.tri[k * 3 + 2]];
+    const T = this.tempOf(a), tt = w[0] * T[m.tri[k * 3]] + w[1] * T[m.tri[k * 3 + 1]] + w[2] * T[m.tri[k * 3 + 2]];
     return { tri: k, p: q, t: tt, part: m.part[k] };
   }
 
@@ -370,7 +433,7 @@ export class ThermalMaps {
     const dd = (l: string, v: string, cls = "") => `<dt>${esc(l)}</dt><dd${cls ? ` class="${cls}"` : ""} translate="no">${v}</dd>`;
     if (id === 0) {
       const flux = at && a.pkg.mesh.flux ? a.pkg.mesh.flux[at.tri] : undefined;
-      return `<h4>${esc(t("Board"))}</h4><dl>${at ? dd(t("Temperature here"), esc(this.shown(a, at.t))) : ""}${flux !== undefined && flux > 0 ? dd(t("Heat leaving to air"), `${esc(String(Math.round(flux)))} W/m²`) : ""}${dd(t("Hottest point"), esc(this.shown(a, a.stats.get(0)?.max)))}</dl>`;
+      return `<h4>${esc(t("Board"))}</h4><dl>${at ? dd(this.delta(a) ? t("Change here") : t("Temperature here"), esc(this.here(a, at.t))) : ""}${flux !== undefined && flux > 0 ? dd(t("Heat leaving to air"), `${esc(String(Math.round(flux)))} W/m²`) : ""}${dd(t("Hottest point"), esc(this.shown(a, a.stats.get(0)?.max)))}</dl>`;
     }
     const p = this.partOf(a, id);
     if (!p) return `<h4 translate="no">#${id}</h4>`;
@@ -381,7 +444,7 @@ export class ThermalMaps {
       + (p.p !== undefined ? dd(t("Power"), `${esc(watts(p.p))} W`) : "")
       + (split ? dd(t("Heat goes to"), esc(split)) : "")
       + dd(p.tKind && KIND_LABEL[p.tKind] ? t("Temperature ({kind})", { kind: t(KIND_LABEL[p.tKind]) }) : t("Temperature"), esc(this.shown(a, tC)), cls)
-      + (at ? dd(t("Temperature here"), esc(this.shown(a, at.t))) : "")
+      + (at ? dd(this.delta(a) ? t("Change here") : t("Temperature here"), esc(this.here(a, at.t))) : "")
       + (p.limit !== undefined ? dd(t("Limit"), `${esc(deg(p.limit))} °C`) : "")
       + (mg !== undefined ? dd(t("Margin"), `${esc(deg(mg))} °C`, cls) : "")
       + (p.life !== undefined ? dd(t("Estimated life"), `${esc(hours(p.life))} ${esc(t("h"))}${p.lifeBy === "computed" ? ` (${esc(t("computed"))})` : ""}`, p.life < this.prefs.life ? "bad" : "") : "")
@@ -457,13 +520,16 @@ export class ThermalMaps {
       });
     }
     const items: { p: V3; html: string }[] = [];
-    a!.probes.forEach((p, i) => items.push({ p: p.p, html: `<div class="sim-probe" data-probe="${i}"><i></i><span translate="no">${esc(this.shown(a!, p.t))}</span><button data-rm="${i}" title="${esc(t("Remove probe"))}" aria-label="${esc(t("Remove probe"))}">×</button></div>` }));
+    a!.probes.forEach((p, i) => items.push({ p: p.p, html: `<div class="sim-probe" data-probe="${i}"><i></i><span translate="no">${esc(this.here(a!, p.t))}</span><button data-rm="${i}" title="${esc(t("Remove probe"))}" aria-label="${esc(t("Remove probe"))}">×</button></div>` }));
     if (this.prefs.labels) {
       const peak = (id: number, warn: boolean) => {
         const s = a!.stats.get(id);
         if (!s) return;
         const p = id > 0 ? this.partOf(a!, id) : undefined;
-        items.push({ p: s.at, html: `<div class="sim-probe sim-peak${warn ? " warn" : ""}${a!.sel === id && id > 0 ? " sel" : ""}" data-peak="${id}"><i></i><span><b translate="no">${esc(this.nameOf(a!, id))}</b> <span translate="no">${esc(this.shown(a!, p ? partTemp(p, a!.stats) : s.max))}</span></span></div>` });
+        const row = a!.cmp && a!.cmp.view !== "a" ? a!.cmp.changes.rows.find(r => r.ia === id) : undefined;
+        if (a!.cmp && a!.cmp.view !== "a" && !row) return;
+        const txt = row ? (a!.cmp!.view === "d" ? this.here(a!, row.d) : this.shown(a!, row.b)) : this.shown(a!, p ? partTemp(p, a!.stats) : s.max);
+        items.push({ p: s.at, html: `<div class="sim-probe sim-peak${warn ? " warn" : ""}${a!.sel === id && id > 0 ? " sel" : ""}" data-peak="${id}"><i></i><span><b translate="no">${esc(this.nameOf(a!, id))}</b> <span translate="no">${esc(txt)}</span></span></div>` });
       };
       const over = this.problemsOf(a!).filter(p => p.kind === "over").slice(0, 12).map(p => p.id);
       const sm = summary(a!.pkg, a!.stats);
@@ -473,6 +539,11 @@ export class ThermalMaps {
       if (!done.has(hot)) { done.add(hot); peak(hot, false); }
       if (a!.stats.has(0) && !done.has(0)) { done.add(0); peak(0, (a!.stats.get(0)!.max) > this.prefs.board); }
       if (a!.sel !== null && !done.has(a!.sel)) peak(a!.sel, false);
+      // comparing: the parts that changed most
+      if (a!.cmp && a!.cmp.view !== "a") {
+        const rs = a!.cmp.changes.rows, up = rs.reduce<PartChange | null>((m, r) => (r.d > 0 && (!m || r.d > m.d) ? r : m), null);
+        for (const r of [...(up ? [up] : []), ...rs.slice(0, 5)]) if (!done.has(r.ia)) { done.add(r.ia); peak(r.ia, false); }
+      }
     }
     this.layer.innerHTML = items.map(i => i.html).join("");
     this.pins = items.map((it, k) => ({ p: it.p, el: this.layer!.children[k] as HTMLElement }));
@@ -520,7 +591,7 @@ export class ThermalMaps {
       + btn("probe", t("Probe"), t("Click the map to read the temperature at a point"), { on: this.probing, dis: !a.on }))
       + sep + group(t("Parts"), btn("parts", t("Parts"), t("The parts of the map with their power, temperature and margin")))
       + sep + group(t("Study"), btn("simulate", t("Simulate"), a.own ? t("Open the board's STEP to measure it or simulate it.") : t("Simulate in MöbiusCAD: an assembly of the board's parts with a thermal study from this package, where you can add a heatsink or change the cooling"), { dis: a.own }))
-      + sep + group(t("Package"), btn("add", t("Replace map"), t("Open another thermal package for this model")) + btn("remove", t("Remove map"), t("Take the thermal map off this model")));
+      + sep + group(t("Package"), btn("add", t("Another map"), t("Open another thermal package for this model: put it in place of this one, or compare the two")) + btn("remove", t("Remove map"), t("Take the thermal map off this model")));
   }
 
   private barClick(e: Event) {
@@ -603,6 +674,7 @@ export class ThermalMaps {
       + (bad ? `<p class="th-warn" data-v="misfit">${esc(t("The map does not fit this model (about {v} mm off).", { v: a.match.off.toFixed(1) }))} <button class="btn small" data-a="fit">${esc(t("Fit by parts"))}</button></p>` : "")
       + (a.picture ? `<a class="th-pic" href="${a.picture}" target="_blank" rel="noopener" title="${esc(t("Picture from the design app"))}"><img src="${a.picture}" alt="${esc(t("Picture from the design app"))}" /></a>` : "")
       + `</div>`
+      + this.compareHtml(a)
       + `<div class="th-sec th-probs"><h4>${esc(t("Problems"))} <span class="pill" data-v="nprob">${probs.length + extra.length}</span></h4>`
       + (probs.length + extra.length ? `<ul class="th-list">${probs.map((p, i) => `<li class="${p.kind === "over" || p.kind === "board" ? "bad" : "warn"}" data-prob="${i}" tabindex="0">${esc(this.problemText(a, p))}</li>`).join("")}${extra.join("")}</ul>` : `<p class="muted" data-v="noprob">${esc(t("No part is over its limit."))}</p>`)
       + `</div>`
@@ -615,6 +687,21 @@ export class ThermalMaps {
       + `<div class="th-sec th-set"><h4>${esc(t("Checks"))}</h4>`
       + `<label class="ana-row"><span>${esc(t("Shortest capacitor life, h"))}</span><input type="text" inputmode="decimal" data-k="life" value="${this.prefs.life}" /></label>`
       + `<label class="ana-row"><span>${esc(t("Highest board temperature, °C"))}</span><input type="text" inputmode="decimal" data-k="board" value="${this.prefs.board}" /></label></div>`;
+  }
+
+  /** The parts by how much their temperature changed between the two maps (FR-TMAP-030). */
+  private compareHtml(a: Attached) {
+    const c = a.cmp;
+    if (!c) return "";
+    const nm = (x: ThermalPackage) => x.manifest.design || x.name, ch = c.changes;
+    const d = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${deg(Math.abs(v))}`;
+    return `<div class="th-sec th-cmp"><h4>${esc(t("Compare"))}</h4><p class="muted" data-v="pair">A <span translate="no">${esc(nm(a.pkg))}</span> · B <span translate="no">${esc(nm(c.pkg))}</span></p>`
+      + `<div class="th-tablewrap"><table class="th-table th-ctable"><thead><tr><th>${esc(t("Part"))}</th><th>A, °C</th><th>B, °C</th><th title="${esc(t("B − A"))}">Δ, K</th></tr></thead><tbody>`
+      + ch.rows.map(r => `<tr data-cpart="${r.ia}" class="${r.d > 0.05 ? "up" : r.d < -0.05 ? "down" : ""}"><td translate="no">${esc(r.ia === 0 ? t("Board") : r.name)}</td><td translate="no">${esc(deg(r.a))}</td><td translate="no">${esc(deg(r.b))}</td><td data-v="dt" translate="no">${esc(d(r.d))}</td></tr>`).join("")
+      + `</tbody></table></div>`
+      + (ch.onlyA.length ? `<p class="muted" data-v="onlya">${esc(t("Only in A:"))} <span translate="no">${esc(ch.onlyA.join(", "))}</span></p>` : "")
+      + (ch.onlyB.length ? `<p class="muted" data-v="onlyb">${esc(t("Only in B:"))} <span translate="no">${esc(ch.onlyB.join(", "))}</span></p>` : "")
+      + `</div>`;
   }
 
   private sideClick(e: Event, dbl = false) {
@@ -630,6 +717,8 @@ export class ThermalMaps {
     }
     const sort = tg.closest<HTMLElement>("[data-sort]");
     if (sort && !dbl) { const col = sort.dataset.sort as SortCol; a.sort = { col, up: a.sort.col === col ? !a.sort.up : col === "name" || col === "margin" || col === "life" }; this.renderSide(); return; }
+    const crow = tg.closest<HTMLElement>("tr[data-cpart]");
+    if (crow) { if (!a.on) this.setOn(true); this.zoomTo(a, Number(crow.dataset.cpart)); return; }
     const row = tg.closest<HTMLElement>("tr[data-part]");
     if (row) { if (!a.on) this.setOn(true); this.zoomTo(a, Number(row.dataset.part)); return; }
     const prob = tg.closest<HTMLElement>("[data-prob]");
@@ -662,10 +751,15 @@ export class ThermalMaps {
     const [lo, hi] = this.rangeOf(a!), mr = a!.pkg.mesh.range, amb = this.ambient(a!), mf = a!.pkg.manifest;
     const rise = this.prefs.rise && amb !== undefined, off = rise ? amb! : 0;
     const src = [mf.app, mf.created ? mf.created.slice(0, 10) : ""].filter(Boolean).join(", ");
-    el.innerHTML = `<div class="ana-head"><strong>${esc(rise ? t("Temperature rise") : t("Temperature"))}</strong>`
+    const cmp = a!.cmp, dl = cmp?.view === "d";
+    const nm = (x: ThermalPackage) => x.manifest.design || x.name;
+    el.innerHTML = `<div class="ana-head"><strong>${esc(dl ? t("Temperature change") : rise ? t("Temperature rise") : t("Temperature"))}</strong>`
       + `<button class="sim-ib" data-a="close" title="${esc(t("Hide the map"))}" aria-label="${esc(t("Hide the map"))}">×</button></div>`
-      + `<div class="ana-ramp" style="background:${paletteCss(this.prefs.palette)}"></div>`
-      + `<div class="ana-scale"><span data-v="min" translate="no">${mr[0] < lo - 1e-6 ? "▼ " : ""}${rise ? "+" : ""}${esc(deg(lo - off))}</span><span>°C</span><span data-v="max" translate="no">${mr[1] > hi + 1e-6 ? "▲ " : ""}${rise ? "+" : ""}${esc(deg(hi - off))}</span></div>`
+      + (cmp ? `<label class="ana-row" title="${esc(t("B flips between the two maps"))}"><span>${esc(t("Show"))}</span><select data-k="show"><option value="a"${cmp.view === "a" ? " selected" : ""}>A: ${esc(nm(a!.pkg))}</option><option value="b"${cmp.view === "b" ? " selected" : ""}>B: ${esc(nm(cmp.pkg))}</option><option value="d"${dl ? " selected" : ""}>${esc(t("Change (B − A)"))}</option></select></label>` : "")
+      + `<div class="ana-ramp" style="background:${paletteCss(dl ? "diverging" : this.prefs.palette)}"></div>`
+      + (dl ? `<div class="ana-scale"><span data-v="min" translate="no">${esc(this.here(a!, lo).replace(" K", ""))}</span><span>K</span><span data-v="max" translate="no">${esc(this.here(a!, hi).replace(" K", ""))}</span></div>`
+        : `<div class="ana-scale"><span data-v="min" translate="no">${mr[0] < lo - 1e-6 ? "▼ " : ""}${rise ? "+" : ""}${esc(deg(lo - off))}</span><span>°C</span><span data-v="max" translate="no">${mr[1] > hi + 1e-6 ? "▲ " : ""}${rise ? "+" : ""}${esc(deg(hi - off))}</span></div>`)
+      + (cmp ? `<p class="ana-note" data-v="cmpnote">${esc(dl ? t("Blue: cooler in B, red: hotter in B.") : t("A and B share one colour range."))}</p><button class="btn small" data-a="uncompare">${esc(t("Stop comparing"))}</button>` : "")
       + (src ? `<p class="ana-note" data-v="source">${esc(t("From {app}", { app: "\u0001" })).replace("\u0001", `<span translate="no">${esc(src)}</span>`)}</p>` : "")
       + (amb !== undefined ? `<p class="ana-note" data-v="ambient">${esc(t("Ambient {v} °C", { v: deg(amb) }))}${mf.settings.operatingPoint ? ` · ${esc(t("operating point {v}", { v: mf.settings.operatingPoint }))}` : ""}</p>` : "")
       + (mf.accuracy !== undefined ? `<p class="ana-note" data-v="accuracy">${esc(t("Estimate ±{v} °C", { v: deg(mf.accuracy) }))}</p>` : "")
@@ -689,11 +783,13 @@ export class ThermalMaps {
     else if (k === "noprobes") { a.probes = []; this.renderAll(); }
     else if (k === "probecsv") this.probeCsv(a);
     else if (k === "fit") { a.fitted = true; this.show(); this.renderAll(); }
+    else if (k === "uncompare") this.uncompare();
   }
 
   private legendChange(e: Event) {
     const el = e.target as HTMLInputElement, k = el.dataset.k, a = this.cur();
     if (!a || !k) return;
+    if (k === "show") { this.setView(el.value as "a" | "b" | "d"); return; }
     if (k === "palette") { this.prefs.palette = el.value as PaletteName; this.savePrefs(); }
     else if (k === "labels") { this.prefs.labels = el.checked; this.savePrefs(); }
     else if (k === "rise") { this.prefs.rise = el.checked; this.savePrefs(); }
@@ -752,6 +848,7 @@ export class ThermalMaps {
       range: this.rangeOf(a), parts: a.pkg.manifest.parts.length, matched: a.match.bodies.size, missing: a.match.missing, changed: a.match.changed, off: a.match.off, fitted: a.fitted,
       hidden: this.saved.length, problems: this.problemsOf(a).map(p => ({ kind: p.kind, id: p.id, value: p.value })), hottest: sm.hottest, peak: sm.peak, power: sm.power,
       sel: a.sel, probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
+      compare: a.cmp ? { name: a.cmp.pkg.name, view: a.cmp.view, rows: a.cmp.changes.rows.map(r => ({ name: r.name, a: r.a, b: r.b, d: r.d })), onlyA: a.cmp.changes.onlyA, onlyB: a.cmp.changes.onlyB } : null,
     };
   }
   /** Where a point of the package is on screen (window pixels), for tests that click the map. */

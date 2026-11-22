@@ -17390,6 +17390,47 @@ try {
     await ctx.close();
   }
 
+  // --- thermal compare 1.659 (FRS-thermal FR-TMAP-030/031): a second package of the same board compared with the first ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const cp = await ctx.newPage();
+    cp.on("pageerror", e => errors.push(e.message));
+    cp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal");
+    await cp.goto(`${origin}/index.html?debug&nokernel`);
+    await cp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await cp.goto(`${origin}/index.html?debug&nokernel`);
+    await cp.waitForFunction(() => window.__sv);
+    await cp.setInputFiles("#file-input", [join(thx, "amp.step"), join(thx, "amp-thermal.zip")]);
+    await cp.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    await cp.setInputFiles("#file-input", [join(thx, "amp-vented-thermal.zip")]);
+    await cp.waitForSelector('dialog.choose-dlg [data-choose="compare"]', { timeout: 30000 });
+    const ask = await cp.evaluate(() => document.querySelector("dialog.choose-dlg p")?.textContent);
+    await cp.click('dialog.choose-dlg [data-choose="compare"]');
+    await cp.waitForFunction(() => window.__sv.thermal.state()?.compare, null, { timeout: 30000 });
+    await cp.waitForTimeout(500);
+    const c1 = await cp.evaluate(() => { const s = window.__sv.thermal.state(); return { cmp: s.compare, range: s.range, show: document.querySelector('#th-legend select[data-k="show"]')?.value, min: document.querySelector('#th-legend [data-v="min"]')?.textContent, max: document.querySelector('#th-legend [data-v="max"]')?.textContent,
+      rows: [...document.querySelectorAll("#th-side .th-ctable tr[data-cpart]")].map(r => [r.children[0].textContent, r.querySelector('[data-v="dt"]').textContent, r.className]), onlyA: document.querySelector('#th-side [data-v="onlya"]')?.textContent,
+      wide: document.querySelector("#tab-thermal").scrollWidth - document.querySelector("#tab-thermal").clientWidth }; });
+    check(/EL84 test board/.test(ask ?? "") && c1.cmp.view === "d" && c1.show === "d" && c1.range[0] === -c1.range[1] && c1.range[1] >= 10 && /^−/.test(c1.min) && /^\+/.test(c1.max) && c1.rows.length === 6 && c1.rows[0][1] === "−10"
+      && c1.rows.some(r => r[0] === "R14" && r[1] === "+8" && r[2] === "up") && /C13/.test(c1.onlyA ?? "") && c1.wide <= 0,
+      `thermal compare 1.659: a second package of the board opened on it asks Replace or Keep both; comparing shows the change B − A on a range centred on 0, and the parts by their change, the one in A only listed (${JSON.stringify(c1)})`);
+    // B flips between the two maps on one range
+    await cp.mouse.move(700, 450);
+    await cp.keyboard.press("b");
+    const b1 = await cp.evaluate(() => { const s = window.__sv.thermal.state(); return { view: s.compare.view, range: s.range }; });
+    // the top of R14 (part 2)
+    const atB = await cp.evaluate(() => { const q = window.__sv.thermal.screenOf([45, 30, 8.5]), v = q && window.__sv.thermal.valueAt(q.x, q.y); return v && v.part === 2 ? [q.x, q.y, v.t] : null; });
+    await cp.keyboard.press("b");
+    const a1 = await cp.evaluate(([x, y]) => ({ view: window.__sv.thermal.state().compare.view, range: window.__sv.thermal.state().range, v: window.__sv.thermal.valueAt(x, y) }), atB ?? [0, 0]);
+    check(b1.view === "b" && a1.view === "a" && JSON.stringify(b1.range) === JSON.stringify(a1.range) && b1.range[0] <= 33.01 && b1.range[1] >= 181.9 && atB && a1.v && Math.abs(atB[2] - a1.v.t - 8) < 0.01,
+      `thermal compare 1.659: B flips between map A and map B on one colour range, and R14 reads 8 K hotter in B at the same point (${JSON.stringify({ b1, a1, atB })})`);
+    await cp.click('#th-legend [data-a="uncompare"]');
+    const u = await cp.evaluate(() => ({ cmp: window.__sv.thermal.state().compare, show: !!document.querySelector('#th-legend select[data-k="show"]'), table: !!document.querySelector("#th-side .th-ctable") }));
+    check(u.cmp === null && !u.show && !u.table, `thermal compare 1.659: Stop comparing goes back to map A alone (${JSON.stringify(u)})`);
+    await ctx.close();
+  }
+
   // --- Board thermal maps 1.653 (FRS-thermal TH1): a board's STEP with its thermal package ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

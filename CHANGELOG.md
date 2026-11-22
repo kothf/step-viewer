@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.659.0] - 2026-11-22
+
+### Added
+
+- Compare two thermal maps of one board. Opening a second thermal package for a model that already has a map asks whether to replace the map or keep both and compare them. The map then shows A, B or the temperature change B − A on a diverging scale symmetric about zero (B flips between A and B), and the Thermal tab lists the parts by how much their temperature changed, with the ones found in one map only.
+- The Thermal bar's Add button is now "Another map".
+
 ## [1.658.0] - 2026-11-22
 
 ### Added
@@ -4323,7 +4330,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.658.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.659.0...HEAD
+[1.659.0]: https://github.com/kothf/step-viewer/compare/v1.658.0...v1.659.0
 [1.658.0]: https://github.com/kothf/step-viewer/compare/v1.657.0...v1.658.0
 [1.657.0]: https://github.com/kothf/step-viewer/compare/v1.656.0...v1.657.0
 [1.656.0]: https://github.com/kothf/step-viewer/compare/v1.655.0...v1.656.0
