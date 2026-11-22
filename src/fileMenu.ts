@@ -110,7 +110,7 @@ export class FileMenu {
       "-",
       { id: "open", label: t("Open…"), key: "Ctrl+O", on: true },
       { id: "open-drawing", label: t("Open drawing"), on: true, hidden: !h.openDrawing, title: t("The drawing of this part or assembly: open, in a tab, in the vault or in the recent documents") },
-      { id: "thermal-map", label: t("Add thermal map…"), on: true, hidden: !h.addThermalMap || k !== "model", title: t("A thermal package of this board: temperatures from the board design app, shown on the model") },
+      { id: "thermal-map", label: t("Add thermal map…"), on: true, hidden: !h.addThermalMap || (k !== "model" && k !== "pcb"), title: t("A thermal package of this board: temperatures from the board design app, shown on the model") },
       { id: "close", label: t("Close"), key: "Ctrl+Alt+W", on: h.docCount() > 0 },
       { id: "close-all", label: t("Close all"), on: h.docCount() > 0 },
       "-",

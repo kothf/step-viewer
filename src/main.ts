@@ -51,6 +51,7 @@ import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
 import { packageMeshes, readPackageAsking, thermalErrorText, ThermalMaps } from "./thermal/ui";
+import { PcbThermal } from "./thermal/pcbOverlayUi";
 import { findManifest, isSourcesCsv, type ThermalPackage } from "./thermal/package";
 import type { ModelBody, PartMatch } from "./thermal/match";
 import { findMaterial, toRef, type MatRef } from "./tools/materials";
@@ -107,6 +108,7 @@ const thermal = new ThermalMaps({
   simulate: (pkg, match, bodies) => { void simulateBoard(pkg, match, bodies); },
   savePicture: () => { void exportPng(false, parseInt($<HTMLSelectElement>("#png-scale").value) || 2); },
   gerber: files => { if (state.fileKey) boardGerbers.set(state.fileKey, files); },
+  pcbView: (pkg, du, dv) => void openPcbThermal(pkg, du, dv),
 });
 /**
  * Simulate in MöbiusCAD (FRS-thermal J5): the board's STEP becomes an assembly, one component per body with a
@@ -787,8 +789,32 @@ $("#back-pcb").addEventListener("click", () => {
   gerber.render();
 });
 
+/** The package's board-face temperatures under the PCB view's layers (FRS-thermal FR-TMAP-040). */
+const pcbThermal = new PcbThermal(gerber, () => thermal.palette());
+
+/** Opens the shown map's Gerber set in the PCB view with the map's board-face temperatures under it. */
+async function openPcbThermal(pkg: ThermalPackage, du = 0, dv = 0) {
+  const set = boardGerbers.get(state.fileKey);
+  if (!set) { toast(t("Open the board's Gerber set first: it goes under the map and into the PCB view."), "warn"); return; }
+  await openPcb(set);
+  if (!gerber.loaded) return;
+  if (!pcbThermal.set(pkg, du, dv)) toast(t("The thermal package has no board faces to draw in the PCB view."), "warn");
+}
+
+/** A thermal package opened while the PCB view shows a board: its temperatures go under the layers. */
+async function pcbThermalFrom(files: Map<string, Uint8Array>, name: string) {
+  let pkg: Awaited<ReturnType<typeof readPackageAsking>>;
+  try { pkg = await readPackageAsking(files, name); }
+  catch (err) { toast(thermalErrorText(err, name), true); return; }
+  if (!pkg) return;
+  if (pkg.sourcesOnly) { toast(t("A heat-source table has no temperatures to draw: open the board's STEP and add it there."), "warn"); return; }
+  if (pcbThermal.set(pkg)) toast(t("Board temperatures of {name} under the PCB layers.", { name: pkg.name }), "success");
+  else toast(t("The thermal package has no board faces to draw in the PCB view."), "warn");
+}
+
 async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], append = false) {
   const list = await Promise.all(files.map(async f => (f instanceof File ? { name: f.name, data: await f.arrayBuffer() } : f)));
+  if (!append) pcbThermal.set(null);
   ++loadToken;
   docs?.before3d();
   modeller.close();
@@ -823,6 +849,8 @@ async function openFiles(files: File[]) {
     if (th) {
       void recentAdd(files.map(f => ({ name: f.name, data: f })));
       const step = th.rest.find(f => /\.(step|stp)$/i.test(f.name));
+      // the PCB view on screen: the package's board temperatures go under its layers (FR-TMAP-040)
+      if (!step && isPcbMode() && gerber.loaded && !(await pcbFilesOf(th.rest)).length) { await pcbThermalFrom(th.files, th.name); return; }
       // the board's Gerber set opened with them goes under the map (FR-TBRD-020)
       const pcb = await pcbFilesOf(th.rest);
       if (pcb.length && step) boardGerbers.set(`sv:m:${step.name}:${step.size || ""}`, await gerberData(pcb));
@@ -4016,4 +4044,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, sim, thermal, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setArcMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, sim, thermal, pcbThermal, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setArcMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });
