@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.657.0] - 2026-11-21
+
+### Added
+
+- **Heat paths** (FRS-thermal TH3, FR-TBRD-003): the results of a board study made from a thermal package list, for each part, the share of its heat conducted into the board, the share leaving its own surface (convection, radiation, or a heatsink resistance on it) and the share going elsewhere (a modelled heatsink, other parts). Hover a row to see the split the package worked out. A cool part on a hot board shows a negative board share: it takes heat in from the board. The table is in the report too.
+- **Keep the package's split**, in the Heat from package panel: each part's board share then enters the board under the part as a fixed power, a chassis share leaves the model, and the rest is made in the part. Off (the default), all the heat is made in the parts and goes where the conductances send it.
+- The per-component results now know the heat leaving each component's own surface, so the heat balance of every part can be read.
+
 ## [1.656.0] - 2026-11-21
 
 ### Added
@@ -4303,6 +4311,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.655.0...HEAD
+[1.657.0]: https://github.com/kothf/step-viewer/compare/v1.656.0...v1.657.0
 [1.656.0]: https://github.com/kothf/step-viewer/compare/v1.655.0...v1.656.0
 [1.655.0]: https://github.com/kothf/step-viewer/compare/v1.654.0...v1.655.0
 [1.654.0]: https://github.com/kothf/step-viewer/compare/v1.653.0...v1.654.0

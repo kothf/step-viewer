@@ -6,6 +6,7 @@ import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNorma
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { DEFAULT_AMBIENT, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { contactPatch } from "../thermal/study";
 import { solveThermal, thermalMemory, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource } from "./thermal";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
@@ -456,7 +457,8 @@ export interface PassResult {
     min: number; max: number; applied: number; flows: SinkFlow[]; solves: number;
     /** Assemblies: where the components touch and the heat passing there; each one's temperatures and the heat made in it. */
     contacts?: ThermalContact[];
-    comps?: { min: number; max: number; mean: number; power: number }[];
+    /** By component: surface temperatures, heat made, and heat leaving its own surface (W; the rest is conducted to neighbours). */
+    comps?: { min: number; max: number; mean: number; power: number; out?: number }[];
   };
 }
 
@@ -469,6 +471,13 @@ export interface ThermalSetup {
 }
 
 /** Area of a triangle soup (9 numbers per triangle), mm². */
+/** The triangles of the faces on these components (face names `<comp>@<face>`). */
+function compTris(b: SimBody, comps: Set<string>): Float64Array {
+  const on = b.names.map(n => comps.has(compOf(n))), keep: number[] = [];
+  for (let i = 0; i < b.face.length; i++) if (on[b.face[i]]) for (let k = 0; k < 9; k++) keep.push(b.tris[9 * i + k]);
+  return Float64Array.from(keep);
+}
+
 function surfaceArea(tris: ArrayLike<number>): number {
   let a = 0;
   for (let o = 0; o + 8 < tris.length; o += 9) {
@@ -526,14 +535,24 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
     if (off.has(l.id) || !isThermalType(l.type)) continue;
     const v = l.value?.v ?? 0;
     if (l.type === "pkgheat") {
-      // a board's package: each part's power is made throughout the components its bodies became
+      // a board's package: each part's power is made throughout the components its bodies became; with the
+      // package's split kept, its board share enters the board under the part and a chassis share leaves the model
       let any = false;
+      const boardDom = l.board ? (regions ?? []).findIndex(k => compOf(k) === l.board) : -1;
+      const boardTris = l.split && boardDom >= 0 ? compTris(b, new Set([l.board!])) : null;
       for (const part of l.parts ?? []) {
         if (part.off || !(part.p >= PACKAGE_MIN_POWER)) continue;
         const comps = new Set(part.comps), doms: number[] = [];
         (regions ?? []).forEach((k, i) => { if (comps.has(compOf(k))) doms.push(i); });
         if (!doms.length) continue;
-        out.sources.push({ power: part.p, doms });
+        let own = part.p;
+        if (boardTris) {
+          const share = Math.min(own, Math.max(0, part.board ?? 0));
+          const patch = share > 0 ? contactPatch(boardTris, compTris(b, comps)) : null;
+          if (patch) { out.sources.push({ tris: patch, power: share, dom: boardDom }); own -= share; }
+          if (part.path === "chassis") own -= Math.min(own, Math.max(0, part.sink ?? 0));
+        }
+        if (own > 0) out.sources.push({ power: own, doms });
         any = true;
       }
       if (!any) out.problems.push({ id: l.id, code: "E-SIM-EMPTY" });
@@ -922,19 +941,23 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
     }
     if (!s.temp.length) { min = 0; max = 0; }
     // by component: the temperatures on its surface and the heat made in it
-    let comps: { min: number; max: number; mean: number; power: number }[] | undefined;
+    let comps: { min: number; max: number; mean: number; power: number; out?: number }[] | undefined;
     if (domains && s.dom) {
       comps = domains.map(() => ({ min: Infinity, max: -Infinity, mean: 0, power: 0 }));
       const cnt = new Float64Array(domains.length);
       for (let i = 0; i < s.temp.length; i++) { const c = comps[s.dom[i]], v = s.temp[i]; if (v < c.min) c.min = v; if (v > c.max) c.max = v; c.mean += v; cnt[s.dom[i]]++; }
       comps.forEach((c, i) => { if (cnt[i]) c.mean /= cnt[i]; else { c.min = 0; c.max = 0; } });
       for (const q of set.sources) {
+        if (q.tris && q.dom !== undefined && q.power && comps[q.dom]) comps[q.dom].power += q.power;
         if (q.tris || !q.power) continue;
         const ds = q.doms ?? domains.map((_d, i) => i);
         let vol = 0;
         for (const d of ds) vol += r.volumes[d] ?? 0;
         if (vol > 0) for (const d of ds) comps[d].power += (q.power * (r.volumes[d] ?? 0)) / vol;
       }
+      // what leaves each component's own surface (to the air or a fixed temperature): its heat less what it conducts away
+      comps.forEach(c => { c.out = c.power; });
+      for (const c of r.contacts ?? []) { if (comps[c.a]) comps[c.a].out! -= c.heat; if (comps[c.b]) comps[c.b].out! += c.heat; }
     }
     // the range the change is measured against takes in the surroundings, so a nearly even part still converges
     let lo = min, hi = max;

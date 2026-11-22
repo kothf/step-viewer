@@ -40,6 +40,8 @@ export interface ThermalSource {
   flux?: number;
   /** Without faces and with `domains`: the heat is spread over the volume of these domains only. */
   doms?: number[];
+  /** With faces: the domain they are on (bookkeeping only, for the heat made per component). */
+  dom?: number;
 }
 
 /** One body of several (an assembly's component): its own conductivity, W/(mm·K), and surface. */
