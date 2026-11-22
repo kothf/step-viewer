@@ -112,7 +112,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "remote", "hydro", "gravity", "centrifugal", "temperature"];
-const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", fan: "⤳", rad: "☼", radx: "⇌", transient: "◷", temperature: "ϑ" };
+const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", vheat: "▣", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", fan: "⤳", rad: "☼", radx: "⇌", transient: "◷", temperature: "ϑ" };
 /** A forced air condition's speed, m/s (from the fan when it has one). */
 const forcedSpeed = (f: ForcedAir) => (f.fan ? fanSpeed(f.fan.q, f.fan.a) : f.speed);
 /** The flow direction's label (+X…−Z), or the nearest. */
@@ -141,6 +141,7 @@ const TIP: Record<string, string> = {
   remote: "Remote load: a force and a moment at a point, carried to the faces",
   heat: "Heat power: watts made in the part or entering through faces",
   transient: "Over time: warm-up, cool-down and heaters switched on and off, from a start temperature",
+  vheat: "Volume heat: watts per cubic metre made throughout the part, like a resistor or a coil",
   hflux: "Heat flux: watts per area entering through faces",
   temp: "Fixed temperature: the faces are held at a temperature, like a cold plate",
   conv: "Convection: the faces are cooled by air or a liquid",
@@ -776,7 +777,7 @@ export class SimController {
     }
     if ((THERMAL_LOADS as string[]).includes(c)) {
       const type = c as LoadType;
-      this.edit = { kind: "load", isNew: true, draft: { id: nextId(st, "l"), name: itemName(st, type), type, faces: [], value: { v: type === "heat" ? 1 : 1000 } } };
+      this.edit = { kind: "load", isNew: true, draft: { id: nextId(st, "l"), name: itemName(st, type), type, faces: [], value: { v: type === "heat" ? 1 : type === "vheat" ? 1e6 : 1000 } } };
       this.renderAll(); this.drawMarks();
       return;
     }
@@ -1044,7 +1045,7 @@ export class SimController {
   }
 
   private unpicked(d: { type: string; body?: boolean; all?: boolean }): boolean {
-    return (d.type === "heat" && !!d.body && !this.host.asm()) || d.type === "pkgheat" || d.type === "temperature" || ((d.type === "conv" || d.type === "rad") && !!d.all);
+    return ((d.type === "heat" && !!d.body || d.type === "vheat") && !this.host.asm()) || d.type === "pkgheat" || d.type === "temperature" || ((d.type === "conv" || d.type === "rad") && !!d.all);
   }
 
   /** The part's thermal studies (sources of a temperature load). */
@@ -3301,6 +3302,7 @@ export class SimController {
     if (it.type === "radx") return `ε ${sig(it.emis ?? 0.9)} / ${sig(it.emis2 ?? it.emis ?? 0.9)}`;
     const prof = (l: StudyLoad) => (st.settings.transient && l.profile ? `, ${profileText(l.profile, t)}` : "");
     if (it.type === "heat") return `${sig(it.value?.v ?? 0)} W${prof(it)}`;
+    if (it.type === "vheat") return `${sig(it.value?.v ?? 0)} W/m³${prof(it)}`;
     if (it.type === "hflux") return `${sig(it.value?.v ?? 0)} W/m²${prof(it)}`;
     if (it.type === "pkgheat") return `${sig((it.parts ?? []).reduce((a, x) => a + (x.off || !(x.p >= PACKAGE_MIN_POWER) || !x.comps.length ? 0 : x.p), 0))} W${prof(it)}`;
     return "";
@@ -3311,7 +3313,7 @@ export class SimController {
     const blocks: ReportBlock[] = [{ kind: "h", text: t("Study") }];
     const kv = (rows: string[][]) => blocks.push({ kind: "table", rows: [[t("Property"), t("Value")], ...rows], widths: [2, 3] });
     const name = (it: StudySupport | StudyLoad) => (it.name ?? it.id) + (off.has(it.id) ? ` (${t("left out")})` : "");
-    const on = (it: StudySupport | StudyLoad) => (it.type === "heat" && it.body ? (res.comps ? t("whole component") : t("whole body")) : this.pickText(it));
+    const on = (it: StudySupport | StudyLoad) => ((it.type === "heat" && it.body) || it.type === "vheat" ? (res.comps ? t("whole component") : t("whole body")) : this.pickText(it));
     kv([[t("Document"), doc.name], [t("Study"), st.name], [t("Kind"), st.settings.transient ? t("Transient thermal") : t("Thermal")], [t("Ambient temperature"), `${sig(st.settings.ambient ?? DEFAULT_AMBIENT)} °C`], [t("Enclosure"), `${t(ENCLOSURES.find(x => x.id === (st.settings.enclosure ?? "open"))?.label ?? "Custom")} (${sig(enclosureFactor(st.settings))})`], [t("Passes"), `${res.passes.length} / ${Math.min(THERMAL_PASSES, st.settings.passes)}`],
       ...(res.comps ? [] : [[t("Material"), m?.name ?? "–"], [t("Thermal conductivity"), `${sig(m?.k ?? 0)} W/(m·K)`]])]);
     if (res.comps && res.bodyMats) {
@@ -3465,7 +3467,7 @@ export class SimController {
       const isOff = off.has(it.id);
       return `<li class="sim-row${isOff ? " off" : ""}${bad ? " bad" : ""}${this.edit?.draft.id === it.id ? " cur" : ""}" data-id="${it.id}">`
         + `<button class="sim-name" data-a="edit" translate="no" title="${esc(t("Edit"))}"><i class="sim-dot ${it.type === "refine" ? "ref" : it.type === "connector" ? "conn" : it.type === "mass" ? "mass" : it.type === "weld" ? "weld" : load ? "load" : "sup"}" aria-hidden="true"></i>${esc(it.name ?? it.id)}</button>`
-        + `<span class="sim-meta">${isThermalType(it.type) ? esc(`${it.type === "heat" && (it as StudyLoad).body ? (this.host.asm() ? t("whole component") : t("whole body")) : this.pickText(it)} · ${this.thermalText(it as StudyLoad, st)}`) : it.type === "gravity" ? "" : it.type === "temperature" ? this.tempText(it as StudyLoad, true) : it.type === "centrifugal" && !it.faces.length ? esc(this.axisText(it as StudyLoad)) : esc(it.type === "connector" ? t(it.kind === "spring" ? "spring" : "rigid") : this.pickText(it))}${it.type === "mass" ? ` · ${trim(it.mass)} kg` : it.type === "refine" ? ` · ${esc(t("level {n}", { n: it.level }))}` : it.type === "weld" ? (it.on === "points" ? ` · ⌀ ${trim(it.dia ?? DEFAULT_SPOT)} mm` : ` · a ${trim(it.throat)} mm`) : ""}</span>`
+        + `<span class="sim-meta">${isThermalType(it.type) ? esc(`${(it.type === "heat" && (it as StudyLoad).body) || it.type === "vheat" ? (this.host.asm() ? t("whole component") : t("whole body")) : this.pickText(it)} · ${this.thermalText(it as StudyLoad, st)}`) : it.type === "gravity" ? "" : it.type === "temperature" ? this.tempText(it as StudyLoad, true) : it.type === "centrifugal" && !it.faces.length ? esc(this.axisText(it as StudyLoad)) : esc(it.type === "connector" ? t(it.kind === "spring" ? "spring" : "rigid") : this.pickText(it))}${it.type === "mass" ? ` · ${trim(it.mass)} kg` : it.type === "refine" ? ` · ${esc(t("level {n}", { n: it.level }))}` : it.type === "weld" ? (it.on === "points" ? ` · ⌀ ${trim(it.dia ?? DEFAULT_SPOT)} mm` : ` · a ${trim(it.throat)} mm`) : ""}</span>`
         + `<button class="sim-ib" data-a="toggle" aria-pressed="${isOff}" title="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}" aria-label="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}">${isOff ? "○" : "●"}</button>`
         + `<button class="sim-ib" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">×</button>`
         + (bad ? `<p class="sim-prob">${esc(this.errorText(`${bad}: ${it.id}`))}</p>` : "")
@@ -3910,6 +3912,8 @@ export class SimController {
             + `<p class="pm-help muted">${esc(l.split ? t("Each part's board share enters the board under the part as a fixed power, and a chassis share leaves the model; the rest is made in the part.") : t("Off: all the heat is made in the parts and goes where the conductances send it."))}</p>`) : "")
           + this.profileGroup(l, group);
       }
+      else if (l.type === "vheat") body += group(t("Volume heat"), nf("value", t("Heat per volume"), l.value, "W/m³")
+        + `<p class="pm-help muted">${esc(this.host.asm() ? t("Heat made in each cubic metre of the components the picked faces are on; the power grows with their volume. 1 W/cm³ = 1,000,000 W/m³.") : t("Heat made in each cubic metre of the part; the power grows with its volume. 1 W/cm³ = 1,000,000 W/m³."))}</p>`) + this.profileGroup(l, group);
       else if (l.type === "hflux") body += group(t("Heat flux"), nf("value", t("Heat flux"), l.value, "W/m²")
         + `<p class="pm-help muted">${esc(t("Power per area going into the picked faces."))}</p>`) + this.profileGroup(l, group);
       else if (l.type === "remote") {

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.671.0] - 2026-11-22
+
+### Added
+
+- Volume heat in thermal studies. Heat sources ▸ Volume heat makes heat throughout the part in W/m³ (type W/cm³, kW/m³ or W/mm³ too), like a resistor, a coil or a chemical reaction, so the power follows the part's volume as it changes. In an assembly it is made throughout the components the picked faces are on. It takes a power profile in studies over time like the other heat sources.
+
 ## [1.670.0] - 2026-11-22
 
 ### Added
@@ -4412,7 +4418,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.670.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.671.0...HEAD
+[1.671.0]: https://github.com/kothf/step-viewer/compare/v1.670.0...v1.671.0
 [1.670.0]: https://github.com/kothf/step-viewer/compare/v1.669.0...v1.670.0
 [1.669.0]: https://github.com/kothf/step-viewer/compare/v1.668.0...v1.669.0
 [1.668.0]: https://github.com/kothf/step-viewer/compare/v1.667.0...v1.668.0

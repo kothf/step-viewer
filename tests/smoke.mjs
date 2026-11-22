@@ -17921,6 +17921,20 @@ try {
     check(/Power cases/.test(heads0) && cases0?.length === 2 && JSON.stringify(cases0[0].off) === '["lx"]' && !pc.error && pc.env && pc.res?.length === 2 && Math.abs(rf / ri - 4) < 0.02 && Math.abs(pc.max - (rf + 25)) < 1e-3
       && pc.rows.length === 2 && /^2$/.test(pc.rows[0][1] ?? "") && /^8$/.test(pc.rows[1][1] ?? "") && pc.note && pc.wide <= 0 && !pc0.env && pc0.sel === 0 && Math.abs(pc0.max - (ri + 25)) < 1e-3 && /2 W/.test(pc0.heat) && ruCases.length === 0,
       `power cases 1.670: a study with idle (2 W) and full power (8 W) cases solves both, shows the hottest of them by default and each case on a click; translated (${JSON.stringify({ heads0, cases0, pc, pc0, ri, rf, ruCases })})`);
+    // --- volume heat 1.671 (FR-TLOAD-003): W/m³ throughout the part, typed in W/cm³, no faces to pick ---
+    await fp.click('#sim-tools [data-s="vheat"]');
+    await fp.waitForSelector('#sim-pm [data-n="value"]');
+    const vhPanel = await fp.evaluate(() => ({ unit: document.querySelector('#sim-pm [data-n="value"]')?.closest(".pm-in")?.textContent ?? "", faces: !!document.querySelector("#sim-pm .sim-faces") }));
+    await fp.fill('#sim-pm [data-n="value"]', "0.1 W/cm³");
+    await fp.keyboard.press("Tab");
+    await fp.click("#sim-pm .pm-ok");
+    await fp.waitForTimeout(300);
+    const vh = await fp.evaluate(() => { const l = window.__sv.model.store.doc.studies.at(-1).loads.find(x => x.type === "vheat"); return { v: l?.value?.v, row: document.querySelector(`#sim-tree .sim-row[data-id="${l?.id}"]`)?.textContent ?? "" }; });
+    await fp.click("#lang-btn");
+    const ruVh = await fp.evaluate(() => document.querySelector('#sim-tools [data-s="vheat"]')?.textContent ?? "");
+    await fp.click("#lang-btn");
+    check(/W\/m³/.test(vhPanel.unit) && !vhPanel.faces && vh.v === 1e5 && /whole body/.test(vh.row) && /W\/m³/.test(vh.row) && /Объёмное/.test(ruVh),
+      `volume heat 1.671: Loads ▸ Volume heat takes W/m³ (0.1 W/cm³ typed = 100000 W/m³) for the whole part without picking faces; translated (${JSON.stringify({ vhPanel, vh, ruVh })})`);
     await ctx.close();
   }
 

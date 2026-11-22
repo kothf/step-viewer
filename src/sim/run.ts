@@ -686,6 +686,17 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
       continue;
     }
     if (l.type === "heat" && l.body) { out.sources.push({ power: v, id: l.id }); continue; }
+    if (l.type === "vheat") {
+      // W/m³ throughout the part, or in an assembly throughout the components the picked faces are on
+      const density = v * 1e-9;
+      if (!regions) { out.sources.push({ density, id: l.id }); continue; }
+      if (!l.faces.length) { out.problems.push({ id: l.id, code: "E-SIM-EMPTY" }); continue; }
+      const comps = new Set(l.faces.map(f => compOf(f.name))), doms: number[] = [];
+      regions.forEach((k, i) => { if (comps.has(compOf(k))) doms.push(i); });
+      if (!doms.length) { out.problems.push({ id: l.id, code: "E-SIM-REF" }); continue; }
+      out.sources.push({ density, doms, id: l.id });
+      continue;
+    }
     const tris = facesOf(l);
     if (!tris) continue;
     out.sources.push(l.type === "heat" ? { tris, power: v, id: l.id } : { tris, flux: v * 1e-6, id: l.id });
@@ -1102,7 +1113,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), ...(T.kts?.[i] ? { kt: T.kts[i]! } : {}), tris: r.tris }));
   // nothing brings heat and nothing differs: every point would just sit at the one temperature
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
-  if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
+  if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0 || (s.density ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
   const inside = insideOf(new MeshBody(inp.body.tris));
   const h = cellSize(inp.body, inp.cells);
   const passes = Math.max(1, Math.min(GLOBAL_PASSES, Math.round(inp.passes)));
@@ -1134,11 +1145,11 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       comps.forEach((c, i) => { if (cnt[i]) c.mean /= cnt[i]; else { c.min = 0; c.max = 0; } });
       for (const q of set.sources) {
         if (q.tris && q.dom !== undefined && q.power && comps[q.dom]) comps[q.dom].power += q.power;
-        if (q.tris || !q.power) continue;
+        if (q.tris || !(q.power || q.density)) continue;
         const ds = q.doms ?? domains.map((_d, i) => i);
         let vol = 0;
         for (const d of ds) vol += r.volumes[d] ?? 0;
-        if (vol > 0) for (const d of ds) comps[d].power += (q.power * (r.volumes[d] ?? 0)) / vol;
+        if (vol > 0) for (const d of ds) comps[d].power += q.density !== undefined ? q.density * (r.volumes[d] ?? 0) : (q.power! * (r.volumes[d] ?? 0)) / vol;
       }
       // what leaves each component's own surface (to the air or a fixed temperature): its heat less what it conducts away
       comps.forEach(c => { c.out = c.power; });
@@ -1176,7 +1187,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   if (R ? (Tr.rcs ?? []).length !== R.length || Tr.rcs!.some(v => !(v > 0)) : !(Tr.rc > 0)) throw new Error("E-TH-NOCP");
   if (!set.sinks.length) throw new Error("E-TH-NOSINK");
   if (!(Tr.end > 0)) throw new Error("E-TH-TIME");
-  const heat = set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0);
+  const heat = set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0 || (s.density ?? 0) !== 0);
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!heat && temps.size < 2 && temps.has(Tr.t0)) throw new Error("E-TH-NOHEAT");
   let p = 2, pass = 0, steady: number | null = null;

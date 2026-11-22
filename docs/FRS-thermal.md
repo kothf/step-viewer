@@ -316,7 +316,7 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 | --- | --- | --- | --- | --- | --- |
 | FR-TLOAD-001 | TH2 | M | **Heat power** | bodies, components, faces | Total power in W (or mW), spread over the volume of the picked bodies or the area of the picked faces; "per item" option. Bodies are the default pick (a part dissipates in its body). |
 | FR-TLOAD-002 | TH2 | M | **Heat flux** | faces | W/m² normal into the face. |
-| FR-TLOAD-003 | TH2 | S | **Volume heat** | bodies | W/m³. |
+| FR-TLOAD-003 | TH2 | S | **Volume heat** | bodies | W/m³. Built in 1.671.0: the whole part, or in an assembly the components of the picked faces. |
 | FR-TLOAD-004 | TH3 | M | **Heat from package** | (all package parts) | One power per package part on its matched bodies, split by its heat path (FR-TBRD-003); edited as one row with a table of parts, each part can be left out or given another power. |
 | FR-TLOAD-005 | TH4 | M | **Power profile** | any heat load | Step, table of (time, power or factor), duty cycle (on time, period), expression of t; reuses the motion study profile parsers (`parsePoints`, `exprValue`). |
 
