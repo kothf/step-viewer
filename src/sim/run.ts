@@ -6,9 +6,9 @@ import { MeshBody, insideOf } from "./body";
 import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support, type TempField } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
-import { DEFAULT_AMBIENT, DEFAULT_REF, enclosureFactor, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { DEFAULT_AMBIENT, DEFAULT_REF, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch } from "../thermal/study";
-import { ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow } from "./thermal";
+import { forcedH, ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow } from "./thermal";
 import { viewFactor } from "./viewfactor";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
@@ -555,6 +555,26 @@ export function faceSizes(b: SimBody, idx: number[], down: ArrayLike<number>): {
   return { lv, lh };
 }
 
+/**
+ * Forced air film coefficients per triangle of `idx` (FR-TBC-005), W/(mm²·K): each face's length is its extent along
+ * the flow `dir`; a face standing square to the flow (extent under a fifth of √area) takes √area instead.
+ */
+export function flowFilm(b: SimBody, idx: number[], dir: ArrayLike<number>, speed: number): Float64Array {
+  const face = faceOf(b), T = b.tris, n = Math.hypot(dir[0], dir[1], dir[2]) || 1, d = [dir[0] / n, dir[1] / n, dir[2] / n];
+  const by = new Map<number, [number, number, number]>();
+  for (const t of idx) {
+    let z = by.get(face[t]);
+    if (!z) by.set(face[t], (z = [Infinity, -Infinity, 0]));
+    const o = 9 * t;
+    const ux = T[o + 3] - T[o], uy = T[o + 4] - T[o + 1], uz = T[o + 5] - T[o + 2], vx = T[o + 6] - T[o], vy = T[o + 7] - T[o + 1], vz = T[o + 8] - T[o + 2];
+    z[2] += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+    for (let k = 0; k < 3; k++) { const s = T[o + 3 * k] * d[0] + T[o + 3 * k + 1] * d[1] + T[o + 3 * k + 2] * d[2]; z[0] = Math.min(z[0], s); z[1] = Math.max(z[1], s); }
+  }
+  const hOf = new Map<number, number>();
+  for (const [f, z] of by) { const ext = z[1] - z[0], root = Math.sqrt(z[2]); hOf.set(f, forcedH(speed, ext < 0.2 * root ? root : ext)); }
+  return Float64Array.from(idx, t => hOf.get(face[t])!);
+}
+
 /** The surface conditions and heat sources of a thermal study (FR-TLOAD, FR-TBC): W/m² and W/(m²·K) become per mm². */
 export function thermalSetup(st: Study, b: SimBody, regions?: string[]): ThermalSetup {
   const off = new Set(st.suppressed ?? []), amb = st.settings.ambient ?? DEFAULT_AMBIENT;
@@ -611,6 +631,13 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
       }
       if (s.natural) {
         out.sinks.push({ tris, natural: { factor, down, ...faceSizes(b, idx, down) }, ambient: s.ambient ?? amb, ...free });
+        out.sinkIds.push(s.id);
+        continue;
+      }
+      if (s.forced) {
+        const v = s.forced.fan ? fanSpeed(s.forced.fan.q, s.forced.fan.a) : s.forced.speed;
+        if (!(v > 0) || !Number.isFinite(v)) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
+        out.sinks.push({ tris, forced: { h: flowFilm(b, idx, s.forced.dir, v) }, ambient: s.ambient ?? amb, ...free });
         out.sinkIds.push(s.id);
         continue;
       }

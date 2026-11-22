@@ -37,6 +37,24 @@ export interface ThermalSink {
    * along gravity and its area / perimeter, mm.
    */
   natural?: { factor: number; down: ArrayLike<number>; lv: ArrayLike<number>; lh: ArrayLike<number> };
+  /** Forced air (FR-TBC-005): the film coefficient of each triangle of `tris`, W/(mm²·K) (`forcedH` of its face). */
+  forced?: { h: ArrayLike<number> };
+}
+
+/** Air near room temperature for the forced convection correlations: conductivity W/(m·K), kinematic viscosity m²/s, Prandtl number. */
+export const AIR = { k: 0.0262, nu: 1.57e-5, pr: 0.71 };
+/** Reynolds number where a flat plate's boundary layer turns turbulent. */
+export const RE_TURBULENT = 5e5;
+
+/**
+ * Forced convection film coefficient for air flowing at `speed` m/s along a face `len` mm long in the flow, W/(mm²·K):
+ * the mean over a flat plate, laminar Nu = 0.664 Re^½ Pr^⅓, above Re 5·10⁵ laminar then turbulent
+ * Nu = (0.037 Re^0.8 − 871) Pr^⅓; h = Nu k / L.
+ */
+export function forcedH(speed: number, len: number): number {
+  const L = Math.max(len, 1) * 1e-3, re = (Math.max(speed, 0) * L) / AIR.nu, pr3 = Math.cbrt(AIR.pr);
+  const nu = re > RE_TURBULENT ? (0.037 * re ** 0.8 - 871) * pr3 : 0.664 * Math.sqrt(re) * pr3;
+  return (1e-6 * nu * AIR.k) / L;
 }
 
 /**
@@ -163,7 +181,7 @@ export interface SinkFlow {
   area: number;
   /** Mean temperature of its faces, °C. */
   mean: number;
-  /** Natural convection: the mean film coefficient it came to, W/(mm²·K). */
+  /** Natural convection and forced air: the mean film coefficient it came to, W/(mm²·K). */
   h?: number;
 }
 
@@ -515,12 +533,12 @@ function heldTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, g: 
  * A film on boundary points: K += h w N_a N_b, f += h w T∞ N_a. `rad` > 0 makes it radiation of that emissivity,
  * linearised about the temperatures `x` (°C): q = εσ(T⁴ − Ts⁴) ≈ q(T₀) + 4εσT₀³ (T − T₀).
  */
-function filmTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, h: number, amb: number, rad: number, x: Float64Array | null) {
+function filmTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, h: number | ArrayLike<number>, amb: number, rad: number, x: Float64Array | null) {
   const { grid, nb, bas } = c;
   for (let o = 0; o < L.length; o += 8) {
-    const e = L[o], E = grid.elems[e], w = L[o + 4], K = A.block(e, e), fo = e * nb;
+    const e = L[o], E = grid.elems[e], w = L[o + 4], K = A.block(e, e), fo = e * nb, hp = typeof h === "number" ? h : h[o / 8];
     bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s);
-    let hh = h, rhs = h * amb;
+    let hh = hp, rhs = hp * amb;
     if (rad > 0) {
       let t0 = amb;
       if (x) { t0 = 0; for (let a = 0; a < nb; a++) t0 += bas.v[a] * x[fo + a]; }
@@ -560,9 +578,14 @@ function naturalTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, 
 
 /** The points of a natural convection sink, located face by face so each keeps its face's sizes (2 numbers per point). */
 function naturalPoints(c: Ctx, s: ThermalSink, q: number): { L: Float64Array; lens: Float64Array } {
-  const nat = s.natural!, n = Math.floor(s.tris.length / 9), groups = new Map<string, number[]>();
+  return groupedPoints(c, s, q, [s.natural!.lv, s.natural!.lh]);
+}
+
+/** The points of `s`, located in groups of triangles sharing the values `per` gives them, which each point keeps (one number per array). */
+function groupedPoints(c: Ctx, s: ThermalSink, q: number, per: ArrayLike<number>[]): { L: Float64Array; lens: Float64Array } {
+  const n = Math.floor(s.tris.length / 9), groups = new Map<string, number[]>();
   for (let t = 0; t < n; t++) {
-    const key = `${nat.lv[t]}|${nat.lh[t]}`;
+    const key = per.map(a => a[t]).join("|");
     let g = groups.get(key);
     if (!g) groups.set(key, (g = []));
     g.push(t);
@@ -573,7 +596,7 @@ function naturalPoints(c: Ctx, s: ThermalSink, q: number): { L: Float64Array; le
     g.forEach((t, k) => { for (let j = 0; j < 9; j++) sub[9 * k + j] = s.tris[9 * t + j]; });
     const L = s.free && c.doms ? freePoints(c, sub, q) : located(c, sub, q);
     parts.push(L);
-    for (let o = 0; o < L.length; o += 8) lens.push(nat.lv[g[0]], nat.lh[g[0]]);
+    for (let o = 0; o < L.length; o += 8) for (const a of per) lens.push(a[g[0]]);
   }
   const L = new Float64Array(parts.reduce((a, p) => a + p.length, 0));
   let m = 0;
@@ -626,6 +649,7 @@ function energies(c: Ctx, x: Float64Array, prev: Float64Array | null) {
 /** What a sink takes, W: the flux the terms above carry through its points. */
 function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?: Float64Array): SinkFlow {
   const { grid, nb, bas, k3, gam } = c, nat = s.natural, amb = s.ambient ?? 0;
+  const forced = s.forced && s.temp === undefined && lens ? lens : null;
   let out = 0, area = 0, sum = 0, hs = 0;
   for (let o = 0; o < L.length; o += 8) {
     const e = L[o], E = grid.elems[e], w = L[o + 4];
@@ -644,9 +668,10 @@ function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?:
       const h = nat.factor * naturalH(up, t - amb, lens[o2], lens[o2 + 1]);
       hs += w * h;
       out += w * h * (t - amb);
-    } else if (s.temp === undefined) out += w * (s.h ?? 0) * (t - amb);
+    } else if (forced) { const h = forced[o / 8]; hs += w * h; out += w * h * (t - amb); }
+    else if (s.temp === undefined) out += w * (s.h ?? 0) * (t - amb);
   }
-  return { out, area, mean: area > 0 ? sum / area : 0, ...(nat ? { h: area > 0 ? hs / area : 0 } : {}) };
+  return { out, area, mean: area > 0 ? sum / area : 0, ...(nat || forced ? { h: area > 0 ? hs / area : 0 } : {}) };
 }
 
 export const thermalMemory = (grid: Grid, p: number) => memoryBytes(grid, () => basisSize(p));
@@ -782,6 +807,7 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   const lens: (Float64Array | undefined)[] = [];
   const at = pb.sinks.map((s, i) => {
     if (s.natural && s.temp === undefined) { const r = naturalPoints(c, s, tq); lens[i] = r.lens; return r.L; }
+    if (s.forced && s.temp === undefined) { const r = groupedPoints(c, s, tq, [s.forced.h]); lens[i] = r.lens; return r.L; }
     return s.free && doms ? freePoints(c, s.tris, tq) : located(c, s.tris, tq);
   });
   // the penalty is measured on the fixed-temperature faces and, with several domains, on every domain's surface
@@ -797,6 +823,7 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   }
   pb.sinks.forEach((s, i) => {
     if (s.temp !== undefined) heldTerms(c, A, f, at[i], s.temp);
+    else if (s.forced) filmTerms(c, A, f, at[i], lens[i]!, s.ambient ?? 0, 0, null);
     else if (!s.natural && (s.h ?? 0) > 0) filmTerms(c, A, f, at[i], s.h!, s.ambient ?? 0, 0, null);
   });
   let volume = 0;

@@ -38,7 +38,7 @@ import { MEMORY_LIMIT } from "./static";
 import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardK, plateAxis, type BoardStack } from "../thermal/study";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
-import { NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
+import { DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
 import { BOARD_RC, SERIES_COLORS, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
 import { parseKTable, kTableText, ktFactors, type KTable } from "./ktable";
 import { DEFAULT_GAP, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
@@ -109,6 +109,15 @@ const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySele
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "remote", "hydro", "gravity", "centrifugal", "temperature"];
 const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", rad: "☼", radx: "⇌", transient: "◷", temperature: "ϑ" };
+/** A forced air condition's speed, m/s (from the fan when it has one). */
+const forcedSpeed = (f: ForcedAir) => (f.fan ? fanSpeed(f.fan.q, f.fan.a) : f.speed);
+/** The flow direction's label (+X…−Z), or the nearest. */
+const flowLabel = (d: ArrayLike<number>) => {
+  let best = "+X", top = -Infinity;
+  for (const [l, v] of FLOWS) { const c = v[0] * d[0] + v[1] * d[1] + v[2] * d[2]; if (c > top) { top = c; best = l; } }
+  return best;
+};
+
 const TIP: Record<string, string> = {
   temperature: "Temperature: the part expands as it warms, uniformly or as a thermal study found; held, it is stressed",
   fixed: "Fixed support: the faces cannot move",
@@ -131,6 +140,7 @@ const TIP: Record<string, string> = {
   hflux: "Heat flux: watts per area entering through faces",
   temp: "Fixed temperature: the faces are held at a temperature, like a cold plate",
   conv: "Convection: the faces are cooled by air or a liquid",
+  fan: "Forced air: a fan blows air over the faces; each face's film coefficient comes from the air speed and its length along the flow",
   rad: "Radiation: the faces radiate heat to the surroundings",
   radx: "Radiation between faces: two sets of faces exchange heat by radiation, like a valve bulb and the board under it",
   newthermal: "New thermal study: the temperatures of this part and where its heat goes",
@@ -664,9 +674,15 @@ export class SimController {
     if (c === "report") { void this.report(); return; }
     if (c === "results") { this.plot.on = !this.plot.on; this.showPlot(); this.renderAll(); this.drawMarks(); return; }
     // a command of the other analysis than the open study's: the study of that kind used last, or a new one
-    if (c !== "mat") this.useStudy(isThermalType(c));
+    if (c !== "mat") this.useStudy(c === "fan" || isThermalType(c));
     const st = this.study();
     if (!st) return;
+    if (c === "fan") {
+      this.connSide = 1;
+      this.edit = { kind: "support", isNew: true, draft: { id: nextId(st, "s"), name: t("Forced air"), type: "conv", faces: [], h: FILM_PRESETS[1][1], forced: { ...DEFAULT_FORCED, dir: [...DEFAULT_FORCED.dir] } } };
+      this.renderAll(); this.drawMarks();
+      return;
+    }
     if ((THERMAL_SUPPORTS as string[]).includes(c)) {
       const type = c as SupportType, amb = st.settings.ambient ?? DEFAULT_AMBIENT;
       this.connSide = 1;
@@ -3131,11 +3147,21 @@ export class SimController {
     return html + `<p class="sim-note muted">${esc(t("The solver picks its own time steps. Each heat source can be switched on later or cycled: open it to set its power over time."))}</p></div>`;
   }
 
+  /** Forced air fields: speed (or a fan's flow through an opening) and the flow direction (FR-TBC-005). */
+  private forcedHtml(f: ForcedAir, q: (k: string, label: string, v: number, unit: string) => string): string {
+    const d = flowLabel(f.dir);
+    return (f.fan ? q("fanq", t("Fan flow"), f.fan.q, "m³/h") + q("fana", t("Opening the air passes through"), f.fan.a, "cm²")
+      + `<div class="pm-field"><span>${esc(t("Air speed"))}</span><span data-v="fanv">${sig(forcedSpeed(f))} m/s</span></div>` : q("speed", t("Air speed"), f.speed, "m/s"))
+      + `<label class="chk pm-chk"><input type="checkbox" data-k="fanon"${f.fan ? " checked" : ""} />${esc(t("Speed from a fan's flow"))}</label>`
+      + `<label class="pm-field" title="${esc(t("Which way the air moves over the faces"))}"><span>${esc(t("Flow direction"))}</span><select data-k="flow">${FLOWS.map(([l]) => `<option value="${l}"${l === d ? " selected" : ""}>${l}</option>`).join("")}</select></label>`;
+  }
+
   private thermalText(it: StudySupport | StudyLoad, st: Study): string {
     const amb = (s: StudySupport) => `${sig(s.ambient ?? st.settings.ambient ?? DEFAULT_AMBIENT)} °C`;
     if (it.type === "temp") return `${sig(it.temp ?? 0)} °C`;
     if (it.type === "conv" && it.rth !== undefined && !it.all) return `${sig(it.rth)} K/W, ${amb(it)}`;
     if (it.type === "conv" && it.natural) return `${t("natural convection")}, ${amb(it)}`;
+    if (it.type === "conv" && it.forced) return `${t("forced air")} ${sig(forcedSpeed(it.forced))} m/s ${flowLabel(it.forced.dir)}, ${amb(it)}`;
     if (it.type === "conv") return `${sig(it.h ?? 0)} W/(m²·K), ${amb(it)}`;
     if (it.type === "rad") return `ε ${sig(it.emis ?? 0)}, ${amb(it)}`;
     if (it.type === "radx") return `ε ${sig(it.emis ?? 0.9)} / ${sig(it.emis2 ?? it.emis ?? 0.9)}`;
@@ -3266,7 +3292,7 @@ export class SimController {
     if (thermal) {
       el.innerHTML = pick + sep + group(t("Study"), btn("newthermal", t("Thermal study"), t(asm ? "New thermal study: the temperatures of this assembly and where its heat goes" : TIP.newthermal), { dis: busy }) + (asm ? "" : btn("mat", t("Material"), t("The part's material: thermal conductivity"), { dis: busy })) + btn("ambient", t("Ambient"), t(TIP.ambient), { dis: busy }) + btn("transient", t("Over time"), t(TIP.transient), { dis: busy || st?.kind !== "thermal", on: !!(st?.kind === "thermal" && st.settings.transient) }))
         + sep + group(t("Heat sources"), THERMAL_LOADS.filter(k => k !== "pkgheat").map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
-        + sep + group(t("Cooling"), THERMAL_SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
+        + sep + group(t("Cooling"), THERMAL_SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join("").replace(/(<button[^>]*data-s="conv"[\s\S]*?<\/button>)/, `$1${btn("fan", t("Forced air"), t(TIP.fan), { dis: busy })}`))
         + sep + group(t("Solve"), solve);
       return;
     }
@@ -3526,7 +3552,7 @@ export class SimController {
     html += `<dt>${esc(t("Heat put in"))}</dt><dd data-v="heatin">${sig(T.applied)} W</dd>`;
     T.flows.forEach((f, i) => {
       html += `<dt>${esc(f.out < 0 ? t("Heat brought in") : t("Heat taken away"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd data-v="flow" title="${esc(t("Mean temperature of the faces"))}: ${sig(f.mean)} °C">${sig(Math.abs(f.out))} W</dd>`;
-      if (f.h !== undefined) html += `<dt>${esc(t("Mean film coefficient"))}</dt><dd data-v="hnat" title="${esc(t("What natural convection came to over these faces"))}">${sig(f.h * 1e6)} W/(m²·K)</dd>`;
+      if (f.h !== undefined) html += `<dt>${esc(t("Mean film coefficient"))}</dt><dd data-v="hnat" title="${esc(t("The film coefficient these faces came to on average"))}">${sig(f.h * 1e6)} W/(m²·K)</dd>`;
     });
     if (T.flows.length > 1) html += `<dt>${esc(t("Heat taken away in total"))}</dt><dd data-v="heatout">${sig(out)} W</dd>`;
     if (off != null) html += `<dt title="${esc(t("How far the heat taken away is from the heat put in, as a share of it"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${off > 1 ? ' class="sim-low"' : ""}>${pct(off).replace("<", "&lt;")} %</dd>`;
@@ -3663,9 +3689,11 @@ export class SimController {
         + `<p class="pm-help muted">${esc(t("The faces are held at this temperature, like a cold plate or a mounting surface whose temperature is known."))}</p>`);
       if (s.type === "conv" || s.type === "rad") body += group(t("Surfaces"), chk("all", s.all, t("All surfaces open to the air"))
         + (s.all ? `<p class="pm-help muted">${esc(t("Every surface of the model, without the areas where components lie on each other."))}</p>` : ""));
-      const sink = s.rth !== undefined && !s.all && !s.natural, nat = !!s.natural;
-      if (s.type === "conv") body += group(t("Convection"), `<label class="pm-field"><span>${esc(t("Cooling by"))}</span><select data-k="film"><option value="nat"${nat ? " selected" : ""}>${esc(t("Natural convection (worked out)"))}</option>${FILM_PRESETS.map(([l, v]) => `<option value="${v}"${!sink && !nat && s.h === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}${s.all ? "" : `<option value="rth"${sink ? " selected" : ""}>${esc(t("Heatsink (thermal resistance)"))}</option>`}<option value=""${sink || nat || FILM_PRESETS.some(([, v]) => v === s.h) ? "" : " selected"}>${esc(t("Custom"))}</option></select></label>`
-        + (sink ? q("rth", t("Thermal resistance"), s.rth!, "K/W") : nat ? "" : q("hc", t("Film coefficient"), s.h ?? FILM_PRESETS[0][1], "W/(m²·K)")) + ambient
+      const nat = !!s.natural, fan = !nat && !!s.forced, sink = s.rth !== undefined && !s.all && !nat && !fan, worked = nat || fan;
+      const fanHtml = fan ? this.forcedHtml(s.forced!, q) : "";
+      if (s.type === "conv") body += group(t("Convection"), `<label class="pm-field"><span>${esc(t("Cooling by"))}</span><select data-k="film"><option value="nat"${nat ? " selected" : ""}>${esc(t("Natural convection (worked out)"))}</option><option value="fan"${fan ? " selected" : ""}>${esc(t("Forced air (worked out)"))}</option>${FILM_PRESETS.map(([l, v]) => `<option value="${v}"${!sink && !worked && s.h === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}${s.all ? "" : `<option value="rth"${sink ? " selected" : ""}>${esc(t("Heatsink (thermal resistance)"))}</option>`}<option value=""${sink || worked || FILM_PRESETS.some(([, v]) => v === s.h) ? "" : " selected"}>${esc(t("Custom"))}</option></select></label>`
+        + (sink ? q("rth", t("Thermal resistance"), s.rth!, "K/W") : worked ? fanHtml : q("hc", t("Film coefficient"), s.h ?? FILM_PRESETS[0][1], "W/(m²·K)")) + ambient
+        + (fan ? `<p class="pm-help muted">${esc(t("Each face gets its own film coefficient from the air speed and how long it is along the flow (flat plate correlations, laminar and turbulent). Faces facing the flow are taken by their size. The air is taken at the ambient temperature and does not warm up as it passes."))}</p>` : "")
         + (nat ? `<p class="pm-help muted">${esc(t("Each face gets its own film coefficient from how it is tilted, how big it is and how much hotter it is than the air (plate correlations for still air), times the study's enclosure factor."))}</p>` : "")
         + (sink ? `<p class="pm-help muted">${esc(t("A heatsink that is not modelled: the picked faces pass their heat to the air through this thermal resistance, as its data sheet gives it."))}</p>` : "")
         + `<p class="pm-help muted">${esc(t("The faces give heat to the air or liquid around them: film coefficient × area × how much hotter they are than the surroundings. The presets are typical figures."))}</p>`);
@@ -4126,10 +4154,14 @@ export class SimController {
     }
     else if (k === "film") {
       const sp = e.draft as StudySupport;
+      delete sp.forced;
       if (el.value === "nat") { sp.natural = true; delete sp.rth; }
+      else if (el.value === "fan") { sp.forced = { ...DEFAULT_FORCED, dir: [...DEFAULT_FORCED.dir] }; delete sp.rth; delete sp.natural; }
       else if (el.value === "rth") { sp.rth ??= 10; delete sp.natural; }
       else { delete sp.rth; delete sp.natural; if (el.value) sp.h = Number(el.value); }
     }
+    else if (k === "flow") { const f = (e.draft as StudySupport).forced, d = FLOWS.find(x => x[0] === el.value); if (f && d) f.dir = [...d[1]]; }
+    else if (k === "fanon") { const f = (e.draft as StudySupport).forced; if (f) { if (el.checked) f.fan = { q: 50, a: Math.round(50 / 3600 / Math.max(0.1, f.speed) * 1e4) }; else { if (f.fan) f.speed = fanSpeed(f.fan.q, f.fan.a) || f.speed; delete f.fan; } } }
     else if (k === "axis") (e.draft as StudyLoad).axis = el.value as "x" | "y" | "z";
     else if (k === "tfrom") { const l = e.draft as StudyLoad; if (el.value) l.from = el.value; else { delete l.from; l.value ??= { v: 100 }; } this.renderPanel(); }
     else if (k === "ckind" && e.kind === "connector") e.draft.kind = el.value === "spring" ? "spring" : "rigid";
@@ -4151,6 +4183,17 @@ export class SimController {
         if (p.kind === "step" && q === "pat") p.at = v || undefined;
         else if (p.kind === "duty") { if (q === "pon") p.on = v; else if (q === "pper") p.period = v; else if (q === "pdel") p.delay = v || undefined; }
         this.renderTree();
+        return;
+      }
+      if (q === "speed" || q === "fanq" || q === "fana") {
+        const f = sup.forced, bad = v == null || !(v > 0) || (q === "speed" && v > 100);
+        el.setAttribute("aria-invalid", String(bad));
+        if (bad || !f) return;
+        if (q === "speed") f.speed = v!;
+        else if (f.fan) { if (q === "fanq") f.fan.q = v!; else f.fan.a = v!; f.speed = fanSpeed(f.fan.q, f.fan.a); }
+        this.renderTree();
+        const out = document.querySelector('#sim-pm [data-v="fanv"]');
+        if (out) out.textContent = `${sig(f.speed)} m/s`;
         return;
       }
       if (q === "tref") { const bad = v == null || v < -273.15; el.setAttribute("aria-invalid", String(bad)); if (!bad) { (e.draft as StudyLoad).ref = v!; this.renderTree(); } return; }

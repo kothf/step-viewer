@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.667.0] - 2026-11-22
+
+### Added
+
+- Forced air in thermal studies. The Thermal bar's Forced air button (or Cooling by ▸ Forced air in a Convection item) cools the picked faces, or every open surface, with air blown by a fan. Type the air speed, or tick Speed from a fan's flow and type the fan's flow (m³/h) and the opening it blows through (cm²), and pick the flow direction. Each face gets its own film coefficient from the flat plate correlation (laminar, and laminar then turbulent on long fast runs) with its length along the flow; faces facing the flow are taken by their size. The results show the mean film coefficient it came to.
+
+### Fixed
+
+- The 1.665.0 section of this changelog had lost its heading.
+
 ## [1.666.0] - 2026-11-22
 
 ### Added
@@ -15,7 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - When nothing takes the heat from a component, the message now suggests radiation between faces as well.
 
- - 2026-11-22
+## [1.665.0] - 2026-11-22
 
 ### Added
 
@@ -4384,7 +4394,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.666.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.667.0...HEAD
+[1.667.0]: https://github.com/kothf/step-viewer/compare/v1.666.0...v1.667.0
 [1.666.0]: https://github.com/kothf/step-viewer/compare/v1.665.0...v1.666.0
 [1.665.0]: https://github.com/kothf/step-viewer/compare/v1.664.0...v1.665.0
 [1.664.0]: https://github.com/kothf/step-viewer/compare/v1.663.0...v1.664.0

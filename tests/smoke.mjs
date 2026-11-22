@@ -17115,7 +17115,7 @@ try {
     const b1 = await bar();
     const empty = await tp.evaluate(() => !!document.querySelector('#sim-tree .sim-empty [data-a="newthermal"]'));
     check(b0.on === "mode-structural" && b0.ids.includes("force") && b0.ids.includes("fixed") && !b0.ids.includes("heat") && b0.checked === 1 && !b0.wide && b0.words === 2
-      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "hflux", "temp", "conv", "rad", "radx", "solve", "results", "report"]) && empty,
+      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "hflux", "temp", "conv", "fan", "rad", "radx", "solve", "results", "report"]) && empty,
       `thermal 1.651: the Simulation bar has a Structural | Thermal switch; Thermal shows the thermal study's commands in place of supports and loads (${JSON.stringify({ b0, b1, empty })})`);
     // 8 W made in the whole bar (a thermal study is made on the way), the top face held at 30 °C
     await tp.click('#sim-tools [data-s="heat"]');
@@ -17799,6 +17799,82 @@ try {
       && !t1.error && x1 && Math.abs(x1.f - F) < 0.02 && Math.abs(x1.heat - 0.5) < 0.01 && Math.abs(t1.thermal.out[0] - 0.5) < 0.01 && Math.abs(law - 0.5) < 0.01 && x1.ta > x1.tb + 20
       && res.rows.length === 1 && res.wide <= 0 && ru.length === 0,
       `radiation between faces 1.666: a bar heated by 0.5 W and cooled only by radiation to a held bar 40 mm away; the view factor matches the closed form and the grey-body law holds; translated (${JSON.stringify({ t0: t0.error, tools, asked, panel, ruPm, item, error: t1.error, x1, F, law, out: t1.thermal?.out, res, ru })})`);
+    await ctx.close();
+  }
+
+  // --- forced air 1.667 (FRS-thermal FR-TBC-005): a fan blowing along a heated bar ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const fp = await ctx.newPage();
+    fp.on("pageerror", e => errors.push(e.message));
+    fp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await fp.goto(`${origin}/index.html?debug`);
+    await fp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await fp.goto(`${origin}/index.html?debug`);
+    await fp.waitForFunction(() => window.__sv);
+    await fp.click("#new-part");
+    await fp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // a 20 × 20 bar, 100 long along Y, k = 200 W/(m·K): nearly one temperature
+    await fp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test aluminium", density: 2.7, E: 70, nu: 0.33, sy: 100, k: 200 };
+    }));
+    await fp.waitForTimeout(150);
+    await fp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await fp.click("#cm-t-simulation");
+    await fp.waitForTimeout(300);
+    await fp.click('#sim-tools [data-s="mode-thermal"]');
+    await fp.waitForTimeout(200);
+    await fp.click('#sim-tools [data-s="heat"]');
+    await fp.waitForTimeout(200);
+    await fp.check('#sim-pm [data-k="body"]');
+    await fp.fill('#sim-pm [data-n="value"]', "2");
+    await fp.keyboard.press("Tab");
+    await fp.click("#sim-pm .pm-ok");
+    await fp.waitForTimeout(300);
+    const tools = await fp.evaluate(() => [...document.querySelectorAll("#sim-tools [data-s]")].map(b => b.dataset.s));
+    await fp.click('#sim-tools [data-s="fan"]');
+    await fp.waitForTimeout(200);
+    const fresh = await fp.evaluate(() => ({ film: document.querySelector('#sim-pm [data-k="film"]')?.value, speed: document.querySelector('#sim-pm [data-q="speed"]')?.value, flow: document.querySelector('#sim-pm [data-k="flow"]')?.value }));
+    await fp.check('#sim-pm [data-k="all"]');
+    await fp.waitForTimeout(150);
+    // a fan's flow first: 36 m³/h through 50 cm² = 2 m/s
+    await fp.check('#sim-pm [data-k="fanon"]');
+    await fp.waitForTimeout(150);
+    await fp.fill('#sim-pm [data-q="fanq"]', "36");
+    await fp.keyboard.press("Tab");
+    await fp.fill('#sim-pm [data-q="fana"]', "50");
+    await fp.keyboard.press("Tab");
+    await fp.waitForTimeout(150);
+    const fan = await fp.evaluate(() => document.querySelector('#sim-pm [data-v="fanv"]')?.textContent ?? "");
+    await fp.click("#lang-btn");
+    const ruPm = await fp.evaluate(() => [...document.querySelectorAll("#sim-pm *")].filter(e => !e.children.length && !e.closest("[translate=no]") && e.tagName !== "INPUT" && e.tagName !== "OPTION").map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await fp.click("#lang-btn");
+    // then 3 m/s typed, blowing along the bar
+    await fp.uncheck('#sim-pm [data-k="fanon"]');
+    await fp.waitForTimeout(150);
+    await fp.fill('#sim-pm [data-q="speed"]', "3");
+    await fp.keyboard.press("Tab");
+    await fp.selectOption('#sim-pm [data-k="flow"]', "+Y");
+    await fp.waitForTimeout(150);
+    await fp.click("#sim-pm .pm-ok");
+    await fp.waitForTimeout(300);
+    const item = await fp.evaluate(() => { const s = window.__sv.model.store.doc.studies.at(-1).supports.find(x => x.forced); return { f: s?.forced, all: s?.all, row: [...document.querySelectorAll("#sim-tree .sim-row")].map(r => r.textContent).find(x => /m\/s/.test(x)) ?? "" }; });
+    await fp.click('#sim-tools [data-s="solve"]');
+    await fp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 });
+    await fp.waitForTimeout(400);
+    const r = await fp.evaluate(() => window.__sv.sim.state());
+    const hnat = await fp.evaluate(() => document.querySelector('#sim-tree [data-v="hnat"]')?.textContent ?? "");
+    // flat plate: the four sides are 100 mm long in the flow, the two ends face it (√400 = 20 mm)
+    const h = L => { const re = 3 * L * 1e-3 / 1.57e-5; return 0.664 * Math.sqrt(re) * Math.cbrt(0.71) * 0.0262 / (L * 1e-3); };
+    const G = (h(100) * 4 * 2000 + h(20) * 2 * 400) * 1e-6, mean = G * 1e6 / 8800, want = 25 + 2 / G;
+    const max = r.thermal?.max ?? 0;
+    check(tools.includes("fan") && tools.indexOf("fan") === tools.indexOf("conv") + 1 && fresh.film === "fan" && fresh.speed === "2" && fresh.flow === "+X" && /^2 m\/s/.test(fan) && ruPm.length === 0
+      && item.f?.speed === 3 && JSON.stringify(item.f?.dir) === "[0,1,0]" && !item.f?.fan && item.all && /3 m\/s \+Y/.test(item.row)
+      && !r.error && Math.abs(r.thermal.out[0] - 2) < 0.02 && Math.abs(max - want) < 0.04 * (want - 25) && Math.abs(r.thermal.flows[0].h * 1e6 - mean) < 0.02 * mean && /W\/\(m²·K\)/.test(hnat),
+      `forced air 1.667: a 2 W bar blown at 3 m/s along its length by a Forced air item; the film coefficients follow the flat plate correlation and the fan's flow gives its speed; translated (${JSON.stringify({ tools, fresh, fan, ruPm, item, error: r.error, out: r.thermal?.out, max, want, h: r.thermal?.flows?.[0]?.h, mean, hnat })})`);
     await ctx.close();
   }
 
