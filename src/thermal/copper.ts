@@ -160,7 +160,7 @@ export function kmapMeans(k: KMap): { along: number; through: number } {
 export function gerberName(names: string[]): string {
   const stems = names.map(n => n.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, ""));
   if (!stems.length) return "";
-  if (stems.length === 1) return stems[0];
+  if (stems.length === 1) return stems[0].replace(/[-_ ](gerbers?|pcb)$/i, "") || stems[0];
   let p = stems[0];
   for (const s of stems) while (!s.startsWith(p)) p = p.slice(0, -1);
   p = p.replace(/[-_. ]+$/, "");

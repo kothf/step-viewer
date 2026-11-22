@@ -879,7 +879,7 @@ export class SimController {
    * A thermal study of a board made from its thermal package (FR-TBRD-001): the package's ambient, one Heat from
    * package load, and convection and radiation from every surface open to the air.
    */
-  boardStudy(spec: { ambient?: number; emissivity?: number; enclosure?: "open" | "vented" | "closed"; down?: [number, number, number]; heat: PackageHeat[]; board?: { comp: string; t: number } }): string | null {
+  boardStudy(spec: { ambient?: number; emissivity?: number; enclosure?: "open" | "vented" | "closed"; down?: [number, number, number]; heat: PackageHeat[]; board?: { comp: string; t: number; stack?: Partial<BoardStack> } }): string | null {
     const doc = this.host.doc();
     if (!doc) return null;
     const st = newStudy(doc.studies ?? [], "thermal");
@@ -887,7 +887,7 @@ export class SimController {
     // the package's ambient wins over the enclosure preset's
     st.settings.ambient = spec.ambient !== undefined && Number.isFinite(spec.ambient) ? spec.ambient : ENCLOSURES.find(x => x.id === spec.enclosure)?.ambient ?? DEFAULT_AMBIENT;
     if (spec.down) st.settings.down = spec.down;
-    if (spec.board?.comp) st.comps = { [spec.board.comp]: { board: { ...DEFAULT_STACK, ...(spec.board.t > 0 ? { t: Math.round(spec.board.t * 1000) / 1000 } : {}) } } };
+    if (spec.board?.comp) st.comps = { [spec.board.comp]: { board: { ...DEFAULT_STACK, ...(spec.board.stack ?? {}), ...(spec.board.t > 0 ? { t: Math.round(spec.board.t * 1000) / 1000 } : {}) } } };
     st.loads.push({ id: "l1", name: itemName(st, "pkgheat"), type: "pkgheat", faces: [], parts: spec.heat, ...(spec.board?.comp ? { board: spec.board.comp } : {}) });
     st.supports.push({ id: "s1", name: itemName(st, "conv"), type: "conv", faces: [], all: true, natural: true, h: FILM_PRESETS[0][1] });
     const emis = spec.emissivity !== undefined && spec.emissivity > 0 && spec.emissivity <= 1 ? spec.emissivity : 0.9;
@@ -1667,6 +1667,13 @@ export class SimController {
     if (on && !thick) toast(t("The component is not a flat plate square to an axis: it is analysed with the board's in-plane conductivity in every direction."), "info");
   }
 
+  /** The components marked as circuit boards in the active thermal study of an assembly (Gerber drops go to them). */
+  boardComps(): string[] {
+    const st = this.study();
+    if (!st || st.kind !== "thermal" || !this.host.asm()) return [];
+    return Object.entries(st.comps ?? {}).filter(([, c]) => c.board).map(([id]) => id);
+  }
+
   /** A board's copper from its Gerber set (FR-TBRD-020): the button to read one, or the map with what it holds. */
   private boardMapHtml(id: string, bd: BoardStack & { map?: CopperMap }, off: string): string {
     const m = bd.map;
@@ -1702,13 +1709,13 @@ export class SimController {
   }
 
   /** The board's copper map from Gerber files (or zips of them); `null` = even copper again. */
-  async readGerber(id: string, files: { name: string; data: ArrayBuffer }[] | null) {
+  async readGerber(id: string, files: { name: string; data: ArrayBuffer }[] | null): Promise<boolean> {
     const st = this.study();
-    if (!st || this.running) return;
+    if (!st || this.running) return false;
     let map: CopperMap | null = null;
     if (files) {
       try { map = await copperFromGerber(files, gerberName(files.map(f => f.name))); }
-      catch (err) { toast(String((err as Error).message).startsWith("E-TH-GERBER") ? t("These files hold no copper layer: pick the board's Gerber files or a zip of them.") : t("The Gerber files could not be read: {e}", { e: (err as Error).message }), "warn"); return; }
+      catch (err) { toast(String((err as Error).message).startsWith("E-TH-GERBER") ? t("These files hold no copper layer: pick the board's Gerber files or a zip of them.") : t("The Gerber files could not be read: {e}", { e: (err as Error).message }), "warn"); return false; }
     }
     this.host.change(map ? t("Copper from Gerber") : t("Even copper"), d => {
       const s = d.studies?.find(x => x.id === st.id), b = s?.comps?.[id]?.board;
@@ -1718,6 +1725,7 @@ export class SimController {
       this.setComp(s, id, { ...s.comps![id], board: nb });
     });
     if (map) toast(t("Copper read from {n} layers: the board's conductivity now follows its copper.", { n: map.labels.length }), "info");
+    return true;
   }
 
   /** The thickness of a component that is a flat plate square to an axis, mm, from the shown model. */

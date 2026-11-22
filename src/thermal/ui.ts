@@ -32,6 +32,8 @@ export interface ThermalHost {
   simulate(pkg: ThermalPackage, match: PartMatch, bodies: ModelBody[]): void;
   /** Saves the view as a PNG (File ▸ Export PNG), which draws the map's legend in through `decorate`. */
   savePicture(): void;
+  /** A Gerber set went under the map: kept as the board's for a study and Pack and Go (FR-TBRD-020). */
+  gerber?(files: { name: string; data: ArrayBuffer }[]): void;
 }
 
 type V3 = [number, number, number];
@@ -547,23 +549,33 @@ export class ThermalMaps {
 
   /** Reads a Gerber set and draws it under the map of the model on screen. */
   async addGerber(files: File[]) {
+    await this.addGerberData(await Promise.all(files.map(async f => ({ name: f.name, data: await f.arrayBuffer() }))));
+  }
+
+  /** Reads a Gerber set (files or zips, as bytes) and draws it under the map; false when it could not be read. */
+  async addGerberData(data: { name: string; data: ArrayBuffer }[], tell = true): Promise<boolean> {
     const a = this.cur();
-    if (!a) return;
-    const name = gerberName(files.map(f => f.name));
+    if (!a) return false;
+    const name = gerberName(data.map(f => f.name));
     try {
-      const data = await Promise.all(files.map(async f => ({ name: f.name, data: await f.arrayBuffer() })));
       const layers = await pcbFromGerber(data, name);
-      if (this.cur() !== a) return;
+      if (this.cur() !== a) return false;
       a.pcb = { layers, du: 0, dv: 0, shown: true };
       if (!a.on) a.on = true;
       this.show();
       this.renderAll();
-      toast(t("Board layers {name} under the map: {layers}", { name, layers: layers.labels.join(", ") }), "success");
+      this.host.gerber?.(data);
+      if (tell) toast(t("Board layers {name} under the map: {layers}", { name, layers: layers.labels.join(", ") }), "success");
+      return true;
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       toast(m === "E-TH-GERBER" ? t("{name} has no copper or silkscreen layer.", { name }) : t("Could not read the board layers {name}: {err}", { name, err: m }), "error");
+      return false;
     }
   }
+
+  /** The map on screen already has board layers under it. */
+  hasLayers() { return !!this.cur()?.pcb; }
 
   /** Moves the board's layers on the map (manual offset, mm). */
   setPcbOffset(du: number, dv: number) {

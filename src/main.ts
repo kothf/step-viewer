@@ -54,7 +54,7 @@ import { packageMeshes, readPackageAsking, thermalErrorText, ThermalMaps } from 
 import { findManifest, isSourcesCsv, type ThermalPackage } from "./thermal/package";
 import type { ModelBody, PartMatch } from "./thermal/match";
 import { findMaterial, toRef, type MatRef } from "./tools/materials";
-import { BOARD_MATERIAL, boardConductivity, boardPlan } from "./thermal/study";
+import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardPlan } from "./thermal/study";
 import { unzipLimited, zip as zipFiles } from "./model/zip";
 import { bindModal, bindTabs, busy, fitTabStrip, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast, trapFocus } from "./ui";
 import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
@@ -106,6 +106,7 @@ const thermal = new ThermalMaps({
   addMap: () => openPicker(),
   simulate: (pkg, match, bodies) => { void simulateBoard(pkg, match, bodies); },
   savePicture: () => { void exportPng(false, parseInt($<HTMLSelectElement>("#png-scale").value) || 2); },
+  gerber: files => { if (state.fileKey) boardGerbers.set(state.fileKey, files); },
 });
 /**
  * Simulate in MöbiusCAD (FRS-thermal J5): the board's STEP becomes an assembly, one component per body with a
@@ -115,13 +116,16 @@ async function simulateBoard(pkg: ThermalPackage, match: PartMatch, bodies: Mode
   const src = modelSrc;
   if (!src) { toast(t("Open the board's STEP to measure it or simulate it."), "warn"); return; }
   const plan = boardPlan(pkg.manifest, match, bodies);
-  const bk = boardConductivity(plan.thickness || 1.6);
+  const bk = boardConductivity(plan.thickness || 1.6, { ...DEFAULT_STACK, ...plan.stack });
   const boardMat: MatRef = { name: BOARD_MATERIAL, density: Math.round(bk.density * 1000) / 1000, k: Math.round(bk.along * 100) / 100, cp: Math.round(bk.cp) };
   const mats = plan.mats.map((name, i) => { if (i === plan.board) return boardMat; const m = findMaterial(name); return m ? toRef(m) : null; });
+  const gerbers = boardGerbers.get(`sv:m:${src.name}:${src.data.byteLength || ""}`);
   const ids = await asm.fromModel(src.data.slice(0), src.name, mats, plan.names);
   if (!ids) return;
   const heat = plan.heat.map(h => ({ id: h.id, name: h.name, comps: h.bodies.map(i => ids[i]).filter((x): x is string => !!x), p: h.p, ...(h.limit !== undefined ? { limit: h.limit } : {}), ...(h.board !== undefined ? { board: h.board } : {}), ...(h.sink !== undefined ? { sink: h.sink } : {}), ...(h.path ? { path: h.path } : {}) }));
-  sim.boardStudy({ ambient: plan.ambient, emissivity: plan.emissivity, enclosure: plan.enclosure, down: plan.down, heat, ...(plan.board >= 0 && ids[plan.board] ? { board: { comp: ids[plan.board]!, t: plan.thickness } } : {}) });
+  sim.boardStudy({ ambient: plan.ambient, emissivity: plan.emissivity, enclosure: plan.enclosure, down: plan.down, heat, ...(plan.board >= 0 && ids[plan.board] ? { board: { comp: ids[plan.board]!, t: plan.thickness, ...(plan.stack ? { stack: plan.stack } : {}) } } : {}) });
+  // the board's Gerber set, when one came with the STEP, gives the board its copper (FR-TBRD-020)
+  if (gerbers && plan.board >= 0 && ids[plan.board]) await sim.readGerber(ids[plan.board]!, gerbers);
   selectCmTab("simulation");
   showLeftTab("sim");
   const lost = heat.filter(h => !h.comps.length && h.p >= 0.01).length;
@@ -818,7 +822,13 @@ async function openFiles(files: File[]) {
     const th = await thermalFilesOf(files);
     if (th) {
       void recentAdd(files.map(f => ({ name: f.name, data: f })));
-      return openThermal(th.files, th.name, th.rest.find(f => /\.(step|stp)$/i.test(f.name)), th.zip);
+      const step = th.rest.find(f => /\.(step|stp)$/i.test(f.name));
+      // the board's Gerber set opened with them goes under the map (FR-TBRD-020)
+      const pcb = await pcbFilesOf(th.rest);
+      if (pcb.length && step) boardGerbers.set(`sv:m:${step.name}:${step.size || ""}`, await gerberData(pcb));
+      await openThermal(th.files, th.name, step, th.zip);
+      if (pcb.length && !step) await useBoardGerber(await gerberData(pcb));
+      return;
     }
   }
   // File ▸ recent documents: the main file first (a drawing, part or assembly, else the biggest 3D model).
@@ -836,10 +846,13 @@ async function openFiles(files: File[]) {
   if (sw.length) return openSolidWorks(sw);
   const model = files.find(f => is3dName(f.name));
   if (model && files.length === 1) return openFile(model);
-  const pcb: File[] = [];
-  for (const f of files) {
-    if (is3dName(f.name)) continue;
-    if (isPcbName(f.name) || sniff(new Uint8Array(await f.slice(0, 8192).arrayBuffer()))) pcb.push(f);
+  const pcb = await pcbFilesOf(files);
+  // a board's STEP with its Gerber set: the STEP opens and keeps the set for its thermal map and studies (FR-TBRD-020)
+  if (pcb.length && model && /\.(step|stp|iges|igs|brep)$/i.test(model.name)) {
+    boardGerbers.set(`sv:m:${model.name}:${model.size || ""}`, await gerberData(pcb));
+    await openFile(model);
+    toast(t("Gerber files kept with {name}: they go under its thermal map and give a board study its copper.", { name: model.name }), "success");
+    return;
   }
   if (pcb.length) return openPcb(pcb);
   if (model) return openFile(model);
@@ -1056,6 +1069,59 @@ async function thermalFilesOf(files: File[]): Promise<{ files: Map<string, Uint8
  * puts it beside the STEP. Kept for parked tabs too.
  */
 const thermalSrcs = new Map<string, { name: string; data: Uint8Array }>();
+/**
+ * The board's Gerber set by model file key (FRS-thermal FR-TBRD-020): opened or dropped with the STEP, found beside it
+ * in the vault, or put under its thermal map. It goes under the map, gives a board study its copper and goes with the
+ * STEP in Pack and Go.
+ */
+type GerberSet = { name: string; data: ArrayBuffer }[];
+const boardGerbers = new Map<string, GerberSet>();
+/** The files among `files` that are PCB layers, drill files or zips of them. */
+async function pcbFilesOf(files: File[]): Promise<File[]> {
+  const out: File[] = [];
+  for (const f of files) {
+    if (is3dName(f.name)) continue;
+    if (isPcbName(f.name) || sniff(new Uint8Array(await f.slice(0, 8192).arrayBuffer()))) out.push(f);
+  }
+  return out;
+}
+const gerberData = (fs: File[]): Promise<GerberSet> => Promise.all(fs.map(async f => ({ name: f.name, data: await f.arrayBuffer() })));
+/** The model file on screen is a STEP/IGES/BREP that can carry a board's Gerber set. */
+const boardModelShown = () => state.fileKey.startsWith("sv:m:") && !isPcbMode() && viewer.parts.length > 0 && !$("#app").classList.contains("model") && !$("#app").classList.contains("asm");
+/**
+ * Puts a Gerber set on the board on screen: the board of the active thermal study of an assembly, else the model's
+ * thermal map (or kept for it). False when nothing on screen takes it.
+ */
+async function useBoardGerber(set: GerberSet): Promise<boolean> {
+  const boards = boardsShown();
+  if (boards.length === 1) return sim.readGerber(boards[0], set);
+  if (boards.length > 1) { toast(t("This study has several circuit boards: use Copper from Gerber… on the board's row."), "warn"); return true; }
+  if (!boardModelShown()) return false;
+  if (thermal.has()) return thermal.addGerberData(set);
+  boardGerbers.set(state.fileKey, set);
+  toast(t("Gerber files kept with {name}: they go under its thermal map and give a board study its copper.", { name: state.fileName }), "success");
+  return true;
+}
+/** The circuit boards of the thermal study of the assembly on screen. */
+const boardsShown = () => (asm.active && $("#app").classList.contains("asm") ? sim.boardComps() : []);
+/** Gerber sets that came inside a thermal package: Pack and Go does not add them again beside it. */
+const packagedGerbers = new WeakSet<GerberSet>();
+/** The board's Gerber set inside a thermal package: the files in its `gerber/` folder (FR-TBRD-020), or null. */
+function packageGerber(files: Map<string, Uint8Array>, folder?: string): GerberSet | null {
+  const set: GerberSet = [], dir = (folder ?? "").replace(/^\.?\/+|\/+$/g, "").toLowerCase();
+  for (const [n, d] of files) {
+    const m = dir ? (n.toLowerCase().startsWith(`${dir}/`) ? [n, n.slice(dir.length + 1)] : null) : /^(?:.*\/)?gerbers?\/(.+)$/i.exec(n);
+    if (m && !m[1].endsWith("/") && d.byteLength) set.push({ name: m[1].replace(/^.*\//, ""), data: d.slice().buffer as ArrayBuffer });
+  }
+  if (!set.length) return null;
+  packagedGerbers.add(set);
+  return set;
+}
+/** A Gerber set kept for the model goes under its map once one is attached. */
+async function knownGerberUnderMap() {
+  const g = boardGerbers.get(state.fileKey);
+  if (g && thermal.has() && !thermal.hasLayers()) await thermal.addGerberData(g);
+}
 async function keepThermalSrc(files: Map<string, Uint8Array>, name: string, src?: ArrayBuffer) {
   const key = state.fileKey;
   if (!key) return;
@@ -1071,16 +1137,22 @@ async function openThermal(files: Map<string, Uint8Array>, name: string, step?: 
   catch (err) { if (idle) setLoading(false); toast(thermalErrorText(err, name), true); return; }
   if (!pkg) { if (idle) setLoading(false); return; }
   const model = step ? { name: step.name, data: await step.arrayBuffer() } : pkg.step ? { name: pkg.step.name, data: pkg.step.data.slice().buffer as ArrayBuffer } : null;
+  // the board's Gerber set may travel inside the package, in a gerber/ folder (FR-TBRD-020)
+  const inner = packageGerber(files, pkg.manifest.files.gerber);
   if (model) {
     const key = `sv:m:${model.name}:${model.data.byteLength || ""}`;
+    if (inner && !boardGerbers.has(key)) boardGerbers.set(key, inner);
     await openBuffer(model.data, model.name);
     if (state.fileKey !== key) return;
     thermal.attach(pkg);
     void keepThermalSrc(files, name, src);
+    void knownGerberUnderMap();
   } else if (thermal.host.key() && viewer.parts.length && !thermal.cur()?.own) {
     if (idle) setLoading(false);
+    if (inner) boardGerbers.set(state.fileKey, inner);
     thermal.attach(pkg);
     void keepThermalSrc(files, name, src);
+    void knownGerberUnderMap();
   } else if (pkg.sourcesOnly) {
     if (idle) setLoading(false);
     toast(t("Open the board's STEP first, then add its heat sources to it."), "warn");
@@ -1099,9 +1171,11 @@ async function openThermal(files: Map<string, Uint8Array>, name: string, step?: 
     const meshes = packageMeshes(pkg);
     const result = await runImport(file, { kind: "mesh", name: file, meshes, cacheKey: null }, meshes.map(m => m.pos.buffer));
     if (!result || token !== loadToken) return;
+    if (inner) boardGerbers.set(`sv:m:${file}:${data.byteLength}`, inner);
     showModel(result.parts, result.tree, file, `sv:m:${file}:${data.byteLength}`, t0);
     showKernelStatus();
     thermal.attach(pkg, true);
+    void knownGerberUnderMap();
   }
   selectCmTab("thermal");
   showLeftTab("thermal");
@@ -1391,6 +1465,15 @@ vpEl.addEventListener("drop", e => {
   const files = [...dt.files];
   // On an open assembly, parts and STEP/IGES/BREP models (a McMaster-Carr download, say) become components.
   if (files.length && asm.active && $("#app").classList.contains("asm") && files.every(f => /\.(step|stp|iges|igs|brep|mcadprt)$/i.test(f.name))) { void asm.dropFiles(files); return; }
+  // Gerber files dropped on a board (its thermal map, the board hint or a board study) go on that board (FR-TBRD-020).
+  if (files.length && !files.some(f => is3dName(f.name)) && (boardsShown().length || (boardModelShown() && (thermal.has() || thermal.hintShown())))) {
+    void (async () => {
+      const pcb = await pcbFilesOf(files);
+      if (pcb.length === files.length && !(await thermalFilesOf(files)) && await useBoardGerber(await gerberData(pcb))) return;
+      openFiles(files);
+    })();
+    return;
+  }
   if (files.length) openFiles(files);
 });
 
@@ -2627,7 +2710,9 @@ const vaultPanel = new VaultPanel($("#vault-panel"), {
   pair: async (name, data) => {
     const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
     const th = await thermalZip(buf);
-    if (!th || !viewer.parts.length || thermal.has()) return false;
+    // a Gerber set beside the board's STEP (FR-TBRD-020)
+    if (!th) return sniff(new Uint8Array(buf, 0, Math.min(8192, buf.byteLength))) === "zip" || isPcbName(name) ? useBoardGerber([{ name, data: buf }]) : false;
+    if (!viewer.parts.length || thermal.has()) return false;
     await openThermal(th, name.replace(/\.zip$/i, ""), undefined, buf);
     return thermal.has();
   },
@@ -3816,10 +3901,17 @@ const fileMenu = new FileMenu({
       const src = (tab.state as { name: string; data: ArrayBuffer } | null) ?? modelSrc;
       // a board's thermal package goes with its STEP (FR-TPKG-006)
       const th = src ? thermalSrcs.get(`sv:m:${src.name}:${src.data.byteLength || ""}`) : undefined;
+      const gb = src ? boardGerbers.get(`sv:m:${src.name}:${src.data.byteLength || ""}`) : undefined;
       return { label, kind: "model", live, async files() {
         if (!src) return [];
         const out = [{ name: src.name, data: new Uint8Array(src.data.slice(0)) }];
         if (th && th.name !== src.name) out.push({ name: th.name, data: th.data.slice() });
+        // and its Gerber set (FR-TBRD-020): one zip as it came, else the files zipped
+        if (gb?.length && !packagedGerbers.has(gb)) {
+          const stem = src.name.replace(/\.[^.]+$/, "");
+          const zipped = gb.length === 1 && /\.zip$/i.test(gb[0].name);
+          out.push({ name: zipped ? gb[0].name : `${stem}-gerber.zip`, data: zipped ? new Uint8Array(gb[0].data.slice(0)) : await zipFiles(gb.map(f => ({ name: f.name, data: new Uint8Array(f.data) }))) });
+        }
         return out;
       } };
     });

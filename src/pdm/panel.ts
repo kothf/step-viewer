@@ -602,6 +602,9 @@ export class VaultPanel {
       else await this.app.open(version ? name.replace(/(\.[^.]+)$/, ` (v${version})$1`) : name, data, replace && !version);
       const pkg = !version ? (step ? f : this.pairedPackage(f)) : null;
       if (pkg && this.app.pair) await this.app.pair(pkg.path.split("/").pop()!, pkg === f ? data : await this.bytesOf(pkg));
+      // FRS-thermal FR-TBRD-020: and the board's Gerber set beside the STEP
+      const gerber = !version ? this.pairedGerber(step ?? f) : null;
+      if (gerber && this.app.pair) await this.app.pair(gerber.path.split("/").pop()!, await this.bytesOf(gerber));
       if (step) return;
       // A part, assembly or drawing opened from the vault saves back into it (an old version is a loose copy).
       const d = this.app.doc();
@@ -622,6 +625,14 @@ export class VaultPanel {
     if (!m) return null;
     const want = [`${m[1]}-thermal.zip`, `${m[1]}.zip`].map(x => x.toLowerCase());
     return this.files.find(x => !x.deleted && want.includes(x.path.toLowerCase())) ?? null;
+  }
+
+  /** The board's Gerber set beside a STEP/IGES/BREP: `<stem>-gerber.zip` (or `_gerber`, `-gerbers`, `-pcb`) in the same folder. */
+  private pairedGerber(f: FileRec): FileRec | null {
+    const m = /^(.*)\.(step|stp|iges|igs|brep)$/i.exec(f.path);
+    if (!m) return null;
+    const stem = m[1].toLowerCase();
+    return this.files.find(x => !x.deleted && x.path.toLowerCase().startsWith(stem) && /^[-_ ](gerbers?|pcb)\.zip$/i.test(x.path.slice(stem.length))) ?? null;
   }
 
   /** The board's STEP beside a thermal package `<stem>-thermal.zip` in the same folder. */

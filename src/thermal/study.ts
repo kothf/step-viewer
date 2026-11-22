@@ -189,6 +189,8 @@ export interface BoardPlan {
   down?: [number, number, number];
   /** Total power of the parts that have bodies, W. */
   power: number;
+  /** The board's copper stack from the manifest, where it gives one. */
+  stack?: Partial<BoardStack>;
 }
 
 /**
@@ -233,5 +235,6 @@ export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelB
   }
   return { board, thickness: board >= 0 ? sizes(bodies[board].box)[0] : 0, mats, names, heat, ambient: man.settings.ambient, emissivity: man.settings.emissivity, power,
     ...(["open", "vented", "closed"].includes(man.settings.enclosure ?? "") ? { enclosure: man.settings.enclosure as "open" | "vented" | "closed" } : {}),
-    ...(() => { const down = boardDown(man.settings.orientation, bodies, board); return down ? { down } : {}; })() };
+    ...(() => { const down = boardDown(man.settings.orientation, bodies, board); return down ? { down } : {}; })(),
+    ...(man.board ? { stack: { ...man.board } } : {}) };
 }

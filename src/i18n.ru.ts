@@ -5882,6 +5882,8 @@ export const RU: Record<string, string> = {
   "These files hold no copper layer: pick the board's Gerber files or a zip of them.": "В этих файлах нет слоя меди: выберите Gerber-файлы платы или их zip-архив.",
   "The Gerber files could not be read: {e}": "Не удалось прочитать Gerber-файлы: {e}",
   "Copper from Gerber": "Медь из Gerber",
+  "This study has several circuit boards: use Copper from Gerber… on the board's row.": "В этом исследовании несколько плат: используйте «Медь из Gerber…» в строке нужной платы.",
+  "Gerber files kept with {name}: they go under its thermal map and give a board study its copper.": "Файлы Gerber сохранены вместе с {name}: они лягут под тепловую карту и дадут меди исследованию платы.",
   "Copper read from {n} layers: the board's conductivity now follows its copper.": "Медь прочитана из слоёв: {n}. Теплопроводность платы теперь следует за её медью.",
   "Bolted joint": "Болтовое соединение",
   "A pair a toolbox bolt clamps is a bolted joint: it passes heat by a contact conductance of {h} W/(m²·K) unless you set another.": "Пара деталей, стянутая болтом из библиотеки, считается болтовым соединением: она передаёт тепло с контактной проводимостью {h} Вт/(м²·К), если не задано другое значение.",

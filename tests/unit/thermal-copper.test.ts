@@ -85,5 +85,6 @@ test("the solver takes the board's conductivity element by element: two halves i
 test("a Gerber set is named by its files' common start", () => {
   assert.equal(gerberName(["amp-F_Cu.gbr", "amp-B_Cu.gbr", "amp-Edge_Cuts.gbr", "amp-PTH.drl"]), "amp");
   assert.equal(gerberName(["board.zip"]), "board");
+  assert.equal(gerberName(["amp-gerber.zip"]), "amp");
   assert.equal(gerberName(["x.gbr", "y.gbr"]), "x");
 });
