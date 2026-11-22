@@ -56,7 +56,8 @@ test("vtu: malformed files are refused with a reason (AT-TH1-9)", async () => {
   };
   await refused("hello", /not a VTK XML/);
   await refused(good.slice(0, good.length / 2), /cut short|missing/);
-  await refused(good.replace('Name="Temperature_C"', 'Name="Temp"'), /Temperature_C is missing/);
+  // Another name is read as the temperature since FR-TPKG-014; none left at all is refused.
+  await refused(good.replace('Name="Temperature_C"', 'Name="Normals"'), /Temperature_C is missing/);
   await refused(good.replace(/(Name="offsets" format="ascii">)3 6/, "$19 6"), /past the end|type/);
   await refused(good.replace(/(Name="connectivity" format="ascii">)0 1 2/, "$10 1 99"), /does not exist/);
   await refused(good.replace('type="UnstructuredGrid"', 'type="PolyData"'), /PolyData/);

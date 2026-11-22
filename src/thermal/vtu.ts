@@ -1,11 +1,13 @@
 // VTK XML UnstructuredGrid (.vtu) reader and writer for thermal packages (FRS-thermal FR-TPKG-011, section 15.2).
 // Pure: no DOM (a worker and node have no DOMParser), so the few tags a .vtu has are found by scanning the text.
 // Read: one <Piece>, DataArrays in ascii or binary (base64) form, UInt32 or UInt64 headers, little-endian,
-// plain or vtkZLibDataCompressor blocks; triangles (type 5) and quads (type 9, split a-b-c / a-c-d).
+// plain or vtkZLibDataCompressor blocks; triangles (type 5), quads (type 9, split a-b-c / a-c-d) and polygons (type 7, fans).
+// A .vtu from another tool (FR-TPKG-014) may name its temperature otherwise (any one-component point array, picked
+// by `ReadOptions.field` when there are several) and may have no PartId: its connected pieces become parts 1…n.
 
 /** A reader error: `reason` is a fixed English text (an i18n key), `params` fill its {placeholders}. */
 export class ThermalError extends Error {
-  constructor(public code: "E-TH-PKG" | "E-TH-VERSION" | "E-TH-VTU", public reason: string, public params: Record<string, string | number> = {}) {
+  constructor(public code: "E-TH-PKG" | "E-TH-VERSION" | "E-TH-VTU" | "E-TH-FIELD", public reason: string, public params: Record<string, string | number> = {}) {
     super(reason.replace(/\{(\w+)\}/g, (_m, k: string) => String(params[k] ?? "")));
   }
 }
@@ -30,6 +32,46 @@ export interface ThermalMesh {
   gridStep?: number;
   /** Lowest and highest temperature of the points. */
   range: [number, number];
+  /** The point array the temperatures came from, when it is not Temperature_C (FR-TPKG-014). */
+  field?: string;
+  /** The array held kelvin (its name ends in K or says kelvin): `temp` is converted to °C. */
+  kelvin?: boolean;
+  /** The file had no PartId: parts are its connected pieces, largest first. */
+  pieces?: boolean;
+}
+
+/** How to read a .vtu written by another tool. */
+export interface ReadOptions {
+  /** The point array to read as temperature when the file has no Temperature_C. */
+  field?: string;
+}
+
+/** Point arrays not taken for a temperature. */
+const NOT_TEMP = /^(partid|face|normals?|ids?|vtk\w*|point_?ids?|node_?ids?|global_?ids?)$/i;
+/** A name read as kelvin: ends in K (T_K, Temperature [K], temp(K)) or says kelvin. */
+export const isKelvin = (name: string) => /kelvin|(^|[\s_\-[(])k[\])]?$/i.test(name);
+/** The preferred temperature array among several: one name that says temp/temperature, or a lone T. */
+function likelyTemp(names: string[]) {
+  const t = names.filter(n => /temp/i.test(n));
+  if (t.length === 1) return t[0];
+  const one = names.filter(n => /^t(_?[ck])?$/i.test(n));
+  return one.length === 1 ? one[0] : undefined;
+}
+
+/** Connected pieces of a triangle list (sharing a point), numbered 1…n by triangle count, largest first. */
+export function piecesOf(tri: Uint32Array, np: number): Int32Array {
+  const up = new Int32Array(np).map((_, i) => i);
+  const find = (a: number) => { while (up[a] !== a) { up[a] = up[up[a]]; a = up[a]; } return a; };
+  const join = (a: number, b: number) => { a = find(a); b = find(b); if (a !== b) up[a] = b; };
+  const nt = tri.length / 3;
+  for (let k = 0; k < nt; k++) { join(tri[k * 3], tri[k * 3 + 1]); join(tri[k * 3], tri[k * 3 + 2]); }
+  const count = new Map<number, number>();
+  for (let k = 0; k < nt; k++) { const r = find(tri[k * 3]); count.set(r, (count.get(r) ?? 0) + 1); }
+  const order = [...count.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  const id = new Map(order.map(([r], i) => [r, i + 1]));
+  const out = new Int32Array(nt);
+  for (let k = 0; k < nt; k++) out[k] = id.get(find(tri[k * 3]))!;
+  return out;
 }
 
 /** Most points or cells a map may have (a 300 × 200 mm board on a 0.5 mm grid is about 1 M cells). */
@@ -180,7 +222,7 @@ async function values(tag: Tag, c: Ctx): Promise<Num | Float64Array> {
 }
 
 /** Reads a .vtu. Throws `ThermalError` E-TH-VTU naming what is wrong; never hangs on a damaged file. */
-export async function readVtu(data: Uint8Array | string): Promise<ThermalMesh> {
+export async function readVtu(data: Uint8Array | string, opts: ReadOptions = {}): Promise<ThermalMesh> {
   const text = typeof data === "string" ? data : new TextDecoder().decode(data);
   const file = tagOf(text, "VTKFile");
   if (!file) throw bad("it is not a VTK XML file");
@@ -206,8 +248,22 @@ export async function readVtu(data: Uint8Array | string): Promise<ThermalMesh> {
 
   const pts = await read(section("Points")[0], "Points", np * 3);
   const pointData = section("PointData"), cellData = section("CellData"), cells = section("Cells");
-  const temp = await read(named(pointData, "Temperature_C"), "Temperature_C", np);
-  const partId = await read(named(cellData, "PartId"), "PartId", nc);
+  // The temperature: Temperature_C, else the array asked for, else the only (or the likely) one-component point array.
+  let tempTag = named(pointData, "Temperature_C"), field: string | undefined;
+  if (!tempTag) {
+    const cands = pointData.filter(a => (+(a.attrs.NumberOfComponents ?? 1) || 1) === 1 && a.attrs.Name && !NOT_TEMP.test(a.attrs.Name)).map(a => a.attrs.Name);
+    const want = opts.field && cands.includes(opts.field) ? opts.field : cands.length === 1 ? cands[0] : likelyTemp(cands);
+    if (!want) {
+      if (!cands.length) throw bad("the array {name} is missing", { name: "Temperature_C" });
+      throw new ThermalError("E-TH-FIELD", "it has no Temperature_C array; pick the temperature among {names}", { names: cands.join(", "), list: cands.join("\n") });
+    }
+    tempTag = named(pointData, want);
+    field = want;
+  }
+  const kelvin = !!field && isKelvin(field);
+  const temp = await read(tempTag, field ?? "Temperature_C", np);
+  const partTag = named(cellData, "PartId");
+  const partId = partTag ? await read(partTag, "PartId", nc) : undefined;
   const offs = await read(named(cells, "offsets"), "offsets", nc);
   const types = await read(named(cells, "types"), "types", nc);
   const connTag = named(cells, "connectivity");
@@ -217,7 +273,7 @@ export async function readVtu(data: Uint8Array | string): Promise<ThermalMesh> {
   const faceIn = await opt("Face"), powerIn = await opt("Power_W"), fluxIn = await opt("HeatFlux_W_m2");
 
   const pos = pts instanceof Float32Array ? pts : Float32Array.from(pts);
-  const t = temp instanceof Float32Array ? temp : Float32Array.from(temp);
+  const t = temp instanceof Float32Array && !kelvin ? temp : Float32Array.from(temp, x => kelvin ? x - 273.15 : x);
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < np; i++) {
     const x = t[i];
@@ -234,7 +290,8 @@ export async function readVtu(data: Uint8Array | string): Promise<ThermalMesh> {
     if (!(end >= prev) || end > conn.length) throw bad("cell {i} points past the end of the connectivity", { i });
     if (ty === 5 && n === 3) nt += 1;
     else if (ty === 9 && n === 4) nt += 2;
-    else throw bad("cell {i} is of type {type} with {n} points; only triangles (5) and quads (9) are read", { i, type: ty, n });
+    else if (ty === 7 && n >= 3) nt += n - 2;
+    else throw bad("cell {i} is of type {type} with {n} points; only triangles (5), quads (9) and polygons (7) are read", { i, type: ty, n });
     prev = end;
   }
   const tri = new Uint32Array(nt * 3), part = new Int32Array(nt);
@@ -244,21 +301,24 @@ export async function readVtu(data: Uint8Array | string): Promise<ThermalMesh> {
   const put = (a: number, b: number, d: number, cell: number) => {
     if (!(a < np && b < np && d < np) || a < 0 || b < 0 || d < 0) throw bad("cell {i} names a point that does not exist", { i: cell });
     tri[k * 3] = a; tri[k * 3 + 1] = b; tri[k * 3 + 2] = d;
-    part[k] = partId[cell];
+    part[k] = partId ? partId[cell] : 0;
     if (face) face[k] = faceIn![cell];
     if (power) power[k] = powerIn![cell];
     if (flux) flux[k] = fluxIn![cell];
     k++;
   };
   for (let i = 0; i < nc; i++) {
-    const s = prev;
-    put(conn[s], conn[s + 1], conn[s + 2], i);
-    if (types[i] === 9) put(conn[s], conn[s + 2], conn[s + 3], i);
+    const s = prev, n = offs[i] - prev;
+    for (let j = 1; j + 1 < n; j++) put(conn[s], conn[s + j], conn[s + j + 1], i);
     prev = offs[i];
   }
-  const field = arraysOf(tagOf(file.body, "FieldData")?.body ?? "");
-  const one = async (name: string) => { const tg = named(field, name); if (!tg) return undefined; const v = await values(tg, c); return v.length && Number.isFinite(v[0]) ? v[0] : undefined; };
-  return { pos, temp: t, tri, part, face, power, flux, ambient: await one("Ambient_C"), gridStep: await one("GridStep_mm"), range: np ? [lo, hi] : [0, 0] };
+  const fieldData = arraysOf(tagOf(file.body, "FieldData")?.body ?? "");
+  const one = async (name: string) => { const tg = named(fieldData, name); if (!tg) return undefined; const v = await values(tg, c); return v.length && Number.isFinite(v[0]) ? v[0] : undefined; };
+  const out: ThermalMesh = { pos, temp: t, tri, part: partId ? part : piecesOf(tri, np), face, power, flux, ambient: await one("Ambient_C"), gridStep: await one("GridStep_mm"), range: np ? [lo, hi] : [0, 0] };
+  if (field) out.field = field;
+  if (kelvin) out.kelvin = true;
+  if (!partId) out.pieces = true;
+  return out;
 }
 
 // ---------- writer (MöbiusCAD's own export, FR-TREP-010, and test fixtures) ----------

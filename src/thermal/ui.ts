@@ -101,7 +101,7 @@ const ICON: Record<string, string> = {
 };
 
 /** Reads a package from its files in a worker (the error is a `ThermalError`). */
-export function readPackageInWorker(files: Map<string, Uint8Array>, name: string): Promise<ThermalPackage> {
+export function readPackageInWorker(files: Map<string, Uint8Array>, name: string, field?: string): Promise<ThermalPackage> {
   return new Promise((resolve, reject) => {
     const w = new ThermalWorker();
     w.onmessage = (e: MessageEvent<ThermalReply>) => {
@@ -111,8 +111,23 @@ export function readPackageInWorker(files: Map<string, Uint8Array>, name: string
       else reject(new ThermalError(d.code as "E-TH-PKG", d.reason, d.params));
     };
     w.onerror = e => { w.terminate(); reject(new ThermalError("E-TH-PKG", "{err}", { err: e.message || "worker failed" })); };
-    w.postMessage({ id: 1, files: [...files], name });
+    w.postMessage({ id: 1, files: [...files], name, field });
   });
+}
+
+/**
+ * Reads a package; a plain .vtu with several possible temperature arrays (E-TH-FIELD, FR-TPKG-014) asks which one in
+ * a small list. Null when the list is cancelled.
+ */
+export async function readPackageAsking(files: Map<string, Uint8Array>, name: string): Promise<ThermalPackage | null> {
+  try { return await readPackageInWorker(files, name); }
+  catch (err) {
+    if (!(err instanceof ThermalError) || err.code !== "E-TH-FIELD") throw err;
+    const list = String(err.params.list ?? "").split("\n").filter(Boolean);
+    const pick = await chooseModal(t("Which array is the temperature?"), t("{name} has no Temperature_C array. Pick the point array that holds the temperatures (°C; a name ending in K is read as kelvin).", { name }),
+      list.map(n => ({ key: n, label: n })));
+    return pick ? readPackageInWorker(files, name, pick) : null;
+  }
 }
 
 /** What a reader error says to the user. */

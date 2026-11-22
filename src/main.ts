@@ -50,7 +50,7 @@ import ImportWorker from "./worker/import.worker?worker";
 import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
-import { packageMeshes, readPackageInWorker, thermalErrorText, ThermalMaps } from "./thermal/ui";
+import { packageMeshes, readPackageAsking, thermalErrorText, ThermalMaps } from "./thermal/ui";
 import { findManifest, isSourcesCsv, type ThermalPackage } from "./thermal/package";
 import type { ModelBody, PartMatch } from "./thermal/match";
 import { findMaterial, toRef, type MatRef } from "./tools/materials";
@@ -1054,9 +1054,10 @@ async function thermalFilesOf(files: File[]): Promise<{ files: Map<string, Uint8
 async function openThermal(files: Map<string, Uint8Array>, name: string, step?: File, src?: ArrayBuffer) {
   const idle = !$("#empty").hidden;
   if (idle) setLoading(true, t("Reading the thermal map…"), 5);
-  let pkg: Awaited<ReturnType<typeof readPackageInWorker>>;
-  try { pkg = await readPackageInWorker(files, name); }
+  let pkg: Awaited<ReturnType<typeof readPackageAsking>>;
+  try { pkg = await readPackageAsking(files, name); }
   catch (err) { if (idle) setLoading(false); toast(thermalErrorText(err, name), true); return; }
+  if (!pkg) { if (idle) setLoading(false); return; }
   const model = step ? { name: step.name, data: await step.arrayBuffer() } : pkg.step ? { name: pkg.step.name, data: pkg.step.data.slice().buffer as ArrayBuffer } : null;
   if (model) {
     const key = `sv:m:${model.name}:${model.data.byteLength || ""}`;

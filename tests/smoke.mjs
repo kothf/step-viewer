@@ -17573,8 +17573,32 @@ try {
     await ctx.close();
   }
 
+  // --- plain vtu 1.677 (FRS-thermal FR-TPKG-014): a .vtu from another tool opens as a map; the temperature array is picked ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const vp = await ctx.newPage();
+    vp.on("pageerror", e => errors.push(e.message));
+    vp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await vp.goto(`${origin}/index.html?debug`);
+    await vp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await vp.goto(`${origin}/index.html?debug`);
+    await vp.waitForFunction(() => window.__sv);
+    await vp.setInputFiles("#file-input", [join(resolve("tests/fixtures/thermal"), "other-tool.vtu")]);
+    await vp.waitForSelector("dialog.choose-dlg [data-choose]", { timeout: 20000 });
+    const opts = await vp.evaluate(() => [...document.querySelectorAll("dialog.choose-dlg [data-choose]")].map(b => b.dataset.choose));
+    await vp.click('dialog.choose-dlg [data-choose="Field_K"]');
+    await vp.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 60000 });
+    await vp.waitForTimeout(400);
+    const pv = await vp.evaluate(() => { const s = window.__sv.thermal.state(); return { name: s.name, own: s.own, range: s.range, parts: s.parts, tris: s.tris,
+      toasts: [...document.querySelectorAll(".toast")].map(t => t.textContent).join(" | ") }; });
+    check(JSON.stringify(opts) === '["Flux","Field_K"]' && pv.name === "other-tool" && pv.own && pv.parts === 2 && pv.tris === 4 && Math.abs(pv.range[0] - 20) < 0.01 && Math.abs(pv.range[1] - 65) < 0.01
+      && /Field_K \(kelvin/.test(pv.toasts) && /connected piece/.test(pv.toasts),
+      `plain vtu 1.677: a .vtu from another tool asks which array is the temperature, reads kelvin as °C and makes its connected pieces the parts (${JSON.stringify({ opts, ...pv })})`);
+    await ctx.close();
+  }
+
   // --- bolted joints 1.673 (FRS-thermal FR-TCON-003): plates a toolbox bolt clamps pass heat by a bolted joint's conductance ---
-  if (inShard(5)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
