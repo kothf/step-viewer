@@ -2,6 +2,7 @@
 // Values are in the solver's units: N, MPa, mm/s², N·mm. Faces are named like everywhere else
 // (persistent face names), so a study follows the model through edits (FR-STU-020).
 
+import type { PowerProfile, TransientSettings } from "./transient";
 import type { BoardStack } from "../thermal/study";
 import type { FaceRef, Num, V3 } from "../model/types";
 import type { MatRef } from "../tools/materials";
@@ -114,6 +115,8 @@ export interface StudyLoad {
   board?: string;
   /** Heat from package: keep the package's split, its shares applied as fixed powers (FR-TBRD-003). */
   split?: boolean;
+  /** Transient thermal studies: how the power changes with time (FR-TLOAD-005); absent = constant. */
+  profile?: PowerProfile;
 }
 
 /** Local accuracy (FR-SOL-012): the solution starts `level` degrees higher where it meets these faces. */
@@ -201,6 +204,8 @@ export interface StudySettings {
   factor?: number;
   /** Thermal studies: gravity's direction for natural convection (FR-TBC-011), a unit vector; absent = −Z. */
   down?: [number, number, number];
+  /** Thermal studies: transient (FR-TSOL-006), stepped in time from the start temperature to `end`; absent = steady. */
+  transient?: TransientSettings;
 }
 export const DEFAULT_AMBIENT = 25;
 export type Enclosure = "open" | "vented" | "closed" | "custom";

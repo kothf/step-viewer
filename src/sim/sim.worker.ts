@@ -5,7 +5,7 @@
 
 import { findConnections, type Connection } from "./connect";
 import { findBolts, type FastenerBody } from "./bolts";
-import { runModal, runStatic, runThermal, sampleAt, type PassResult, type RunInput, type SampleResult, type Sampler } from "./run";
+import { runModal, runStatic, runThermal, runTransient, sampleAt, type PassResult, type RunInput, type SampleResult, type Sampler } from "./run";
 
 export type SimRequest =
   | { id: number; type: "static" | "modal" | "thermal"; input: RunInput; /** Keep the solutions of the solves before (the other load cases). */ more?: boolean }
@@ -43,8 +43,8 @@ self.onmessage = (e: MessageEvent<SimRequest>) => {
       return;
     }
     if (!r.more) kept.clear();
-    const passes = r.type === "modal" ? runModal(r.input) : r.type === "thermal" ? runThermal(r.input, (s, inside) => { kept.set(r.id, { sample: s, inside }); }) : runStatic(r.input, (s, inside) => { kept.set(r.id, { sample: s, inside }); });
-    for (const pass of passes) post({ id: r.id, pass }, [pass.u.buffer, pass.vm.buffer, pass.err.buffer, ...(pass.shapes ?? []).map(s => s.buffer)]);
+    const passes = r.type === "modal" ? runModal(r.input) : r.type === "thermal" && r.input.thermal?.transient ? runTransient(r.input) : r.type === "thermal" ? runThermal(r.input, (s, inside) => { kept.set(r.id, { sample: s, inside }); }) : runStatic(r.input, (s, inside) => { kept.set(r.id, { sample: s, inside }); });
+    for (const pass of passes) post({ id: r.id, pass }, [pass.u.buffer, pass.vm.buffer, pass.err.buffer, ...(pass.shapes ?? []).map(s => s.buffer), ...(pass.transient?.frames ?? []).map(f => f.buffer)]);
     post({ id: r.id, done: true });
   } catch (err) {
     post({ id: r.id, error: err instanceof Error ? err.message : String(err) });

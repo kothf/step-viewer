@@ -17115,7 +17115,7 @@ try {
     const b1 = await bar();
     const empty = await tp.evaluate(() => !!document.querySelector('#sim-tree .sim-empty [data-a="newthermal"]'));
     check(b0.on === "mode-structural" && b0.ids.includes("force") && b0.ids.includes("fixed") && !b0.ids.includes("heat") && b0.checked === 1 && !b0.wide && b0.words === 2
-      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "heat", "hflux", "temp", "conv", "rad", "solve", "results", "report"]) && empty,
+      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "hflux", "temp", "conv", "rad", "solve", "results", "report"]) && empty,
       `thermal 1.651: the Simulation bar has a Structural | Thermal switch; Thermal shows the thermal study's commands in place of supports and loads (${JSON.stringify({ b0, b1, empty })})`);
     // 8 W made in the whole bar (a thermal study is made on the way), the top face held at 30 °C
     await tp.click('#sim-tools [data-s="heat"]');
@@ -17187,6 +17187,120 @@ try {
     const t4 = await sim(), b4 = await bar();
     check(b2.on === "mode-structural" && b2.ids.includes("force") && k2 === "thermal" && t3.kind === "static" && b3.on === "mode-structural" && t4.kind === "thermal" && b4.on === "mode-thermal" && b4.ids.includes("heat") && !b4.ids.includes("force"),
       `thermal 1.651: Structural shows the structural commands, Fixed then makes a static study, and Thermal goes back to the thermal study (${JSON.stringify({ b2: b2.on, k2, k3: t3.kind, b3: b3.on, k4: t4.kind, b4: b4.on })})`);
+    await ctx.close();
+  }
+
+  // --- Transient thermal 1.661 (FRS-thermal TH4): warm-up over time with a heater switched on later ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.goto(`${origin}/index.html?debug`);
+    await tp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await tp.goto(`${origin}/index.html?debug`);
+    await tp.waitForFunction(() => window.__sv);
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await tp.waitForTimeout(150); await tp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 }); };
+    // A 20 × 20 × 200 steel bar; the material has no specific heat yet
+    await tp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 200), P(4, -10, 200), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50 };
+    }));
+    await settle();
+    const at = name => tp.evaluate(n => {
+      const v = window.__sv.viewer, part = v.parts[0], names = window.__sv.model.last().faceNames, f = part.data.faces[names.indexOf(n)];
+      const s = v.toWorld(part, f.center).clone().project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, name);
+    const sim = () => tp.evaluate(() => window.__sv.sim.state());
+    const solved = async () => { await tp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 240000 }); await tp.waitForTimeout(300); };
+    await tp.click("#cm-t-simulation");
+    await tp.waitForTimeout(300);
+    await tp.click('#sim-tools [data-s="mode-thermal"]');
+    await tp.waitForTimeout(150);
+    await tp.click('#sim-tools [data-s="heat"]');
+    await tp.waitForSelector("#sim-pm .pm-ok");
+    await tp.check('#sim-pm [data-k="body"]');
+    await tp.fill('#sim-pm [data-n="value"]', "8");
+    await tp.press('#sim-pm [data-n="value"]', "Tab");
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    await tp.click('#sim-tools [data-s="conv"]');
+    let p = await at("f1:end");
+    await tp.mouse.click(p.x, p.y);
+    await tp.waitForTimeout(200);
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    // Over time, 600 s with results every 60 s
+    await tp.click('#sim-tools [data-s="transient"]');
+    await settle();
+    const tsec0 = await tp.evaluate(() => ({ on: document.querySelector('#sim-tree [data-k="transient"]')?.checked ?? false, rcp: document.querySelector('#sim-tree [data-v="rcp"]')?.className ?? "" }));
+    await tp.fill('#sim-tree [data-k="tend"]', "600");
+    await tp.press('#sim-tree [data-k="tend"]', "Tab");
+    await settle();
+    await tp.fill('#sim-tree [data-k="tout"]', "60");
+    await tp.press('#sim-tree [data-k="tout"]', "Tab");
+    await settle();
+    // the heater comes on at 60 s
+    await tp.click('#sim-tree .sim-heat button.sim-name[data-a="edit"]');
+    await tp.waitForSelector("#sim-pm .pm-ok");
+    await tp.selectOption('#sim-pm [data-k="profile"]', "step");
+    await tp.waitForTimeout(150);
+    const pat = await tp.evaluate(() => document.querySelector('#sim-pm [data-q="pat"]')?.value ?? null);
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    const set = await tp.evaluate(() => { const st = window.__sv.model.store.doc.studies[0]; return { tr: st.settings.transient, profile: st.loads[0].profile, meta: document.querySelector("#sim-tree .sim-heat .sim-meta")?.textContent ?? "" }; });
+    await tp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t0 = await sim();
+    const noCp = await tp.evaluate(() => document.querySelector("#tab-sim").textContent + [...document.querySelectorAll(".toast")].map(e => e.textContent).join(" "));
+    await tp.evaluate(() => window.__sv.model.store.change("Material", d => { d.material = { ...d.material, cp: 460 }; }));
+    await settle();
+    const rcp = await tp.evaluate(() => document.querySelector('#sim-tree [data-v="rcp"]')?.textContent ?? "");
+    await tp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t1 = await sim();
+    const res = await tp.evaluate(() => ({ chart: document.querySelectorAll("#sim-tree svg.sim-tchart polyline, #sim-tree svg.sim-tchart path").length, csv: !!document.querySelector('#sim-tree [data-a="tcsv"]'),
+      tend: document.querySelector('#sim-tree [data-v="tend"]')?.textContent ?? "", stored: document.querySelector('#sim-tree [data-v="stored"]')?.textContent ?? "", slider: document.querySelector('#sim-legend input[data-k="time"]')?.max ?? null,
+      ttime: document.querySelector('#sim-legend [data-v="ttime"]')?.textContent ?? "", kind: document.querySelector('#sim-tree [data-v="kind"]')?.textContent ?? "", wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    // the slider shows 300 s
+    await tp.$eval('#sim-legend input[data-k="time"]', e => { e.value = "5"; e.dispatchEvent(new Event("input", { bubbles: true })); });
+    await tp.waitForTimeout(300);
+    const t5 = await sim(), tt5 = await tp.evaluate(() => document.querySelector('#sim-legend [data-v="ttime"]')?.textContent ?? "");
+    // a probe on a side face reads the temperature at every output time
+    await tp.click('#sim-legend [data-a="probe"]');
+    p = await at("f1:side:s1l2");
+    await tp.mouse.click(p.x, p.y);
+    await tp.waitForTimeout(400);
+    await tp.click('#sim-legend [data-a="probe"]');
+    // time to reach 30 °C
+    await tp.fill('#sim-tree [data-k="reach"]', "30");
+    await tp.press('#sim-tree [data-k="reach"]', "Tab");
+    await tp.waitForTimeout(300);
+    const reach = await tp.evaluate(() => [...document.querySelectorAll('#sim-tree [data-v="treach"]')].map(e => e.textContent));
+    // play runs to the end
+    await tp.$eval('#sim-legend input[data-k="time"]', e => { e.value = "0"; e.dispatchEvent(new Event("input", { bubbles: true })); });
+    await tp.click('#sim-legend [data-a="tplay"]');
+    await tp.waitForTimeout(300);
+    const playing = (await sim()).transient.playing;
+    await tp.waitForFunction(() => { const s = window.__sv.sim.state().transient; return !s.playing && s.frame === s.times.length - 1; }, null, { timeout: 30000 });
+    const t2 = await sim();
+    await tp.click("#lang-btn");
+    const ru = await tp.evaluate(() => [...document.querySelectorAll("#tab-sim *, #sim-tools *, #sim-legend *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await tp.click("#lang-btn");
+    await tp.waitForTimeout(200);
+    const T = t1.transient, C = 7.85e-6 * 460 * 80000, rise = 8 * 540 / C, end = T ? T.max[T.max.length - 1] : 0;
+    check(tsec0.on && /sim-prob/.test(tsec0.rcp) && pat === "60" && set.tr?.end === 600 && set.tr?.out === 60 && set.profile?.kind === "step" && set.profile?.at === 60
+      && /^E-TH-NOCP/.test(t0.error) && /specific heat/.test(noCp) && /460/.test(rcp)
+      && !t1.error && T && T.times.length === 11 && T.times[10] === 600 && Math.abs(T.max[1] - 25) < 0.05 && end - 25 > rise * 0.85 && end - 25 < rise * 1.01 && T.steady > end
+      && res.chart > 0 && res.csv && /600|10 min/.test(res.tend) && res.slider === "10" && /Transient/.test(res.kind) && res.wide <= 0
+      && t5.transient.frame === 5 && t5.transient.time === 300 && /300 s|5 min/.test(tt5) && Math.abs(t5.transient.shown - T.max[5]) < 1e-6
+      && t2.transient.probes.length === 1 && t2.transient.probes[0].length === 11 && reach.length > 0 && playing && /^"Time, s"/.test(t2.transient.csv) && ru.length === 0,
+      `thermal transient 1.661: 8 W switched on at 60 s in a steel bar: nothing until then, then it warms by about P·t / (ρ·c·V) less what the face takes; the slider, probes, time to reach and play follow the run; translated (${JSON.stringify({ tsec0, pat, set, noCp: t0.error, noCpText: /specific heat/.test(noCp), rcp, error: t1.error, times: T?.times, max: T?.max, rise, res, t5: t5.transient && { frame: t5.transient.frame, time: t5.transient.time, shown: t5.transient.shown }, tt5, probes: t2.transient?.probes, reach, playing, csv: t2.transient?.csv?.slice(0, 40), ru })})`);
     await ctx.close();
   }
 
