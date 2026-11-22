@@ -88,6 +88,10 @@ export interface SimHost {
 type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "load"; draft: StudyLoad; isNew: boolean } | { kind: "refine"; draft: StudyRefine; isNew: boolean } | { kind: "weld"; draft: StudyWeld; isNew: boolean } | { kind: "connector"; draft: StudyConnector; isNew: boolean } | { kind: "mass"; draft: StudyMass; isNew: boolean };
 /** `parts` = bodies of the part when there are several (they are analysed bonded). */
 /** One load case's results; `job` names its solution in the worker (0 = not held). */
+/** A highest or lowest value of a plot: in display units, `at` in the display length unit, `hidden` = behind the model in the picture. */
+interface Extreme { max: boolean; value: number; unit: string; at: number[]; hidden: boolean }
+/** A plot captured for the report. */
+interface Captured { src: string; w: number; h: number; caption: string; extremes: Extreme[] }
 interface CaseResult { id: string; name: string; passes: PassResult[]; job: number }
 /** `passes` are the shown ones: the study's, or with load cases the picked case's or the envelope (one made-up pass). */
 /** A bolt of a solve: its screw's component id and name, every fastener it stands for, its thread. */
@@ -296,7 +300,9 @@ export class SimController {
   private vals: Float32Array | null = null;
   private probeLayer: HTMLElement | null = null;
   /** The last report saved (for tests). */
-  private lastReport: { kind: string; blocks: number; images: number } | null = null;
+  private lastReport: { kind: string; blocks: number; images: number; marks: Extreme[][] } | null = null;
+  /** The highest and lowest values marked on each picture of the report being made. */
+  private repMarks: Extreme[][] = [];
   /** Modal results: the mode shown (−1 = the first elastic one) and whether its shape swings. */
   private modeSel = -1;
   private animate = true;
@@ -453,7 +459,7 @@ export class SimController {
     const boxes = partBoxes(mesh);
     for (const x of parts) x.box = boxes.get(x.id);
     // the view, as the report draws it
-    const was = { ...this.plot }, im = this.capture("temp", "image/png");
+    const was = { ...this.plot }, im = this.capture("temp", "image/png", false);
     this.plot = was;
     this.showPlot();
     const picture = im ? Uint8Array.from(atob(im.src.split(",")[1] ?? ""), c => c.charCodeAt(0)) : undefined;
@@ -3090,7 +3096,7 @@ export class SimController {
   // ---------- report ----------
 
   /** The plot of one result as a picture, in the current view, with its colour scale drawn in. */
-  private capture(kind: PlotKind, type = "image/jpeg"): { src: string; w: number; h: number; caption: string } | null {
+  private capture(kind: PlotKind, type = "image/jpeg", marks = true): Captured | null {
     this.plot.kind = kind;
     this.plot.on = true;
     this.showPlot();
@@ -3116,9 +3122,80 @@ export class SimController {
     g.textAlign = "center"; g.fillText(unit, x0 + bw / 2, y0 + bh + 3 * s);
     g.textAlign = "right"; g.fillText(hi, x0 + bw, y0 + bh + 3 * s);
     const mr = this.res?.passes.at(-1), mi = this.modeIndex(mr), mode = mr?.modes?.[mi];
+    const extremes = marks && !mode ? this.markExtremes(g, k, s, kind) : [];
     const label = mode ? `${t("Mode {n}", { n: mi + 1 })}, ${mode.rigid ? t("rigid body") : `${sig(mode.hz)} Hz`}. ${t(PLOTS.find(p => p[0] === kind)![1])}` : t(PLOTS.find(p => p[0] === kind)![1]);
     const caption = mode ? `${label}. ${t("Mode shapes have no scale: only the pattern of the motion is meaningful.")}` : `${label}: ${lo} … ${hi}${unit ? ` ${unit}` : ""}` + (this.plot.deformed ? `. ${t("Deformed shape")} ×${sig(this.usedScale)}` : "");
-    return { src: c.toDataURL(type, 0.9), w: c.width, h: c.height, caption };
+    return { src: c.toDataURL(type, 0.9), w: c.width, h: c.height, caption, extremes };
+  }
+
+  /**
+   * The highest and lowest values of the shown plot: an arrow and a label on the picture `g` (the canvas scaled by `k`
+   * from the view, `s` = text scale) at each, and their places for the report's table. A safety factor shows only its
+   * lowest value. A point hidden behind the model still gets its arrow, and its label says so.
+   */
+  private markExtremes(g: CanvasRenderingContext2D, k: number, s: number, kind: PlotKind): Extreme[] {
+    const a = this.vals, ov = this.overlay, r = this.res;
+    if (!a || !ov || !r) return [];
+    const mk = this.mask;
+    let lo = -1, hi = -1;
+    for (let i = 0; i < a.length; i++) { if (mk && !mk[i]) continue; if (lo < 0 || a[i] < a[lo]) lo = i; if (hi < 0 || a[i] > a[hi]) hi = i; }
+    if (lo < 0) return [];
+    const picks: { max: boolean; i: number }[] = kind === "sf" ? [{ max: false, i: lo }] : [{ max: true, i: hi }, ...(a[lo] < a[hi] ? [{ max: false, i: lo }] : [])];
+    const [unit, f] = this.plotUnit(), uf = UNITS[units.current].f, v = this.host.viewer, cv = v.renderer.domElement;
+    const pa = ov.geometry.getAttribute("position"), W = g.canvas.width, H = g.canvas.height;
+    const ray = new THREE.Raycaster(), hits: THREE.Intersection[] = [];
+    const out: Extreme[] = [], spots: { x: number; y: number }[] = [];
+    for (const p of picks) {
+      const w = ov.localToWorld(new THREE.Vector3().fromBufferAttribute(pa, p.i)), q = w.clone().project(v.camera);
+      if (q.z > 1 || q.z < -1) continue;
+      spots.push({ x: ((q.x + 1) / 2) * cv.width * k, y: ((1 - q.y) / 2) * cv.height * k });
+      // hidden: the plot surface lies in front of the point along the line of sight
+      hits.length = 0;
+      const eye = v.camera.position.clone(), dir = w.clone().sub(eye), dist = dir.length();
+      ray.set(eye, dir.normalize());
+      if ((v.camera as THREE.OrthographicCamera).isOrthographicCamera) { const back = v.camera.getWorldDirection(new THREE.Vector3()); ray.set(w.clone().addScaledVector(back, -1e6), back); }
+      THREE.Mesh.prototype.raycast.call(ov, ray, hits);
+      const far = (v.camera as THREE.OrthographicCamera).isOrthographicCamera ? 1e6 : dist, hidden = hits.some(h => h.distance < far - 1e-3 * v.modelSize);
+      const at = [0, 1, 2].map(c => r.mesh.pos[3 * p.i + c] * uf);
+      out.push({ max: p.max, value: a[p.i] * f, unit, at, hidden });
+    }
+    // the arrows come in from outside the model, away from the middle of the marked points (or of the picture)
+    const cx = spots.length > 1 ? (spots[0].x + spots[1].x) / 2 : W / 2, cy = spots.length > 1 ? (spots[0].y + spots[1].y) / 2 : H / 2;
+    out.forEach((e, n) => {
+      const p = spots[n];
+      let dx = p.x - cx, dy = p.y - cy, d = Math.hypot(dx, dy);
+      if (d < 1) { dx = e.max ? -1 : 1; dy = -1; d = Math.SQRT2; }
+      dx /= d; dy /= d;
+      // lean the arrow up a little so it reads like a pointer
+      const L = 80 * s, ux = dx * 0.8, uy = dy * 0.8 - 0.6, ul = Math.hypot(ux, uy);
+      let sx = p.x + (ux / ul) * L, sy = p.y + (uy / ul) * L;
+      sx = Math.min(W - 10 * s, Math.max(10 * s, sx)); sy = Math.min(H - 50 * s, Math.max(20 * s, sy));
+      const col = e.max ? "#c92a2a" : "#1864ab", bx = p.x - sx, by = p.y - sy, bl = Math.hypot(bx, by) || 1, hx = bx / bl, hy = by / bl, hl = 11 * s;
+      g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 2.2 * s;
+      if (e.hidden) g.setLineDash([6 * s, 4 * s]);
+      g.beginPath(); g.moveTo(sx, sy); g.lineTo(p.x - hx * hl * 0.8, p.y - hy * hl * 0.8); g.stroke();
+      g.setLineDash([]);
+      g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(p.x - hx * hl - hy * hl * 0.45, p.y - hy * hl + hx * hl * 0.45); g.lineTo(p.x - hx * hl + hy * hl * 0.45, p.y - hy * hl - hx * hl * 0.45); g.closePath(); g.fill();
+      const text = `${t(e.max ? "Max" : "Min")} ${sig(e.value)}${e.unit ? ` ${e.unit}` : ""}${e.hidden ? ` (${t("hidden from view")})` : ""}`;
+      g.font = `bold ${12 * s}px "DejaVu Sans", system-ui, sans-serif`; g.textBaseline = "middle";
+      const tw = g.measureText(text).width, left = bx > 0, tx = Math.min(W - tw - 8 * s, Math.max(8 * s, left ? sx - tw - 6 * s : sx + 6 * s));
+      g.fillStyle = "rgba(255,255,255,0.92)"; g.fillRect(tx - 4 * s, sy - 10 * s, tw + 8 * s, 20 * s);
+      g.strokeStyle = col; g.lineWidth = 1 * s; g.strokeRect(tx - 4 * s, sy - 10 * s, tw + 8 * s, 20 * s);
+      g.fillStyle = col; g.textAlign = "left"; g.fillText(text, tx, sy);
+    });
+    return out;
+  }
+
+  /** A captured plot into the report, with a table of where its highest and lowest values are. */
+  private pushImage(blocks: ReportBlock[], im: Captured | null) {
+    if (!im) return;
+    const { extremes, ...img } = im;
+    blocks.push({ kind: "image", ...img });
+    this.repMarks.push(extremes);
+    if (!extremes.length) return;
+    const unit = extremes[0].unit;
+    blocks.push({ kind: "table", widths: [2, 2, 4], rows: [["", `${t("Value")}${unit ? `, ${unit}` : ""}`, `X, Y, Z, ${units.current}`],
+      ...extremes.map(e => [t(e.max ? "Max" : "Min") + (e.hidden ? ` (${t("hidden from view")})` : ""), sig(e.value), e.at.map(x => String(Number(x.toFixed(3)))).join(", ")])] });
   }
 
   /** The report's tables of the connectors' results and of the masses. */
@@ -3194,6 +3271,7 @@ export class SimController {
 
   /** What the report says: the study, its set-up and the results of the last pass, in the UI language. */
   private reportOf(): SimReport | null {
+    this.repMarks = [];
     const doc = this.host.doc(), st = this.study(), res = this.res, last = res?.passes.at(-1);
     if (!doc || !st || !res || !last || this.stale()) return null;
     const m = this.matOf(doc), off = new Set(st.suppressed ?? []);
@@ -3258,7 +3336,7 @@ export class SimController {
     kv(rows);
     const keep = { ...this.plot };
     const kinds: PlotKind[] = ["vm", "u", ...(this.hasYield() ? ["sf" as PlotKind] : [])];
-    for (const k of kinds) { const im = this.capture(k); if (im) blocks.push({ kind: "image", ...im }); }
+    for (const k of kinds) this.pushImage(blocks, this.capture(k));
     this.plot = keep;
     this.showPlot();
     if (this.probes.length && this.saved) {
@@ -3313,7 +3391,7 @@ export class SimController {
     const keep = { ...this.plot }, sel = this.modeSel, anim = this.animate;
     this.animate = false;
     const elastic = (last.modes ?? []).map((x, i) => (x.rigid ? -1 : i)).filter(i => i >= 0).slice(0, 4);
-    for (const i of elastic) { this.modeSel = i; const im = this.capture("u"); if (im) blocks.push({ kind: "image", ...im }); }
+    for (const i of elastic) { this.modeSel = i; this.pushImage(blocks, this.capture("u")); }
     this.plot = keep; this.modeSel = sel; this.animate = anim;
     this.showPlot();
     blocks.push({ kind: "h", text: t("Convergence") });
@@ -3452,7 +3530,7 @@ export class SimController {
       blocks.push({ kind: "table", widths: [3, 1, 2, 2, 2], rows: [[t("Part"), "W", t("Board"), t("Surface"), t("Other")], ...paths.map(x => [x.name, sig(x.p), sh(x.board, x.p), sh(x.air, x.p), sh(Math.max(0, x.other), x.p)])] });
     }
     const was = { ...this.plot };
-    for (const k of ["temp", "flux"] as PlotKind[]) { const im = this.capture(k); if (im) blocks.push({ kind: "image", ...im }); }
+    for (const k of ["temp", "flux"] as PlotKind[]) this.pushImage(blocks, this.capture(k));
     this.plot = was;
     this.showPlot();
     blocks.push({ kind: "h", text: t("Convergence") });
@@ -3487,7 +3565,7 @@ export class SimController {
         for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
         download(reportPdf(jsPDF, rep, btoa(bin)), `${stem}-report.pdf`);
       }
-      this.lastReport = { kind, blocks: rep.blocks.length, images: rep.blocks.filter(b => b.kind === "image").length };
+      this.lastReport = { kind, blocks: rep.blocks.length, images: rep.blocks.filter(b => b.kind === "image").length, marks: this.repMarks };
     } catch (e) {
       toast(t("Could not save: {err}", { err: (e as Error).message }), true);
     }

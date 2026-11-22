@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.680.0] - 2026-11-22
+
+### Added
+
+- Study reports mark the highest and lowest values. Every picture in a structural or thermal report has an arrow and a label at its maximum and minimum (only the minimum for a safety factor), dashed with "hidden from view" when the point is on the far side of the model, and a table under the picture gives each value and its X, Y, Z position.
+
 ## [1.679.0] - 2026-11-22
 
 ### Changed
@@ -4466,7 +4472,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.679.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.680.0...HEAD
+[1.680.0]: https://github.com/kothf/step-viewer/compare/v1.679.0...v1.680.0
 [1.679.0]: https://github.com/kothf/step-viewer/compare/v1.678.0...v1.679.0
 [1.678.0]: https://github.com/kothf/step-viewer/compare/v1.677.0...v1.678.0
 [1.677.0]: https://github.com/kothf/step-viewer/compare/v1.676.0...v1.677.0

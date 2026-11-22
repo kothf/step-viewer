@@ -5507,6 +5507,7 @@ export const RU: Record<string, string> = {
   "Highest and lowest values": "Наибольшее и наименьшее значения",
   "Max": "Макс.",
   "Min": "Мин.",
+  "hidden from view": "не видно в этом виде",
   "Pass {n}: accuracy raised in {k} of {m} cells.": "Проход {n}: точность повышена в {k} из {m} ячеек.",
   "Each pass raises the accuracy on the same geometry and stops early once the strain energy changes by less than {n} %.": "Каждый проход повышает точность на той же геометрии; расчёт останавливается раньше, когда энергия деформации меняется меньше чем на {n} %.",
   "Not solved yet.": "Расчёт ещё не выполнен.",
