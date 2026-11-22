@@ -840,9 +840,16 @@ export function envelope(cases: PassResult[]): PassResult {
   }
   const top = (f: (p: PassResult) => number) => Math.max(...cases.map(f));
   const errors = first.errors.map((_e, i) => { const v = cases.map(c => c.errors[i]).filter((x): x is number => x != null); return v.length ? Math.max(...v) : null; });
+  // thermal power cases (FR-TSTU-005): the hottest and coolest of any case, and each component's hottest; flows belong to one case
+  const T = first.thermal ? cases.map(c => c.thermal!) : null;
+  const thermal = T ? {
+    min: Math.min(...T.map(x => x.min)), max: Math.max(...T.map(x => x.max)), applied: Math.max(...T.map(x => x.applied)), flows: [], solves: Math.max(...T.map(x => x.solves)),
+    ...(T[0].comps ? { comps: T[0].comps.map((_c, i) => ({ min: Math.min(...T.map(x => x.comps?.[i]?.min ?? Infinity)), max: Math.max(...T.map(x => x.comps?.[i]?.max ?? -Infinity)), mean: Math.max(...T.map(x => x.comps?.[i]?.mean ?? -Infinity)), power: Math.max(...T.map(x => x.comps?.[i]?.power ?? 0)) })) } : {}),
+  } : undefined;
   return {
     ...first, u, vm, err, errors, maxU: top(c => c.maxU), maxVm: top(c => c.maxVm), dofs: top(c => c.dofs), ms: cases.reduce((s, c) => s + c.ms, 0),
     energy: top(c => c.energy), change: null, reactions: [], applied: { force: [0, 0, 0], moment: [0, 0, 0] }, converged: cases.every(c => c.converged), done: true,
+    ...(thermal ? { thermal } : {}),
   };
 }
 
