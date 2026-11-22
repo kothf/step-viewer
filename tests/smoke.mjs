@@ -17511,6 +17511,88 @@ try {
     await ctx.close();
   }
 
+  // --- thermal stress 1.663 (FRS-thermal TH5, FR-LOAD-011): a Temperature load, uniform or from a thermal study ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const sp = await ctx.newPage();
+    sp.on("pageerror", e => errors.push(e.message));
+    sp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await sp.goto(`${origin}/index.html?debug`);
+    await sp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await sp.goto(`${origin}/index.html?debug`);
+    await sp.waitForFunction(() => window.__sv);
+    await sp.click("#new-part");
+    await sp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // a 20 × 20 steel bar, 100 long along Y; α 12e-6 /K, k 50 W/(m·K)
+    await sp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50, cp: 460, alpha: 12 };
+    }));
+    await sp.waitForTimeout(150);
+    await sp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const sim = () => sp.evaluate(() => window.__sv.sim.state());
+    const solved = async () => { await sp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await sp.waitForTimeout(400); };
+    await sp.click("#cm-t-simulation");
+    await sp.waitForTimeout(300);
+    // a static study (made by the first command), held across its two ends and on two sides so it cannot drift
+    await sp.click('#sim-tools [data-s="sliding"]');
+    await sp.waitForTimeout(200);
+    await sp.keyboard.press("Escape");
+    await sp.waitForTimeout(200);
+    await sp.evaluate(() => window.__sv.model.store.change("Study", d => {
+      const st = d.studies.at(-1);
+      st.supports.push({ id: "s1", type: "sliding", faces: ["f1:side:s1l1", "f1:side:s1l3", "f1:start", "f1:side:s1l4"].map(name => ({ name })) });
+      d.studies.push({ id: "st9", name: "Thermal 1", kind: "thermal", supports: [{ id: "t1", type: "temp", faces: [{ name: "f1:side:s1l1" }], temp: 20 }, { id: "t2", type: "temp", faces: [{ name: "f1:side:s1l3" }], temp: 220 }], loads: [], settings: { ...st.settings, energyTol: 1, ambient: 25 } });
+    }));
+    await sp.waitForTimeout(300);
+    // Loads ▸ Temperature: 120 °C everywhere, stress-free at 20 °C; the thermal study is offered as a source
+    await sp.click('#sim-tools [data-s="temperature"]');
+    await sp.waitForSelector("#sim-pm .pm-ok");
+    const opts = await sp.evaluate(() => [...document.querySelectorAll('#sim-pm [data-k="tfrom"] option')].map(o => o.value));
+    await sp.selectOption('#sim-pm [data-k="tfrom"]', "");
+    await sp.waitForTimeout(150);
+    await sp.fill('#sim-pm [data-n="value"]', "120");
+    await sp.keyboard.press("Tab");
+    await sp.click("#sim-pm .pm-ok");
+    await sp.waitForTimeout(300);
+    const meta = await sp.evaluate(() => document.querySelector("#sim-tree .sim-loads .sim-meta")?.textContent ?? "");
+    await sp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const u1 = await sim();
+    // held along its length the bar is pushed by E α ΔT = 252 MPa
+    const sig = 210000 * 12e-6 * 100;
+    // from the thermal study (20 to 220 °C along it) with the far end let go: it grows by α · 100 K · 100 mm and is hardly stressed
+    await sp.evaluate(() => window.__sv.model.store.change("Study", d => { const st = d.studies.find(x => x.kind === "static"); st.supports[0].faces = ["f1:side:s1l1", "f1:start", "f1:side:s1l4"].map(name => ({ name })); }));
+    await sp.waitForTimeout(300);
+    await sp.click('#sim-tree .sim-loads button.sim-name[data-a="edit"]');
+    await sp.waitForSelector("#sim-pm .pm-ok");
+    await sp.selectOption('#sim-pm [data-k="tfrom"]', "st9");
+    await sp.waitForTimeout(150);
+    await sp.click("#sim-pm .pm-ok");
+    await sp.waitForTimeout(300);
+    const meta2 = await sp.evaluate(() => document.querySelector("#sim-tree .sim-loads .sim-meta")?.textContent ?? "");
+    await sp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const u2 = await sim();
+    // a material without α is refused with a reason
+    await sp.evaluate(() => window.__sv.model.store.change("Mat", d => { delete d.material.alpha; }));
+    await sp.waitForTimeout(400);
+    await sp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const u3 = await sim();
+    await sp.click("#lang-btn");
+    const ru = await sp.evaluate(() => [...document.querySelectorAll("#tab-sim *, #sim-tools *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await sp.click("#lang-btn");
+    check(opts.includes("") && opts.includes("st9") && /120 °C/.test(meta) && /stress-free at 20/.test(meta)
+      && !u1.error && Math.abs(u1.maxVm / sig - 1) < 0.02
+      && /from Thermal 1/.test(meta2) && !u2.error && u2.maxU > 0.118 && u2.maxU < 0.15 && u2.maxVm < 0.6 * 2 * sig
+      && /^E-TH-ALPHA/.test(u3.error ?? "") && ru.length === 0,
+      `thermal stress 1.663: a uniform 120 °C pushes the held bar by E α ΔT, a thermal study's 20–220 °C stretches the freed bar by α ΔT L with stress only from the side supports that hold its uneven swelling, no α is refused; translated (${JSON.stringify({ opts, meta, meta2, vm1: u1.maxVm, sig, e1: u1.error, u2: u2.maxU, vm2: u2.maxVm, e2: u2.error, e3: u3.error, ru })})`);
+    await ctx.close();
+  }
+
   // --- thermal isolate and picture 1.660 (FRS-thermal FR-TMAP-020/042): one part alone; a PNG with the colour scale drawn in ---
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

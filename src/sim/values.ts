@@ -20,6 +20,7 @@ const UNITS: Record<LoadType, Record<string, number>> = {
   pkgheat: { W: 1, mW: 1e-3, kW: 1000, Вт: 1, мВт: 1e-3, кВт: 1000 },
   hflux: { "W/m²": 1, "W/m2": 1, "W/cm²": 1e4, "W/cm2": 1e4, "W/mm²": 1e6, "W/mm2": 1e6, "kW/m²": 1000, "kW/m2": 1000, "Вт/м²": 1, "Вт/м2": 1, "Вт/см²": 1e4, "Вт/см2": 1e4 },
   centrifugal: { rpm: 1, "rad/s": 30 / Math.PI, Hz: 60, "об/мин": 1, "рад/с": 30 / Math.PI, Гц: 60 },
+  temperature: { "°C": 1, C: 1 },
 };
 
 /** From the unit a field shows to what the study stores (N, MPa, N·mm, mm/s²). */
