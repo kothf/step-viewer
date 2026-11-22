@@ -217,6 +217,17 @@ input[type="color"] { width: 28px; height: 24px; padding: 0; border: 1px solid v
 .tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
 .tabs button { flex: 1; border: 0; background: none; padding: 9px 4px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; }
 .tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+/* Side panel tabs (model tree panel, PCB layers panel): icon + short name on one line, like other CAD apps'
+   side panel tabs. ui.ts fitTabStrip adds .tabs-icons (only the open tab keeps its name) and .tabs-bare
+   (icons only) when the panel is too narrow; the tooltip keeps the full name, the count badges stay. */
+.side-tabs { flex-wrap: nowrap; overflow: hidden; }
+.side-tabs button { flex: 1 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 6px 7px; font-size: 12px; white-space: nowrap; }
+.side-tabs button[hidden] { display: none; }
+.side-tabs button svg { flex: none; }
+.side-tabs .pill { font-size: 10px; line-height: 14px; padding: 0 5px; font-weight: 400; }
+.side-tabs.tabs-icons button { padding-inline: 8px; }
+.side-tabs.tabs-icons button:not(.on) .tb-lbl, .side-tabs.tabs-bare .tb-lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.side-tabs.tabs-bare button { padding-inline: 4px; gap: 3px; }
 .pill { background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 0 6px; font-size: 11px; }
 .tab { display: none; flex-direction: column; min-height: 0; flex: 1; }
 .tab.on { display: flex; }

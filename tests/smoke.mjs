@@ -1299,7 +1299,7 @@ try {
     await pg.waitForTimeout(200);
     const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#st-hint").textContent, banner: !document.querySelector("#tool-hint").hidden }));
     const leftModel = await untranslated();
-    check(model.lang === "ru" && model.tree === "Дерево модели" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint) && !model.banner, `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
+    check(model.lang === "ru" && model.tree === "Дерево" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint) && !model.banner, `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
     check(leftModel.length === 0, `i18n: no English left in the model view${leftModel.length ? ": " + leftModel.slice(0, 6).join(" | ") : ""}`);
     for (const lang of ["ru", "en"]) {
       for (const w of [1024, 1280, 1440]) {
@@ -1308,11 +1308,19 @@ try {
         const over = await pg.evaluate(() => { const t = document.querySelector(".topbar"); return t.scrollWidth - t.clientWidth; });
         check(over <= 1, `i18n: model header fits at ${w}px in ${lang.toUpperCase()} (${over})`);
       }
+      // Side panel tabs stay on one line at any panel width: names fold to icons (the open tab keeps its name while it fits).
+      for (const lw of [200, 270, 420]) {
+        await pg.evaluate(v => { document.querySelector("#t-features").hidden = false; document.querySelector("#t-sim").hidden = false; document.documentElement.style.setProperty("--left-w", v + "px"); }, lw);
+        await pg.waitForTimeout(80);
+        const tabs = await pg.evaluate(() => { const l = document.querySelector("#left-tabs"), bs = [...l.querySelectorAll("[role=tab]:not([hidden])")]; return { over: l.scrollWidth - l.clientWidth, rows: new Set(bs.map(b => b.offsetTop)).size, cls: l.className, badge: !!document.querySelector("#m-count").offsetWidth, n: bs.length }; });
+        check(tabs.over <= 1 && tabs.rows === 1 && tabs.badge && tabs.n >= 5, `side tabs: one line at ${lw}px in ${lang.toUpperCase()} (${JSON.stringify(tabs)})`);
+      }
+      await pg.evaluate(() => { document.querySelector("#t-features").hidden = true; document.querySelector("#t-sim").hidden = true; document.documentElement.style.removeProperty("--left-w"); });
       if (lang === "ru") await pg.click("#lang-btn");
     }
     await pg.setViewportSize({ width: 1440, height: 900 });
     const back = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, stored: localStorage.getItem("sv:lang") }));
-    check(back.lang === "en" && back.tree === "Model tree" && back.stored === "en" && /^[A-Za-z]/.test(back.card ?? "A"), `i18n: back to English restores the static and rendered text (${JSON.stringify(back)})`);
+    check(back.lang === "en" && back.tree === "Tree" && back.stored === "en" && /^[A-Za-z]/.test(back.card ?? "A"), `i18n: back to English restores the static and rendered text (${JSON.stringify(back)})`);
     // Tips: each shows once; "Turn off tips" stops them and Help turns them back on.
     const tipsSeen = await pg.evaluate(() => localStorage.getItem("sv:tips-seen"));
     await pg.evaluate(() => { localStorage.setItem("sv:tips-seen", ""); });
