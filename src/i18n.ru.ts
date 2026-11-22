@@ -6204,4 +6204,12 @@ export const RU: Record<string, string> = {
   "Which way the air moves over the faces": "Куда движется воздух вдоль граней",
   "Flow direction": "Направление потока",
   "The film coefficient these faces came to on average": "Средний коэффициент теплоотдачи на этих гранях",
+  "Open the board's STEP first, then add its heat sources to it.": "Сначала откройте STEP платы, затем добавьте к нему источники тепла.",
+  "its heat-source table names no part with a power": "в таблице источников тепла нет ни одного элемента с мощностью",
+  "The heat sources with their power and limit": "Источники тепла с мощностью и пределом",
+  "Simulate in MöbiusCAD: an assembly of the board's parts with a thermal study whose heat comes from this table, where you can add a heatsink or change the cooling": "Расчёт в MöbiusCAD: сборка из элементов платы с тепловым исследованием, тепло которого берётся из этой таблицы; можно добавить радиатор или изменить охлаждение",
+  "Open a thermal package for this model in place of the heat sources": "Открыть тепловой пакет для этой модели вместо источников тепла",
+  "Remove heat sources": "Убрать источники тепла",
+  "Take the heat sources off this model": "Убрать источники тепла с этой модели",
+  "Heat sources alone: no temperature map. Simulate makes a thermal study with these powers.": "Только источники тепла, без карты температур. «Расчёт» создаёт тепловое исследование с этими мощностями.",
 };

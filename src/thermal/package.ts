@@ -68,6 +68,8 @@ export interface ThermalPackage {
   step?: { name: string; data: Uint8Array };
   /** Notes for the user (fixed English texts with params). */
   notes: { text: string; params?: Record<string, string | number> }[];
+  /** A heat-source table alone (FR-TPKG-015): no temperatures, the mesh is empty; it gives a study its powers. */
+  sourcesOnly?: boolean;
 }
 
 const num = (v: unknown): number | undefined => {
@@ -172,15 +174,28 @@ export function readSources(text: string): ThermalPart[] {
   const rows = csvRows(text);
   if (rows.length < 2) return [];
   const head = rows[0].map(h => h.trim());
+  // a table of powers alone may leave part_id out: rows are numbered then
+  const numbered = !head.includes("part_id");
   const out: ThermalPart[] = [];
   const seen = new Set<number>();
-  for (const r of rows.slice(1)) {
+  for (const [k, r] of rows.slice(1).entries()) {
     const o: Record<string, unknown> = {};
     head.forEach((h, i) => { o[h] = (r[i] ?? "").trim(); });
+    if (numbered) o.part_id = k + 1;
     const p = partOf(o);
     if (p && !seen.has(p.id)) { seen.add(p.id); out.push(p); }
   }
   return out;
+}
+
+/**
+ * True when CSV text is a heat-source table (FR-TPKG-015): its header names `p_total_W` and a way to find the
+ * part (`step_bodies` or `designator`).
+ */
+export function isSourcesCsv(text: string) {
+  const line = (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text).split(/\r?\n/, 1)[0] ?? "";
+  const head = csvRows(line)[0]?.map(h => h.trim()) ?? [];
+  return head.includes("p_total_W") && (head.includes("step_bodies") || head.includes("designator"));
 }
 
 const base = (n: string) => n.replace(/^.*[\\/]/, "");
@@ -221,6 +236,10 @@ export async function readPackage(files: Map<string, Uint8Array>, fallbackName =
   };
   const mf = findManifest(files);
   const vtuOnly = !mf ? names.filter(n => /\.vtu$/i.test(n)) : [];
+  if (!mf && !vtuOnly.length) {
+    const csv = names.find(n => /\.csv$/i.test(n) && !base(n).startsWith(".") && isSourcesCsv(new TextDecoder().decode(files.get(n)!.subarray(0, 4096))));
+    if (csv) return sourcesPackage(base(csv), new TextDecoder().decode(files.get(csv)!));
+  }
   if (!mf && vtuOnly.length !== 1) throw new ThermalError("E-TH-PKG", "it has no manifest (a file ending in -thermal.json)");
   const manifest: ThermalManifest = mf ? readManifest(mf.text)
     : { format: "tubecad-thermal", version: 1, newer: false, app: "", created: "", design: "", files: { mesh: vtuOnly[0] }, settings: {}, parts: [] };
@@ -256,6 +275,18 @@ export async function readPackage(files: Map<string, Uint8Array>, fallbackName =
     name: name || fallbackName, manifest, mesh, notes,
     picture: picName ? files.get(picName) : undefined,
     step: stepName ? { name: base(stepName), data: files.get(stepName)! } : undefined,
+  };
+}
+
+/** A heat-source table alone as a package with no map (FR-TPKG-015). Throws E-TH-PKG when no row has a power. */
+export function sourcesPackage(fileName: string, text: string): ThermalPackage {
+  const parts = readSources(text).sort((a, b) => a.id - b.id);
+  if (!parts.some(p => p.p !== undefined)) throw new ThermalError("E-TH-PKG", "its heat-source table names no part with a power");
+  const mesh: ThermalMesh = { pos: new Float32Array(0), temp: new Float32Array(0), tri: new Uint32Array(0), part: new Int32Array(0), range: [0, 0] };
+  return {
+    name: fileName.replace(/(-heat-sources)?\.csv$/i, "") || "heat sources",
+    manifest: { format: "mobiuscad-thermal", version: VERSION, newer: false, app: "", created: "", design: "", files: { sources: fileName }, settings: {}, parts },
+    mesh, notes: [], sourcesOnly: true,
   };
 }
 

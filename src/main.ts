@@ -51,7 +51,7 @@ import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
 import { packageMeshes, readPackageInWorker, thermalErrorText, ThermalMaps } from "./thermal/ui";
-import { findManifest, type ThermalPackage } from "./thermal/package";
+import { findManifest, isSourcesCsv, type ThermalPackage } from "./thermal/package";
 import type { ModelBody, PartMatch } from "./thermal/match";
 import { findMaterial, toRef, type MatRef } from "./tools/materials";
 import { BOARD_MATERIAL, boardConductivity, boardPlan } from "./thermal/study";
@@ -1034,6 +1034,13 @@ async function thermalFilesOf(files: File[]): Promise<{ files: Map<string, Uint8
     if (th) return { files: th, name: f.name.replace(/\.zip$/i, ""), rest: files.filter(x => x !== f), zip: buf };
   }
   const manifest = files.find(f => /-thermal\.json$/i.test(f.name)), vtu = files.filter(f => /\.vtu$/i.test(f.name));
+  if (!manifest && !vtu.length) {
+    // a heat-source table alone (FR-TPKG-015): powers for a study, no map
+    for (const f of files.filter(x => /\.csv$/i.test(x.name) && x.size < 64 * 1024 * 1024)) {
+      const data = new Uint8Array(await f.arrayBuffer());
+      if (isSourcesCsv(new TextDecoder().decode(data.subarray(0, 4096)))) return { files: new Map([[f.name, data]]), name: f.name.replace(/(-heat-sources)?\.csv$/i, ""), rest: files.filter(x => x !== f) };
+    }
+  }
   if (!manifest && vtu.length !== 1) return null;
   const own = files.filter(f => /\.(vtu|json|csv|png|txt)$/i.test(f.name));
   const map = new Map<string, Uint8Array>();
@@ -1059,6 +1066,10 @@ async function openThermal(files: Map<string, Uint8Array>, name: string, step?: 
   } else if (thermal.host.key() && viewer.parts.length && !thermal.cur()?.own) {
     if (idle) setLoading(false);
     thermal.attach(pkg);
+  } else if (pkg.sourcesOnly) {
+    if (idle) setLoading(false);
+    toast(t("Open the board's STEP first, then add its heat sources to it."), "warn");
+    return;
   } else {
     // No STEP: the package's own surfaces are the model.
     const data = src ?? (await zipFiles([...files].map(([n, d]) => ({ name: n, data: d })))).slice().buffer as ArrayBuffer;
