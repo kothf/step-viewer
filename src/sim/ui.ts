@@ -486,7 +486,7 @@ export class SimController {
     const bolts = this.boltSettings(st);
     if (bolts.length) parts.push(bolts);
     if (st.kind === "modal") parts.push("modal");
-    else if (st.kind === "thermal") parts.push("thermal");
+    else if (st.kind === "thermal") parts.push(this.powerCases(st).length ? ["thermal", st.cases!.map(c => [c.id, c.off])] : "thermal");
     else if (st.cases?.length) parts.push(st.cases.map(c => [c.id, c.off]));
     return JSON.stringify(parts);
   }
@@ -560,6 +560,9 @@ export class SimController {
     const doc = this.host.doc(), st = this.study();
     return !!this.res && (!doc || !st || st.id !== this.res.study || this.keyOf(doc, st) !== this.res.key);
   }
+
+  /** A thermal study's power cases (FR-TSTU-005): none in a transient study, which runs every load on its profile. */
+  private powerCases(st: Study) { return st.kind === "thermal" && !st.settings.transient ? st.cases ?? [] : []; }
 
   /** With load cases: is the envelope shown, not one case? */
   private get enveloped() { const c = this.res?.cases; return !!c && c.length > 1 && this.caseSel < 0; }
@@ -1341,9 +1344,12 @@ export class SimController {
         this.comps = bodies.map(b => ({ key: b.key, name: b.name ?? b.key }));
         if (!this.freshFound(st)) void this.findFrom(bodies, st.settings.gap ?? DEFAULT_GAP, this.foundKey(st)).then(() => { this.renderAll(); this.drawMarks(); }).catch(() => {});
       }
-      if (setup.problems.length) {
-        for (const p of setup.problems) this.problems.set(p.id, p.code);
-        throw new Error(`${setup.problems[0].code}: ${setup.problems[0].id}`);
+      // power cases (FR-TSTU-005): each solved on its own with its ticked heat loads and the same cooling
+      const cases = this.powerCases(st);
+      const runs = cases.length ? cases.map(c => ({ c: c as typeof c | null, setup: this.thermalParts(caseStudy(st, c), got).setup })) : [{ c: null, setup }];
+      for (const r of runs) if (r.setup.problems.length) {
+        for (const p of r.setup.problems) this.problems.set(p.id, p.code);
+        throw new Error(`${r.setup.problems[0].code}: ${r.setup.problems[0].id}`);
       }
       // a transient study needs each body's heat capacity ρ·cp, J/(mm³·K): g/cm³ × 1e-6 × J/(kg·K)
       const tr = st.settings.transient;
@@ -1377,9 +1383,13 @@ export class SimController {
       }
       const mesh = refineMesh(p0, n0, idx, plotTarget(meshArea(p0, idx), size / 70));
       const total = Math.max(1, Math.min(THERMAL_PASSES, Math.round(st.settings.passes)));
-      const res: Results = { study: st.id, key, passes: [], ids: setup.sinkIds, ...(setup.exchangeIds?.length ? { xids: setup.exchangeIds } : {}), ms: 0, mesh, ...(asm ? { comps: this.comps, bodyMats: bodies.map((_b, i) => ({ name: nameOf(i), sy: 0, k: kOf(i), ...(bks[i]?.k3 ? { kz: bks[i]!.through } : {}) })) } : {}), ...(off.size ? { off: [...off] } : {}) };
-      this.progress = t("Pass {n} of {m}…", { n: 1, m: total });
+      const res: Results = { study: st.id, key, passes: [], ids: setup.sinkIds, ...(setup.exchangeIds?.length ? { xids: setup.exchangeIds } : {}), ms: 0, mesh, ...(asm ? { comps: this.comps, bodyMats: bodies.map((_b, i) => ({ name: nameOf(i), sy: 0, k: kOf(i), ...(bks[i]?.k3 ? { kz: bks[i]!.through } : {}) })) } : {}), ...(off.size ? { off: [...off] } : {}), ...(cases.length ? { cases: [] } : {}) };
       this.frame = -1; this.stopPlay();
+      for (let ci = 0; ci < runs.length; ci++) {
+      const run = runs[ci], setup = run.setup, pre = run.c ? `${run.c.name}: ` : "";
+      const mine: PassResult[] = run.c ? [] : res.passes;
+      if (run.c) { res.cases!.push({ id: run.c.id, name: run.c.name, passes: mine, job: 0 }); res.passes = mine; this.caseSel = ci; this.errorIn = run.c.name; this.hot = null; }
+      this.progress = pre + t("Pass {n} of {m}…", { n: 1, m: total });
       this.renderAll();
       await this.client.solve({
         body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] }, passes: total, energyTol: st.settings.energyTol, pos: mesh.pos, nrm: mesh.nrm, ...(memLimit() ? { memory: memLimit() } : {}),
@@ -1387,25 +1397,31 @@ export class SimController {
         ...(asm ? { regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: nameOf(i), E: 0, nu: 0, rho: 0 } })) } : {}),
         thermal: asm ? { k: kOf(0) * 1e-3, setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s: bks.map(q => (q?.k3 ? q.k3.map(v => v * 1e-3) : null)), gap: st.settings.gap ?? DEFAULT_GAP, links, ...(kts ? { kts } : {}), ...(transient ? { transient } : {}) } : { k: m!.k! * 1e-3, setup, ...(kt ? { kt } : {}), ...(transient ? { transient } : {}) },
       }, p => {
-        res.passes.push(p);
+        mine.push(p);
         res.ms = performance.now() - t0;
         this.res = res;
         this.plot.on = true;
-        if (!p.done) this.progress = transient && (p.pass >= Math.min(2, total) || !st.loads.length) ? t("Stepping in time…") : t("Pass {n} of {m}…", { n: p.pass + 1, m: total });
+        if (!p.done) this.progress = transient && (p.pass >= Math.min(2, total) || !st.loads.length) ? t("Stepping in time…") : pre + t("Pass {n} of {m}…", { n: p.pass + 1, m: total });
         if (p.transient) this.useFrame(res, p.transient.times.length - 1);
         this.showPlot();
         this.renderAll();
         this.drawMarks();
-      });
-      if (!res.passes.length) throw new Error(SIM_STOPPED);
-      res.job = this.client.solution;
+      }, ci > 0);
+      if (!mine.length) throw new Error(SIM_STOPPED);
+      if (run.c) res.cases![ci].job = this.client.solution; else res.job = this.client.solution;
+      }
+      this.errorIn = "";
+      if (res.cases) { this.caseSel = res.cases.length > 1 ? -1 : 0; this.hot = null; this.applyCase(); if ((this.res as Results | null) === res) this.showPlot(); }
       done = true;
       if ((this.res as Results | null) === res) { this.solved = res; this.running = false; this.capsSoon(); this.syncPath(); }
-      const keep: Kept = { passes: res.tr ? [...res.passes.slice(0, -1), res.tr] : res.passes, ids: res.ids, ...(res.xids ? { xids: res.xids } : {}), ms: res.ms, mesh: res.mesh, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}) };
+      const keep: Kept = { passes: res.tr ? [...res.passes.slice(0, -1), res.tr] : res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ...(res.xids ? { xids: res.xids } : {}), ms: res.ms, mesh: res.mesh, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}), ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
       void cacheKey("sim", key).then(k => cachePut(k, keep));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg !== SIM_STOPPED) { this.error = msg; toast(this.errorText(msg), "error"); }
+      // power cases are shown together or not at all
+      const shown = this.res as Results | null;
+      if (shown?.cases && shown.study === st.id) { this.res = null; this.clearPlot(); }
+      if (msg !== SIM_STOPPED) { this.error = msg; toast((this.errorIn ? `${this.errorIn}: ` : "") + this.errorText(msg), "error"); }
     } finally {
       this.running = false;
       void done;
@@ -1773,7 +1789,7 @@ export class SimController {
   private heatPaths(r: Results | null = this.res && !this.stale() ? this.res : null) {
     const last = r?.passes.at(-1), rows = last?.thermal?.comps, st = this.study(), off = new Set(st?.suppressed ?? []);
     const l = st?.loads.find(x => x.type === "pkgheat" && !off.has(x.id) && x.board);
-    if (!r?.comps || !rows || !l) return [];
+    if (!r?.comps || !rows || !l || (r.env && r.passes === r.env)) return [];
     const board = r.comps.findIndex(c => compOf(c.key) === l.board), contacts = last!.thermal!.contacts ?? [];
     if (board < 0) return [];
     const out: { name: string; p: number; board: number; air: number; other: number; pkg: { board: number; air: number; sink: number } | null }[] = [];
@@ -3308,6 +3324,12 @@ export class SimController {
     blocks.push({ kind: "h", text: t("Cooling and fixed temperatures") });
     blocks.push({ kind: "table", widths: [3, 3, 2, 3], rows: [[t("Name"), t("Type"), t("Applied to"), t("Details")], ...st.supports.map(s => [name(s), t(SUPPORT_LABEL[s.type]), on(s), this.thermalText(s, st)])] });
     blocks.push({ kind: "h", text: t("Results") });
+    if (res.cases?.length) {
+      blocks.push({ kind: "table", widths: [3, 2, 2, 3], rows: [[t("Power case"), `${t("Highest temperature")}, °C`, `${t("Heat put in")}, W`, t("Heat sources")],
+        ...res.cases.map(c => { const cs = st.cases?.find(x => x.id === c.id), T = c.passes.at(-1)!.thermal!;
+          return [this.caseName(c), sig(T.max), sig(T.applied), st.loads.filter(l => !cs?.off.includes(l.id) && !off.has(l.id)).map(l => l.name ?? l.id).join(", ") || "–"]; })] });
+      kv([[t("Power case shown"), this.enveloped ? t("Envelope (hottest of all cases)") : this.caseName(res.cases[Math.max(0, this.caseSel)])]]);
+    }
     const out = T.flows.reduce((a, f) => a + f.out, 0);
     kv([[t("Highest temperature"), `${sig(T.max)} °C`], [t("Lowest temperature"), `${sig(T.min)} °C`], [t("Heat put in"), `${sig(T.applied)} W`],
       ...T.flows.map((f, i) => [`${f.out < 0 ? t("Heat brought in") : t("Heat taken away")}: ${this.nameOf(res.ids[i] ?? "")}`, `${sig(Math.abs(f.out))} W (${t("mean")} ${sig(f.mean)} °C${f.h !== undefined ? `, ${sig(f.h * 1e6)} W/(m²·K)` : ""})`]), [t("Heat taken away in total"), `${sig(out)} W`]]);
@@ -3463,9 +3485,21 @@ export class SimController {
         : m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`)
       + (ownMats.length ? `<p class="sim-note muted sim-bodymats">${esc(t("Bodies with their own material:"))} <span translate="no">${esc(ownMats.join(", "))}</span></p>` : "") + `</div>`;
     const auto = `<label class="chk sim-auto" title="${esc(t("After every change to the model or to the study, the study is solved again by itself"))}"><input type="checkbox" data-k="auto"${st.auto ? " checked" : ""} />${esc(t("Solve on change"))}</label>`;
+    // load cases (static) or power cases (steady thermal): sets of the loads solved in one go
+    const casesHtml = () => {
+      if (modal || (thermal && st.settings.transient) || !(st.loads.length > 1 || st.cases?.length)) return "";
+      const cs = st.cases ?? [];
+      return `<div class="sim-sec sim-cases"><h4>${esc(thermal ? t("Power cases") : t("Load cases"))}</h4>`
+        + cs.map(c => `<div class="sim-case" data-c="${c.id}"><div class="sim-case-h"><input type="text" data-k="cname" value="${esc(c.name)}" aria-label="${esc(t("Name"))}" translate="no" spellcheck="false" /><button class="sim-ib" data-a="rmcase" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">×</button></div>`
+          + st.loads.map(l => `<label class="chk"><input type="checkbox" data-k="cload" data-l="${l.id}"${c.off.includes(l.id) || off.has(l.id) ? "" : " checked"}${off.has(l.id) ? " disabled" : ""} /><span translate="no">${esc(l.name ?? l.id)}</span></label>`).join("") + `</div>`).join("")
+        + `<p class="sim-note muted">${esc(thermal
+          ? (cs.length ? t("Each case is solved on its own with its ticked heat sources and the same cooling. The results show one case, or the hottest of them all.") : t("All the heat sources work together. Add cases (idle, full power…) to solve different sets of them in one go."))
+          : (cs.length ? t("Each case is solved on its own with its ticked loads and the same supports. The results show one case, or the highest values of them all.") : t("All the loads act together. Add cases to solve different sets of the loads in one go.")))}</p>`
+        + (cs.length < MAX_CASES ? `<button class="btn small" data-a="addcase">${esc(thermal ? t("Add power case") : t("Add load case"))}</button>` : "") + `</div>`;
+    };
     if (thermal) {
       const amb = st.settings.ambient ?? DEFAULT_AMBIENT, passes = Math.min(THERMAL_PASSES, st.settings.passes);
-      html += `<div class="sim-sec sim-heat"><h4>${esc(t("Heat sources"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`
+      html += `<div class="sim-sec sim-heat"><h4>${esc(t("Heat sources"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>` + casesHtml()
         + `<div class="sim-sec sim-cool"><h4>${esc(t("Cooling and fixed temperatures"))}</h4><ul class="sim-list">${st.supports.map(x => row(x, false)).join("") || none(t("None yet: the heat needs a way out. Pick one in the Simulation tab."))}</ul>`
         + `<label class="pm-field"><span>${esc(t("Ambient temperature"))}, °C</span><input type="number" data-k="ambient" step="any" value="${sig(amb)}" title="${esc(t(TIP.ambient))}"></label>`
         + this.enclosureHtml(st)
@@ -3482,14 +3516,7 @@ export class SimController {
     if (!thermal && st.connectors?.length) html += `<div class="sim-sec sim-conns"><h4>${esc(t("Connectors"))}</h4><p class="sim-note muted">${esc(t(CONNECTOR_NOTE))}</p><ul class="sim-list">${st.connectors.map(c => row(c, false)).join("")}</ul></div>`;
     if (!thermal && st.masses?.length) html += `<div class="sim-sec sim-masses"><h4>${esc(t("Masses"))}</h4><p class="sim-note muted">${esc(t(MASS_NOTE))}</p><ul class="sim-list">${st.masses.map(c => row(c, false)).join("")}</ul></div>`;
     if (!modal && !thermal) html += `<div class="sim-sec sim-loads"><h4>${esc(t("Loads"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
-    if (!modal && !thermal && (st.loads.length > 1 || st.cases?.length)) {
-      const cs = st.cases ?? [];
-      html += `<div class="sim-sec sim-cases"><h4>${esc(t("Load cases"))}</h4>`
-        + cs.map(c => `<div class="sim-case" data-c="${c.id}"><div class="sim-case-h"><input type="text" data-k="cname" value="${esc(c.name)}" aria-label="${esc(t("Name"))}" translate="no" spellcheck="false" /><button class="sim-ib" data-a="rmcase" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">×</button></div>`
-          + st.loads.map(l => `<label class="chk"><input type="checkbox" data-k="cload" data-l="${l.id}"${c.off.includes(l.id) || off.has(l.id) ? "" : " checked"}${off.has(l.id) ? " disabled" : ""} /><span translate="no">${esc(l.name ?? l.id)}</span></label>`).join("") + `</div>`).join("")
-        + `<p class="sim-note muted">${esc(cs.length ? t("Each case is solved on its own with its ticked loads and the same supports. The results show one case, or the highest values of them all.") : t("All the loads act together. Add cases to solve different sets of the loads in one go."))}</p>`
-        + (cs.length < MAX_CASES ? `<button class="btn small" data-a="addcase">${esc(t("Add load case"))}</button>` : "") + `</div>`;
-    }
+    if (!thermal) html += casesHtml();
     if (thermal) { /* its sections are above */ }
     else if (modal) html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Find"))}</span><select data-k="find"><option value="count"${st.settings.range ? "" : " selected"}>${esc(t("The lowest modes"))}</option><option value="range"${st.settings.range ? " selected" : ""}>${esc(t("Modes in a frequency range"))}</option></select></label>`
       + (st.settings.range
@@ -3652,7 +3679,28 @@ export class SimController {
   }
 
   /** Thermal results: the temperatures, where the heat goes, the passes and what they mean. */
+  /** Power cases on a thermal result: the case shown (or the envelope) and each case's hottest point and heat. */
+  private powerCasesHtml(r: Results): string {
+    if (!r.cases?.length || this.running) return "";
+    const env = this.enveloped;
+    let html = `<label class="pm-field"><span>${esc(t("Power case"))}</span><select data-k="case" translate="no">${r.cases.map((c, i) => `<option value="${i}"${!env && i === Math.max(0, this.caseSel) ? " selected" : ""}>${esc(this.caseName(c))}</option>`).join("")}`
+      + (r.cases.length > 1 ? `<option value="-1"${env ? " selected" : ""}>${esc(t("Envelope (hottest of all cases)"))}</option>` : "") + `</select></label>`;
+    if (r.cases.length > 1) html += `<table class="sim-passes sim-casetable"><thead><tr><th>${esc(t("Power case"))}</th><th>${esc(t("Highest temperature"))}, °C</th><th>${esc(t("Heat put in"))}, W</th></tr></thead><tbody>`
+      + r.cases.map((c, i) => { const T = c.passes.at(-1)!.thermal; return `<tr data-a="case" data-case="${i}" tabindex="0" class="${!env && i === this.caseSel ? "sel" : ""}"><td translate="no">${esc(this.caseName(c))}</td><td data-v="cmax">${T ? sig(T.max) : "–"}</td><td data-v="cheat">${T ? sig(T.applied) : "–"}</td></tr>`; }).join("") + `</tbody></table>`;
+    if (env) html += `<p class="sim-note muted sim-env">${esc(t("Envelope: at every point the highest temperature of any case."))}</p>`;
+    return html;
+  }
+
   private thermalHtml(r: Results, last: PassResult): string {
+    if (this.enveloped) {
+      const T = last.thermal!;
+      return this.powerCasesHtml(r) + `<dl class="sim-kv"><dt>${esc(t("Highest temperature"))}</dt><dd data-v="tmax">${sig(T.max)} °C</dd><dt>${esc(t("Lowest temperature"))}</dt><dd data-v="tmin">${sig(T.min)} °C</dd></dl>`
+        + this.thermalCompsHtml(r, last) + this.thermalPassesHtml(r, last);
+    }
+    return this.powerCasesHtml(r) + this.thermalHtml0(r, last);
+  }
+
+  private thermalHtml0(r: Results, last: PassResult): string {
     const T = last.thermal!;
     const out = T.flows.reduce((a, f) => a + f.out, 0), size = Math.max(Math.abs(T.applied), T.flows.reduce((a, f) => a + Math.abs(f.out), 0) / 2);
     const off = size > 0 ? 100 * Math.abs(out - T.applied) / size : null;

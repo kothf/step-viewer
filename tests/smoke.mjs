@@ -17895,6 +17895,32 @@ try {
     check(JSON.stringify(kinds.slice(0, 3)) === '["temp","rise","flux"]' && rise.kind === "rise" && Math.abs(rise.range[1] - (rise.max - 25)) < 1e-3 && Math.abs(rise.range[0] - (rise.min - 25)) < 1e-3 && /K/.test(rise.unit)
       && arrows.n > 20 && arrows.n === arrows.st && gone === 0 && ruLeg.length === 0,
       `thermal plots 1.669: the plot list has Temperature rise (temperature less the ambient, in K), and Heat flow arrows draws arrows on the surface and takes them off again; translated (${JSON.stringify({ kinds, rise, arrows, gone, ruLeg })})`);
+    // --- power cases 1.670 (FR-TSTU-005): idle and full power solved in one go, results per case and the hottest of both ---
+    await fp.evaluate(() => window.__sv.model.store.change("Second heat source", d => { const s = d.studies.at(-1); s.loads.push({ id: "lx", type: "heat", name: "Heat 2", faces: [], body: true, value: { v: 6 } }); }));
+    await fp.waitForTimeout(300);
+    const heads0 = await fp.evaluate(() => document.querySelector("#sim-tree .sim-cases h4")?.textContent ?? "");
+    await fp.click('#sim-tree [data-a="addcase"]');
+    await fp.waitForTimeout(200);
+    await fp.click('#sim-tree [data-a="addcase"]');
+    await fp.waitForTimeout(200);
+    await fp.uncheck('#sim-tree .sim-case[data-c="c1"] input[data-k="cload"][data-l="lx"]');
+    await fp.waitForTimeout(200);
+    const cases0 = await fp.evaluate(() => window.__sv.model.store.doc.studies.at(-1).cases);
+    await fp.click('#sim-tools [data-s="solve"]');
+    await fp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 });
+    await fp.waitForTimeout(400);
+    const pc = await fp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, env: s.enveloped, res: s.caseResults, max: s.thermal?.max, rows: [...document.querySelectorAll("#sim-tree .sim-casetable tr[data-case]")].map(r => [r.querySelector('[data-v="cmax"]')?.textContent, r.querySelector('[data-v="cheat"]')?.textContent]), note: !!document.querySelector("#sim-tree .sim-env"), wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }; });
+    await fp.click('#sim-tree tr[data-a="case"][data-case="0"]');
+    await fp.waitForTimeout(300);
+    const pc0 = await fp.evaluate(() => { const s = window.__sv.sim.state(); return { env: s.enveloped, sel: s.caseSel, max: s.thermal?.max, heat: document.querySelector('#sim-tree [data-v="heatin"]')?.textContent ?? "" }; });
+    await fp.click("#lang-btn");
+    const ruCases = await fp.evaluate(() => [...document.querySelectorAll("#sim-tree .sim-cases *, #sim-tree .sim-casetable *, #sim-tree select[data-k=case]")].filter(e => !e.children.length && !e.closest("[translate=no]") && e.tagName !== "INPUT").map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await fp.click("#lang-btn");
+    // linear: the full case's rise is 4 times the idle case's (8 W against 2 W)
+    const [ri, rf] = (pc.res ?? []).map(c => c.maxVm - 25);
+    check(/Power cases/.test(heads0) && cases0?.length === 2 && JSON.stringify(cases0[0].off) === '["lx"]' && !pc.error && pc.env && pc.res?.length === 2 && Math.abs(rf / ri - 4) < 0.02 && Math.abs(pc.max - (rf + 25)) < 1e-3
+      && pc.rows.length === 2 && /^2$/.test(pc.rows[0][1] ?? "") && /^8$/.test(pc.rows[1][1] ?? "") && pc.note && pc.wide <= 0 && !pc0.env && pc0.sel === 0 && Math.abs(pc0.max - (ri + 25)) < 1e-3 && /2 W/.test(pc0.heat) && ruCases.length === 0,
+      `power cases 1.670: a study with idle (2 W) and full power (8 W) cases solves both, shows the hottest of them by default and each case on a click; translated (${JSON.stringify({ heads0, cases0, pc, pc0, ri, rf, ruCases })})`);
     await ctx.close();
   }
 

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.670.0] - 2026-11-22
+
+### Added
+
+- Power cases in thermal studies. A steady thermal study with two or more heat sources has a Power cases section under Heat sources: add cases (Idle, Full power, With signal…), name them and tick the heat sources each one runs. One Solve runs every case with the same cooling; the results show the hottest of them all at every point, a table with each case's hottest temperature and heat, and any case on its own with a click. The report lists the cases too.
+
 ## [1.669.0] - 2026-11-22
 
 ### Added
@@ -4406,7 +4412,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.669.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.670.0...HEAD
+[1.670.0]: https://github.com/kothf/step-viewer/compare/v1.669.0...v1.670.0
 [1.669.0]: https://github.com/kothf/step-viewer/compare/v1.668.0...v1.669.0
 [1.668.0]: https://github.com/kothf/step-viewer/compare/v1.667.0...v1.668.0
 [1.667.0]: https://github.com/kothf/step-viewer/compare/v1.666.0...v1.667.0
