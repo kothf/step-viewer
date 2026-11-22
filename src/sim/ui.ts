@@ -379,7 +379,7 @@ export class SimController {
     if (st.refine?.length) parts.push(st.refine);
     // thermal stress: the temperatures come from another study, so its set-up counts too
     const from = st.loads.find(l => l.type === "temperature" && l.from)?.from, src = from ? this.host.doc()?.studies?.find(x => x.id === from) : null;
-    if (src) parts.push(["temp-from", src.supports, src.loads, src.settings, src.mats ?? null, src.suppressed ?? null]);
+    if (src) parts.push(["temp-from", src.supports, src.loads, src.settings, src.mats ?? null, src.suppressed ?? null, ...(src.links?.length || src.comps ? [src.links ?? null, src.comps ?? null] : [])]);
     if (st.mats && Object.keys(st.mats).length) parts.push(Object.entries(st.mats).sort(([a], [b]) => (a < b ? -1 : 1)));
     if (st.welds?.length) parts.push(st.welds.map(w => (w.on === "points" ? [w.id, w.edges, w.points ?? [], w.dia ?? DEFAULT_SPOT] : [w.id, w.edges])));
     if (st.connectors?.length) parts.push(st.connectors.map(c => [c.id, c.faces.map(f => f.name), c.faces2.map(f => f.name), c.kind, c.k, c.kr ?? null]));
@@ -704,7 +704,6 @@ export class SimController {
         ...(type === "disp" ? { dirs: [true, true, true] as [boolean, boolean, boolean], disp: [0, 0, 0] as [number, number, number] } : {}), ...(type === "elastic" ? { kn: 100, kt: 100 } : {}) } };
     } else if ((LOADS as string[]).includes(c)) {
       if (st.kind === "modal") { toast(t("A modal study has no loads: it finds how the part vibrates on its own.")); return; }
-      if (c === "temperature" && this.host.asm()) { toast(t("Thermal stress is for parts so far.")); return; }
       if (c === "temperature" && st.loads.some(l => l.type === "temperature")) { toast(t("A study takes one temperature load.")); return; }
       const type = c as LoadType;
       const d: StudyLoad = { id: nextId(st, "l"), name: itemName(st, type), type, faces: [] };
@@ -1020,6 +1019,8 @@ export class SimController {
       // bodies with a material of their own keep it: each body is then solved with its own stiffness and density
       const simMat = (q: NonNullable<typeof doc.material>) => ({ name: q.name, E: (q.E ?? 0) * 1000, nu: q.nu ?? 0, rho: q.density * 1e-9, sy: q.sy ?? undefined, su: q.su ?? undefined });
       let regions: { tris: Float64Array; mat: ReturnType<typeof simMat>; rigid?: boolean }[] | undefined;
+      // each region's thermal expansion, 1e-6/K (a temperature load): null = its material gives none
+      let alphas: { name: string; a: number | null }[] = [];
       // an assembly: every component is its own body with its part's material, joined to the others where they touch
       let joined: { gap: number; links: { a: number; b: number; type: "sliding" | "none" | "adhesive"; kn?: number; kt?: number }[] } | undefined;
       if (asm) {
@@ -1031,8 +1032,9 @@ export class SimController {
           // a toolbox part made before its steel had elastic constants
           if (q && !q.E && steelParts.has(compOf(b.key))) q = { ...q, E: 210, nu: 0.3 };
           // a rigid component needs no elastic constants: only its density counts (weight, spinning)
-          if (sc?.rigid) return { tris: b.tris, mat: q ? { ...simMat(q), sy: undefined, su: undefined } : { name: "", E: 0, nu: 0.3, rho: 0, sy: undefined, su: undefined }, rigid: true };
+          if (sc?.rigid) { alphas.push({ name: b.name ?? b.key, a: 0 }); return { tris: b.tris, mat: q ? { ...simMat(q), sy: undefined, su: undefined } : { name: "", E: 0, nu: 0.3, rho: 0, sy: undefined, su: undefined }, rigid: true }; }
           if (!q || !q.E || q.nu == null) throw new Error(`E-SIM-COMPMAT: ${b.name ?? b.key}`);
+          alphas.push({ name: b.name ?? b.key, a: q.alpha ?? null });
           return { tris: b.tris, mat: simMat(q) };
         });
         if (regions.every(r => r.rigid)) throw new Error("E-SIM-ALLRIGID");
@@ -1045,9 +1047,10 @@ export class SimController {
         regions = bodies.map(b => {
           const q = this.bodyMatOf(doc, b.key) ?? m;
           if (!q.E || q.nu == null) throw new Error(`E-SIM-BODYMAT: ${q.name}`);
+          alphas.push({ name: q.name, a: q.alpha ?? null });
           return { tris: b.tris, mat: simMat(q) };
         });
-        if (regions.every(r => r.mat.name === regions![0].mat.name && r.mat.E === regions![0].mat.E)) regions = undefined;
+        if (regions.every(r => r.mat.name === regions![0].mat.name && r.mat.E === regions![0].mat.E)) { regions = undefined; alphas = []; }
       }
       // with load cases each one is solved on its own: the same supports, its own loads
       const cases = modal ? [] : st.cases ?? [];
@@ -1057,7 +1060,7 @@ export class SimController {
         throw new Error(`${r.problem.problems[0].code}: ${r.problem.problems[0].id}`);
       }
       const problem = runs[0].problem;
-      const temp = modal ? undefined : this.tempInput(doc, st, geo, regions);
+      const temp = modal ? undefined : this.tempInput(doc, st, geo, regions ? alphas : undefined, got);
       const g = part.geometry, pa = g.getAttribute("position"), na = g.getAttribute("normal"), n = pa.count;
       const p0 = new Float32Array(3 * n), n0 = new Float32Array(3 * n);
       for (let i = 0; i < n; i++) {
@@ -1138,19 +1141,65 @@ export class SimController {
    * A temperature load's input (FR-LOAD-011): the material's α, 1/K, and for temperatures from a thermal study
    * that study's own run input (the worker solves it first). Undefined without a temperature load.
    */
-  private tempInput(doc: SimDoc, st: Study, geo: Parameters<typeof thermalSetup>[1], regions: unknown[] | undefined): RunInput["temp"] | undefined {
+  private tempInput(doc: SimDoc, st: Study, geo: Parameters<typeof thermalSetup>[1], regions: { name: string; a: number | null }[] | undefined, got: Awaited<ReturnType<SimHost["simGeo"]>>): RunInput["temp"] | undefined {
     const gone = new Set(st.suppressed ?? []), tl = st.loads.find(l => l.type === "temperature" && !gone.has(l.id));
     if (!tl) return undefined;
-    if (regions) throw new Error("E-TH-STRESSMATS");
-    const a = this.matOf(doc)?.alpha;
-    if (!a) throw new Error("E-TH-ALPHA");
-    if (!tl.from) return { alpha: a * 1e-6 };
-    const th = this.thermalStudies().find(x => x.id === tl.from), q = th ? th.mats?.[""] ?? doc.material : null;
-    if (!th || !q?.k) throw new Error("E-TH-NOFIELD");
+    // several bodies (an assembly's components, a part's bodies of their own material): each expands by its own α
+    let a: number, alphas: number[] | undefined;
+    if (regions) {
+      const no = regions.find(r => r.a == null);
+      if (no) throw new Error(`E-TH-COMPALPHA: ${no.name}`);
+      alphas = regions.map(r => r.a! * 1e-6);
+      a = Math.max(...regions.map(r => r.a!));
+      if (!(a > 0)) throw new Error("E-TH-ALPHA");
+    } else {
+      const ma = this.matOf(doc)?.alpha;
+      if (!ma) throw new Error("E-TH-ALPHA");
+      a = ma;
+    }
+    const base = { alpha: a * 1e-6, ...(alphas ? { alphas } : {}) };
+    if (!tl.from) return base;
+    const th = this.thermalStudies().find(x => x.id === tl.from);
+    if (!th) throw new Error("E-TH-NOFIELD");
+    const tr = { problem: { fixed: [], loads: [], problems: [], supportIds: [] }, passes: Math.max(1, Math.min(THERMAL_PASSES, Math.round(th.settings.passes))), energyTol: th.settings.energyTol, pos: new Float32Array(3), nrm: new Float32Array(3) };
+    if (this.host.asm()) {
+      // the thermal study of the same assembly: its own components, materials and contacts
+      let tp: ReturnType<SimController["thermalParts"]>;
+      try { tp = this.thermalParts(th, got); } catch { throw new Error("E-TH-NOFIELD"); }
+      if (tp.setup.problems.length) throw new Error("E-TH-NOFIELD");
+      const { bodies, bks, kOf, nameOf } = tp;
+      return { ...base, thermal: { ...tr, body: tp.geo, mat: { name: nameOf(0), E: 0, nu: 0, rho: 0 }, regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: nameOf(i), E: 0, nu: 0, rho: 0 } })),
+        thermal: { k: kOf(0) * 1e-3, setup: tp.setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s: bks.map(q => (q?.k3 ? q.k3.map(v => v * 1e-3) : null)), gap: th.settings.gap ?? DEFAULT_GAP, links: tp.links } } };
+    }
+    const q = th.mats?.[""] ?? doc.material;
+    if (!q?.k) throw new Error("E-TH-NOFIELD");
     const setup = thermalSetup(th, geo);
     if (setup.problems.length) throw new Error("E-TH-NOFIELD");
-    return { alpha: a * 1e-6, thermal: { body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] }, passes: Math.max(1, Math.min(THERMAL_PASSES, Math.round(th.settings.passes))), energyTol: th.settings.energyTol,
-      pos: new Float32Array(3), nrm: new Float32Array(3), mat: { name: q.name, E: 0, nu: 0, rho: 0 }, thermal: { k: q.k * 1e-3, setup } } };
+    return { ...base, thermal: { ...tr, body: geo, mat: { name: q.name, E: 0, nu: 0, rho: 0 }, thermal: { k: q.k * 1e-3, setup } } };
+  }
+
+
+  /**
+   * A thermal study's bodies and set-up on the geometry `got` (one solid for a part; an assembly's components, less
+   * those the study leaves out, each with its conductivity, joined where they touch as its links say).
+   */
+  private thermalParts(st: Study, got: Awaited<ReturnType<SimHost["simGeo"]>>) {
+    const asm = this.host.asm();
+    // an assembly: every component is its own body with its material's conductivity, joined where they touch
+    const off = asm ? offComps(st) : new Set<string>();
+    const geo = off.size ? withoutFaces(got.geo, n => off.has(compOf(n))) : got.geo;
+    const bodies = asm ? (off.size ? got.regions?.filter(b => !off.has(compOf(b.key))) : got.regions) ?? [] : [];
+    if (asm && !bodies.length) throw new Error("E-SIM-NOBODY");
+    const mats = bodies.map(b => st.comps?.[compOf(b.key)]?.material ?? b.mat ?? null);
+    // a board conducts by its copper: along it far better than through it
+    const bks = bodies.map(b => { const bd = st.comps?.[compOf(b.key)]?.board; return bd ? boardK(b.tris, bd, bd.t) : null; });
+    mats.forEach((q, i) => { if (!bks[i] && !q?.k) throw new Error(`E-TH-COMPMAT: ${bodies[i].name ?? bodies[i].key}`); });
+    const kOf = (i: number) => bks[i]?.along ?? mats[i]!.k!, nameOf = (i: number) => (bks[i] ? BOARD_MATERIAL : mats[i]!.name);
+    const at = new Map(bodies.map((b, i) => [b.key, i]));
+    const links = (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) && (l.type === "none" || l.type === "resist" || l.type === "pad")
+      ? [l.type === "none" ? { a: at.get(l.a)!, b: at.get(l.b)!, type: "none" as const } : { a: at.get(l.a)!, b: at.get(l.b)!, type: "resistance" as const, h: linkConductance(l) }] : []));
+    const setup = thermalSetup(st, geo, asm ? bodies.map(b => b.key) : undefined);
+    return { off, geo, bodies, mats, bks, kOf, nameOf, links, setup };
   }
 
   /** A thermal study's solve (FRS-thermal TH2): the part's temperatures from its heat sources and cooling. */
@@ -1171,24 +1220,11 @@ export class SimController {
       const size = this.host.viewer.modelSize;
       const got = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
       if (!asm && got.solids !== 1) throw new Error("E-SIM-BODIES");
-      // an assembly: every component is its own body with its material's conductivity, joined where they touch
-      const off = asm ? offComps(st) : new Set<string>();
-      const geo = off.size ? withoutFaces(got.geo, n => off.has(compOf(n))) : got.geo;
-      const bodies = asm ? (off.size ? got.regions?.filter(b => !off.has(compOf(b.key))) : got.regions) ?? [] : [];
-      if (asm && !bodies.length) throw new Error("E-SIM-NOBODY");
-      const mats = bodies.map(b => st.comps?.[compOf(b.key)]?.material ?? b.mat ?? null);
-      // a board conducts by its copper: along it far better than through it
-      const bks = bodies.map(b => { const bd = st.comps?.[compOf(b.key)]?.board; return bd ? boardK(b.tris, bd, bd.t) : null; });
-      mats.forEach((q, i) => { if (!bks[i] && !q?.k) throw new Error(`E-TH-COMPMAT: ${bodies[i].name ?? bodies[i].key}`); });
-      const kOf = (i: number) => bks[i]?.along ?? mats[i]!.k!, nameOf = (i: number) => (bks[i] ? BOARD_MATERIAL : mats[i]!.name);
-      const at = new Map(bodies.map((b, i) => [b.key, i]));
-      const links = (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) && (l.type === "none" || l.type === "resist" || l.type === "pad")
-        ? [l.type === "none" ? { a: at.get(l.a)!, b: at.get(l.b)!, type: "none" as const } : { a: at.get(l.a)!, b: at.get(l.b)!, type: "resistance" as const, h: linkConductance(l) }] : []));
+      const { off, geo, bodies, mats, bks, kOf, nameOf, links, setup } = this.thermalParts(st, got);
       if (asm) {
         this.comps = bodies.map(b => ({ key: b.key, name: b.name ?? b.key }));
         if (!this.freshFound(st)) void this.findFrom(bodies, st.settings.gap ?? DEFAULT_GAP, this.foundKey(st)).then(() => { this.renderAll(); this.drawMarks(); }).catch(() => {});
       }
-      const setup = thermalSetup(st, geo, asm ? bodies.map(b => b.key) : undefined);
       if (setup.problems.length) {
         for (const p of setup.problems) this.problems.set(p.id, p.code);
         throw new Error(`${setup.problems[0].code}: ${setup.problems[0].id}`);
@@ -1673,7 +1709,7 @@ export class SimController {
     switch (code) {
       case "E-SIM-NOLOAD": return t("Add a load first.");
       case "E-TH-ALPHA": return t("The material has no thermal expansion coefficient. Pick one that has it, or make your own with it.");
-      case "E-TH-STRESSMATS": return t("Thermal stress needs one material for the whole part so far.");
+      case "E-TH-COMPALPHA": return t("{name} has no thermal expansion coefficient: pick a material that gives one.", { name: rest });
       case "E-TH-NOFIELD": return t("The thermal study the temperature load takes its temperatures from cannot be solved. Open it and solve it first.");
       case "E-SIM-ONETEMP": return t("A study takes one temperature load.");
       case "E-TH-NOSINK": return t("Nothing takes the heat away. Add convection, radiation or a fixed temperature: without one the part would heat up for ever.");
@@ -3182,7 +3218,7 @@ export class SimController {
     const noLoads = st?.kind === "modal";
     el.innerHTML = pick + sep + group(t("Study"), btn("new", t("New study"), asm ? t("New static study of this assembly") : t("New static study of this part"), { dis: busy }) + btn("newmodal", t("Modal study"), asm ? t("New modal study: the natural frequencies and mode shapes of this assembly") : t("New modal study: the natural frequencies and mode shapes of this part"), { dis: busy }) + (asm ? "" : btn("mat", t("Material"), t("The part's material: elastic modulus, Poisson's ratio, strength"), { dis: busy })))
       + sep + group(t("Supports"), SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
-      + (noLoads ? "" : sep + group(t("Loads"), LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy || (k === "temperature" && !!this.host.asm()) })).join("")))
+      + (noLoads ? "" : sep + group(t("Loads"), LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy })).join("")))
       + sep + group(t("Connections"), (asm ? btn("weld", t(WELD_LABEL), t("A weld along edges where two components meet"), { dis: busy }) + btn("spot", t(SPOT_LABEL), t("Spot welds at points, through one component into the next"), { dis: busy }) : "") + btn("connector", t(CONNECTOR_LABEL), t("A rigid or spring connector between two sets of faces"), { dis: busy }) + btn("mass", t(MASS_LABEL), t("A mass spread over faces: it weighs and lowers the natural frequencies"), { dis: busy }))
       + sep + group(t("Solve"), btn("refine", t(REFINE_LABEL), t("Local accuracy: the solution starts finer at the picked faces"), { dis: busy || noLoads }) + solve);
   }

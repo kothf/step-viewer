@@ -243,9 +243,10 @@ export interface StaticProblem {
    * gives the temperature °C (and its gradient K/mm when `grad`) at points (3 numbers each). The loads that are
    * consistent with σ = D(ε − ε_th): the body force −β∇T and the traction β (T − ref) n on `tris` (the surface
    * less the faces whose motion supports hold), β = (3λ + 2μ) α. Stresses are reported less β (T − ref) I.
-   * One material only.
+   * With `domains`, `alphas` gives each domain's α (a rigid one takes none) and the domains' joining terms
+   * carry the thermal part of their shared traction, so bodies of different expansion push on each other.
    */
-  thermo?: { alpha: number; ref: number; field: TempField; tris: ArrayLike<number> };
+  thermo?: { alpha: number; alphas?: ArrayLike<number>; ref: number; field: TempField; tris: ArrayLike<number> };
   /** The most memory the stiffness matrix may take, bytes (default `MEMORY_LIMIT`); more = E-SIM-MEMORY: <MB>. */
   memory?: number;
 }
@@ -593,6 +594,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const setMat = (e: number) => { const L = lames[domE[e]]; lam = L.lam; mu = L.mu; };
   const rhoOf = (e: number) => mats[domE[e]].rho ?? 0;
   const rigidE = (e: number) => rigidD[domE[e]];
+  // thermal strain: β = (3λ + 2μ) α per element, by its domain's material (a rigid domain has none)
+  const betaE = pb.thermo ? thermoBeta(pb.thermo, grid.elems.length, domE, lames, rigidD) : null;
   const deg: ArrayLike<number> | null = anyRigid ? Int8Array.from(grid.elems, (_, e) => (rigidE(e) ? 1 : deg0 ? deg0[e] : p)) : deg0;
   const hasRho = mats.every(q => (q.rho ?? 0) > 0);
   /** The lowest E/ρ: the scale of the shift that stands in for stiffness the supports do not give. */
@@ -1376,9 +1379,11 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   }
   // thermal strain: traction β ΔT n on the free surface and body force −β ∇T in the volume (kept out of this function: see measurePenalty)
   const th = pb.thermo;
+  // per joining point: the thermal part {β} ΔT of the shared traction (taken off the connection forces)
+  let joinTh: Float64Array | null = null;
   if (th) {
-    if (doms) throw new Error("E-TH-STRESSMATS");
-    thermoLoads(th, (3 * lam + 2 * mu) * th.alpha, grid, bas, off, nbs, f, located, (x, y, z, fx, fy, fz) => add(applied, x, y, z, fx, fy, fz));
+    joinTh = thermoLoads(th, betaE!, grid, bas, off, nbs, f, located, (x, y, z, fx, fy, fz) => add(applied, x, y, z, fx, fy, fz),
+      doms ? { insides: doms.map(d => d.inside), joins, glued: glueOf.map(Boolean), rigid: rigidE } : null);
   }
   // inertia relief: the rigid acceleration the loads give the free body, and its inertia forces as a body force
   let accel: { a: number[]; alpha: number[]; com: number[]; mass: number } | undefined;
@@ -1709,6 +1714,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         }
       }
       for (let c = 0; c < 3; c++) ta[c] -= g * ua[c];
+      // the stress is D ε less the thermal part β ΔT I
+      if (joinTh) { const q = joinTh[o / 11]; for (let c = 0; c < 3; c++) ta[c] -= q * nrm[c]; }
       const gl = glueOf[ci];
       if (gl) {
         // the layer alone carries the load: b pulls a back by its stiffness times the jump
@@ -1796,7 +1803,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       const n = pos.length / 3, u = new Float32Array(3 * n), vm = new Float32Array(n), err = new Float32Array(n);
       const hit = hits ? new Uint8Array(n) : undefined, dom = doms ? new Uint8Array(n) : undefined;
       const eps = 1e-6 * grid.h, G = new Float64Array(9);
-      const thT = th ? th.field(Float64Array.from(pos), false).t : null, thB = th ? (3 * lam + 2 * mu) * th.alpha : 0;
+      const thT = th ? th.field(Float64Array.from(pos), false).t : null;
       for (let i = 0; i < n; i++) {
         let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
         if (nrm) { px -= eps * nrm[3 * i]; py -= eps * nrm[3 * i + 1]; pz -= eps * nrm[3 * i + 2]; }
@@ -1818,7 +1825,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         u[3 * i] = ux; u[3 * i + 1] = uy; u[3 * i + 2] = uz;
         const tr = G[0] + G[4] + G[8];
         // a rigid component's stress is not a result
-        const sth = thT ? thB * (thT[i] - th!.ref) : 0;
+        const sth = thT ? betaE![e] * (thT[i] - th!.ref) : 0;
         if (!stiff) vm[i] = vonMises([lam * tr + 2 * mu * G[0] - sth, lam * tr + 2 * mu * G[4] - sth, lam * tr + 2 * mu * G[8] - sth, mu * (G[1] + G[3]), mu * (G[5] + G[7]), mu * (G[6] + G[2])]);
       }
       return { u, vm, err, ...(hit ? { hit } : {}), ...(dom ? { dom } : {}) };
@@ -1848,16 +1855,28 @@ export function solveStatic(pb: StaticProblem): StaticResult {
 }
 
 /** The loads of a thermal strain (`StaticProblem.thermo`): traction β ΔT n on its surface, body force −β ∇T. */
-function thermoLoads(th: NonNullable<StaticProblem["thermo"]>, beta: number, grid: Grid, bas: Basis, off: ArrayLike<number>, nbs: ArrayLike<number>, f: Float64Array,
+function thermoLoads(th: NonNullable<StaticProblem["thermo"]>, betaE: Float64Array, grid: Grid, bas: Basis, off: ArrayLike<number>, nbs: ArrayLike<number>, f: Float64Array,
   located: (tris: ArrayLike<number>, fn: (e: number, x: number, y: number, z: number, w: number, nrm: number[]) => void) => void,
-  add: (x: number, y: number, z: number, fx: number, fy: number, fz: number) => void) {
+  add: (x: number, y: number, z: number, fx: number, fy: number, fz: number) => void,
+  multi: { insides: ((x: number, y: number, z: number) => boolean)[]; joins: number[]; glued: boolean[]; rigid: (e: number) => boolean } | null): Float64Array | null {
   const sp: number[] = [];
-  located(th.tris, (e, x, y, z, w, nrm) => { sp.push(e, x, y, z, w, nrm[0], nrm[1], nrm[2]); });
+  const eps = 2e-3 * grid.h;
+  located(th.tris, (e, x, y, z, w, nrm) => {
+    if (multi) {
+      // several bodies: the point belongs to the body just inside it (a cell may hold two bodies' pieces)
+      const bx = x - eps * nrm[0], by = y - eps * nrm[1], bz = z - eps * nrm[2];
+      const d = multi.insides.findIndex(f => f(bx, by, bz));
+      const c = d >= 0 ? grid.cellOf(bx, by, bz, d) : -1;
+      if (c >= 0) e = grid.cells[c].el;
+    }
+    sp.push(e, x, y, z, w, nrm[0], nrm[1], nrm[2]);
+  });
   const ns = sp.length / 8, sx = new Float64Array(3 * ns);
   for (let k = 0; k < ns; k++) { sx[3 * k] = sp[8 * k + 1]; sx[3 * k + 1] = sp[8 * k + 2]; sx[3 * k + 2] = sp[8 * k + 3]; }
   const ts = ns ? th.field(sx, false).t : new Float64Array(0);
   for (let k = 0; k < ns; k++) {
-    const o = 8 * k, e = sp[o], x = sp[o + 1], y = sp[o + 2], z = sp[o + 3], q = sp[o + 4] * beta * (ts[k] - th.ref), E = grid.elems[e];
+    const o = 8 * k, e = sp[o], x = sp[o + 1], y = sp[o + 2], z = sp[o + 3], q = sp[o + 4] * betaE[e] * (ts[k] - th.ref), E = grid.elems[e];
+    if (!q) continue;
     bas.eval(x, y, z, E.c, E.s);
     add(x, y, z, q * sp[o + 5], q * sp[o + 6], q * sp[o + 7]);
     for (let a = 0, r = off[e]; a < nbs[e]; a++) for (let c = 0; c < 3; c++) f[r + 3 * a + c] += bas.v[a] * q * sp[o + 5 + c];
@@ -1873,6 +1892,8 @@ function thermoLoads(th: NonNullable<StaticProblem["thermo"]>, beta: number, gri
       const Q = grid.cells[ci].pts;
       for (let j = 0; j < Q.n; j++, k++) { P[3 * k] = Q.a[4 * j]; P[3 * k + 1] = Q.a[4 * j + 1]; P[3 * k + 2] = Q.a[4 * j + 2]; W[k] = Q.a[4 * j + 3]; }
     }
+    const beta = betaE[e];
+    if (!beta) continue;
     const g = th.field(P, true).g;
     if (!g) continue;
     for (let j = 0; j < n; j++) {
@@ -1883,6 +1904,39 @@ function thermoLoads(th: NonNullable<StaticProblem["thermo"]>, beta: number, gri
       for (let a = 0, q = off[e]; a < nbs[e]; a++) { f[q + 3 * a] += w * bas.v[a] * bx; f[q + 3 * a + 1] += w * bas.v[a] * by; f[q + 3 * a + 2] += w * bas.v[a] * bz; }
     }
   }
+  if (!multi) return null;
+  // joined bodies: the shared traction {σ n} holds the thermal part −{β} ΔT n too, which works on the jump [v]
+  // (with one material it cancels the two faces' tractions above; with two it is what makes them push on each other)
+  const J = multi.joins, nj = J.length / 11, out = new Float64Array(nj);
+  if (!nj) return out;
+  const jp = new Float64Array(3 * nj);
+  for (let k = 0; k < nj; k++) for (let c = 0; c < 3; c++) jp[3 * k + c] = J[11 * k + 3 + c];
+  const jt = th.field(jp, false).t;
+  for (let k = 0; k < nj; k++) {
+    const o = 11 * k;
+    if (multi.glued[J[o]]) continue;
+    const ea = J[o + 1], eb = J[o + 2], x = J[o + 3], y = J[o + 4], z = J[o + 5], w = J[o + 6];
+    const ra = multi.rigid(ea), rb = multi.rigid(eb), wa = ra === rb ? 0.5 : ra ? 0 : 1, wb = ra === rb ? 0.5 : rb ? 0 : 1;
+    out[k] = (wa * betaE[ea] + wb * betaE[eb]) * (jt[k] - th.ref);
+    const q = w * out[k];
+    if (!q) continue;
+    for (const [e, sg] of [[ea, -1], [eb, 1]]) {
+      const E = grid.elems[e];
+      bas.eval(x, y, z, E.c, E.s);
+      for (let a = 0, r = off[e]; a < nbs[e]; a++) for (let c = 0; c < 3; c++) f[r + 3 * a + c] += sg * bas.v[a] * q * J[o + 7 + c];
+    }
+  }
+  return out;
+}
+
+/** β = (3λ + 2μ) α per element: by its domain's material and α, none for a rigid domain. */
+function thermoBeta(th: NonNullable<StaticProblem["thermo"]>, nel: number, domE: ArrayLike<number>, lames: { lam: number; mu: number }[], rigidD: boolean[]): Float64Array {
+  const out = new Float64Array(nel);
+  for (let e = 0; e < nel; e++) {
+    const d = domE[e], L = lames[d], a = th.alphas && th.alphas.length > d ? th.alphas[d] : th.alpha;
+    out[e] = rigidD[d] ? 0 : (3 * L.lam + 2 * L.mu) * a;
+  }
+  return out;
 }
 
 /** Temperature °C at points (3 numbers each), and its gradient K/mm (3 each) when `grad`. */

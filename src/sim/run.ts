@@ -696,7 +696,7 @@ export interface RunInput {
    * Thermal expansion: the material's α, 1/K, and for a temperature load from a thermal study, that study's
    * run input (solved here first; its last pass gives the temperatures).
    */
-  temp?: { alpha: number; thermal?: RunInput };
+  temp?: { alpha: number; /** Per region (assemblies, bodies of their own material): α, 1/K; 0 for a rigid one. */ alphas?: number[]; thermal?: RunInput };
   thermal?: { k: number; setup: ThermalSetup; ks?: number[]; /** Per region: conductivity along X, Y, Z when they differ (a board), else null. */ k3s?: (number[] | null)[]; gap?: number; links?: ThermalLink[];
     /**
      * A transient study (FR-TSOL-006): volumetric heat capacity ρ·cp, J/(mm³·K) (`rcs` per region), start
@@ -848,7 +848,7 @@ export function sampleAt(sample: Sampler, pos: ArrayLike<number>, scale = 0, ins
  */
 export function tempField(inp: RunInput): TempField {
   const th = inp.problem.thermo!;
-  if (!inp.temp || !(inp.temp.alpha > 0)) throw new Error("E-TH-ALPHA");
+  if (!inp.temp || !(inp.temp.alpha > 0 || inp.temp.alphas?.some(a => a > 0))) throw new Error("E-TH-ALPHA");
   if (th.uniform != null) { const u = th.uniform; return pts => ({ t: new Float64Array(pts.length / 3).fill(u) }); }
   const ti = inp.temp.thermal;
   if (!ti?.thermal) throw new Error("E-TH-NOFIELD");
@@ -915,7 +915,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
       lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts, welds: inp.welds, connectors: inp.problem.connectors, masses: inp.problem.masses,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin, relief: inp.problem.relief, memory: inp.memory,
-      ...(field ? { thermo: { alpha: inp.temp!.alpha, ref: inp.problem.thermo!.ref, field, tris: inp.problem.thermo!.tris } } : {}),
+      ...(field ? { thermo: { alpha: inp.temp!.alpha, ...(domains && inp.temp!.alphas ? { alphas: inp.temp!.alphas } : {}), ref: inp.problem.thermo!.ref, field, tris: inp.problem.thermo!.tris } } : {}),
     });
     grid = r.grid;
     prev = r.x;
