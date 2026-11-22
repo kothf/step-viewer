@@ -3,7 +3,7 @@
 
 import type { GerberView, GMeasure, GTool } from "./GerberView";
 import type { GUnit } from "./model";
-import { bindTabs, busy, confirmModal, emptyState, type Panels } from "../ui";
+import { bindTabs, busy, fitTabStrip, confirmModal, emptyState, type Panels } from "../ui";
 import { layerLabel, onLangChange, t } from "../i18n";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -11,6 +11,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 
 export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => void; open: () => void; openBody: () => void; exportStep: () => Promise<void> | void; panels: Panels }) {
   // Tabs
+  fitTabStrip($("#g-left .g-tabs"), onLangChange);
   const selectTab = bindTabs($("#g-left .g-tabs"), tab => {
     document.querySelectorAll("#g-left .g-tab").forEach(t => t.classList.toggle("on", t.id === `g-tab-${tab}`));
     $("#g-left-title").textContent = tab === "layers" ? "Layers" : "Measurements";

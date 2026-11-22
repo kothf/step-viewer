@@ -71,6 +71,8 @@ export const RU: Record<string, string> = {
   "Model tree and measurements": "Дерево модели и измерения",
   "Left panel": "Левая панель",
   "Model tree": "Дерево модели",
+  "Tree": "Дерево",
+  "Measures": "Замеры",
   "Measurements": "Измерения",
   "Filter: name, size>50, vol<1000": "Фильтр: имя, size>50, vol<1000",
   "Filter the model tree": "Фильтр дерева модели",

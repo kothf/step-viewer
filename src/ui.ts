@@ -273,6 +273,27 @@ export function bindTabs(list: HTMLElement, onSelect: (tab: string) => void) {
   return (tab: string) => { const b = tabs.find(t => t.dataset.tab === tab); if (b) select(b); };
 }
 
+/**
+ * Keeps a strip of side panel tabs on one line, like the icon tabs of other CAD apps' side panels:
+ * every tab shows icon + short name while they fit; else only the open tab keeps its name
+ * (`tabs-icons`), and when even that is too wide none do (`tabs-bare`). The full name stays in the
+ * tooltip and the count badges stay. Re-checked when the strip resizes, a tab is shown or hidden or
+ * opened, and when the language changes (callers pass `onLangChange`).
+ */
+export function fitTabStrip(list: HTMLElement, onLang?: (f: () => void) => void) {
+  const fit = () => {
+    list.classList.remove("tabs-icons", "tabs-bare");
+    if (!list.clientWidth) return;
+    if (list.scrollWidth > list.clientWidth + 1) list.classList.add("tabs-icons");
+    if (list.scrollWidth > list.clientWidth + 1) list.classList.add("tabs-bare");
+  };
+  new ResizeObserver(fit).observe(list);
+  new MutationObserver(recs => { if (recs.some(r => r.target !== list)) fit(); }).observe(list, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["hidden", "class"] });
+  onLang?.(fit);
+  fit();
+  return fit;
+}
+
 // ---------- busy buttons ----------
 
 /** Shows a spinner on `btn` while `work` runs (after one frame, so the spinner paints first). */
