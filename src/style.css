@@ -1829,6 +1829,14 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-boltlist li.miss .sim-boltnote { color: var(--warn, #b45309); }
 .sim-boltnote { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
 .sim-boltset { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px; }
+.sim-complist li.th { grid-template-columns: minmax(0, 1fr) auto auto auto; grid-auto-flow: row dense; }
+.sim-complist li.th > [data-v=compk] { grid-column: 1 / -1; padding-left: 20px; font-size: 11px; }
+.sim-kt { grid-column: 1 / -1; margin: 4px 0; }
+#sim-tree .sim-kt .pm-field { grid-template-columns: 1fr; gap: 3px; }
+.sim-complist .sim-kt .btn { max-width: none; }
+.sim-kt textarea { width: 100%; box-sizing: border-box; font-family: var(--mono, monospace); font-size: 12px; }
+.sim-ktbtn { margin-top: 4px; }
+.sim-ktbtn.on { border-color: var(--accent); }
 .sim-boardset { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 0 0 2px 20px; font-size: 11px; }
 .sim-boardset label { gap: 4px; }
 .sim-boardset input { width: 44px; font-size: 11px; padding: 2px 4px; }

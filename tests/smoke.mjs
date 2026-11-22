@@ -17690,6 +17690,64 @@ try {
     await ctx.close();
   }
 
+  // --- conductivity by temperature 1.665 (FRS-thermal FR-TMAT-004): a k(T) table, the solve repeated until k settles ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const kp = await ctx.newPage();
+    kp.on("pageerror", e => errors.push(e.message));
+    kp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await kp.goto(`${origin}/index.html?debug`);
+    await kp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await kp.goto(`${origin}/index.html?debug`);
+    await kp.waitForFunction(() => window.__sv);
+    await kp.click("#new-part");
+    await kp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // a 20 × 20 bar, 100 long along Y, k 50 W/(m·K); a thermal study holds its ends at 20 and 220 °C
+    await kp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50, cp: 460, alpha: 12 };
+      d.studies = [{ id: "st1", name: "Thermal 1", kind: "thermal", supports: [{ id: "t1", type: "temp", faces: [{ name: "f1:side:s1l1" }], temp: 20 }, { id: "t2", type: "temp", faces: [{ name: "f1:side:s1l3" }], temp: 220 }], loads: [], settings: { passes: 2, energyTol: 1, ambient: 25 } }];
+    }));
+    await kp.waitForTimeout(150);
+    await kp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const sim = () => kp.evaluate(() => window.__sv.sim.state());
+    const solved = async () => { await kp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await kp.waitForTimeout(400); };
+    await kp.click("#cm-t-simulation");
+    await kp.waitForTimeout(300);
+    await kp.click('#sim-tools [data-s="mode-thermal"]');
+    await kp.waitForTimeout(300);
+    await kp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const c1 = await sim();
+    // the table: k doubles from 20 to 220 °C; typed in the Material section's editor
+    await kp.click('#sim-tree [data-a="ktab"][data-b=""]');
+    await kp.waitForSelector('#sim-tree textarea[data-k="ktab"]');
+    await kp.fill('#sim-tree textarea[data-k="ktab"]', "20 50\n220 100");
+    await kp.keyboard.press("Tab");
+    await kp.waitForTimeout(300);
+    const ui = await kp.evaluate(() => ({ kt: window.__sv.model.store.doc.studies[0].kt, k: document.querySelector('#sim-tree [data-v="kcond"]')?.textContent ?? "", btn: document.querySelector('#sim-tree .sim-ktbtn')?.textContent ?? "", wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await kp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const c2 = await sim();
+    const note = await kp.evaluate(() => document.querySelector('#sim-tree [data-v="ksteps"]')?.textContent ?? "");
+    // a bad row is refused and the table kept
+    await kp.fill('#sim-tree textarea[data-k="ktab"]', "20 50\n10 60");
+    await kp.keyboard.press("Tab");
+    await kp.waitForTimeout(300);
+    const kept = await kp.evaluate(() => JSON.stringify(window.__sv.model.store.doc.studies[0].kt));
+    await kp.click("#lang-btn");
+    await kp.waitForTimeout(200);
+    const ru = await kp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-mat *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await kp.click("#lang-btn");
+    // constant k: 50 · 400 mm² · 200 K / 100 mm = 40 W; k(T) = 50 (1 + (T − 20) / 200): Kirchhoff gives 50 · 400 · 300 / 100 = 60 W
+    check(!c1.error && Math.abs(c1.thermal.out[0] - 40) < 0.4 && JSON.stringify(ui.kt) === JSON.stringify({ "": [[20, 50], [220, 100]] }) && /50 W\/\(m·K\) at 20 °C … 100 W\/\(m·K\) at 220 °C/.test(ui.k) && /2 rows/.test(ui.btn) && ui.wide <= 0
+      && !c2.error && Math.abs(c2.thermal.out[0] / 60 - 1) < 0.02 && Math.abs(c2.thermal.out[1] / -60 - 1) < 0.02 && /solved \d+ times/.test(note) && kept === JSON.stringify(ui.kt) && ru.length === 0,
+      `conductivity by temperature 1.665: a bar held at 20 and 220 °C passes 40 W with constant k and the Kirchhoff 60 W once k doubles over that range; a bad table is refused; translated (${JSON.stringify({ e1: c1.error, o1: c1.thermal?.out, ui, e2: c2.error, o2: c2.thermal?.out, note, kept, ru })})`);
+    await ctx.close();
+  }
+
   // --- thermal isolate and picture 1.660 (FRS-thermal FR-TMAP-020/042): one part alone; a PNG with the colour scale drawn in ---
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

@@ -308,7 +308,7 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 - **FR-TMAT-001** (TH2, M) Thermal conductivity k (and, for transient studies, density and specific heat cp) come from the body, part or component material, or the study's material override, as for structural studies. A body without k (or cp when needed) blocks the solve with "Set a material with thermal conductivity for <body>" and a button to the picker.
 - **FR-TMAT-002** (TH2, M) Materials used by electronics get thermal values where a public source gives them: FR-4 (k 0.3, cp 1,100), copper (k 390), aluminium alloys, tin-lead and SAC solder, alumina, silicone thermal pads, thermal grease, glass (valve bulbs), ABS/PLA/PETG/PC enclosures, mica; library rows without a source stay without the value (the library rule). Each added value gets its reference like other rows.
 - **FR-TMAT-003** (TH2, S) Orthotropic conductivity: a material or a study override may give in-plane and through-thickness k with the plane's normal (a board, a laminated stack, a graphite pad). Stored as `kx, ky, kz` in a body frame.
-- **FR-TMAT-004** (TH5, C) Temperature-dependent k (table), solved by repeating the solve with k at the current temperature until it changes less than 0.5 %.
+- **FR-TMAT-004** (TH5, C) Temperature-dependent k (table), solved by repeating the solve with k at the current temperature until it changes less than 0.5 %. Built in 1.665.0: a table per part or component in the thermal study (also used in transient studies).
 
 ### 9.2 Heat loads
 

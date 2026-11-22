@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.665.0] - 2026-11-22
+
+### Added
+
+- Conductivity that changes with temperature in thermal studies. In the Study tab's Material section, Conductivity changes with temperature… opens a small table of temperatures and conductivities (one row per line); over an assembly each component has its own k(T) button. Between the rows the conductivity is linear and beyond them it keeps the end values. The solve is repeated with each place's conductivity at its temperature until no conductivity changes by more than 0.5 %, and the results say how many times; transient studies take it at the temperatures as they change. A thermal stress study fed by such a thermal study uses it too.
+
+### Fixed
+
+- Thermal stress from an assembly's thermal study took the temperature gradient with the first component's conductivity everywhere; each component now uses its own (by direction on a board).
+
 ## [1.664.0] - 2026-11-22
 
 ### Added
@@ -4364,7 +4374,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.664.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.665.0...HEAD
+[1.665.0]: https://github.com/kothf/step-viewer/compare/v1.664.0...v1.665.0
 [1.664.0]: https://github.com/kothf/step-viewer/compare/v1.663.0...v1.664.0
 [1.663.0]: https://github.com/kothf/step-viewer/compare/v1.662.0...v1.663.0
 [1.662.0]: https://github.com/kothf/step-viewer/compare/v1.661.0...v1.662.0

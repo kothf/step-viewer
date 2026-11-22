@@ -8,7 +8,7 @@ import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { DEFAULT_AMBIENT, DEFAULT_REF, enclosureFactor, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch } from "../thermal/study";
-import { solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource } from "./thermal";
+import { ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource } from "./thermal";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
 export interface SimBody {
@@ -473,7 +473,7 @@ export interface PassResult {
    * `ThermalSetup.sinkIds`), and how many solves the pass took (radiation is solved step by step).
    */
   thermal?: {
-    min: number; max: number; applied: number; flows: SinkFlow[]; solves: number;
+    min: number; max: number; applied: number; flows: SinkFlow[]; solves: number; /** Solves made again with k at the temperatures found (FR-TMAT-004). */ kSteps?: number;
     /** Assemblies: where the components touch and the heat passing there; each one's temperatures and the heat made in it. */
     contacts?: ThermalContact[];
     /** By component: surface temperatures, heat made, and heat leaving its own surface (W; the rest is conducted to neighbours). */
@@ -698,6 +698,8 @@ export interface RunInput {
    */
   temp?: { alpha: number; /** Per region (assemblies, bodies of their own material): α, 1/K; 0 for a rigid one. */ alphas?: number[]; thermal?: RunInput };
   thermal?: { k: number; setup: ThermalSetup; ks?: number[]; /** Per region: conductivity along X, Y, Z when they differ (a board), else null. */ k3s?: (number[] | null)[]; gap?: number; links?: ThermalLink[];
+    /** Conductivity changing with temperature (FR-TMAT-004): [°C, factor on k, …] for the part (`kt`) or per region (`kts`, null = constant). */
+    kt?: number[]; kts?: (number[] | null)[];
     /**
      * A transient study (FR-TSOL-006): volumetric heat capacity ρ·cp, J/(mm³·K) (`rcs` per region), start
      * temperature °C, end time and output interval s, and the power profile of each heat load by its id.
@@ -855,7 +857,7 @@ export function tempField(inp: RunInput): TempField {
   let sampler: Sampler | null = null, last: PassResult | undefined;
   for (const p of runThermal(ti, s => { sampler = s; })) last = p;
   if (!sampler || !last) throw new Error("E-TH-NOFIELD");
-  const s: Sampler = sampler, k = ti.thermal.k, mean = (last.thermal!.min + last.thermal!.max) / 2;
+  const s: Sampler = sampler, TT = ti.thermal, mean = (last.thermal!.min + last.thermal!.max) / 2;
   const c = [(inp.body.lo[0] + inp.body.hi[0]) / 2, (inp.body.lo[1] + inp.body.hi[1]) / 2, (inp.body.lo[2] + inp.body.hi[2]) / 2];
   return (pts, grad) => {
     const n = pts.length / 3, r = s(pts, undefined, true), t = Float64Array.from(r.vm), g = grad ? new Float64Array(3 * n) : undefined;
@@ -868,7 +870,11 @@ export function tempField(inp: RunInput): TempField {
       const r2 = s(q, undefined, true);
       miss.forEach((i, j) => { t[i] = r2.hit?.[j] ? r2.vm[j] : mean; if (g) for (let a = 0; a < 3; a++) r.u[3 * i + a] = r2.hit?.[j] ? r2.u[3 * j + a] : 0; });
     }
-    if (g) for (let i = 0; i < 3 * n; i++) g[i] = -r.u[i] / k;
+    // ∇T = −flux / k, with the body's own conductivity (by direction for a board, at the temperature when it changes)
+    if (g) for (let i = 0; i < n; i++) {
+      const d = r.dom?.[i] ?? 0, k3 = TT.k3s?.[d], kt = TT.kts ? TT.kts[d] : TT.kt, m = kt ? ktFactor(kt, t[i]) : 1, k = TT.ks?.[d] ?? TT.k;
+      for (let a = 0; a < 3; a++) g[3 * i + a] = -r.u[3 * i + a] / ((k3 ? k3[a] : k) * m);
+    }
     return { t, g };
   };
 }
@@ -1034,7 +1040,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const R = T.ks && inp.regions && inp.regions.length > 1 ? inp.regions : null;
   if (R ? T.ks!.some(v => !(v > 0)) : !((T.ks?.[0] ?? T.k) > 0)) throw new Error("E-TH-NOK");
   if (!set.sinks.length) throw new Error("E-TH-NOSINK");
-  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), tris: r.tris }));
+  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), ...(T.kts?.[i] ? { kt: T.kts[i]! } : {}), tris: r.tris }));
   // nothing brings heat and nothing differs: every point would just sit at the one temperature
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
@@ -1045,7 +1051,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now(), p = k + 2;
-    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, grid, prev, sinks: set.sinks, sources: set.sources, memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) });
+    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), grid, prev, sinks: set.sinks, sources: set.sources, memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) });
     grid = r.grid; prev = r.x;
     if (r.prevError != null) known.push(r.prevError);
     const sampler: Sampler = (pos, nrm, hits) => { const s = r.sample(pos, nrm, hits); return { u: s.flux, vm: s.temp, err: s.err, ...(s.hit ? { hit: s.hit } : {}), ...(s.dom ? { dom: s.dom } : {}) }; };
@@ -1091,7 +1097,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, ...(capped ? { capped } : {}), energy: r.energy, change, ms: Date.now() - t0, reactions: [], applied: none,
       u: s.flux, vm: s.temp, err: s.err, errors: [...known, passError(known)], maxU, maxVm: max, converged, done: converged || capped > 0 || k === passes - 1,
       ...(s.dom ? { dom: s.dom } : {}),
-      thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations, ...(domains ? { contacts: r.contacts, comps } : {}) },
+      thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations, ...(r.kSteps ? { kSteps: r.kSteps } : {}), ...(domains ? { contacts: r.contacts, comps } : {}) },
     };
     if (converged || capped) return;
   }
@@ -1121,7 +1127,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
     }
   }
   const t0 = Date.now();
-  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), tris: r.tris }));
+  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), ...(T.kts?.[i] ? { kt: T.kts[i]! } : {}), tris: r.tris }));
   const inside = insideOf(new MeshBody(inp.body.tris));
   const h = cellSize(inp.body, inp.cells);
   const times = outputTimes(Tr.end, Tr.out);
@@ -1131,7 +1137,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const comps: number[][] = [];
   let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint8Array | undefined, flows: SinkFlow[] = [];
   const r = transientThermal(
-    { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, sinks: set.sinks, sources: set.sources, memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
+    { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), sinks: set.sinks, sources: set.sources, memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
     {
       rc: R ? Tr.rcs! : [Tr.rc], t0: Tr.t0, times, ...(Number.isFinite(maxStep) ? { maxStep } : {}), breaks: prof.flatMap(profileBreaks),
       factor: (i, t) => profileFactor(prof[i], t),
