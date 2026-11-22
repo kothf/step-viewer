@@ -17289,6 +17289,12 @@ try {
     const playing = (await sim()).transient.playing;
     await tp.waitForFunction(() => { const s = window.__sv.sim.state().transient; return !s.playing && s.frame === s.times.length - 1; }, null, { timeout: 30000 });
     const t2 = await sim();
+    // 1.662: the warm-up as a GIF, one frame per output time, the time shown kept
+    await tp.$eval('#sim-legend input[data-k="time"]', e => { e.value = "3"; e.dispatchEvent(new Event("input", { bubbles: true })); });
+    await tp.waitForTimeout(200);
+    await tp.click('#sim-legend [data-a="gif"]');
+    await tp.waitForFunction(() => window.__sv.sim.state().gifs > 0, null, { timeout: 60000 });
+    const tg = await sim(), gif = { ...tg.gif, frame: tg.transient.frame };
     await tp.click("#lang-btn");
     const ru = await tp.evaluate(() => [...document.querySelectorAll("#tab-sim *, #sim-tools *, #sim-legend *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
     await tp.click("#lang-btn");
@@ -17299,8 +17305,9 @@ try {
       && !t1.error && T && T.times.length === 11 && T.times[10] === 600 && Math.abs(T.max[1] - 25) < 0.05 && end - 25 > rise * 0.85 && end - 25 < rise * 1.01 && T.steady > end
       && res.chart > 0 && res.csv && /600|10 min/.test(res.tend) && res.slider === "10" && /Transient/.test(res.kind) && res.wide <= 0
       && t5.transient.frame === 5 && t5.transient.time === 300 && /300 s|5 min/.test(tt5) && Math.abs(t5.transient.shown - T.max[5]) < 1e-6
-      && t2.transient.probes.length === 1 && t2.transient.probes[0].length === 11 && reach.length > 0 && playing && /^"Time, s"/.test(t2.transient.csv) && ru.length === 0,
-      `thermal transient 1.661: 8 W switched on at 60 s in a steel bar: nothing until then, then it warms by about P·t / (ρ·c·V) less what the face takes; the slider, probes, time to reach and play follow the run; translated (${JSON.stringify({ tsec0, pat, set, noCp: t0.error, noCpText: /specific heat/.test(noCp), rcp, error: t1.error, times: T?.times, max: T?.max, rise, res, t5: t5.transient && { frame: t5.transient.frame, time: t5.transient.time, shown: t5.transient.shown }, tt5, probes: t2.transient?.probes, reach, playing, csv: t2.transient?.csv?.slice(0, 40), ru })})`);
+      && t2.transient.probes.length === 1 && t2.transient.probes[0].length === 11 && reach.length > 0 && playing && /^"Time, s"/.test(t2.transient.csv) && ru.length === 0
+      && gif.frames === 11 && gif.bytes > 1000 && gif.w > 0 && gif.frame === 3,
+      `thermal transient 1.661: 8 W switched on at 60 s in a steel bar: nothing until then, then it warms by about P·t / (ρ·c·V) less what the face takes; the slider, probes, time to reach and play follow the run; the warm-up saves as an 11-frame GIF; translated (${JSON.stringify({ tsec0, pat, set, noCp: t0.error, noCpText: /specific heat/.test(noCp), rcp, error: t1.error, times: T?.times, max: T?.max, rise, res, t5: t5.transient && { frame: t5.transient.frame, time: t5.transient.time, shown: t5.transient.shown }, tt5, probes: t2.transient?.probes, reach, playing, csv: t2.transient?.csv?.slice(0, 40), ru, gif })})`);
     await ctx.close();
   }
 

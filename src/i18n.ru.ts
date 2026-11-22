@@ -6090,6 +6090,7 @@ export const RU: Record<string, string> = {
   "Showing {name} only": "Показана только {name}",
   "Show all parts": "Показать все детали",
   "Play the warm-up": "Воспроизвести прогрев",
+  "Save the warm-up as an animated GIF of the current view": "Сохранить прогрев как анимированный GIF текущего вида",
   "Transient study": "Расчёт во времени",
   "Steady study": "Установившийся расчёт",
   "A transient study needs a material with a density and a specific heat.": "Для расчёта во времени нужен материал с плотностью и удельной теплоёмкостью.",

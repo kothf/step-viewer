@@ -2390,7 +2390,8 @@ export class SimController {
     const k = Math.max(0, this.frame);
     return `<div class="sim-time"><button class="btn small" data-a="tplay" aria-pressed="${!!this.playTimer}" title="${esc(t(this.playTimer ? "Pause" : "Play the warm-up"))}">${this.playTimer ? "❚❚" : "▶"}</button>`
       + `<input type="range" data-k="time" min="0" max="${T.times.length - 1}" step="1" value="${k}" aria-label="${esc(t("Time"))}" />`
-      + `<span data-v="ttime" translate="no">${esc(timeText(T.times[k]))}</span></div>`;
+      + `<span data-v="ttime" translate="no">${esc(timeText(T.times[k]))}</span>`
+      + `<button class="btn small" data-a="gif" title="${esc(t("Save the warm-up as an animated GIF of the current view"))}">GIF</button></div>`;
   }
 
   /** Each probe's temperature over the run (from the plot surface), °C per output time. */
@@ -2609,6 +2610,7 @@ export class SimController {
 
   /** One swing of the shown mode shape as a looping GIF of the current view (up to `maxW` px wide). */
   async recordGif(maxW = 640): Promise<Blob | null> {
+    if (this.res?.tr?.transient) return this.recordWarmGif(maxW);
     const ov = this.overlay, r = this.res?.passes.at(-1), doc = this.host.doc(), st = this.study();
     const mi = this.modeIndex(r), shape = r?.shapes?.[mi], pm = this.res?.mesh;
     if (!ov || !r?.modes || !shape || !pm || !doc || !st || !this.plot.deformed || this.recording) return null;
@@ -2645,6 +2647,58 @@ export class SimController {
     download(blob, `${`${doc.name}-${st.name}`.replace(/[\\/:*?"<>|]+/g, "_")}-mode${mi + 1}.gif`);
     // back to the live swing (or the still shape)
     if (this.overlay === ov) { if (this.animate) this.startAnim(pm.pos, shape, scale); else { this.place(arr, pm.pos, scale, shape); pa.needsUpdate = true; v.invalidate(); } }
+    return blob;
+  }
+
+  /**
+   * The warm-up of a transient thermal result as a GIF of the current view (FR-TRES-007, AT-TH4-4): one frame per
+   * output time at the playback rate, the colours on the range of the whole run, the time and hottest temperature in
+   * the corner and the colour scale below; the time shown before is put back.
+   */
+  async recordWarmGif(maxW = 640): Promise<Blob | null> {
+    const r = this.res, T = r?.tr?.transient, doc = this.host.doc(), st = this.study();
+    if (!r || !T || !doc || !st || !this.overlay || !this.plot.on || this.recording) return null;
+    const v = this.host.viewer, src = v.renderer.domElement;
+    if (!src.width || !src.height) return null;
+    this.stopPlay();
+    this.recording = true;
+    const was = this.frame, n = T.times.length, k = Math.min(1, maxW / src.width), temp = this.plot.kind === "temp" && !this.iso.on && !this.mask;
+    const c = document.createElement("canvas");
+    c.width = Math.max(2, Math.round(src.width * k)); c.height = Math.max(2, Math.round(src.height * k));
+    const g = c.getContext("2d", { willReadFrequently: true })!, frames: Uint8ClampedArray[] = [];
+    const [unit, f] = this.plotUnit();
+    const scale = (lo: number, hi: number) => {
+      const w = Math.min(160, c.width - 16), h = 10, x = 8, y = c.height - 28, rgb = new Float32Array(3);
+      for (let i = 0; i < w; i++) { ramp(i / (w - 1), rgb, 0); g.fillStyle = `rgb(${Math.round(rgb[0] * 255)},${Math.round(rgb[1] * 255)},${Math.round(rgb[2] * 255)})`; g.fillRect(x + i, y, 1, h); }
+      g.strokeStyle = "#111827"; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      g.fillStyle = "#111827"; g.font = `11px "DejaVu Sans", system-ui, sans-serif`; g.textBaseline = "top";
+      g.textAlign = "left"; g.fillText(`${sig(lo * f)}`, x, y + h + 2);
+      g.textAlign = "right"; g.fillText(`${sig(hi * f)} ${unit}`, x + w, y + h + 2);
+    };
+    v.bareKeep = new Set();
+    try {
+      for (let i = 0; i < n; i++) {
+        this.useFrame(r, i);
+        if (temp) this.paintFrame(); else this.showPlot();
+        v.render();
+        g.fillStyle = "#ffffff"; g.fillRect(0, 0, c.width, c.height);
+        g.drawImage(src, 0, 0, c.width, c.height);
+        g.fillStyle = "#111827"; g.font = `13px "DejaVu Sans", system-ui, sans-serif`; g.textBaseline = "top"; g.textAlign = "left";
+        g.fillText(`${st.name} · ${timeText(T.times[i])}`, 8, 8);
+        g.fillText(`${t("Max")}: ${sig(T.max[i])} °C`, 8, 26);
+        scale(this.range[0], this.range[1]);
+        frames.push(g.getImageData(0, 0, c.width, c.height).data);
+        if (i % 6 === 5) await new Promise(res => setTimeout(res, 0));
+      }
+    } finally {
+      v.bareKeep = null;
+      this.recording = false;
+      this.seek(was);
+    }
+    const blob = new Blob([encodeGif(frames, c.width, c.height, gifDelays(n, Math.max(1, Math.round(8 * this.speed))))], { type: "image/gif" });
+    this.gifs++;
+    this.lastGif = { bytes: blob.size, frames: n, w: c.width, h: c.height };
+    download(blob, `${`${doc.name}-${st.name}`.replace(/[\\/:*?"<>|]+/g, "_")}-warmup.gif`);
     return blob;
   }
 
