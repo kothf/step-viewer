@@ -1935,3 +1935,6 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .th-table tr.miss td:first-child { color: var(--muted); font-style: italic; }
 .th-set .ana-row input { width: 72px; }
 .sim-xtable th, .sim-xtable td { overflow-wrap: anywhere; }
+.sim-bmap { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 0 4px 20px; font-size: 11px; }
+.sim-bmap img { width: 96px; max-height: 72px; object-fit: contain; image-rendering: pixelated; border: 1px solid var(--border, #ccc); border-radius: 3px; }
+.sim-bmap [data-v="bmapinfo"] { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }

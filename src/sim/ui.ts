@@ -5,7 +5,7 @@
 import * as THREE from "three";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
-import { lang, onLangChange, t, withLang } from "../i18n";
+import { lang, layerLabel, onLangChange, t, withLang } from "../i18n";
 import { pickMaterial } from "../materialPicker";
 import { cacheGet, cacheKey, cachePut } from "../buildCache";
 import type { ExprError } from "../model/expr";
@@ -39,6 +39,8 @@ import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, typ
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { MEMORY_LIMIT } from "./static";
 import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardK, plateAxis, type BoardStack } from "../thermal/study";
+import { boardMap, gerberName, mapPicture, stackK, type CopperMap } from "../thermal/copper";
+import { copperFromGerber } from "../thermal/copperRaster";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { BOLTED_TCC, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
@@ -1291,9 +1293,9 @@ export class SimController {
       let tp: ReturnType<SimController["thermalParts"]>;
       try { tp = this.thermalParts(th, got, this.boltedPairs(this.freshBolts(th)?.list)); } catch { throw new Error("E-TH-NOFIELD"); }
       if (tp.setup.problems.length) throw new Error("E-TH-NOFIELD");
-      const { bodies, bks, kOf, nameOf, kts } = tp;
+      const { bodies, bks, kOf, nameOf, kts, kmaps } = tp;
       return { ...base, thermal: { ...tr, body: tp.geo, mat: { name: nameOf(0), E: 0, nu: 0, rho: 0 }, regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: nameOf(i), E: 0, nu: 0, rho: 0 } })),
-        thermal: { k: kOf(0) * 1e-3, setup: tp.setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s: bks.map(q => (q?.k3 ? q.k3.map(v => v * 1e-3) : null)), gap: th.settings.gap ?? DEFAULT_GAP, links: tp.links, ...(kts ? { kts } : {}) } } };
+        thermal: { k: kOf(0) * 1e-3, setup: tp.setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s: bks.map(q => (q?.k3 ? q.k3.map(v => v * 1e-3) : null)), gap: th.settings.gap ?? DEFAULT_GAP, links: tp.links, ...(kts ? { kts } : {}), ...(kmaps ? { kmaps } : {}) } } };
     }
     const q = th.mats?.[""] ?? doc.material;
     if (!q?.k) throw new Error("E-TH-NOFIELD");
@@ -1336,7 +1338,9 @@ export class SimController {
     const setup = thermalSetup(st, geo, asm ? bodies.map(b => b.key) : undefined);
     // a conductivity table (FR-TMAT-004) as factors on each body's k; a board keeps its copper's conductivity
     const kts = bodies.map((b, i) => { const rows = st.kt?.[compOf(b.key)]; return rows?.length && !bks[i] ? ktFactors(rows, kOf(i)) : null; });
-    return { off, geo, bodies, mats, bks, kOf, nameOf, links, setup, kts: kts.some(Boolean) ? kts : undefined };
+    // a board with its Gerber set: the conductivity follows its copper cell by cell (FR-TBRD-020)
+    const kmaps = bodies.map((b, i) => { const bd = st.comps?.[compOf(b.key)]?.board; return bd?.map && bks[i] ? boardMap(b.tris, bd, bks[i]!.t) : null; });
+    return { off, geo, bodies, mats, bks, kOf, nameOf, links, setup, kts: kts.some(Boolean) ? kts : undefined, kmaps: kmaps.some(Boolean) ? kmaps : undefined };
   }
 
   /** A thermal study's solve (FRS-thermal TH2): the part's temperatures from its heat sources and cooling. */
@@ -1358,7 +1362,7 @@ export class SimController {
       const got = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
       if (!asm && got.solids !== 1) throw new Error("E-SIM-BODIES");
       const bolted = asm ? this.boltedPairs(await this.boltsOf(st, got.regions ?? [])) : undefined;
-      const { off, geo, bodies, mats, bks, kOf, nameOf, links, setup, kts } = this.thermalParts(st, got, bolted);
+      const { off, geo, bodies, mats, bks, kOf, nameOf, links, setup, kts, kmaps } = this.thermalParts(st, got, bolted);
       const kt = !asm && st.kt?.[""]?.length ? ktFactors(st.kt[""], m!.k!) : undefined;
       if (asm) {
         this.comps = bodies.map(b => ({ key: b.key, name: b.name ?? b.key }));
@@ -1415,7 +1419,7 @@ export class SimController {
         body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] }, passes: total, energyTol: st.settings.energyTol, pos: mesh.pos, nrm: mesh.nrm, ...(memLimit() ? { memory: memLimit() } : {}),
         mat: { name: asm ? nameOf(0) : m!.name, E: 0, nu: 0, rho: 0 },
         ...(asm ? { regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: nameOf(i), E: 0, nu: 0, rho: 0 } })) } : {}),
-        thermal: asm ? { k: kOf(0) * 1e-3, setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s: bks.map(q => (q?.k3 ? q.k3.map(v => v * 1e-3) : null)), gap: st.settings.gap ?? DEFAULT_GAP, links, ...(kts ? { kts } : {}), ...(transient ? { transient } : {}) } : { k: m!.k! * 1e-3, setup, ...(kt ? { kt } : {}), ...(transient ? { transient } : {}) },
+        thermal: asm ? { k: kOf(0) * 1e-3, setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s: bks.map(q => (q?.k3 ? q.k3.map(v => v * 1e-3) : null)), gap: st.settings.gap ?? DEFAULT_GAP, links, ...(kts ? { kts } : {}), ...(kmaps ? { kmaps } : {}), ...(transient ? { transient } : {}) } : { k: m!.k! * 1e-3, setup, ...(kt ? { kt } : {}), ...(transient ? { transient } : {}) },
       }, p => {
         mine.push(p);
         res.ms = performance.now() - t0;
@@ -1490,12 +1494,13 @@ export class SimController {
         const o = st.comps?.[c.id], own = o?.material, name = own?.name ?? c.material, k = own ? own.k : c.k, bd = o?.board;
         const brd = `<button class="btn small sim-crigid${bd ? " on" : ""}" data-a="compboard" data-c="${esc(c.id)}" aria-pressed="${bd ? "true" : "false"}" title="${esc(t("Circuit board: it conducts by its copper layers, along it far better than through it"))}"${dis || (o?.off ? " disabled" : "")}>${esc(t("Board"))}</button>`;
         if (bd) {
-          const bk = boardConductivity(bd.t ?? 1.6, bd), off = dis || (o?.off ? " disabled" : "");
+          const mp = bd.map, bk = mp ? stackK(bd.t ?? 1.6, bd, mp.means) : boardConductivity(bd.t ?? 1.6, bd), off = dis || (o?.off ? " disabled" : "");
           return `<li data-comp="${esc(c.id)}" class="${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
             + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Thermal conductivity along the board / through it"))}">${sig(bk.along)} / ${sig(bk.through)} W/(m·K)</span>${brd}`
             + `<span class="sim-boardset"><label>${esc(t("Copper layers"))} <input type="text" inputmode="numeric" data-k="blayers" data-c="${esc(c.id)}" value="${bd.layers}"${off} /></label>`
             + `<label>${esc(t("Copper"))}, µm <input type="text" inputmode="decimal" data-k="bcopper" data-c="${esc(c.id)}" value="${sig(bd.copper)}"${off} /></label>`
-            + `<label>${esc(t("Coverage"))}, % <input type="text" inputmode="decimal" data-k="bcover" data-c="${esc(c.id)}" value="${sig(bd.cover * 100)}"${off} /></label></span></li>`;
+            + (mp ? "" : `<label>${esc(t("Coverage"))}, % <input type="text" inputmode="decimal" data-k="bcover" data-c="${esc(c.id)}" value="${sig(bd.cover * 100)}"${off} /></label>`) + `</span>`
+            + this.boardMapHtml(c.id, bd, off) + `</li>`;
         }
         return `<li data-comp="${esc(c.id)}" class="th ${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
           + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Thermal conductivity"))}">${st.kt?.[c.id]?.length ? this.ktRange(st.kt[c.id]) : k ? `${sig(k)} W/(m·K)` : ""}</span>${brd}`
@@ -1646,6 +1651,59 @@ export class SimController {
       this.setComp(s, id, c);
     });
     if (on && !thick) toast(t("The component is not a flat plate square to an axis: it is analysed with the board's in-plane conductivity in every direction."), "info");
+  }
+
+  /** A board's copper from its Gerber set (FR-TBRD-020): the button to read one, or the map with what it holds. */
+  private boardMapHtml(id: string, bd: BoardStack & { map?: CopperMap }, off: string): string {
+    const m = bd.map;
+    if (!m) return `<span class="sim-bmap"><button class="btn small" data-a="bgerber" data-c="${esc(id)}" title="${esc(t("Read the board's Gerber files: the conductivity then follows its copper and plated holes cell by cell"))}"${off}>${esc(t("Copper from Gerber…"))}</button></span>`;
+    const layers = m.labels.map((l, i) => `${esc(layerLabel(l))} ${Math.round(m.means[i] * 100)} %`).join(", ");
+    return `<span class="sim-bmap on"><img data-v="bmap" alt="${esc(t("Copper map"))}" src="${this.mapImage(m)}" />`
+      + `<span class="muted" data-v="bmapinfo"><span translate="no">${esc(m.name)}</span>: ${layers}; ${esc(t("{n} plated holes", { n: m.holes }))}; ${esc(t("cells of {s} mm", { s: sig(m.cell) }))}</span>`
+      + `<button class="btn small" data-a="bgerber" data-c="${esc(id)}"${off}>${esc(t("Other Gerber files…"))}</button><button class="btn small" data-a="bgerberclear" data-c="${esc(id)}"${off}>${esc(t("Even copper"))}</button></span>`;
+  }
+
+  private mapImages = new WeakMap<CopperMap, string>();
+  /** A copper map as a picture (cached per map). */
+  private mapImage(m: CopperMap): string {
+    let u = this.mapImages.get(m);
+    if (u) return u;
+    const p = mapPicture(m), cv = document.createElement("canvas");
+    cv.width = p.w; cv.height = p.h;
+    cv.getContext("2d")!.putImageData(new ImageData(p.rgba, p.w, p.h), 0, 0);
+    u = cv.toDataURL("image/png");
+    this.mapImages.set(m, u);
+    return u;
+  }
+
+  /** Reads Gerber files picked by the user into the board's copper map. */
+  private pickGerber(id: string) {
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.multiple = true;
+    inp.onchange = async () => {
+      const files = [...(inp.files ?? [])];
+      if (files.length) await this.readGerber(id, await Promise.all(files.map(async f => ({ name: f.name, data: await f.arrayBuffer() }))));
+    };
+    inp.click();
+  }
+
+  /** The board's copper map from Gerber files (or zips of them); `null` = even copper again. */
+  async readGerber(id: string, files: { name: string; data: ArrayBuffer }[] | null) {
+    const st = this.study();
+    if (!st || this.running) return;
+    let map: CopperMap | null = null;
+    if (files) {
+      try { map = await copperFromGerber(files, gerberName(files.map(f => f.name))); }
+      catch (err) { toast(String((err as Error).message).startsWith("E-TH-GERBER") ? t("These files hold no copper layer: pick the board's Gerber files or a zip of them.") : t("The Gerber files could not be read: {e}", { e: (err as Error).message }), "warn"); return; }
+    }
+    this.host.change(map ? t("Copper from Gerber") : t("Even copper"), d => {
+      const s = d.studies?.find(x => x.id === st.id), b = s?.comps?.[id]?.board;
+      if (!s || !b) return;
+      const nb = { ...b };
+      if (map) { nb.map = map; nb.layers = map.labels.length; } else delete nb.map;
+      this.setComp(s, id, { ...s.comps![id], board: nb });
+    });
+    if (map) toast(t("Copper read from {n} layers: the board's conductivity now follows its copper.", { n: map.labels.length }), "info");
   }
 
   /** The thickness of a component that is a flat plate square to an axis, mm, from the shown model. */
@@ -4038,6 +4096,8 @@ export class SimController {
     }
     else if (a === "comprigid") this.toggleRigid(b.dataset.c ?? "");
     else if (a === "compboard") this.toggleBoard(b.dataset.c ?? "");
+    else if (a === "bgerber") this.pickGerber(b.dataset.c ?? "");
+    else if (a === "bgerberclear") void this.readGerber(b.dataset.c ?? "", null);
     else if (a === "ktab") { const k = b.dataset.b ?? ""; this.ktOpen = this.ktOpen === k ? null : k; this.renderTree(); if (this.ktOpen != null) ($("#sim-tree").querySelector(`textarea[data-k="ktab"]`) as HTMLTextAreaElement | null)?.focus(); }
     else if (a === "ktclear") this.setKt(b.dataset.b ?? "", null);
     else if (a === "link") {

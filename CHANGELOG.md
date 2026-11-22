@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.675.0] - 2026-11-22
+
+### Added
+
+- Board copper from Gerber files in thermal studies. On a component marked as a circuit board, Copper from Gerber… reads the board's Gerber set (copper layers, outline and drill files, or a zip of them): each copper layer's coverage is measured on a grid of about 1 mm cells and plated holes add copper through the board where they are. The study then gives the board its conductivity cell by cell, so copper pours spread heat and bare board does not, instead of one even value. The board row shows a picture of the copper with each layer's share; Other Gerber files… reads a new set and Even copper goes back to the plain stack.
+
 ## [1.674.0] - 2026-11-22
 
 ### Changed
@@ -4436,7 +4442,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.674.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.675.0...HEAD
+[1.675.0]: https://github.com/kothf/step-viewer/compare/v1.674.0...v1.675.0
 [1.674.0]: https://github.com/kothf/step-viewer/compare/v1.673.0...v1.674.0
 [1.673.0]: https://github.com/kothf/step-viewer/compare/v1.672.0...v1.673.0
 [1.672.0]: https://github.com/kothf/step-viewer/compare/v1.671.0...v1.672.0

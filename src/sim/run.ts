@@ -8,7 +8,7 @@ import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { DEFAULT_AMBIENT, DEFAULT_REF, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch } from "../thermal/study";
-import { forcedH, ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow } from "./thermal";
+import { forcedH, kmapMean, ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
 import { viewFactor } from "./viewfactor";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
@@ -752,6 +752,8 @@ export interface RunInput {
    */
   temp?: { alpha: number; /** Per region (assemblies, bodies of their own material): α, 1/K; 0 for a rigid one. */ alphas?: number[]; thermal?: RunInput };
   thermal?: { k: number; setup: ThermalSetup; ks?: number[]; /** Per region: conductivity along X, Y, Z when they differ (a board), else null. */ k3s?: (number[] | null)[]; gap?: number; links?: ThermalLink[];
+    /** Per region: a board's conductivity varying over it, from its copper (FR-TBRD-020), else null. */
+    kmaps?: (KMap | null)[];
     /** Conductivity changing with temperature (FR-TMAT-004): [°C, factor on k, …] for the part (`kt`) or per region (`kts`, null = constant). */
     kt?: number[]; kts?: (number[] | null)[];
     /**
@@ -933,7 +935,8 @@ export function tempField(inp: RunInput): TempField {
     }
     // ∇T = −flux / k, with the body's own conductivity (by direction for a board, at the temperature when it changes)
     if (g) for (let i = 0; i < n; i++) {
-      const d = r.dom?.[i] ?? 0, k3 = TT.k3s?.[d], kt = TT.kts ? TT.kts[d] : TT.kt, m = kt ? ktFactor(kt, t[i]) : 1, k = TT.ks?.[d] ?? TT.k;
+      const d = r.dom?.[i] ?? 0, km = TT.kmaps?.[d], kt = TT.kts ? TT.kts[d] : TT.kt, m = kt ? ktFactor(kt, t[i]) : 1, k = TT.ks?.[d] ?? TT.k;
+      const k3 = km ? (([al, th]) => [0, 1, 2].map(a => (a === km.axis ? th : al)))(kmapMean(km, [pts[3 * i], pts[3 * i + 1], pts[3 * i + 2]], 0)) : TT.k3s?.[d];
       for (let a = 0; a < 3; a++) g[3 * i + a] = -r.u[3 * i + a] / ((k3 ? k3[a] : k) * m);
     }
     return { t, g };
@@ -1121,6 +1124,7 @@ export function reuseKey(inp: RunInput, h: number): string {
   const T = inp.thermal!;
   return JSON.stringify([
     hashOf(inp.body.tris), inp.body.lo, inp.body.hi, h, inp.memory ?? null, T.k, T.ks ?? null, T.k3s ?? null, T.kt ?? null, T.kts ?? null, T.gap ?? null, T.links ?? null,
+    (T.kmaps ?? []).map(m => (m ? [m.axis, m.ua, m.va, m.u0, m.v0, m.cell, m.nu, m.nv, hashOf(m.along), hashOf(m.through)] : null)),
     (inp.regions ?? []).map(r => hashOf(r.tris)),
     T.setup.sinks.map(s => [hashOf(s.tris), s.temp !== undefined ? "t" : "f", s.temp !== undefined ? 0 : s.h ?? 0, s.emissivity ?? 0, !!s.free, s.natural ? 1 : 0, s.forced ? hashOf(s.forced.h) : 0]),
     (T.setup.exchanges ?? []).length,
@@ -1133,7 +1137,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const R = T.ks && inp.regions && inp.regions.length > 1 ? inp.regions : null;
   if (R ? T.ks!.some(v => !(v > 0)) : !((T.ks?.[0] ?? T.k) > 0)) throw new Error("E-TH-NOK");
   if (!set.sinks.length) throw new Error("E-TH-NOSINK");
-  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), ...(T.kts?.[i] ? { kt: T.kts[i]! } : {}), tris: r.tris }));
+  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), ...(T.kmaps?.[i] ? { kmap: T.kmaps[i]! } : {}), ...(T.kts?.[i] ? { kt: T.kts[i]! } : {}), tris: r.tris }));
   // nothing brings heat and nothing differs: every point would just sit at the one temperature
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0 || (s.density ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
@@ -1222,7 +1226,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
     }
   }
   const t0 = Date.now();
-  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), ...(T.kts?.[i] ? { kt: T.kts[i]! } : {}), tris: r.tris }));
+  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), ...(T.kmaps?.[i] ? { kmap: T.kmaps[i]! } : {}), ...(T.kts?.[i] ? { kt: T.kts[i]! } : {}), tris: r.tris }));
   const inside = insideOf(new MeshBody(inp.body.tris));
   const h = cellSize(inp.body, inp.cells);
   const times = outputTimes(Tr.end, Tr.out);
