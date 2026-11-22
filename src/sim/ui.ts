@@ -13,6 +13,9 @@ import { evalVars } from "../model/params";
 import type { FaceRef, Num, PartDoc } from "../model/types";
 import { encodeGif, gifDelays } from "../motion/gif";
 import { download, pdfWriter } from "../tools/exporters";
+import { zip } from "../model/zip";
+import { packageFiles, partBoxes, type ExportPart } from "../thermal/export";
+import type { ThermalMesh } from "../thermal/vtu";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
 import { chooseModal, toast } from "../ui";
@@ -386,6 +389,81 @@ export class SimController {
   }
   private lastStl: { bytes: number; tris: number; scale: number } | null = null;
 
+  /**
+   * The thermal result as a thermal package (FR-TREP-010): surface temperatures on the plot mesh, one part per heat
+   * load's package part or component (the board = part 0), the heat-source table, the view and the manifest.
+   */
+  private async exportPackage() {
+    // a component "R14<1>" came from the STEP solid "R14" (its second solid is "…#2")
+    const bodyName = (n: string) => n.replace(/#\d+$/, "").replace(/<\d+>$/, "");
+    const res = this.res, last = res?.passes.at(-1), T = last?.thermal, st = this.study(), doc = this.host.doc();
+    if (!res || !last || !T || !st || !doc || this.stale()) return;
+    const tris = res.mesh.index.length / 3, part = new Int32Array(tris), dom = last.dom;
+    const parts: ExportPart[] = [];
+    if (res.comps && dom && T.comps) {
+      const off = new Set(st.suppressed ?? []), pk = st.loads.find(l => l.type === "pkgheat" && !off.has(l.id));
+      const boards = new Set<string>([...(pk?.board ? [pk.board] : []), ...Object.entries(st.comps ?? {}).filter(([, c]) => c.board).map(([id]) => id)]);
+      const idOf = new Int32Array(res.comps.length).fill(-1), byComp = new Map<string, number[]>();
+      res.comps.forEach((c, d) => { const id = compOf(c.key); if (boards.has(id)) idOf[d] = 0; else byComp.set(id, [...(byComp.get(id) ?? []), d]); });
+      const add = (id: number, doms: number[], extra: Partial<ExportPart>, name: string) => {
+        const rows = doms.map(d => T.comps![d]).filter(Boolean);
+        for (const d of doms) idOf[d] = id;
+        parts.push({ id, designator: name, bodies: [...new Set(doms.map(d => bodyName(res.comps![d].name)))], p: rows.reduce((a, x) => a + (x.power ?? 0), 0), t: rows.length ? Math.max(...rows.map(x => x.max)) : undefined, ...extra });
+      };
+      let next = 1;
+      for (const x of pk?.parts ?? []) next = Math.max(next, x.id + 1);
+      for (const x of pk?.parts ?? []) {
+        const doms = x.comps.flatMap(c => byComp.get(c) ?? []).filter(d => idOf[d] < 0);
+        if (doms.length) add(x.id, doms, { path: x.path, limit: x.limit }, x.name);
+      }
+      for (const [, doms] of byComp) { const left = doms.filter(d => idOf[d] < 0); if (left.length) add(next++, left, {}, bodyName(res.comps[left[0]].name)); }
+      // a triangle belongs to the component whose mesh it came from (the sampled domain is ambiguous where two touch)
+      const am = this.host.model() as AsmModel | null, vp = am?.parts ? this.partsOfMesh(am, res.mesh) : null, all = new Map<string, number[]>();
+      res.comps.forEach((c, d) => { const id = compOf(c.key); all.set(id, [...(all.get(id) ?? []), d]); });
+      const meshComp = am?.parts ? am.parts.map((_p, k) => compOf(am.names[am.faceOff[k]] ?? "")) : [];
+      for (let t3 = 0; t3 < tris; t3++) {
+        const v = res.mesh.index[3 * t3];
+        let d = dom[v];
+        if (vp && vp[v] >= 0) { const ds = all.get(meshComp[vp[v]]); if (ds?.length && !ds.includes(d)) d = ds[0]; }
+        part[t3] = Math.max(0, idOf[d] ?? 0);
+      }
+    } else {
+      part.fill(1);
+      parts.push({ id: 1, designator: doc.name, bodies: [doc.name], p: T.applied, t: T.max });
+    }
+    const pOf = new Map(parts.map(x => [x.id, x.p ?? 0])), power = new Float32Array(tris);
+    for (let i = 0; i < tris; i++) power[i] = pOf.get(part[i]) ?? 0;
+    // board faces: top, bottom or edge by the normal (the package frame has z up from the board's bottom face)
+    let face: Int8Array | undefined;
+    if (part.some(x => x === 0)) {
+      face = new Int8Array(tris);
+      const n = res.mesh.nrm, ix = res.mesh.index;
+      for (let i = 0; i < tris; i++) if (part[i] === 0) { const z = n[3 * ix[3 * i] + 2] + n[3 * ix[3 * i + 1] + 2] + n[3 * ix[3 * i + 2] + 2]; face[i] = z > 2.1 ? 1 : z < -2.1 ? 2 : 3; }
+    }
+    const temp = Float32Array.from(last.vm);
+    let lo = Infinity, hi = -Infinity;
+    for (const v of temp) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    const mesh: ThermalMesh = { pos: Float32Array.from(res.mesh.pos), temp, tri: Uint32Array.from(res.mesh.index), part, face, power, ambient: st.settings.ambient ?? DEFAULT_AMBIENT, range: [lo, hi] };
+    const boxes = partBoxes(mesh);
+    for (const x of parts) x.box = boxes.get(x.id);
+    // the view, as the report draws it
+    const was = { ...this.plot }, im = this.capture("temp", "image/png");
+    this.plot = was;
+    this.showPlot();
+    const picture = im ? Uint8Array.from(atob(im.src.split(",")[1] ?? ""), c => c.charCodeAt(0)) : undefined;
+    const enc = st.settings.enclosure, run = res.tr?.transient;
+    const name = this.fileBase();
+    const files = await packageFiles({
+      name, design: doc.name, app: `MöbiusCAD ${__APP_VERSION__}`, created: new Date().toISOString().replace(/\.\d+Z$/, "Z"), mesh, parts, picture,
+      settings: { ambient: st.settings.ambient ?? DEFAULT_AMBIENT, enclosure: typeof enc === "string" ? enc : undefined },
+      study: { name: st.name, kind: run ? "transient" : "steady", time: run ? run.times[Math.max(0, this.frame)] : undefined },
+    });
+    const bytes = await zip(files);
+    this.lastPkg = { name: `${name}-thermal.zip`, files: files.map(f => f.name), parts: parts.map(x => ({ id: x.id, designator: x.designator, p: x.p ?? 0, t: x.t ?? null })), bytes: bytes.length, data: bytes };
+    download(new Blob([bytes as BlobPart], { type: "application/zip" }), `${name}-thermal.zip`);
+  }
+  private lastPkg: { name: string; files: string[]; parts: { id: number; designator: string; p: number; t: number | null }[]; bytes: number; data: Uint8Array } | null = null;
+
   /** What the results depend on: the model, the material and the study's set-up. */
   private keyOf(_doc: SimDoc, st: Study) {
     const model = this.host.stateKey();
@@ -536,7 +614,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -2864,7 +2942,7 @@ export class SimController {
   // ---------- report ----------
 
   /** The plot of one result as a picture, in the current view, with its colour scale drawn in. */
-  private capture(kind: PlotKind): { src: string; w: number; h: number; caption: string } | null {
+  private capture(kind: PlotKind, type = "image/jpeg"): { src: string; w: number; h: number; caption: string } | null {
     this.plot.kind = kind;
     this.plot.on = true;
     this.showPlot();
@@ -2892,7 +2970,7 @@ export class SimController {
     const mr = this.res?.passes.at(-1), mi = this.modeIndex(mr), mode = mr?.modes?.[mi];
     const label = mode ? `${t("Mode {n}", { n: mi + 1 })}, ${mode.rigid ? t("rigid body") : `${sig(mode.hz)} Hz`}. ${t(PLOTS.find(p => p[0] === kind)![1])}` : t(PLOTS.find(p => p[0] === kind)![1]);
     const caption = mode ? `${label}. ${t("Mode shapes have no scale: only the pattern of the motion is meaningful.")}` : `${label}: ${lo} … ${hi}${unit ? ` ${unit}` : ""}` + (this.plot.deformed ? `. ${t("Deformed shape")} ×${sig(this.usedScale)}` : "");
-    return { src: c.toDataURL("image/jpeg", 0.9), w: c.width, h: c.height, caption };
+    return { src: c.toDataURL(type, 0.9), w: c.width, h: c.height, caption };
   }
 
   /** The report's tables of the connectors' results and of the masses. */
@@ -3588,7 +3666,7 @@ export class SimController {
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %).", { tol: sig(st?.settings.energyTol ?? 1), n: sig(last.change) })
         : t("One pass only: no convergence check."))}</p>`;
       html += `<p class="sim-note muted sim-assume">${esc(t(THERMAL_ASSUMPTIONS))}</p>`;
-      if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button>`;
+      if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button> <button class="btn small" data-a="tpkg" title="${esc(t("Save the temperatures as a thermal package: a zip that opens in ParaView, PyVista or FreeCAD, and as a thermal map on the model here"))}">${esc(t("Thermal package"))}</button>`;
     }
     return html;
   }
@@ -3895,6 +3973,7 @@ export class SimController {
       return;
     } else if (a === "hotcsv") { this.exportHot(); return; }
     else if (a === "stl") { this.exportStl(); return; }
+    else if (a === "tpkg") { void this.exportPackage(); return; }
     else if (a === "dupstudy" && st) {
       const list = this.host.doc()?.studies ?? [], blank = newStudy(list, st.kind === "modal" ? "modal" : "static");
       let k = 2;

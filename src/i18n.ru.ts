@@ -5707,6 +5707,8 @@ export const RU: Record<string, string> = {
   "Property": "Свойство",
   "Report": "Отчёт",
   "Report…": "Отчёт…",
+  "Thermal package": "Тепловой пакет",
+  "Save the temperatures as a thermal package: a zip that opens in ParaView, PyVista or FreeCAD, and as a thermal map on the model here": "Сохранить температуры как тепловой пакет: zip-архив, который открывается в ParaView, PyVista или FreeCAD, а здесь — как тепловая карта на модели",
   "Convergence": "Сходимость",
   "Assumptions": "Допущения",
   "left out": "не учитывается",

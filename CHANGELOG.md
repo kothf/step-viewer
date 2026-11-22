@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.668.0] - 2026-11-22
+
+### Added
+
+- Thermal results as a thermal package. A solved thermal study has a Thermal package button under its results: it saves a zip with the surface temperatures as a VTK file (opens in ParaView, PyVista or FreeCAD FEM), a heat-source table with each part's power and hottest temperature, the view as a picture, a manifest and a README, in the same layout a board design app writes. In a board study every package part keeps its number and name, so the zip dropped on the board's STEP opens as a thermal map with every part matched, ready to compare with the design app's own map.
+
 ## [1.667.0] - 2026-11-22
 
 ### Added
@@ -4394,7 +4400,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.667.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.668.0...HEAD
+[1.668.0]: https://github.com/kothf/step-viewer/compare/v1.667.0...v1.668.0
 [1.667.0]: https://github.com/kothf/step-viewer/compare/v1.666.0...v1.667.0
 [1.666.0]: https://github.com/kothf/step-viewer/compare/v1.665.0...v1.666.0
 [1.665.0]: https://github.com/kothf/step-viewer/compare/v1.664.0...v1.665.0
