@@ -76,6 +76,8 @@ export interface ThermalSource {
   power?: number;
   /** Heat flux into the body, W/mm² (faces only). */
   flux?: number;
+  /** Without faces: heat made per volume, W/mm³ (in place of `power`; the power is this × the volume). */
+  density?: number;
   /** Without faces and with `domains`: the heat is spread over the volume of these domains only. */
   doms?: number[];
   /** With faces: the domain they are on (bookkeeping only, for the heat made per component). */
@@ -849,12 +851,13 @@ function sourceLoad(c: Ctx, s: ThermalSource, tq: number, volume: number, volume
       for (let a = 0; a < nb; a++) f[e * nb + a] += w * c.bas.v[a];
       put += w;
     }
-  } else if (s.power && volume > 0) {
+  } else if ((s.power || s.density) && volume > 0) {
     const only = doms && s.doms ? new Set(s.doms) : null;
     let vol = volume;
     if (only) { vol = 0; for (const d of only) vol += volumes[d] ?? 0; }
     if (!(vol > 0)) return { f, put };
-    const q = s.power / vol;
+    const power = s.density !== undefined ? s.density * vol : s.power!;
+    const q = power / vol;
     for (let e = 0; e < nel; e++) {
       if (only && !only.has(dom[e])) continue;
       const E = grid.elems[e];
@@ -867,7 +870,7 @@ function sourceLoad(c: Ctx, s: ThermalSource, tq: number, volume: number, volume
         }
       }
     }
-    put = s.power;
+    put = power;
   }
   return { f, put };
 }
