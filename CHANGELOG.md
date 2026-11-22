@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.678.0] - 2026-11-22
+
+### Added
+
+- A hint for board models. A STEP that looks like a circuit board (a body named board or PCB, three or more parts named by designators such as R12 or C3, or a thin flat body larger than every other) now shows "This looks like a circuit board. Add thermal map…" in the status bar, so the board's thermal package is one click away. It shows once per file and goes when a map is added or × is clicked.
+
 ## [1.677.0] - 2026-11-22
 
 ### Added
@@ -4454,7 +4460,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.677.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.678.0...HEAD
+[1.678.0]: https://github.com/kothf/step-viewer/compare/v1.677.0...v1.678.0
 [1.677.0]: https://github.com/kothf/step-viewer/compare/v1.676.0...v1.677.0
 [1.676.0]: https://github.com/kothf/step-viewer/compare/v1.675.0...v1.676.0
 [1.675.0]: https://github.com/kothf/step-viewer/compare/v1.674.0...v1.675.0
