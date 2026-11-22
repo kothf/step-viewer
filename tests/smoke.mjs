@@ -18403,7 +18403,7 @@ try {
     await gp.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
     await gp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0, 0, 1), false); v.fit(false); });
     await gp.waitForTimeout(800);
-    const shot = async () => gp.screenshot({ clip: { x: 500, y: 250, width: 500, height: 350 } });
+    const shot = async () => gp.screenshot({ clip: { x: 460, y: 320, width: 400, height: 320 } });
     // mean per-channel difference of two screenshots (0..255), measured in the page
     const diff = (x, y) => gp.evaluate(async ([p, q]) => {
       const px = async b => { const im = new Image(); im.src = `data:image/png;base64,${b}`; await im.decode(); const c = document.createElement("canvas"); c.width = im.width; c.height = im.height; const g = c.getContext("2d"); g.drawImage(im, 0, 0); return g.getImageData(0, 0, c.width, c.height).data; };

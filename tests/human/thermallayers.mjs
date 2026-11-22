@@ -9,7 +9,7 @@ await openFiles(pg, [resolve(fx, "amp.step"), resolve(fx, "amp-thermal.zip")]);
 await pg.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 120000 });
 await pg.waitForTimeout(800);
 const st = () => pg.evaluate(() => window.__sv.thermal.state());
-const shot = () => pg.screenshot({ clip: { x: 500, y: 250, width: 500, height: 350 } });
+const shot = () => pg.screenshot({ clip: { x: 460, y: 320, width: 400, height: 320 } });
 const plain = await shot();
 
 // TL-1: Board layers with the board's four Gerber files.
