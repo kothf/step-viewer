@@ -1,13 +1,14 @@
 // Structural analysis (FR-SOL-010, FR-STU-020): a study turned into a solver problem, and the passes.
 // Pure: runs in the solver worker and in node tests.
 
+import { outputTimes, profileBreaks, profileFactor, profileStep, type PowerProfile } from "./transient";
 import { MeshBody, insideOf } from "./body";
 import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { DEFAULT_AMBIENT, enclosureFactor, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch } from "../thermal/study";
-import { solveThermal, thermalMemory, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource } from "./thermal";
+import { solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource } from "./thermal";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
 export interface SimBody {
@@ -460,6 +461,15 @@ export interface PassResult {
     /** By component: surface temperatures, heat made, and heat leaving its own surface (W; the rest is conducted to neighbours). */
     comps?: { min: number; max: number; mean: number; power: number; out?: number }[];
   };
+  /**
+   * Transient thermal studies, on the last pass: the output times, s, and each one's temperatures at the sample
+   * points, °C, with their lowest and highest, the heat put in and what the surfaces take, W, and by component its
+   * highest temperature. `steady` = the hottest point of the steady state at full power (null without heat).
+   */
+  transient?: {
+    times: number[]; frames: Float32Array[]; min: number[]; max: number[]; put: number[]; out: number[]; comps?: number[][];
+    steps: number; rejected: number; dt: [number, number]; capacity: number; t0: number; steady: number | null;
+  };
 }
 
 /** A thermal study on the body's triangles. */
@@ -596,10 +606,10 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
         if (boardTris) {
           const share = Math.min(own, Math.max(0, part.board ?? 0));
           const patch = share > 0 ? contactPatch(boardTris, compTris(b, comps)) : null;
-          if (patch) { out.sources.push({ tris: patch, power: share, dom: boardDom }); own -= share; }
+          if (patch) { out.sources.push({ tris: patch, power: share, dom: boardDom, id: l.id }); own -= share; }
           if (part.path === "chassis") own -= Math.min(own, Math.max(0, part.sink ?? 0));
         }
-        if (own > 0) out.sources.push({ power: own, doms });
+        if (own > 0) out.sources.push({ power: own, doms, id: l.id });
         any = true;
       }
       if (!any) out.problems.push({ id: l.id, code: "E-SIM-EMPTY" });
@@ -611,13 +621,13 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
       const comps = new Set(l.faces.map(f => compOf(f.name))), doms: number[] = [];
       regions.forEach((k, i) => { if (comps.has(compOf(k))) doms.push(i); });
       if (!doms.length) { out.problems.push({ id: l.id, code: "E-SIM-REF" }); continue; }
-      out.sources.push({ power: v, doms });
+      out.sources.push({ power: v, doms, id: l.id });
       continue;
     }
-    if (l.type === "heat" && l.body) { out.sources.push({ power: v }); continue; }
+    if (l.type === "heat" && l.body) { out.sources.push({ power: v, id: l.id }); continue; }
     const tris = facesOf(l);
     if (!tris) continue;
-    out.sources.push(l.type === "heat" ? { tris, power: v } : { tris, flux: v * 1e-6 });
+    out.sources.push(l.type === "heat" ? { tris, power: v, id: l.id } : { tris, flux: v * 1e-6, id: l.id });
   }
   return out;
 }
@@ -664,7 +674,13 @@ export interface RunInput {
    * Assemblies: `ks` = each region's conductivity (the regions are then solved as bodies joined where they
    * touch, within `gap`, as `links` say).
    */
-  thermal?: { k: number; setup: ThermalSetup; ks?: number[]; /** Per region: conductivity along X, Y, Z when they differ (a board), else null. */ k3s?: (number[] | null)[]; gap?: number; links?: ThermalLink[] };
+  thermal?: { k: number; setup: ThermalSetup; ks?: number[]; /** Per region: conductivity along X, Y, Z when they differ (a board), else null. */ k3s?: (number[] | null)[]; gap?: number; links?: ThermalLink[];
+    /**
+     * A transient study (FR-TSOL-006): volumetric heat capacity ρ·cp, J/(mm³·K) (`rcs` per region), start
+     * temperature °C, end time and output interval s, and the power profile of each heat load by its id.
+     */
+    transient?: { rc: number; rcs?: number[]; t0: number; end: number; out: number; profiles: Record<string, PowerProfile> };
+  };
   /** A modal study: this many modes; loads are not used. */
   modal?: {
     count: number;
@@ -1022,4 +1038,71 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
     };
     if (converged || capped) return;
   }
+}
+
+/**
+ * The passes of a transient thermal study (FR-TSOL-006): when heat is made, steady passes at degree 2 and 3 first
+ * (they choose the degree and show where the temperatures head), then the run in time at that degree from the start
+ * temperature. The last pass carries every output time's temperatures at the sample points; its `vm` is the last one.
+ */
+export function* runTransient(inp: RunInput): Generator<PassResult> {
+  const T = inp.thermal!, Tr = T.transient!, set = T.setup;
+  if (set.problems.length) throw new Error(`${set.problems[0].code}: ${set.problems[0].id}`);
+  const R = T.ks && inp.regions && inp.regions.length > 1 ? inp.regions : null;
+  if (R ? T.ks!.some(v => !(v > 0)) : !((T.ks?.[0] ?? T.k) > 0)) throw new Error("E-TH-NOK");
+  if (R ? (Tr.rcs ?? []).length !== R.length || Tr.rcs!.some(v => !(v > 0)) : !(Tr.rc > 0)) throw new Error("E-TH-NOCP");
+  if (!set.sinks.length) throw new Error("E-TH-NOSINK");
+  if (!(Tr.end > 0)) throw new Error("E-TH-TIME");
+  const heat = set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0);
+  const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
+  if (!heat && temps.size < 2 && temps.has(Tr.t0)) throw new Error("E-TH-NOHEAT");
+  let p = 2, pass = 0, steady: number | null = null;
+  if (heat) {
+    for (const r of runThermal({ ...inp, passes: Math.min(2, Math.max(1, Math.round(inp.passes))) })) {
+      pass = r.pass; p = r.p; steady = r.thermal?.max ?? null;
+      yield { ...r, done: false, converged: false };
+    }
+  }
+  const t0 = Date.now();
+  const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), tris: r.tris }));
+  const inside = insideOf(new MeshBody(inp.body.tris));
+  const h = cellSize(inp.body, inp.cells);
+  const times = outputTimes(Tr.end, Tr.out);
+  const prof = set.sources.map(s => (s.id ? Tr.profiles[s.id] : undefined));
+  const maxStep = Math.min(...prof.map(profileStep));
+  const frames: Float32Array[] = [], min: number[] = [], max: number[] = [], put: number[] = [], out: number[] = [];
+  const comps: number[][] = [];
+  let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint8Array | undefined, flows: SinkFlow[] = [];
+  const r = transientThermal(
+    { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, sinks: set.sinks, sources: set.sources, memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
+    {
+      rc: R ? Tr.rcs! : [Tr.rc], t0: Tr.t0, times, ...(Number.isFinite(maxStep) ? { maxStep } : {}), breaks: prof.flatMap(profileBreaks),
+      factor: (i, t) => profileFactor(prof[i], t),
+      frame: (k, _t, sample, fl, applied) => {
+        const s = sample(inp.pos, inp.nrm);
+        let lo = Infinity, hi = -Infinity;
+        for (const v of s.temp) { if (v < lo) lo = v; if (v > hi) hi = v; }
+        if (!s.temp.length) { lo = 0; hi = 0; }
+        frames[k] = s.temp; min[k] = lo; max[k] = hi; put[k] = applied; out[k] = fl.reduce((a, f) => a + f.out, 0);
+        if (domains && s.dom) {
+          const m = domains.map(() => -Infinity);
+          for (let i = 0; i < s.temp.length; i++) if (s.temp[i] > m[s.dom[i]]) m[s.dom[i]] = s.temp[i];
+          comps[k] = m.map(v => (v === -Infinity ? 0 : v));
+          dom = s.dom;
+        }
+        if (k === times.length - 1) { flux = s.flux; flows = fl; }
+      },
+    },
+  );
+  const last = frames[frames.length - 1];
+  let maxU = 0;
+  for (let i = 0; i < flux.length; i += 3) maxU = Math.max(maxU, Math.hypot(flux[i], flux[i + 1], flux[i + 2]));
+  const none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
+  yield {
+    pass: pass + 1, p, dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, energy: 0, change: null, ms: Date.now() - t0, reactions: [], applied: none,
+    u: flux, vm: Float32Array.from(last), err: new Float32Array(last.length), errors: [], maxU, maxVm: max[max.length - 1], converged: true, done: true,
+    ...(dom ? { dom } : {}),
+    thermal: { min: min[min.length - 1], max: max[max.length - 1], applied: put[put.length - 1], flows, solves: r.solves },
+    transient: { times, frames, min, max, put, out, ...(domains ? { comps } : {}), steps: r.steps, rejected: r.rejected, dt: r.dt, capacity: r.capacity, t0: Tr.t0, steady },
+  };
 }

@@ -153,7 +153,7 @@ test("thermal study of an assembly: components in series, a pad between them, he
   // the heat made throughout the component a picked face is on
   st.loads[0] = { id: "l1", type: "heat", faces: [{ name: "c2@y0" }], value: { v: 4 }, body: true };
   const set = thermalSetup(st, asmBody, ["c1", "c2"]);
-  assert.deepEqual(set.sources, [{ power: 4, doms: [1] }]);
+  assert.deepEqual(set.sources, [{ power: 4, doms: [1], id: "l1" }]);
   const v = go();
   assert.ok(Math.abs(v.thermal!.comps![1].power - 4) < 1e-9 && v.thermal!.comps![0].power === 0);
   assert.ok(Math.abs(v.thermal!.flows[0].out - 4) < 0.02, `out ${v.thermal!.flows[0].out}`);
@@ -167,7 +167,7 @@ test("a board study: heat from the package, cooling of every open surface, a hea
   st.supports.push({ id: "s1", type: "conv", faces: [], all: true, h: 10 });
   const set = thermalSetup(st, asmBody, ["c1", "c2"]);
   // parts under 10 mW, left out or without a body make no heat
-  assert.deepEqual(set.sources, [{ power: 2, doms: [1] }]);
+  assert.deepEqual(set.sources, [{ power: 2, doms: [1], id: "l1" }]);
   assert.equal(set.sinks.length, 1);
   assert.ok(set.sinks[0].free && set.sinks[0].tris.length === asmBody.tris.length && set.problems.length === 0);
   const r = [...runThermal({ body: asmBody, mat: regions[0].mat, problem: studyProblem(st, asmBody), passes: 2, energyTol: 0, pos, nrm, regions,
@@ -218,7 +218,7 @@ test("heat paths of a board study: where a part's heat goes, and the package's s
   };
   // without the split all the heat is made in the part; what leaves each component adds up to the heat put in
   const a = solve(), ca = a.r.thermal!.comps!;
-  assert.deepEqual(a.set.sources, [{ power: 2, doms: [1] }]);
+  assert.deepEqual(a.set.sources, [{ power: 2, doms: [1], id: "l1" }]);
   assert.ok(Math.abs(ca[1].power - 2) < 1e-9 && ca[0].power === 0);
   assert.ok(Math.abs(ca[0].out! + ca[1].out! - 2) < 0.02, `out ${ca[0].out} + ${ca[1].out}`);
   // the part conducts some of its heat into the board, the board loses it to the air
@@ -233,7 +233,7 @@ test("heat paths of a board study: where a part's heat goes, and the package's s
     assert.ok(Math.abs(patch.tris[o + 2] - 1.6) < 1e-9, "on the board's top face");
     assert.ok(patch.tris[o] >= 0 && patch.tris[o] <= 60);
   }
-  assert.deepEqual(b.set.sources.find(s => !s.tris), { power: 2 - 1.2 - 0.5, doms: [1] });
+  assert.deepEqual(b.set.sources.find(s => !s.tris), { power: 2 - 1.2 - 0.5, doms: [1], id: "l1" });
   const cb = b.r.thermal!.comps!;
   assert.ok(Math.abs(cb[0].power - 1.2) < 1e-9 && Math.abs(cb[1].power - 0.3) < 1e-9);
   assert.ok(Math.abs(b.r.thermal!.applied - 1.5) < 0.01, `applied ${b.r.thermal!.applied}`);

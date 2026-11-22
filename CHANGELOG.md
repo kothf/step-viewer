@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.661.0] - 2026-11-22
+
+### Added
+
+- Transient thermal studies. The clock button on the Thermal bar (or Over time in the study's Time section) turns a thermal study into a warm-up over time: set the end time, how often to keep results and the start temperature (ambient by default). The material needs a density and a specific heat.
+- A heat source's power can change over time: switched on later, a duty cycle (on for some seconds in every period) or a table of times and shares of the power.
+- Results over time: a time slider and Play in the legend move the plot, probes and labels through the run with one colour scale; the Study tab shows the start and end temperatures, the steady temperature the part would reach at full power, the heat put in, taken away and stored, a chart of the hottest point and every probe over time, Time to reach a temperature, and a CSV of the curves. The solver picks its own time steps.
+
 ## [1.660.0] - 2026-11-22
 
 ### Added
@@ -4337,7 +4345,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.660.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.661.0...HEAD
+[1.661.0]: https://github.com/kothf/step-viewer/compare/v1.660.0...v1.661.0
 [1.660.0]: https://github.com/kothf/step-viewer/compare/v1.659.0...v1.660.0
 [1.659.0]: https://github.com/kothf/step-viewer/compare/v1.658.0...v1.659.0
 [1.658.0]: https://github.com/kothf/step-viewer/compare/v1.657.0...v1.658.0

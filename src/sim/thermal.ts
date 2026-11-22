@@ -61,6 +61,8 @@ export interface ThermalSource {
   doms?: number[];
   /** With faces: the domain they are on (bookkeeping only, for the heat made per component). */
   dom?: number;
+  /** The study item it comes from (bookkeeping: its power profile in a transient study). */
+  id?: string;
 }
 
 /** One body of several (an assembly's component): its own conductivity, W/(mm·K), and surface. */
@@ -601,7 +603,27 @@ export const thermalMemory = (grid: Grid, p: number) => memoryBytes(grid, () => 
 /** Most solves of a problem with radiation or natural convection. */
 const RAD_STEPS = 40;
 
-export function solveThermal(pb: ThermalProblem): ThermalResult {
+/** A problem set up for solving: the constant matrix and load, each source's load at full power, the sink points. */
+interface Built {
+  c: Ctx;
+  A: BlockMatrix;
+  /** The sinks' part of the load (fixed temperatures, films). */
+  f: Float64Array;
+  /** Each source's load vector at its full power, and the heat it puts in, W. */
+  fs: Float64Array[];
+  put: number[];
+  at: Float64Array[];
+  lens: (Float64Array | undefined)[];
+  /** Sinks with radiation or natural convection: they depend on the temperatures. */
+  rads: number[];
+  contacts: ThermalContact[];
+  joins: number[];
+  volume: number;
+  volumes: number[];
+  memory: number;
+}
+
+function build(pb: ThermalProblem): Built {
   const p = pb.p;
   const doms = pb.domains && pb.domains.length > 1 ? pb.domains : null;
   if (doms ? doms.some(d => !(d.k > 0) || (d.k3 && !(d.k3.length === 3 && d.k3.every(v => v > 0)))) : !(pb.k > 0)) throw new Error("E-TH-NOK");
@@ -648,56 +670,113 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
     if (s.temp !== undefined) heldTerms(c, A, f, at[i], s.temp);
     else if (!s.natural && (s.h ?? 0) > 0) filmTerms(c, A, f, at[i], s.h!, s.ambient ?? 0, 0, null);
   });
-  // sources
-  let applied = 0, volume = 0;
+  let volume = 0;
   const volumes = new Array<number>(doms ? doms.length : 1).fill(0);
   for (const cl of grid.cells) { const v = cl.pts.weight(); volume += v; volumes[doms ? cl.dom : 0] += v; }
-  for (const s of pb.sources) {
-    if (s.tris) {
-      const area = triArea(s.tris), q = s.flux !== undefined ? s.flux : area > 0 ? (s.power ?? 0) / area : 0;
-      const L = located(c, s.tris, tq);
-      for (let o = 0; o < L.length; o += 8) {
-        const e = L[o], E = grid.elems[e], w = q * L[o + 4];
-        c.bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s);
-        for (let a = 0; a < nb; a++) f[e * nb + a] += w * c.bas.v[a];
-        applied += w;
-      }
-    } else if (s.power && volume > 0) {
-      const only = doms && s.doms ? new Set(s.doms) : null;
-      let vol = volume;
-      if (only) { vol = 0; for (const d of only) vol += volumes[d] ?? 0; }
-      if (!(vol > 0)) continue;
-      const q = s.power / vol;
-      for (let e = 0; e < nel; e++) {
-        if (only && !only.has(dom[e])) continue;
-        const E = grid.elems[e];
-        for (const ci of E.cells) {
-          const P = grid.cells[ci].pts;
-          for (let i = 0; i < P.n; i++) {
-            const o = 4 * i, w = q * P.a[o + 3];
-            c.bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], E.c, E.s);
-            for (let a = 0; a < nb; a++) f[e * nb + a] += w * c.bas.v[a];
-          }
+  const fs: Float64Array[] = [], put: number[] = [];
+  for (const s of pb.sources) { const r = sourceLoad(c, s, tq, volume, volumes); fs.push(r.f); put.push(r.put); }
+  const rads = pb.sinks.map((s, i) => (s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural) ? i : -1)).filter(i => i >= 0);
+  return { c, A, f, fs, put, at, lens, rads, contacts, joins, volume, volumes, memory };
+}
+
+/** One source's load vector at its full power and the heat it puts in, W. */
+function sourceLoad(c: Ctx, s: ThermalSource, tq: number, volume: number, volumes: number[]): { f: Float64Array; put: number } {
+  const { grid, nb, nel, dom, doms } = c, f = new Float64Array(nel * nb);
+  let put = 0;
+  if (s.tris) {
+    const area = triArea(s.tris), q = s.flux !== undefined ? s.flux : area > 0 ? (s.power ?? 0) / area : 0;
+    const L = located(c, s.tris, tq);
+    for (let o = 0; o < L.length; o += 8) {
+      const e = L[o], E = grid.elems[e], w = q * L[o + 4];
+      c.bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s);
+      for (let a = 0; a < nb; a++) f[e * nb + a] += w * c.bas.v[a];
+      put += w;
+    }
+  } else if (s.power && volume > 0) {
+    const only = doms && s.doms ? new Set(s.doms) : null;
+    let vol = volume;
+    if (only) { vol = 0; for (const d of only) vol += volumes[d] ?? 0; }
+    if (!(vol > 0)) return { f, put };
+    const q = s.power / vol;
+    for (let e = 0; e < nel; e++) {
+      if (only && !only.has(dom[e])) continue;
+      const E = grid.elems[e];
+      for (const ci of E.cells) {
+        const P = grid.cells[ci].pts;
+        for (let i = 0; i < P.n; i++) {
+          const o = 4 * i, w = q * P.a[o + 3];
+          c.bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], E.c, E.s);
+          for (let a = 0; a < nb; a++) f[e * nb + a] += w * c.bas.v[a];
         }
       }
-      applied += s.power;
     }
+    put = s.power;
   }
-  // radiation and natural convection depend on the temperatures: solved again about the last answer until they settle
-  const rads = pb.sinks.map((s, i) => (s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural) ? i : -1)).filter(i => i >= 0);
+  return { f, put };
+}
+
+/** The matrix and load with the temperature-dependent sinks linearised about `last` (none = their first guess). */
+function linearised(b: Built, last: Float64Array | null): { B: BlockMatrix; g: Float64Array } {
+  const B = copyMatrix(b.A), g = new Float64Array(b.f.length), pb = b.c.pb;
+  for (const i of b.rads) {
+    const s = pb.sinks[i];
+    if (s.natural) naturalTerms(b.c, B, g, b.at[i], s, b.lens[i]!, last);
+    else filmTerms(b.c, B, g, b.at[i], 0, s.ambient ?? 0, s.emissivity!, last);
+  }
+  return { B, g };
+}
+
+/** Samples a solution at points (moved a little against their normals, so a surface point is read inside). */
+function samplerOf(c: Ctx, x: Float64Array, local: Float32Array | null) {
+  const { grid: g0, nb, bas, k3, dom, doms } = c;
+  const elAt = (px: number, py: number, pz: number) => {
+    const cl = g0.cellOf(px, py, pz);
+    if (cl < 0) return -1;
+    const e = g0.cells[cl].el, E = g0.elems[e];
+    bas.eval(px, py, pz, E.c, E.s);
+    return e;
+  };
+  const sample = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): ThermalSample => {
+    const n = pos.length / 3, temp = new Float32Array(n), flux = new Float32Array(3 * n), err = new Float32Array(n);
+    const hit = hits ? new Uint8Array(n) : undefined, eps = 1e-6 * g0.h, where = doms ? new Uint8Array(n) : undefined;
+    for (let i = 0; i < n; i++) {
+      let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
+      if (nrm) { px -= eps * nrm[3 * i]; py -= eps * nrm[3 * i + 1]; pz -= eps * nrm[3 * i + 2]; }
+      if (hit && (px < g0.lo[0] - eps || py < g0.lo[1] - eps || pz < g0.lo[2] - eps || px > g0.lo[0] + g0.n[0] * g0.h + eps || py > g0.lo[1] + g0.n[1] * g0.h + eps || pz > g0.lo[2] + g0.n[2] * g0.h + eps)) continue;
+      const e = elAt(px, py, pz);
+      if (e < 0) continue;
+      if (hit) hit[i] = 1;
+      let t = 0, gx = 0, gy = 0, gz = 0;
+      for (let a = 0; a < nb; a++) { const v = x[e * nb + a]; t += v * bas.v[a]; gx += v * bas.g[3 * a]; gy += v * bas.g[3 * a + 1]; gz += v * bas.g[3 * a + 2]; }
+      if (where) where[i] = dom[e];
+      temp[i] = t; flux[3 * i] = -k3[3 * e] * gx; flux[3 * i + 1] = -k3[3 * e + 1] * gy; flux[3 * i + 2] = -k3[3 * e + 2] * gz; err[i] = local ? local[e] : 0;
+    }
+    return { temp, flux, err, ...(hit ? { hit } : {}), ...(where ? { dom: where } : {}) };
+  };
+  const temp = (px: number, py: number, pz: number) => {
+    const e = elAt(px, py, pz);
+    if (e < 0) return NaN;
+    let t = 0;
+    for (let a = 0; a < nb; a++) t += x[e * nb + a] * bas.v[a];
+    return t;
+  };
+  return { sample, temp };
+}
+
+export function solveThermal(pb: ThermalProblem): ThermalResult {
+  const b = build(pb), { c, A } = b, { grid, p, nel, nb } = c;
+  const f = Float64Array.from(b.f);
+  for (const fs of b.fs) for (let i = 0; i < f.length; i++) f[i] += fs[i];
+  const applied = b.put.reduce((a, v) => a + v, 0);
+  // radiation and natural convection depend on the temperatures: linearised about the last answer and solved again until they settle
   let x: Float64Array, iterations = 1;
-  if (!rads.length) x = solveSystem(c, A, f, null);
+  if (!b.rads.length) x = solveSystem(c, A, f, null);
   else {
-    // radiation: linearised about the last answer and solved again until the temperatures stop moving
     let last: Float64Array | null = null;
     x = f;
     for (let it = 0; it < RAD_STEPS; it++) {
-      const B = copyMatrix(A), g = Float64Array.from(f);
-      for (const i of rads) {
-        const s = pb.sinks[i];
-        if (s.natural) naturalTerms(c, B, g, at[i], s, lens[i]!, last);
-        else filmTerms(c, B, g, at[i], 0, s.ambient ?? 0, s.emissivity!, last);
-      }
+      const { B, g } = linearised(b, last);
+      for (let i = 0; i < g.length; i++) g[i] += f[i];
       x = solveSystem(c, B, g, last);
       iterations = it + 1;
       let d = 0, top = 0;
@@ -714,41 +793,171 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   const prevError = !prev ? null : energy > 0 ? 100 * Math.sqrt(etaSum / energy) : 0;
   const local = new Float32Array(nel);
   for (let e = 0; e < nel; e++) local[e] = prev && energy > 0 ? 100 * Math.sqrt((eta[e] * nel) / energy) : 0;
-  const flows = pb.sinks.map((s, i) => flowOf(c, s, at[i], x, lens[i]));
-  contactFlows(c, contacts, joins, x);
-  const g0 = grid, bas = c.bas;
-  const elAt = (px: number, py: number, pz: number) => {
-    const cl = g0.cellOf(px, py, pz);
-    if (cl < 0) return -1;
-    const e = g0.cells[cl].el, E = g0.elems[e];
-    bas.eval(px, py, pz, E.c, E.s);
-    return e;
-  };
-  return {
-    grid, p, dofs: A.size, memory, x, energy, applied, flows, iterations, eta, prevError, volume, contacts, volumes,
-    sample(pos, nrm, hits) {
-      const n = pos.length / 3, temp = new Float32Array(n), flux = new Float32Array(3 * n), err = new Float32Array(n);
-      const hit = hits ? new Uint8Array(n) : undefined, eps = 1e-6 * g0.h, where = doms ? new Uint8Array(n) : undefined;
-      for (let i = 0; i < n; i++) {
-        let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
-        if (nrm) { px -= eps * nrm[3 * i]; py -= eps * nrm[3 * i + 1]; pz -= eps * nrm[3 * i + 2]; }
-        if (hit && (px < g0.lo[0] - eps || py < g0.lo[1] - eps || pz < g0.lo[2] - eps || px > g0.lo[0] + g0.n[0] * g0.h + eps || py > g0.lo[1] + g0.n[1] * g0.h + eps || pz > g0.lo[2] + g0.n[2] * g0.h + eps)) continue;
-        const e = elAt(px, py, pz);
-        if (e < 0) continue;
-        if (hit) hit[i] = 1;
-        let t = 0, gx = 0, gy = 0, gz = 0;
-        for (let a = 0; a < nb; a++) { const v = x[e * nb + a]; t += v * bas.v[a]; gx += v * bas.g[3 * a]; gy += v * bas.g[3 * a + 1]; gz += v * bas.g[3 * a + 2]; }
-        if (where) where[i] = dom[e];
-        temp[i] = t; flux[3 * i] = -k3[3 * e] * gx; flux[3 * i + 1] = -k3[3 * e + 1] * gy; flux[3 * i + 2] = -k3[3 * e + 2] * gz; err[i] = local[e];
+  const flows = pb.sinks.map((s, i) => flowOf(c, s, b.at[i], x, b.lens[i]));
+  contactFlows(c, b.contacts, b.joins, x);
+  const sm = samplerOf(c, x, local);
+  return { grid, p, dofs: A.size, memory: b.memory, x, energy, applied, flows, iterations, eta, prevError, volume: b.volume, contacts: b.contacts, volumes: b.volumes, sample: sm.sample, temp: sm.temp };
+}
+
+/**
+ * A transient run (FR-TSOL-006). `rc` = volumetric heat capacity ρ·cp, J/(mm³·K), one per domain (or one);
+ * `factor(i, t)` = source i's share of its power at time t, s; `times` = the output times, s, the last = the end.
+ */
+export interface TransientRun {
+  rc: number[];
+  t0: number;
+  times: number[];
+  factor(i: number, t: number): number;
+  /** Each output time's solution (the steps are interpolated to it): read the temperatures, what the sinks take and the heat put in. */
+  frame(k: number, t: number, sample: (pos: ArrayLike<number>, nrm?: ArrayLike<number>) => ThermalSample, flows: SinkFlow[], applied: number): void;
+  /** Allowed temperature change per step, K (at least 2 K). */
+  step?: number;
+  /** The longest step, s, so a power profile's changes are not stepped over. */
+  maxStep?: number;
+  /** Times a power jumps or turns, s: a step ends on each. */
+  breaks?: number[];
+  stop?(): boolean;
+}
+
+export interface TransientResult {
+  grid: Grid;
+  p: number;
+  dofs: number;
+  memory: number;
+  steps: number;
+  rejected: number;
+  /** How many matrices were factored. */
+  solves: number;
+  /** Time steps used, s: smallest and largest. */
+  dt: [number, number];
+  volume: number;
+  /** The heat capacity of the whole model, J/K. */
+  capacity: number;
+}
+
+/** The capacity of each element: ρcp ∫ N_a N_b (diagonal blocks only), and the whole model's ρcp V. */
+function capacity(c: Ctx, rc: number[]): { C: Float64Array[]; total: number } {
+  const { grid, nb, nel, bas, dom } = c, C: Float64Array[] = [];
+  let total = 0;
+  for (let e = 0; e < nel; e++) {
+    const E = grid.elems[e], K = new Float64Array(nb * nb), r0 = rc[Math.min(dom[e], rc.length - 1)] ?? rc[0];
+    for (const ci of E.cells) {
+      const P = grid.cells[ci].pts;
+      for (let q = 0; q < P.n; q++) {
+        const o = 4 * q, w = P.a[o + 3] * r0;
+        total += w;
+        bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], E.c, E.s);
+        for (let a = 0; a < nb; a++) { const va = w * bas.v[a], r = a * nb; for (let b = 0; b < nb; b++) K[r + b] += va * bas.v[b]; }
       }
-      return { temp, flux, err, ...(hit ? { hit } : {}), ...(where ? { dom: where } : {}) };
-    },
-    temp(px, py, pz) {
-      const e = elAt(px, py, pz);
-      if (e < 0) return NaN;
-      let t = 0;
-      for (let a = 0; a < nb; a++) t += x[e * nb + a] * bas.v[a];
-      return t;
-    },
+    }
+    C.push(K);
+  }
+  return { C, total };
+}
+
+/** out += s·C y, element by element. */
+function capMul(C: Float64Array[], nb: number, y: Float64Array, s: number, out: Float64Array) {
+  for (let e = 0; e < C.length; e++) {
+    const K = C[e], o = e * nb;
+    for (let a = 0; a < nb; a++) { let v = 0; const r = a * nb; for (let b = 0; b < nb; b++) v += K[r + b] * y[o + b]; out[o + a] += s * v; }
+  }
+}
+
+/** The finest step allowed is the end time over this, the coarsest the end time over `MIN_STEPS`. */
+const MAX_STEPS = 2000, MIN_STEPS = 20;
+
+/**
+ * Steps a problem in time from a uniform temperature `t0` (FR-TSOL-006): backward Euler for the first step, BDF2 with
+ * variable steps after it, on the consistent capacity matrix. The step is chosen from the temperature change per step
+ * (halved and the step done again when it moved more than allowed, doubled after two quiet steps), from end / 2000 to
+ * end / 20, always a power of two of the coarsest, so the few matrices met are factored once each. Radiation and natural
+ * convection are linearised about the temperatures, again when they moved more than the step allowance since.
+ */
+export function transientThermal(pb: ThermalProblem, run: TransientRun): TransientResult {
+  const b = build(pb), { c } = b, { nb, nel, grid } = c;
+  const { C, total } = capacity(c, run.rc);
+  if (!(total > 0)) throw new Error("E-TH-NOCP");
+  const end = run.times[run.times.length - 1];
+  const dtMax = end / MIN_STEPS;
+  const kMin = run.maxStep && run.maxStep < dtMax ? Math.ceil(Math.log2(dtMax / run.maxStep) - 1e-9) : 0;
+  const kMax = Math.max(kMin, Math.floor(Math.log2(MAX_STEPS / MIN_STEPS)));
+  const allow = Math.max(2, run.step ?? 2);
+  const n = nel * nb, mean = (y: Float64Array, e: number) => y[e * nb];
+  let y0 = new Float64Array(n), yPrev: Float64Array | null = null;
+  for (let e = 0; e < nel; e++) y0[e * nb] = run.t0;
+  const cache = new Map<string, { solve(f: Float64Array, x0: Float64Array): Float64Array }>();
+  let made = 0;
+  let lin: Float64Array | null = b.rads.length ? Float64Array.from(y0) : null, linGen = 0, linG: Float64Array | null = null, linB: BlockMatrix | null = null;
+  const relinearise = () => { if (!lin) return; const r = linearised(b, lin); linB = r.B; linG = r.g; linGen++; };
+  relinearise();
+  const solverFor = (a: number, key: string) => {
+    const k = `${key}|${linGen}`, had = cache.get(k);
+    if (had) return had;
+    const B = copyMatrix(linB ?? b.A);
+    for (let e = 0; e < nel; e++) { const K = B.block(e, e), Ce = C[e]; for (let i = 0; i < nb * nb; i++) K[i] += a * Ce[i]; }
+    const pbx = c.pb, useCg = pbx.solver === "pcg" || (pbx.solver !== "direct" && B.size > DIRECT_LIMIT);
+    let s: { solve(f: Float64Array, x0: Float64Array): Float64Array };
+    if (useCg) { const P = pcgSolver(B, { coarse: basisSize(1), tol: pbx.tol ?? 1e-9 }); s = { solve: (f, x0) => P.solve(f, x0).x }; }
+    else { const E = new Envelope(B); s = { solve: f => E.solve(f) }; }
+    // a new linearisation makes the older matrices useless
+    for (const key2 of [...cache.keys()]) if (!key2.endsWith(`|${linGen}`)) cache.delete(key2);
+    cache.set(k, s);
+    made++;
+    return s;
   };
+  const loadAt = (t: number) => {
+    const f = Float64Array.from(b.f);
+    if (linG) for (let i = 0; i < n; i++) f[i] += linG[i];
+    let put = 0;
+    b.fs.forEach((fs, i) => { const m = run.factor(i, t); if (!m) return; put += m * b.put[i]; for (let j = 0; j < n; j++) f[j] += m * fs[j]; });
+    return { f, put };
+  };
+  const putAt = (t: number) => b.put.reduce((a, v, i) => a + v * run.factor(i, t), 0);
+  const emit = (k: number, t: number, y: Float64Array) => {
+    const sm = samplerOf(c, y, null);
+    run.frame(k, t, sm.sample, pb.sinks.map((s, i) => flowOf(c, s, b.at[i], y, b.lens[i])), putAt(t));
+  };
+  let out = 0;
+  while (out < run.times.length && run.times[out] <= 0) emit(out++, run.times[out - 1] ?? 0, y0);
+  const breaks = (run.breaks ?? []).filter(b2 => b2 > 0 && b2 < end).sort((a2, b2) => a2 - b2);
+  let br = 0;
+  let t = 0, k = Math.max(kMin, Math.min(kMax, 4)), dtLast = 0, steps = 0, rejected = 0, quiet = 0, dtLo = Infinity, dtHi = 0;
+  while (out < run.times.length) {
+    if (run.stop?.()) throw new Error("E-SIM-STOPPED");
+    let dt = dtMax / 2 ** k, clip = "";
+    while (br < breaks.length && breaks[br] <= t + 1e-9 * end) br++;
+    if (br < breaks.length && t + dt > breaks[br] + 1e-9 * end) { dt = breaks[br] - t; clip = `c${dt}`; }
+    const w = yPrev && dtLast > 0 ? dt / dtLast : 0;
+    // the power over the step: read at its middle, so a step that ends where a heater turns on has none of it
+    const { f } = loadAt(t + dt / 2);
+    let a: number, key: string;
+    if (!yPrev) { a = 1 / dt; key = `be${k}${clip}`; capMul(C, nb, y0, a, f); }
+    else {
+      a = (1 + 2 * w) / ((1 + w) * dt); key = `b${k}${clip}|${w}`;
+      capMul(C, nb, y0, (1 + w) / dt, f);
+      capMul(C, nb, yPrev, -(w * w) / ((1 + w) * dt), f);
+    }
+    const y1 = solverFor(a, key).solve(f, y0);
+    let moved = 0;
+    for (let e = 0; e < nel; e++) moved = Math.max(moved, Math.abs(mean(y1, e) - mean(y0, e)));
+    if (moved > allow && k < kMax && (!clip || dt > dtMax / 2 ** (k + 1))) { k++; rejected++; quiet = 0; continue; }
+    steps++;
+    dtLo = Math.min(dtLo, dt); dtHi = Math.max(dtHi, dt);
+    const t1 = t + dt;
+    while (out < run.times.length && run.times[out] <= t1 + 1e-9 * end) {
+      const s = (run.times[out] - t) / dt, yo = new Float64Array(n);
+      for (let i = 0; i < n; i++) yo[i] = y0[i] + s * (y1[i] - y0[i]);
+      emit(out, run.times[out], yo);
+      out++;
+    }
+    yPrev = y0; y0 = y1; t = t1; dtLast = dt;
+    if (lin) {
+      let d = 0;
+      for (let e = 0; e < nel; e++) d = Math.max(d, Math.abs(mean(y0, e) - mean(lin, e)));
+      if (d > allow) { lin = Float64Array.from(y0); relinearise(); }
+    }
+    quiet = moved < allow / 4 ? quiet + 1 : 0;
+    if (quiet >= 2 && k > kMin) { k--; quiet = 0; }
+  }
+  return { grid, p: c.p, dofs: b.A.size, memory: b.memory, steps, rejected, solves: made, dt: [dtLo === Infinity ? 0 : dtLo, dtHi], volume: b.volume, capacity: total };
 }
