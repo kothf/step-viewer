@@ -164,8 +164,35 @@ export interface BoardPlan {
   heat: PlanHeat[];
   ambient?: number;
   emissivity?: number;
+  /** The package's enclosure preset ("open" | "vented" | "closed"), when it names one. */
+  enclosure?: "open" | "vented" | "closed";
+  /** Gravity's direction from the package's orientation and the board's place (FR-TBC-011), when both are known. */
+  down?: [number, number, number];
   /** Total power of the parts that have bodies, W. */
   power: number;
+}
+
+/**
+ * Which way is down for a board (FR-TBC-011): lying flat with its parts up = against the side most part bodies are
+ * on along the board's thin axis; parts down = towards it; standing upright = down its shorter edge (−).
+ */
+export function boardDown(orientation: string | undefined, bodies: ModelBody[], board: number): [number, number, number] | undefined {
+  if (!orientation || board < 0 || !bodies[board]) return undefined;
+  const B = bodies[board].box, ext = [B[3] - B[0], B[4] - B[1], B[5] - B[2]];
+  const axis = ext[0] <= ext[1] && ext[0] <= ext[2] ? 0 : ext[1] <= ext[2] ? 1 : 2;
+  const d: [number, number, number] = [0, 0, 0];
+  if (orientation === "vertical") {
+    const [a1, a2] = [0, 1, 2].filter(a => a !== axis);
+    d[ext[a1] <= ext[a2] ? a1 : a2] = -1;
+    return d;
+  }
+  if (orientation !== "horizontal-up" && orientation !== "horizontal-down") return undefined;
+  const mid = (B[axis] + B[axis + 3]) / 2;
+  let side = 0;
+  bodies.forEach((b, i) => { if (i !== board) side += (b.box[axis] + b.box[axis + 3]) / 2 >= mid ? 1 : -1; });
+  const up = side >= 0 ? 1 : -1;
+  d[axis] = orientation === "horizontal-up" ? -up : up;
+  return d;
 }
 
 /** The study a board's package describes, over the bodies of its STEP (in the viewer's order). */
@@ -185,5 +212,7 @@ export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelB
     heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}) });
     if (list.length) power += w;
   }
-  return { board, thickness: board >= 0 ? sizes(bodies[board].box)[0] : 0, mats, names, heat, ambient: man.settings.ambient, emissivity: man.settings.emissivity, power };
+  return { board, thickness: board >= 0 ? sizes(bodies[board].box)[0] : 0, mats, names, heat, ambient: man.settings.ambient, emissivity: man.settings.emissivity, power,
+    ...(["open", "vented", "closed"].includes(man.settings.enclosure ?? "") ? { enclosure: man.settings.enclosure as "open" | "vented" | "closed" } : {}),
+    ...(() => { const down = boardDown(man.settings.orientation, bodies, board); return down ? { down } : {}; })() };
 }

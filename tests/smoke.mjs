@@ -17356,6 +17356,13 @@ try {
       && b1.limits.filter(Boolean).length === 6 && b1.wide <= 0,
       `thermal 1.655: the board study solves: the 29.17 W of the package leave by convection and radiation, every part has its temperature beside its limit and the ones over are marked (${JSON.stringify(b1)})`);
     // 1.657: heat paths: where each part's heat went (board, air, elsewhere), the package's split in the row's title
+    // 1.658: natural convection with the package's enclosure and orientation
+    const nc = await bp.evaluate(() => { const s = window.__sv.sim.state(), d = window.__sv.asm.doc, st = d.studies.find(x => x.kind === "thermal");
+      return { enc: document.querySelector('#sim-tree select[data-k="enclosure"]')?.value, down: document.querySelector('#sim-tree select[data-k="down"]')?.value, natural: st.supports[0].natural, set: st.settings,
+        h: document.querySelector('#sim-tree [data-v="hnat"]')?.textContent, flows: s.thermal?.flows?.map(f => f.h ?? null), row: document.querySelector('#sim-tree .sim-row[data-id="s1"]')?.innerText.replace(/\s+/g, " ").trim() }; });
+    const hn = parseFloat(nc.h ?? "");
+    check(nc.enc === "closed" && nc.down === "−Z" && nc.natural === true && nc.set.enclosure === "closed" && JSON.stringify(nc.set.down) === "[0,0,-1]" && hn > 1 && hn < 15 && nc.flows[0] > 0 && nc.flows[1] === null && /natural convection/.test(nc.row ?? ""),
+      `thermal 1.658: a board study cools by natural convection in the package's closed chassis with gravity along −Z, and shows the mean film coefficient it came to (${JSON.stringify(nc)})`);
     const hp1 = await bp.evaluate(() => ({ paths: window.__sv.sim.state().thermal?.paths, rows: [...document.querySelectorAll("#sim-tree .sim-paths tr[data-path]")].map(r => [r.dataset.path, r.querySelector('[data-v="pboard"]').textContent, r.querySelector('[data-v="pair"]').textContent, !!r.title]), note: document.querySelector('#sim-tree [data-v="pathnote"]')?.textContent }));
     check(hp1.rows.length === 6 && hp1.paths.every(x => Math.abs(x.board + x.air + x.other - x.p) < 1e-9 && x.air > 0) && hp1.paths.filter(x => x.board > 0.1 * x.p).length >= 2 && hp1.rows.every(r => r[3]) && /conductances/.test(hp1.note ?? ""),
       `thermal 1.657: the Heat paths table says, for each package part, the share of its heat conducted into the board (a cool part on the hot board takes heat in) and the share off its own surface, with the package's split in the row title (${JSON.stringify(hp1)})`);
