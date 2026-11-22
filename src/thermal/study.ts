@@ -125,6 +125,25 @@ export function findBoard(bodies: ModelBody[], taken: Set<number> = new Set()): 
   return best;
 }
 
+/** A reference designator such as R12, C3 or U101 (with an optional suffix after a separator). */
+export const DESIGNATOR = /^[A-Z]{1,3}\d{1,4}(?:[^A-Za-z0-9].*)?$/;
+
+/**
+ * Does the model look like a circuit board (FR-TPKG-005)? A body named board or PCB, three or more bodies named
+ * by reference designators, or a thin flat body whose footprint is larger than every other body's.
+ */
+export function looksLikeBoard(bodies: ModelBody[]): boolean {
+  if (!bodies.length) return false;
+  if (bodies.some(b => /(^|[^a-z])(pcb|board|плата)([^a-z]|$)/i.test(b.name))) return true;
+  if (bodies.filter(b => DESIGNATOR.test(b.name.trim())).length >= 3) return true;
+  if (bodies.length < 2) return false;
+  const i = findBoard(bodies);
+  if (i < 0) return false;
+  const foot = (b: ModelBody) => { const [, w, l] = sizes(b.box); return w * l; };
+  const a = foot(bodies[i]);
+  return bodies.every((b, j) => j === i || foot(b) < a);
+}
+
 /** Library material names the guesses use. */
 export const GUESS = {
   resistor: "Alumina 99.5 %",

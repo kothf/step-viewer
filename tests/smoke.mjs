@@ -17597,6 +17597,34 @@ try {
     await ctx.close();
   }
 
+  // --- board hint 1.678 (FRS-thermal FR-TPKG-005): a STEP that looks like a board offers Add thermal map… once per file ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const bh = await ctx.newPage();
+    bh.on("pageerror", e => errors.push(e.message));
+    bh.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal");
+    await bh.goto(`${origin}/index.html?debug&nokernel`);
+    await bh.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await bh.goto(`${origin}/index.html?debug&nokernel`);
+    await bh.waitForFunction(() => window.__sv);
+    await bh.setInputFiles("#file-input", [join(thx, "amp.step")]);
+    await bh.waitForFunction(() => window.__sv.thermal.hintShown(), null, { timeout: 90000 });
+    const h1 = await bh.evaluate(() => ({ text: document.querySelector("#st-thermal").innerText.replace(/\s+/g, " ").trim(), seen: JSON.parse(localStorage.getItem("mc:thermalHint") ?? "[]").length }));
+    const chooser = bh.waitForEvent("filechooser", { timeout: 10000 }).then(() => true, () => false);
+    await bh.click('#st-thermal [data-a="thadd"]');
+    const picked = await chooser;
+    const gone = await bh.evaluate(() => !window.__sv.thermal.hintShown());
+    // the same file again: no hint; with its package: no hint either
+    await bh.setInputFiles("#file-input", [join(thx, "amp.step"), join(thx, "amp-thermal.zip")]);
+    await bh.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    await bh.waitForTimeout(300);
+    const again = await bh.evaluate(() => window.__sv.thermal.hintShown());
+    check(/looks like a circuit board/.test(h1.text) && /Add thermal map/.test(h1.text) && h1.seen === 1 && picked && gone && !again,
+      `board hint 1.678: a board's STEP gets a status-bar hint whose Add thermal map… opens the file picker, shown once per file (${JSON.stringify({ h1, picked, gone, again })})`);
+    await ctx.close();
+  }
+
   // --- bolted joints 1.673 (FRS-thermal FR-TCON-003): plates a toolbox bolt clamps pass heat by a bolted joint's conductance ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

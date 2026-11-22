@@ -6082,6 +6082,8 @@ export const RU: Record<string, string> = {
   "bulb": "колба",
   "This package was written by a newer app: some data may be missing.": "Пакет записан более новой программой: часть данных может отсутствовать.",
   "Add thermal map…": "Добавить тепловую карту…",
+  "This looks like a circuit board.": "Похоже на печатную плату.",
+  "Open the board's thermal package (temperatures from the board design app) to see them on the model": "Откройте тепловой пакет платы (температуры из программы проектирования плат), чтобы увидеть их на модели",
   "A thermal package of this board: temperatures from the board design app, shown on the model": "Тепловой пакет этой платы: температуры из программы проектирования плат на модели",
   "Thermal map commands": "Команды тепловой карты",
   "Thermal summary": "Сводка тепловой карты",
