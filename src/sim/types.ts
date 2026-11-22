@@ -42,6 +42,8 @@ export interface StudySupport {
   emis2?: number;
   /** Convection: natural convection, the film coefficient worked out per face from its tilt, size and temperature (`h` unused). */
   natural?: boolean;
+  /** Convection: forced air (FR-TBC-005), the film coefficient worked out per face from the air speed and its length along the flow (`h` unused). */
+  forced?: ForcedAir;
   /** Convection and radiation: the temperature of the air or the surroundings, °C; absent = the study's ambient. */
   ambient?: number;
   /** Convection: a heatsink on the faces given by its thermal resistance to the air, K/W, instead of `h`. */
@@ -53,6 +55,15 @@ export interface StudySupport {
   edges?: StudyEdge[];
   points?: StudyPoint[];
 }
+
+/** Forced air over faces: speed m/s along `dir` (a unit vector); `fan` = where the speed came from, a fan's flow m³/h through an opening of cm². */
+export interface ForcedAir { speed: number; dir: [number, number, number]; fan?: { q: number; a: number } }
+/** A new forced air condition: 2 m/s along +X, a small fan blowing over a board. */
+export const DEFAULT_FORCED: ForcedAir = { speed: 2, dir: [1, 0, 0] };
+/** Air speed from a fan's flow, m³/h, through an opening of cm², m/s. */
+export const fanSpeed = (q: number, a: number) => (q > 0 && a > 0 ? q / 3600 / (a * 1e-4) : 0);
+/** Flow directions offered for forced air. */
+export const FLOWS: [string, [number, number, number]][] = [["+X", [1, 0, 0]], ["−X", [-1, 0, 0]], ["+Y", [0, 1, 0]], ["−Y", [0, -1, 0]], ["+Z", [0, 0, 1]], ["−Z", [0, 0, -1]]];
 
 /** One part of a board's thermal package in a Heat from package load. */
 export interface PackageHeat {
