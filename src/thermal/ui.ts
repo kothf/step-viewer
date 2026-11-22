@@ -14,6 +14,9 @@ import type { ThermalReply } from "./thermal.worker";
 import ThermalWorker from "./thermal.worker?worker";
 import { ThermalError } from "./vtu";
 import { looksLikeBoard } from "./study";
+import { gerberName } from "./copper";
+import { pcbFit, pcbUvs, WHITE_PX } from "./pcbTexture";
+import { pcbAtlas, pcbFromGerber, type PcbLayers } from "./pcbRaster";
 
 export interface ThermalHost {
   viewer: Viewer;
@@ -55,9 +58,11 @@ interface Attached {
   picture?: string;
   /** A second map of the same model to compare with (FR-TMAP-030): B's temperatures at A's points, ΔT = B − A. */
   cmp?: { pkg: ThermalPackage; stats: Map<number, PartStat>; tb: Float32Array; delta: Float32Array; changes: { rows: PartChange[]; onlyA: string[]; onlyB: string[] }; view: "a" | "b" | "d" };
+  /** The board's Gerber layers under the map (FR-TMAP-012): moved by (du, dv) mm, `shown` = drawn. */
+  pcb?: { layers: PcbLayers; du: number; dv: number; shown: boolean };
 }
 
-interface Prefs { palette: PaletteName; labels: boolean; rise: boolean; life: number; board: number; folded: boolean }
+interface Prefs { palette: PaletteName; labels: boolean; rise: boolean; life: number; board: number; folded: boolean; pcbMix: number }
 const PREFS_KEY = "mc:thermalMap";
 /** Model files that were shown the "looks like a board" hint (FR-TPKG-005): once per file. */
 const HINT_KEY = "mc:thermalHint";
@@ -67,13 +72,14 @@ function hintedFiles(): string[] {
 }
 /** Opacity of the other parts while one is isolated. */
 const ISO_FADE = 0.18;
-const DEFAULT_PREFS: Prefs = { palette: "heat", labels: true, rise: false, life: DEFAULT_LIMITS.life, board: DEFAULT_LIMITS.board, folded: false };
+const DEFAULT_PREFS: Prefs = { palette: "heat", labels: true, rise: false, life: DEFAULT_LIMITS.life, board: DEFAULT_LIMITS.board, folded: false, pcbMix: 0.6 };
 function loadPrefs(): Prefs {
   try {
     const j = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as Partial<Prefs>;
     return {
       palette: PALETTE_NAMES.includes(j.palette as PaletteName) ? j.palette! : "heat", labels: j.labels !== false, rise: j.rise === true,
       life: Number.isFinite(j.life) && j.life! > 0 ? j.life! : DEFAULT_LIMITS.life, board: Number.isFinite(j.board) ? j.board! : DEFAULT_LIMITS.board, folded: j.folded === true,
+      pcbMix: Number.isFinite(j.pcbMix) ? Math.max(0, Math.min(1, j.pcbMix!)) : 0.6,
     };
   } catch { return { ...DEFAULT_PREFS }; }
 }
@@ -103,6 +109,7 @@ const ICON: Record<string, string> = {
   add: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>`,
   remove: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`,
   isolate: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="6" height="6" rx="1" fill="currentColor" stroke="none"/><path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3" opacity=".6"/></svg>`,
+  gerber: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1.2"/><path d="M5 5.5h3l2 2v3"/><circle cx="5" cy="5.5" r=".9" fill="currentColor" stroke="none"/><circle cx="10" cy="10.5" r=".9" fill="currentColor" stroke="none"/></svg>`,
   png: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="M2.5 12l4-4 3 3 2-2 2.5 2.5"/></svg>`,
   csv: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13.5h10"/></svg>`,
 };
@@ -179,6 +186,10 @@ export class ThermalMaps {
   private hoverQueued = false;
   private down: { x: number; y: number } | null = null;
   private bound = false;
+  /** The Gerber atlas drawn on the map, and its texture (FR-TMAP-012). */
+  private atlas: HTMLCanvasElement | null = null;
+  private atlasTex: THREE.CanvasTexture | null = null;
+  private pcbBoard = 0;
 
   constructor(readonly host: ThermalHost) {
     onCmTab(() => this.renderBar());
@@ -192,6 +203,7 @@ export class ThermalMaps {
     const lg = $("#th-legend");
     lg.addEventListener("click", e => this.legendClick(e));
     lg.addEventListener("change", e => this.legendChange(e));
+    lg.addEventListener("input", e => { const el = e.target as HTMLInputElement; if (el.dataset.k === "pcbmix") this.setPcbMix(Number(el.value) / 100); });
     $("#th-summary").addEventListener("click", e => this.summaryClick(e));
     $("#st-thermal").addEventListener("click", e => {
       const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
@@ -391,6 +403,10 @@ export class ThermalMaps {
     if (this.overlay) { this.overlay.removeFromParent(); (this.overlay.geometry as THREE.BufferGeometry & { disposeBoundsTree?: () => void }).disposeBoundsTree?.(); this.overlay.geometry.dispose(); this.overlay = null; }
     for (const m of this.mats) m.dispose();
     this.mats = [];
+    this.atlasTex?.dispose();
+    this.atlasTex = null;
+    this.atlas = null;
+    this.pcbBoard = 0;
     this.drawn = null;
     this.visKey = "";
     this.hideCard();
@@ -431,6 +447,7 @@ export class ThermalMaps {
     (geo as THREE.BufferGeometry & { computeBoundsTree?: (o: object) => void }).computeBoundsTree?.({ indirect: true });
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.8, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     mat.clippingPlanes = v.clipPlanes;
+    this.pcbTexture(a, geo, mat);
     const under = new THREE.MeshBasicMaterial({ visible: false });
     this.mats.push(mat, under);
     // the matched bodies stay for picking and measuring, unseen (a map that does not fit hides nothing)
@@ -450,7 +467,8 @@ export class ThermalMaps {
       fg.setAttribute("position", geo.getAttribute("position"));
       fg.setAttribute("normal", geo.getAttribute("normal"));
       fg.setAttribute("color", geo.getAttribute("color"));
-      const fm = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.8, side: THREE.DoubleSide, transparent: true, opacity: ISO_FADE, depthWrite: false });
+      if (geo.getAttribute("uv")) fg.setAttribute("uv", geo.getAttribute("uv"));
+      const fm = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.8, side: THREE.DoubleSide, transparent: true, opacity: ISO_FADE, depthWrite: false, map: this.atlasTex });
       fm.clippingPlanes = v.clipPlanes;
       this.mats.push(fm);
       this.fade = new THREE.Mesh(fg, fm);
@@ -481,6 +499,79 @@ export class ThermalMaps {
     for (let i = 0; i < temp.length; i++) paletteColor(pal, (temp[i] - lo) / span, arr, i * 3);
     at.needsUpdate = true;
     this.host.viewer.invalidate();
+  }
+
+  // ---------- board layers under the map (FR-TMAP-012) ----------
+
+  /** Puts the Gerber atlas on the map's board faces: texture coordinates per point and the material's map. */
+  private pcbTexture(a: Attached, geo: THREE.BufferGeometry, mat: THREE.MeshStandardMaterial) {
+    const pc = a.pcb;
+    if (!pc?.shown) return;
+    const m = a.pkg.mesh, L = pc.layers;
+    const pos = geo.getAttribute("position").array as Float32Array;
+    const f = pcbFit(pos, m.tri, m.part, L.box, pc.du, pc.dv, m.face);
+    if (!f) return;
+    const { uv, board } = pcbUvs(pos, m.tri, m.part, f, L.box, L.w);
+    geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    this.atlas = pcbAtlas(L, this.prefs.pcbMix, WHITE_PX);
+    const tex = new THREE.CanvasTexture(this.atlas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    this.atlasTex = tex;
+    this.pcbBoard = board;
+    mat.map = tex;
+  }
+
+  /** How strongly the board's layers show under the map (0..1). */
+  setPcbMix(mix: number) {
+    this.prefs.pcbMix = Math.max(0, Math.min(1, mix));
+    this.savePrefs();
+    const a = this.cur();
+    if (this.atlas && this.atlasTex && a?.pcb) { pcbAtlas(a.pcb.layers, this.prefs.pcbMix, WHITE_PX, this.atlas); this.atlasTex.needsUpdate = true; this.host.viewer.invalidate(); }
+    const out = $("#th-legend").querySelector<HTMLElement>("[data-v=pcbmix]");
+    if (out) out.textContent = `${Math.round(this.prefs.pcbMix * 100)} %`;
+  }
+
+  /** Asks for the board's Gerber set (files or a zip) and puts it under the map. */
+  pickGerber() {
+    let inp = document.querySelector<HTMLInputElement>("#th-gerber-input");
+    if (!inp) {
+      inp = document.createElement("input");
+      inp.type = "file"; inp.multiple = true; inp.id = "th-gerber-input"; inp.hidden = true;
+      inp.accept = ".zip,.gbr,.ger,.gtl,.gbl,.gto,.gbo,.gts,.gbs,.gm1,.gko,.drl,.xln,.txt,.art,.pho";
+      inp.addEventListener("change", () => { const fs = [...(inp!.files ?? [])]; inp!.value = ""; if (fs.length) void this.addGerber(fs); });
+      document.body.appendChild(inp);
+    }
+    inp.click();
+  }
+
+  /** Reads a Gerber set and draws it under the map of the model on screen. */
+  async addGerber(files: File[]) {
+    const a = this.cur();
+    if (!a) return;
+    const name = gerberName(files.map(f => f.name));
+    try {
+      const data = await Promise.all(files.map(async f => ({ name: f.name, data: await f.arrayBuffer() })));
+      const layers = await pcbFromGerber(data, name);
+      if (this.cur() !== a) return;
+      a.pcb = { layers, du: 0, dv: 0, shown: true };
+      if (!a.on) a.on = true;
+      this.show();
+      this.renderAll();
+      toast(t("Board layers {name} under the map: {layers}", { name, layers: layers.labels.join(", ") }), "success");
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      toast(m === "E-TH-GERBER" ? t("{name} has no copper or silkscreen layer.", { name }) : t("Could not read the board layers {name}: {err}", { name, err: m }), "error");
+    }
+  }
+
+  /** Moves the board's layers on the map (manual offset, mm). */
+  setPcbOffset(du: number, dv: number) {
+    const a = this.cur();
+    if (!a?.pcb) return;
+    a.pcb.du = du; a.pcb.dv = dv;
+    this.show();
+    this.renderAll();
   }
 
   /** The map's point under a place of the window: the package triangle, the point (package frame) and its temperature. */
@@ -690,7 +781,8 @@ export class ThermalMaps {
       + btn("flip", a.top ? t("Bottom") : t("Top"), t("Turn the view to the board's other face"), { dis: !a.on })
       + btn("labels", t("Hot spots"), t("Labels on the hottest point and on every part over its limit"), { on: this.prefs.labels, dis: !a.on })
       + btn("probe", t("Probe"), t("Click the map to read the temperature at a point"), { on: this.probing, dis: !a.on })
-      + btn("isolate", t("Isolate"), t("Show the selected part alone, the others see-through (double-click a part)"), { on: a.iso !== null, dis: !a.on || (a.sel === null && a.iso === null) }))
+      + btn("isolate", t("Isolate"), t("Show the selected part alone, the others see-through (double-click a part)"), { on: a.iso !== null, dis: !a.on || (a.sel === null && a.iso === null) })
+      + btn("gerber", t("Board layers"), a.pcb ? t("Show or hide the board's copper and silkscreen under the temperatures") : t("Open the board's Gerber set to see its copper and silkscreen under the temperatures"), { on: !!a.pcb?.shown, dis: !a.on }))
       + sep + group(t("Parts"), btn("parts", t("Parts"), t("The parts of the map with their power, temperature and margin")))
       + sep + group(t("Study"), btn("simulate", t("Simulate"), a.own ? t("Open the board's STEP to measure it or simulate it.") : t("Simulate in MöbiusCAD: an assembly of the board's parts with a thermal study from this package, where you can add a heatsink or change the cooling"), { dis: a.own }))
       + sep + group(t("Package"), btn("png", t("Save picture"), t("Save the view as a PNG with the colour scale, the hottest part and the accuracy drawn in"), { dis: !a.on }) + btn("add", t("Another map"), t("Open another thermal package for this model: put it in place of this one, or compare the two")) + btn("remove", t("Remove map"), t("Take the thermal map off this model")));
@@ -705,6 +797,7 @@ export class ThermalMaps {
     else if (k === "labels") { this.prefs.labels = !this.prefs.labels; this.savePrefs(); this.renderAll(); }
     else if (k === "probe") { this.probing = !this.probing; this.renderAll(); }
     else if (k === "isolate") this.isolate(a.iso !== null ? null : a.sel);
+    else if (k === "gerber") { if (!a.pcb) this.pickGerber(); else { a.pcb.shown = !a.pcb.shown; this.show(); this.renderAll(); } }
     else if (k === "png") this.host.savePicture();
     else if (k === "parts") this.host.showTab();
     else if (k === "simulate") this.host.simulate(a.pkg, a.match, this.bodies());
@@ -915,10 +1008,22 @@ export class ThermalMaps {
       + `<label class="ana-row"><span>${esc(t("Colours"))}</span><select data-k="palette">${PALETTE_NAMES.map(p => `<option value="${p}"${p === this.prefs.palette ? " selected" : ""}>${esc(t(PALETTE_LABEL[p]))}</option>`).join("")}</select></label>`
       + `<label class="ana-row"><span>${esc(t("Range"))}</span><select data-k="range"><option value="auto"${a!.range ? "" : " selected"}>${esc(t("Automatic"))}</option><option value="fixed"${a!.range ? " selected" : ""}>${esc(t("Fixed range"))}</option></select></label>`
       + (a!.range ? `<div class="ana-row"><input type="text" inputmode="decimal" data-k="rmin" value="${deg(lo)}" aria-label="${esc(t("Lowest temperature of the scale, °C"))}" /><span>…</span><input type="text" inputmode="decimal" data-k="rmax" value="${deg(hi)}" aria-label="${esc(t("Highest temperature of the scale, °C"))}" /></div>` : "")
+      + this.pcbHtml(a!)
       + `<label class="chk"><input type="checkbox" data-k="labels"${this.prefs.labels ? " checked" : ""} />${esc(t("Hot spot labels"))}</label>`
       + (amb !== undefined ? `<label class="chk"><input type="checkbox" data-k="rise"${this.prefs.rise ? " checked" : ""} />${esc(t("Rise above ambient"))}</label>` : "")
       + `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the map to read the temperature at a point"))}">${esc(t("Probe"))}</button>`
       + (a!.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button><button class="btn small" data-a="probecsv">${esc(t("Export CSV"))}</button>` : "") + `</div>`;
+  }
+
+  /** The legend's board layers rows (FR-TMAP-012). */
+  private pcbHtml(a: Attached) {
+    const pc = a.pcb;
+    if (!pc) return "";
+    const mix = Math.round(this.prefs.pcbMix * 100);
+    return `<div class="th-pcb" data-v="pcb"><p class="ana-note">${esc(t("Board layers: {name}", { name: "\u0001" })).replace("\u0001", `<span translate="no">${esc(pc.layers.name)}</span>`)}</p>`
+      + (pc.shown ? `<label class="ana-row" title="${esc(t("How strongly the copper and silkscreen show under the temperatures"))}"><span>${esc(t("Layers"))}</span><input type="range" min="0" max="100" step="5" data-k="pcbmix" value="${mix}" aria-label="${esc(t("How strongly the copper and silkscreen show under the temperatures"))}" /><output data-v="pcbmix" translate="no">${mix} %</output></label>`
+        + `<div class="ana-row" title="${esc(t("Move the layers on the board when the outline is not centred on it, mm"))}"><span>${esc(t("Offset, mm"))}</span><input type="text" inputmode="decimal" data-k="pcbdx" value="${pc.du}" aria-label="${esc(t("Offset along the board's first axis, mm"))}" /><input type="text" inputmode="decimal" data-k="pcbdy" value="${pc.dv}" aria-label="${esc(t("Offset along the board's second axis, mm"))}" /></div>` : "")
+      + `<div class="sim-probebar"><button class="btn small" data-a="pcbpick">${esc(t("Other Gerber set…"))}</button><button class="btn small" data-a="pcbclear">${esc(t("Remove layers"))}</button></div></div>`;
   }
 
   private legendClick(e: Event) {
@@ -932,12 +1037,16 @@ export class ThermalMaps {
     else if (k === "fit") { a.fitted = true; this.show(); this.renderAll(); }
     else if (k === "uncompare") this.uncompare();
     else if (k === "unisolate") this.isolate(null);
+    else if (k === "pcbpick") this.pickGerber();
+    else if (k === "pcbclear") { delete a.pcb; this.show(); this.renderAll(); }
   }
 
   private legendChange(e: Event) {
     const el = e.target as HTMLInputElement, k = el.dataset.k, a = this.cur();
     if (!a || !k) return;
     if (k === "show") { this.setView(el.value as "a" | "b" | "d"); return; }
+    if (k === "pcbmix") return;
+    if ((k === "pcbdx" || k === "pcbdy") && a.pcb) { const v = num(el.value); if (v !== null) this.setPcbOffset(k === "pcbdx" ? v : a.pcb.du, k === "pcbdy" ? v : a.pcb.dv); return; }
     if (k === "palette") { this.prefs.palette = el.value as PaletteName; this.savePrefs(); }
     else if (k === "labels") { this.prefs.labels = el.checked; this.savePrefs(); }
     else if (k === "rise") { this.prefs.rise = el.checked; this.savePrefs(); }
@@ -1069,6 +1178,7 @@ export class ThermalMaps {
       range: this.rangeOf(a), parts: a.pkg.manifest.parts.length, matched: a.match.bodies.size, missing: a.match.missing, changed: a.match.changed, off: a.match.off, fitted: a.fitted,
       hidden: this.saved.length, problems: this.problemsOf(a).map(p => ({ kind: p.kind, id: p.id, value: p.value })), hottest: sm.hottest, peak: sm.peak, power: sm.power,
       sel: a.sel, iso: a.iso, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
+      pcb: a.pcb ? { name: a.pcb.layers.name, shown: a.pcb.shown, mix: this.prefs.pcbMix, du: a.pcb.du, dv: a.pcb.dv, labels: a.pcb.layers.labels, w: a.pcb.layers.w, h: a.pcb.layers.h, box: a.pcb.layers.box, board: this.pcbBoard, textured: !!this.atlasTex } : null,
       compare: a.cmp ? { name: a.cmp.pkg.name, view: a.cmp.view, rows: a.cmp.changes.rows.map(r => ({ name: r.name, a: r.a, b: r.b, d: r.d })), onlyA: a.cmp.changes.onlyA, onlyB: a.cmp.changes.onlyB } : null,
     };
   }

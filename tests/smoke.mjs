@@ -18388,6 +18388,65 @@ try {
     await ctx.close();
   }
 
+  // --- board layers 1.681 (FRS-thermal FR-TMAP-012): the board's Gerber set under the thermal map ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const gp = await ctx.newPage();
+    gp.on("pageerror", e => errors.push(e.message));
+    gp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal"), gdir = join(thx, "amp-gerber");
+    await gp.goto(`${origin}/index.html?debug&nokernel`);
+    await gp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await gp.goto(`${origin}/index.html?debug&nokernel`);
+    await gp.waitForFunction(() => window.__sv);
+    await gp.setInputFiles("#file-input", [join(thx, "amp.step"), join(thx, "amp-thermal.zip")]);
+    await gp.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    await gp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0, 0, 1), false); v.fit(false); });
+    await gp.waitForTimeout(800);
+    const shot = async () => gp.screenshot({ clip: { x: 500, y: 250, width: 500, height: 350 } });
+    // mean per-channel difference of two screenshots (0..255), measured in the page
+    const diff = (x, y) => gp.evaluate(async ([p, q]) => {
+      const px = async b => { const im = new Image(); im.src = `data:image/png;base64,${b}`; await im.decode(); const c = document.createElement("canvas"); c.width = im.width; c.height = im.height; const g = c.getContext("2d"); g.drawImage(im, 0, 0); return g.getImageData(0, 0, c.width, c.height).data; };
+      const [u, v] = [await px(p), await px(q)];
+      let d = 0;
+      for (let i = 0; i < u.length; i++) d += Math.abs(u[i] - v[i]);
+      return d / u.length;
+    }, [x.toString("base64"), y.toString("base64")]);
+    const plain = await shot();
+    const [chooser] = await Promise.all([gp.waitForEvent("filechooser"), gp.click('#th-tools [data-th="gerber"]')]);
+    await chooser.setFiles(["amp-F_Cu.gbr", "amp-B_Cu.gbr", "amp-Edge_Cuts.gbr", "amp-PTH.drl"].map(f => join(gdir, f)));
+    await gp.waitForFunction(() => window.__sv.thermal.state()?.pcb?.textured, null, { timeout: 30000 });
+    await gp.waitForTimeout(800);
+    const g1 = await gp.evaluate(() => { const s = window.__sv.thermal.state(); return { pcb: s.pcb, drawn: s.drawn, pressed: document.querySelector('#th-tools [data-th="gerber"]')?.getAttribute("aria-pressed"),
+      slider: document.querySelector('#th-legend input[data-k="pcbmix"]')?.value, name: document.querySelector('#th-legend [data-v="pcb"]')?.textContent }; });
+    const layered = await shot();
+    check(g1.drawn && g1.pcb && g1.pcb.textured && g1.pcb.board > 0 && g1.pcb.name === "amp" && g1.pcb.labels.length === 2 && JSON.stringify(g1.pcb.box) === "[0,0,120,80]" && g1.pressed === "true"
+      && g1.slider === "60" && /amp/.test(g1.name ?? ""),
+      `board layers 1.681: Board layers reads the board's Gerber set and draws its copper under the map's temperatures, laid on the board by the outline (${JSON.stringify(g1)})`);
+    // the slider at 0 hides the layers; an offset moves them; the button hides and shows them; Remove layers takes them off
+    await gp.evaluate(() => { const r = document.querySelector('#th-legend input[data-k="pcbmix"]'); r.value = "0"; r.dispatchEvent(new Event("input", { bubbles: true })); });
+    await gp.waitForTimeout(600);
+    const zero = await shot();
+    const mix0 = await gp.evaluate(() => window.__sv.thermal.state().pcb.mix);
+    const dLayered = await diff(plain, layered), dZero = await diff(plain, zero);
+    await gp.evaluate(() => { const r = document.querySelector('#th-legend input[data-k="pcbmix"]'); r.value = "100"; r.dispatchEvent(new Event("input", { bubbles: true })); });
+    await gp.fill('#th-legend input[data-k="pcbdx"]', "3");
+    await gp.press('#th-legend input[data-k="pcbdx"]', "Enter");
+    await gp.waitForTimeout(400);
+    const moved = await gp.evaluate(() => window.__sv.thermal.state().pcb);
+    await gp.click('#th-tools [data-th="gerber"]');
+    await gp.waitForTimeout(300);
+    const hid = await gp.evaluate(() => window.__sv.thermal.state().pcb);
+    await gp.click('#th-tools [data-th="gerber"]');
+    await gp.click('#th-legend [data-a="pcbclear"]');
+    await gp.waitForTimeout(300);
+    const gone = await gp.evaluate(() => ({ pcb: window.__sv.thermal.state().pcb, drawn: window.__sv.thermal.state().drawn }));
+    check(mix0 === 0 && dLayered > 0.5 && dZero < dLayered / 5 && moved.du === 3 && moved.mix === 1 && moved.textured && !hid.shown && !hid.textured && gone.pcb === null && gone.drawn,
+      `board layers 1.681: the slider at 0 shows the plain map, an offset moves the layers, the button hides them and Remove layers takes them off (${JSON.stringify({ mix0, dLayered, dZero, moved: moved.du, hid: hid.shown, gone })})`);
+    await gp.evaluate(() => localStorage.removeItem("mc:thermalMap"));
+    await ctx.close();
+  }
+
   // --- Board thermal maps 1.653 (FRS-thermal TH1): a board's STEP with its thermal package ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
