@@ -474,7 +474,7 @@ export interface PassResult {
    * `ThermalSetup.sinkIds`), and how many solves the pass took (radiation is solved step by step).
    */
   thermal?: {
-    min: number; max: number; applied: number; flows: SinkFlow[]; solves: number; /** Solves made again with k at the temperatures found (FR-TMAT-004). */ kSteps?: number;
+    min: number; max: number; applied: number; flows: SinkFlow[]; solves: number; /** Solves made again with k at the temperatures found (FR-TMAT-004). */ kSteps?: number; /** Solved with the matrix of the solve before (FR-TSOL-021). */ reused?: boolean;
     /** Assemblies: where the components touch and the heat passing there; each one's temperatures and the heat made in it. */
     contacts?: ThermalContact[];
     /** Radiation between face sets, in the order of `ThermalSetup.exchangeIds`. */
@@ -1104,6 +1104,29 @@ export function exchangesOf(set: ThermalSetup, body: SimBody): ThermalExchange[]
   return got;
 }
 
+/** A hash of some numbers (their float64 bits), for keys. */
+function hashOf(a: ArrayLike<number> | undefined, h = 2166136261): number {
+  if (!a) return h;
+  const f = new Float64Array(1), u = new Uint32Array(f.buffer);
+  for (let i = 0; i < a.length; i++) { f[0] = a[i]; h = Math.imul(h ^ u[0], 16777619); h = Math.imul(h ^ u[1], 16777619); }
+  return h >>> 0;
+}
+
+/**
+ * FR-TSOL-021: what a thermal solve's matrix depends on: the body and its regions, conductivities, joins, the cell
+ * size and every sink's faces and kind (fixed temperature, or film and its coefficient), but not the temperatures,
+ * ambients or powers, which only change the load.
+ */
+export function reuseKey(inp: RunInput, h: number): string {
+  const T = inp.thermal!;
+  return JSON.stringify([
+    hashOf(inp.body.tris), inp.body.lo, inp.body.hi, h, inp.memory ?? null, T.k, T.ks ?? null, T.k3s ?? null, T.kt ?? null, T.kts ?? null, T.gap ?? null, T.links ?? null,
+    (inp.regions ?? []).map(r => hashOf(r.tris)),
+    T.setup.sinks.map(s => [hashOf(s.tris), s.temp !== undefined ? "t" : "f", s.temp !== undefined ? 0 : s.h ?? 0, s.emissivity ?? 0, !!s.free, s.natural ? 1 : 0, s.forced ? hashOf(s.forced.h) : 0]),
+    (T.setup.exchanges ?? []).length,
+  ]);
+}
+
 export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: number, y: number, z: number) => boolean) => void): Generator<PassResult> {
   const T = inp.thermal!, set = T.setup, exchanges = exchangesOf(set, inp.body);
   if (set.problems.length) throw new Error(`${set.problems[0].code}: ${set.problems[0].id}`);
@@ -1119,9 +1142,10 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const passes = Math.max(1, Math.min(GLOBAL_PASSES, Math.round(inp.passes)));
   let grid: Grid | undefined, prev: Float64Array | undefined, before: Float32Array | null = null;
   const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
+  const reuse = reuseKey(inp, h);
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now(), p = k + 2;
-    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), grid, prev, sinks: set.sinks, sources: set.sources, ...(exchanges ? { exchanges } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) });
+    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), grid, prev, sinks: set.sinks, sources: set.sources, ...(exchanges ? { exchanges } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}), reuse });
     grid = r.grid; prev = r.x;
     if (r.prevError != null) known.push(r.prevError);
     const sampler: Sampler = (pos, nrm, hits) => { const s = r.sample(pos, nrm, hits); return { u: s.flux, vm: s.temp, err: s.err, ...(s.hit ? { hit: s.hit } : {}), ...(s.dom ? { dom: s.dom } : {}) }; };
@@ -1168,7 +1192,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, ...(capped ? { capped } : {}), energy: r.energy, change, ms: Date.now() - t0, reactions: [], applied: none,
       u: s.flux, vm: s.temp, err: s.err, errors: [...known, passError(known)], maxU, maxVm: max, converged, done: converged || capped > 0 || k === passes - 1,
       ...(s.dom ? { dom: s.dom } : {}),
-      thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations, ...(r.kSteps ? { kSteps: r.kSteps } : {}), ...(domains ? { contacts: r.contacts, comps } : {}), ...(r.exchanges ? { exchanges: r.exchanges } : {}) },
+      thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations, ...(r.kSteps ? { kSteps: r.kSteps } : {}), ...(r.reused ? { reused: true } : {}), ...(domains ? { contacts: r.contacts, comps } : {}), ...(r.exchanges ? { exchanges: r.exchanges } : {}) },
     };
     if (converged || capped) return;
   }

@@ -3766,6 +3766,7 @@ export class SimController {
       + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td${p.memory ? ` title="${esc(t("Memory: about {n} MB", { n: Math.max(1, Math.round(p.memory / 2 ** 20)) }))}"` : ""}>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${pct(p.change).replace("<", "&lt;")} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 && !pct(errs[i]!).startsWith("<") ? "≈ " : ""}${pct(errs[i]!).replace("<", "&lt;")} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
       + chartSvg(errs, t("Estimated error per pass"));
     html += this.cappedNote(last);
+    if (r.passes.length && r.passes.every(q => q.thermal?.reused)) html += `<p class="sim-note muted" data-v="reused">${esc(t("Only powers or temperatures changed: solved again on the same grid and matrix, so it took a fraction of the time."))}</p>`;
     if (T.kSteps) html += `<p class="sim-note muted" data-v="ksteps">${esc(t("Conductivity changes with temperature: the last pass was solved {n} times until k settled.", { n: T.kSteps }))}</p>`;
     if (T.solves > 1) html += `<p class="sim-note muted sim-radnote">${esc(t("Radiation depends on the surface temperature itself: the last pass was solved {n} times until the temperatures settled.", { n: T.solves }))}</p>`;
     html += this.probesHtml();
