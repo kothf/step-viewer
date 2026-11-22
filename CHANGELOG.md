@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.677.0] - 2026-11-22
+
+### Added
+
+- Temperature maps from other tools. A plain .vtu with no thermal package around it now opens as a map even when it has no Temperature_C array: the temperature is the only one-component point array, or the one whose name says temperature, and when several could be it a short list asks which one. An array whose name ends in K (or says kelvin) is read as kelvin and shown in °C. A file with no PartId gets its connected pieces as parts #1, #2 and so on, largest first, so a map from another simulation tool can be viewed on its own or laid on a STEP. Polygon cells are read too.
+
 ## [1.676.0] - 2026-11-22
 
 ### Added
@@ -4448,7 +4454,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.676.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.677.0...HEAD
+[1.677.0]: https://github.com/kothf/step-viewer/compare/v1.676.0...v1.677.0
 [1.676.0]: https://github.com/kothf/step-viewer/compare/v1.675.0...v1.676.0
 [1.675.0]: https://github.com/kothf/step-viewer/compare/v1.674.0...v1.675.0
 [1.674.0]: https://github.com/kothf/step-viewer/compare/v1.673.0...v1.674.0

@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<!-- A surface temperature map as another tool writes it (FR-TPKG-014): no manifest, no PartId,
+     two one-component point arrays (neither says temperature), the temperature in kelvin, a polygon cell. -->
+<VTKFile type="UnstructuredGrid" version="1.0" byte_order="LittleEndian">
+<UnstructuredGrid><Piece NumberOfPoints="8" NumberOfCells="2">
+<PointData>
+<DataArray type="Float32" Name="Flux" NumberOfComponents="1" format="ascii">1 2 3 4 5 6 7 8</DataArray>
+<DataArray type="Float32" Name="Field_K" NumberOfComponents="1" format="ascii">293.15 294.15 295.15 296.15 323.15 328.15 333.15 338.15</DataArray>
+</PointData>
+<Points><DataArray type="Float32" Name="Points" NumberOfComponents="3" format="ascii">0 0 0 10 0 0 10 10 0 0 10 0 20 0 5 30 0 5 30 10 5 20 10 5</DataArray></Points>
+<Cells>
+<DataArray type="Int32" Name="connectivity" format="ascii">0 1 2 3 4 5 6 7</DataArray>
+<DataArray type="Int32" Name="offsets" format="ascii">4 8</DataArray>
+<DataArray type="UInt8" Name="types" format="ascii">9 7</DataArray>
+</Cells>
+</Piece></UnstructuredGrid></VTKFile>

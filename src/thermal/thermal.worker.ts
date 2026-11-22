@@ -2,7 +2,7 @@
 import { readPackage, type ThermalPackage } from "./package";
 import { ThermalError } from "./vtu";
 
-export interface ThermalRequest { id: number; files: [string, Uint8Array][]; name: string }
+export interface ThermalRequest { id: number; files: [string, Uint8Array][]; name: string; field?: string }
 export type ThermalReply =
   | { id: number; ok: true; pkg: ThermalPackage }
   | { id: number; ok: false; code: string; reason: string; params: Record<string, string | number> };
@@ -10,9 +10,9 @@ export type ThermalReply =
 const post = (m: ThermalReply, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(m, transfer);
 
 self.onmessage = async (e: MessageEvent<ThermalRequest>) => {
-  const { id, files, name } = e.data;
+  const { id, files, name, field } = e.data;
   try {
-    const pkg = await readPackage(new Map(files), name);
+    const pkg = await readPackage(new Map(files), name, { field });
     const m = pkg.mesh;
     const own = new Set<ArrayBufferLike>();
     for (const a of [m.pos, m.temp, m.tri, m.part, m.face, m.power, m.flux]) if (a) own.add(a.buffer);

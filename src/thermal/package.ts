@@ -1,6 +1,6 @@
 // Thermal package of a board (FRS-thermal section 15.2): the manifest, the heat-source table and the mesh that a
 // board design app writes beside the board's STEP. Pure: runs in a worker and in node.
-import { readVtu, ThermalError, type ThermalMesh } from "./vtu";
+import { readVtu, ThermalError, type ReadOptions, type ThermalMesh } from "./vtu";
 
 export const FORMATS = ["tubecad-thermal", "mobiuscad-thermal"] as const;
 export const VERSION = 1;
@@ -227,7 +227,7 @@ export function findManifest(files: Map<string, Uint8Array>): { name: string; te
  * wins over the CSV; the CSV fills parts and fields the manifest lacks. A lone .vtu (no manifest) opens as a map
  * with unnamed parts (FR-TPKG-014).
  */
-export async function readPackage(files: Map<string, Uint8Array>, fallbackName = "thermal"): Promise<ThermalPackage> {
+export async function readPackage(files: Map<string, Uint8Array>, fallbackName = "thermal", opts: ReadOptions = {}): Promise<ThermalPackage> {
   const notes: ThermalPackage["notes"] = [];
   const names = [...files.keys()];
   const pick = (want: string | undefined, ext: RegExp) => {
@@ -246,7 +246,9 @@ export async function readPackage(files: Map<string, Uint8Array>, fallbackName =
   if (manifest.newer) notes.push({ text: "This package was written by a newer app: some data may be missing." });
   const meshName = pick(manifest.files.mesh, /\.vtu$/i);
   if (!meshName) throw new ThermalError("E-TH-PKG", "its mesh file {name} is missing", { name: manifest.files.mesh ?? "*.vtu" });
-  const mesh = await readVtu(files.get(meshName)!);
+  const mesh = await readVtu(files.get(meshName)!, opts);
+  if (mesh.field) notes.push({ text: mesh.kelvin ? "Temperatures read from the array {name} (kelvin, shown in °C)." : "Temperatures read from the array {name}.", params: { name: mesh.field } });
+  if (mesh.pieces) notes.push({ text: "The file names no parts: each connected piece of its surfaces is a part ({n}).", params: { n: new Set(mesh.part).size } });
   const dec = new TextDecoder();
   const csvName = pick(manifest.files.sources, /heat-sources\.csv$/i);
   if (csvName) {
