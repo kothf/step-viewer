@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.682.0] - 2026-11-22
+
+### Added
+
+- A board's STEP and its thermal package stay together. In a vault, opening the STEP also shows the package kept beside it in the same folder (`<name>-thermal.zip`), and opening the package opens the STEP beside it first, with the map on its bodies. Pack and Go puts the package in the zip next to the STEP.
+
 ## [1.681.0] - 2026-11-22
 
 ### Added
@@ -4478,7 +4484,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.681.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.682.0...HEAD
+[1.682.0]: https://github.com/kothf/step-viewer/compare/v1.681.0...v1.682.0
 [1.681.0]: https://github.com/kothf/step-viewer/compare/v1.680.0...v1.681.0
 [1.680.0]: https://github.com/kothf/step-viewer/compare/v1.679.0...v1.680.0
 [1.679.0]: https://github.com/kothf/step-viewer/compare/v1.678.0...v1.679.0

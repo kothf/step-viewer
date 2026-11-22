@@ -18447,6 +18447,50 @@ try {
     await ctx.close();
   }
 
+  // --- vault pairing 1.682 (FRS-thermal FR-TPKG-006): a STEP and its thermal package in one vault folder ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const vp = await ctx.newPage();
+    vp.on("pageerror", e => errors.push(e.message));
+    vp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal");
+    await vp.goto(`${origin}/index.html?debug&nokernel`);
+    await vp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await vp.goto(`${origin}/index.html?debug&nokernel`);
+    await vp.waitForFunction(() => window.__sv);
+    const b64 = async f => (await readFile(join(thx, f))).toString("base64");
+    await vp.evaluate(async ([step, pkg]) => {
+      const bytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+      const p = window.__sv.vault;
+      await p.createInBrowser("Boards");
+      await p.vault.add("amp/amp.step", bytes(step));
+      await p.vault.add("amp/amp-thermal.zip", bytes(pkg));
+      await p.refresh();
+    }, [await b64("amp.step"), await b64("amp-thermal.zip")]);
+    // opening the package opens the STEP beside it first, with the map on it
+    await vp.evaluate(() => { const p = window.__sv.vault; return p.openFile(p.files.find(f => f.path.endsWith(".zip")).id); });
+    await vp.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    const viaPkg = await vp.evaluate(() => ({ key: window.__sv.state.fileKey, own: window.__sv.thermal.state().own }));
+    check(/amp\.step/.test(viaPkg.key) && !viaPkg.own, `vault pairing 1.682: opening the thermal package from the vault opens the board's STEP beside it with the map on it (${JSON.stringify(viaPkg)})`);
+    // Pack and Go keeps the package with the STEP
+    await vp.click("#file-btn");
+    await vp.click("#file-menu [data-f=pack]");
+    await vp.waitForSelector("#pack-dlg[open]");
+    await vp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
+    const [dl] = await Promise.all([vp.waitForEvent("download"), vp.click("#pack-dlg [data-a=ok]")]);
+    const ztext = (await readFile(await dl.path())).toString("latin1");
+    check(ztext.includes("amp.step") && ztext.includes("amp-thermal.zip"), `vault pairing 1.682: Pack and Go puts the thermal package beside the STEP (${dl.suggestedFilename()})`);
+    // a fresh page: opening the STEP from the vault brings the package along
+    await vp.goto(`${origin}/index.html?debug&nokernel`);
+    await vp.waitForFunction(() => window.__sv);
+    await vp.evaluate(async () => { await window.__sv.vault.openInBrowser("Boards"); const p = window.__sv.vault; await p.openFile(p.files.find(f => f.path.endsWith(".step")).id); });
+    await vp.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    const viaStep = await vp.evaluate(() => ({ key: window.__sv.state.fileKey, parts: window.__sv.thermal.state().matched }));
+    check(/amp\.step/.test(viaStep.key), `vault pairing 1.682: opening the STEP from the vault shows its thermal package from the same folder (${JSON.stringify(viaStep)})`);
+    await vp.evaluate(() => localStorage.removeItem("mc:thermalMap"));
+    await ctx.close();
+  }
+
   // --- Board thermal maps 1.653 (FRS-thermal TH1): a board's STEP with its thermal package ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

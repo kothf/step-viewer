@@ -1051,6 +1051,18 @@ async function thermalFilesOf(files: File[]): Promise<{ files: Map<string, Uint8
  * Opens a thermal package: with the board's STEP (picked with it, or inside the package) the STEP opens and the map
  * goes on it; with a model file already on screen the map is attached to that; alone, its own mesh is the model.
  */
+/**
+ * The thermal package each model file's map came from, by the file's key (FRS-thermal FR-TPKG-006), so Pack and Go
+ * puts it beside the STEP. Kept for parked tabs too.
+ */
+const thermalSrcs = new Map<string, { name: string; data: Uint8Array }>();
+async function keepThermalSrc(files: Map<string, Uint8Array>, name: string, src?: ArrayBuffer) {
+  const key = state.fileKey;
+  if (!key) return;
+  const data = src ? new Uint8Array(src.slice(0)) : await zipFiles([...files].map(([n, d]) => ({ name: n, data: d })));
+  thermalSrcs.set(key, { name: /-thermal$/i.test(name) ? `${name}.zip` : `${name}-thermal.zip`, data });
+}
+
 async function openThermal(files: Map<string, Uint8Array>, name: string, step?: File, src?: ArrayBuffer) {
   const idle = !$("#empty").hidden;
   if (idle) setLoading(true, t("Reading the thermal map…"), 5);
@@ -1064,9 +1076,11 @@ async function openThermal(files: Map<string, Uint8Array>, name: string, step?: 
     await openBuffer(model.data, model.name);
     if (state.fileKey !== key) return;
     thermal.attach(pkg);
+    void keepThermalSrc(files, name, src);
   } else if (thermal.host.key() && viewer.parts.length && !thermal.cur()?.own) {
     if (idle) setLoading(false);
     thermal.attach(pkg);
+    void keepThermalSrc(files, name, src);
   } else if (pkg.sourcesOnly) {
     if (idle) setLoading(false);
     toast(t("Open the board's STEP first, then add its heat sources to it."), "warn");
@@ -2609,6 +2623,14 @@ const vaultPanel = new VaultPanel($("#vault-panel"), {
     // A vault file reloaded after a vault action stays in its own tab instead of opening a second one.
     if (replace && docs) await docs.replacing(go); else await go();
   },
+  // A board's thermal package found beside its STEP in the vault goes on the model just opened (FR-TPKG-006).
+  pair: async (name, data) => {
+    const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+    const th = await thermalZip(buf);
+    if (!th || !viewer.parts.length || thermal.has()) return false;
+    await openThermal(th, name.replace(/\.zip$/i, ""), undefined, buf);
+    return thermal.has();
+  },
   show: async id => {
     const tab = docs?.tabs.find(x => x !== docs!.active && (x.state as { vault?: { id: string } | null } | null)?.vault?.id === id);
     if (!tab) return false;
@@ -3792,7 +3814,14 @@ const fileMenu = new FileMenu({
         return { label, kind: "drawing", live, async files() { const r = await drawing.packed(st ?? undefined); return r ? [r] : []; } };
       }
       const src = (tab.state as { name: string; data: ArrayBuffer } | null) ?? modelSrc;
-      return { label, kind: "model", live, async files() { return src ? [{ name: src.name, data: new Uint8Array(src.data.slice(0)) }] : []; } };
+      // a board's thermal package goes with its STEP (FR-TPKG-006)
+      const th = src ? thermalSrcs.get(`sv:m:${src.name}:${src.data.byteLength || ""}`) : undefined;
+      return { label, kind: "model", live, async files() {
+        if (!src) return [];
+        const out = [{ name: src.name, data: new Uint8Array(src.data.slice(0)) }];
+        if (th && th.name !== src.name) out.push({ name: th.name, data: th.data.slice() });
+        return out;
+      } };
     });
   },
   download: (b, n) => download(b, n),
