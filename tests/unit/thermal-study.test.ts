@@ -1,7 +1,7 @@
 // A thermal study from a board's STEP and its package (FRS-thermal J5, FR-TBRD-001/002/010/011): the plan.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BOARD_MATERIAL, DEFAULT_STACK, GUESS, K_FR4, boardConductivity, boardK, boardPlan, plateAxis, findBoard, guessMaterial } from "../../src/thermal/study";
+import { BOARD_MATERIAL, DEFAULT_STACK, GUESS, K_FR4, boardConductivity, boardK, boardPlan, contactPatch, plateAxis, findBoard, guessMaterial } from "../../src/thermal/study";
 import type { ModelBody, PartMatch } from "../../src/thermal/match";
 import type { ThermalManifest, ThermalPart } from "../../src/thermal/package";
 import { findMaterial } from "../../src/tools/materials";
@@ -57,7 +57,7 @@ test("the plan of a board study: board, names, materials and the heat of every p
   assert.ok(Math.abs(plan.thickness - 1.6) < 1e-12);
   assert.deepEqual(plan.names, ["PCB", "V3", "R14", ""]);
   assert.deepEqual(plan.mats, ["", GUESS.glass, GUESS.resistor, GUESS.plastic]);
-  assert.deepEqual(plan.heat, [{ id: 1, name: "V3", bodies: [1], p: 18.2, limit: 250 }, { id: 2, name: "R14", bodies: [2], p: 3.1, limit: 155 }, { id: 3, name: "Q9", bodies: [], p: 4 }]);
+  assert.deepEqual(plan.heat, [{ id: 1, name: "V3", bodies: [1], p: 18.2, limit: 250 }, { id: 2, name: "R14", bodies: [2], p: 3.1, limit: 155 }, { id: 3, name: "Q9", bodies: [], p: 4, path: "heatsink" }]);
   // a part without a body in the model makes no heat
   assert.ok(Math.abs(plan.power - 21.3) < 1e-9);
   assert.equal(plan.ambient, 40);
@@ -86,4 +86,38 @@ test("a board's conductivity by direction from its surface (FR-TBRD-010)", () =>
   const b = boardK(box([0, 0, 0], [10, 10, 10]), DEFAULT_STACK, 1.6);
   assert.equal(b.k3, undefined);
   assert.equal(b.along, c.along);
+});
+
+test("the patch of the board under a part (FR-TBRD-003)", () => {
+  const box = (lo: number[], hi: number[]) => {
+    const t: number[] = [];
+    for (let a = 0; a < 3; a++) for (const [at, out] of [[lo[a], false], [hi[a], true]] as [number, boolean][]) {
+      const a1 = (a + 1) % 3, a2 = (a + 2) % 3, P = (u: number, v: number) => { const p = [0, 0, 0]; p[a] = at; p[a1] = u; p[a2] = v; return p; };
+      // the big faces in a 10 mm grid, so a footprint takes some of them
+      for (let u = lo[a1]; u < hi[a1] - 1e-9; u += Math.min(10, hi[a1] - lo[a1])) for (let v = lo[a2]; v < hi[a2] - 1e-9; v += Math.min(10, hi[a2] - lo[a2])) {
+        const u1 = Math.min(u + 10, hi[a1]), v1 = Math.min(v + 10, hi[a2]);
+        const A = P(u, v), B = P(u1, v), C = P(u1, v1), D = P(u, v1);
+        t.push(...(out ? [...A, ...B, ...C, ...A, ...C, ...D] : [...A, ...C, ...B, ...A, ...D, ...C]));
+      }
+    }
+    return t;
+  };
+  const board = box([0, 0, 0], [60, 40, 1.6]);
+  // a part on top over the cell 20..30 × 10..20: its two triangles on the top face
+  const area = (t: ArrayLike<number>) => {
+    let s = 0;
+    for (let o = 0; o + 8 < t.length; o += 9) s += Math.abs((t[o + 3] - t[o]) * (t[o + 7] - t[o + 1]) - (t[o + 6] - t[o]) * (t[o + 4] - t[o + 1])) / 2;
+    return s;
+  };
+  // a part on top: the top face cut to its footprint grown by 0.5 mm, wound outwards like the board
+  const top = contactPatch(board, box([20, 10, 1.6], [30, 20, 8]))!;
+  assert.ok(Math.abs(area(top) - 11 * 11) < 1e-9, `area ${area(top)}`);
+  for (let o = 2; o < top.length; o += 3) assert.ok(Math.abs(top[o] - 1.6) < 1e-9);
+  for (let o = 0; o + 8 < top.length; o += 9) assert.ok((top[o + 3] - top[o]) * (top[o + 7] - top[o + 1]) - (top[o + 6] - top[o]) * (top[o + 4] - top[o + 1]) > 0);
+  // a part under the board takes the bottom face
+  const under = contactPatch(board, box([20, 10, -5], [30, 20, 0]))!;
+  for (let o = 2; o < under.length; o += 3) assert.ok(Math.abs(under[o]) < 1e-9);
+  // nothing under a part beside the board; a block is no board
+  assert.equal(contactPatch(board, box([100, 100, 1.6], [110, 110, 5])), null);
+  assert.equal(contactPatch(box([0, 0, 0], [10, 10, 10]), box([0, 0, 10], [5, 5, 12])), null);
 });

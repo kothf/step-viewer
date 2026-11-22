@@ -505,7 +505,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -736,7 +736,7 @@ export class SimController {
     const st = newStudy(doc.studies ?? [], "thermal");
     if (spec.ambient !== undefined && Number.isFinite(spec.ambient)) st.settings.ambient = spec.ambient;
     if (spec.board?.comp) st.comps = { [spec.board.comp]: { board: { ...DEFAULT_STACK, ...(spec.board.t > 0 ? { t: Math.round(spec.board.t * 1000) / 1000 } : {}) } } };
-    st.loads.push({ id: "l1", name: itemName(st, "pkgheat"), type: "pkgheat", faces: [], parts: spec.heat });
+    st.loads.push({ id: "l1", name: itemName(st, "pkgheat"), type: "pkgheat", faces: [], parts: spec.heat, ...(spec.board?.comp ? { board: spec.board.comp } : {}) });
     st.supports.push({ id: "s1", name: itemName(st, "conv"), type: "conv", faces: [], all: true, h: FILM_PRESETS[0][1] });
     const emis = spec.emissivity !== undefined && spec.emissivity > 0 && spec.emissivity <= 1 ? spec.emissivity : 0.9;
     st.supports.push({ id: "s2", name: itemName(st, "rad"), type: "rad", faces: [], all: true, emis });
@@ -1500,6 +1500,44 @@ export class SimController {
     const out = new Map<string, number>(), st = this.study(), off = new Set(st?.suppressed ?? []);
     for (const l of st?.loads ?? []) if (l.type === "pkgheat" && !off.has(l.id)) for (const x of l.parts ?? []) if (x.limit !== undefined) for (const c of x.comps) out.set(c, x.limit);
     return out;
+  }
+
+  /**
+   * Where each package part's heat went in the solve (FR-TBRD-003): conducted into the board, off its own surface
+   * into the air, and elsewhere (a heatsink, other parts, the chassis share left out), beside the package's split.
+   */
+  private heatPaths(r: Results | null = this.res && !this.stale() ? this.res : null) {
+    const last = r?.passes.at(-1), rows = last?.thermal?.comps, st = this.study(), off = new Set(st?.suppressed ?? []);
+    const l = st?.loads.find(x => x.type === "pkgheat" && !off.has(x.id) && x.board);
+    if (!r?.comps || !rows || !l) return [];
+    const board = r.comps.findIndex(c => compOf(c.key) === l.board), contacts = last!.thermal!.contacts ?? [];
+    if (board < 0) return [];
+    const out: { name: string; p: number; board: number; air: number; other: number; pkg: { board: number; air: number; sink: number } | null }[] = [];
+    for (const x of l.parts ?? []) {
+      if (x.off || !(x.p >= PACKAGE_MIN_POWER) || !x.comps.length) continue;
+      const comps = new Set(x.comps), doms = new Set<number>();
+      r.comps.forEach((c, d) => { if (d !== board && comps.has(compOf(c.key))) doms.add(d); });
+      if (!doms.size) continue;
+      let own = 0, air = 0, toBoard = 0;
+      for (const d of doms) { own += rows[d]?.power ?? 0; air += rows[d]?.out ?? 0; }
+      for (const c of contacts) { if (doms.has(c.a) && c.b === board) toBoard += c.heat; else if (doms.has(c.b) && c.a === board) toBoard -= c.heat; }
+      const chassis = l.split && x.path === "chassis" ? Math.min(x.p, Math.max(0, x.sink ?? 0)) : 0;
+      const direct = l.split ? Math.max(0, x.p - own - chassis) : 0;
+      const b = toBoard + direct, pkg = x.board !== undefined || x.sink !== undefined ? { board: x.board ?? 0, sink: x.sink ?? 0, air: Math.max(0, x.p - (x.board ?? 0) - (x.sink ?? 0)) } : null;
+      out.push({ name: x.name, p: x.p, board: b, air, other: x.p - b - air, pkg });
+    }
+    return out;
+  }
+
+  private heatPathsHtml(): string {
+    const rows = this.heatPaths();
+    if (!rows.length) return "";
+    const share = (v: number, p: number) => `${Math.round((100 * v) / p)}`;
+    const split = !!this.study()?.loads.find(x => x.type === "pkgheat" && x.split);
+    return `<h5 class="sim-sub">${esc(t("Heat paths"))}</h5>`
+      + `<table class="sim-comptable sim-paths"><thead><tr><th>${esc(t("Part"))}</th><th title="${esc(t("Heat made in the part"))}">W</th><th title="${esc(t("Conducted into the board"))}">${esc(t("Board"))}<br />%</th><th title="${esc(t("Off the part's own surface: convection, radiation, or a heatsink resistance on it"))}">${esc(t("Surface"))}<br />%</th><th title="${esc(t("Into a heatsink, other parts or the chassis"))}">${esc(t("Other"))}<br />%</th></tr></thead><tbody>`
+      + rows.map(x => `<tr data-path="${esc(x.name)}"${x.pkg ? ` title="${esc(t("The package's split: board {b} %, air {a} %, heatsink or chassis {s} %", { b: share(x.pkg.board, x.p), a: share(x.pkg.air, x.p), s: share(x.pkg.sink, x.p) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td>${sig(x.p)}</td><td data-v="pboard"${x.board < 0 ? ` title="${esc(t("It takes heat in from the board"))}"` : ""}>${share(x.board, x.p).replace("-", "−")}</td><td data-v="pair">${share(x.air, x.p)}</td><td data-v="pother">${share(Math.max(0, x.other), x.p)}</td></tr>`).join("") + `</tbody></table>`
+      + `<p class="sim-note muted" data-v="pathnote">${esc(split ? t("The package's split is kept: its board shares enter the board under each part as fixed powers.") : t("The heat goes where the conductances send it; hover a row for the package's split."))}</p>`;
   }
 
   private thermalCompsHtml(r: Results, last: PassResult): string {
@@ -2742,6 +2780,12 @@ export class SimController {
       blocks.push({ kind: "table", widths: [4, 2, 2, 2, 2], rows: [[t("Components"), t("Contact"), `${t("Area")}, mm²`, `${t("Heat")}, W`, "ΔT, °C"],
         ...T.contacts.map(c => [`${res.comps![c.a]?.name ?? ""} – ${res.comps![c.b]?.name ?? ""}`, t(c.type === "perfect" ? "Perfect" : "Pad or contact resistance"), sig(c.area), sig(Math.abs(c.heat)), pct(Math.abs(c.ta - c.tb))])] });
     }
+    const paths = this.heatPaths(res);
+    if (paths.length) {
+      const sh = (v: number, p: number) => `${Math.round((100 * v) / p)} %`;
+      blocks.push({ kind: "h", text: t("Heat paths") });
+      blocks.push({ kind: "table", widths: [3, 1, 2, 2, 2], rows: [[t("Part"), "W", t("Board"), t("Surface"), t("Other")], ...paths.map(x => [x.name, sig(x.p), sh(x.board, x.p), sh(x.air, x.p), sh(Math.max(0, x.other), x.p)])] });
+    }
     const was = { ...this.plot };
     for (const k of ["temp", "flux"] as PlotKind[]) { const im = this.capture(k); if (im) blocks.push({ kind: "image", ...im }); }
     this.plot = was;
@@ -3068,7 +3112,7 @@ export class SimController {
     T.flows.forEach((f, i) => { html += `<dt>${esc(f.out < 0 ? t("Heat brought in") : t("Heat taken away"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd data-v="flow" title="${esc(t("Mean temperature of the faces"))}: ${sig(f.mean)} °C">${sig(Math.abs(f.out))} W</dd>`; });
     if (T.flows.length > 1) html += `<dt>${esc(t("Heat taken away in total"))}</dt><dd data-v="heatout">${sig(out)} W</dd>`;
     if (off != null) html += `<dt title="${esc(t("How far the heat taken away is from the heat put in, as a share of it"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${off > 1 ? ' class="sim-low"' : ""}>${pct(off).replace("<", "&lt;")} %</dd>`;
-    html += `</dl>` + this.thermalCompsHtml(r, last);
+    html += `</dl>` + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
     html += `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th title="${esc(t("Temperature change"))}">${esc(t("Temp. change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
       + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td${p.memory ? ` title="${esc(t("Memory: about {n} MB", { n: Math.max(1, Math.round(p.memory / 2 ** 20)) }))}"` : ""}>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${pct(p.change).replace("<", "&lt;")} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 && !pct(errs[i]!).startsWith("<") ? "≈ " : ""}${pct(errs[i]!).replace("<", "&lt;")} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
       + chartSvg(errs, t("Estimated error per pass"));
@@ -3218,7 +3262,9 @@ export class SimController {
           const low = !(x.p >= PACKAGE_MIN_POWER), lost = !x.comps.length;
           return `<tr data-pk="${x.id}" class="${low || lost ? "muted" : ""}"${lost ? ` title="${esc(t("No body of the model was matched to this part."))}"` : low ? ` title="${esc(t("Under 10 mW: left out."))}"` : ""}><td><input type="checkbox" data-k="pkon" data-i="${i}" aria-label="${esc(x.name)}"${x.off ? "" : " checked"}${lost ? " disabled" : ""} /></td><td translate="no">${esc(x.name)}</td><td><input type="text" inputmode="decimal" data-q="pkp" data-i="${i}" value="${trim(x.p)}" spellcheck="false"${lost ? " disabled" : ""} /></td></tr>`;
         }).join("")}</tbody></table>`
-          + `<p class="pm-help muted">${esc(t("The power of each part from the board's thermal package, made throughout the part's bodies. Untick a part to leave it out, or type another power."))}</p>`);
+          + `<p class="pm-help muted">${esc(t("The power of each part from the board's thermal package, made throughout the part's bodies. Untick a part to leave it out, or type another power."))}</p>`)
+          + (l.board ? group(t("Heat paths"), chk("split", l.split, t("Keep the package's split"))
+            + `<p class="pm-help muted">${esc(l.split ? t("Each part's board share enters the board under the part as a fixed power, and a chassis share leaves the model; the rest is made in the part.") : t("Off: all the heat is made in the parts and goes where the conductances send it."))}</p>`) : "");
       }
       else if (l.type === "hflux") body += group(t("Heat flux"), nf("value", t("Heat flux"), l.value, "W/m²")
         + `<p class="pm-help muted">${esc(t("Power per area going into the picked faces."))}</p>`);
@@ -3564,6 +3610,7 @@ export class SimController {
     else if (k === "flip") d.flip = el.checked || undefined;
     else if (k === "body") { const l = e.draft as StudyLoad; l.body = el.checked || undefined; if (l.body && !this.host.asm()) l.faces = []; }
     else if (k === "all") { const sp = e.draft as StudySupport; sp.all = el.checked || undefined; if (sp.all) { sp.faces = []; delete sp.rth; } }
+    else if (k === "split") { const l = e.draft as StudyLoad; l.split = el.checked || undefined; }
     else if (k === "pkon") { const x = (e.draft as StudyLoad).parts?.[Number(el.dataset.i)]; if (x) x.off = el.checked ? undefined : true; }
     else if (k === "film") {
       const sp = e.draft as StudySupport;

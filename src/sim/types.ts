@@ -59,6 +59,10 @@ export interface PackageHeat {
   off?: boolean;
   /** Temperature limit of the part, °C, from the package. */
   limit?: number;
+  /** The package's split of the power (FR-TBRD-003): W into the board, W into a heatsink or the chassis, and the path. */
+  board?: number;
+  sink?: number;
+  path?: "board" | "air" | "heatsink" | "chassis";
 }
 /** Package parts under this power are left out, as the package does (FR-TBRD-002), W. */
 export const PACKAGE_MIN_POWER = 0.01;
@@ -104,6 +108,10 @@ export interface StudyLoad {
   body?: boolean;
   /** Heat from package: the power of each part of a board's thermal package, made throughout its components. */
   parts?: PackageHeat[];
+  /** Heat from package: the component that is the board (its contact patches take the parts' board shares). */
+  board?: string;
+  /** Heat from package: keep the package's split, its shares applied as fixed powers (FR-TBRD-003). */
+  split?: boolean;
 }
 
 /** Local accuracy (FR-SOL-012): the solution starts `level` degrees higher where it meets these faces. */

@@ -314,7 +314,7 @@ details > :last-child { margin-bottom: 12px; }
 .readout.floating { bottom: auto; }
 .readout .ttl { color: var(--muted); font-size: 11px; display: flex; justify-content: space-between; gap: 10px; }
 .readout .val { font: 650 16px var(--mono); margin: 1px 0 3px; }
-.readout .det { font: 11px var(--mono); color: var(--muted); display: grid; gap: 1px; max-height: 30vh; overflow: auto; overflow-wrap: anywhere; }
+.readout .det { font: 11px var(--mono); color: var(--muted); display: grid; gap: 1px; max-height: 30vh; overflow: auto; }
 .readout .modes { display: flex; margin: 2px 0 5px; font-size: 11px; }
 .readout .modes button { padding: 3px 7px; }
 .readout .amodes { display: flex; gap: 8px; margin: 0 0 5px; font-size: 11px; color: var(--muted); }
@@ -406,7 +406,7 @@ details > :last-child { margin-bottom: 12px; }
 .toast {
   pointer-events: auto; display: flex; align-items: flex-start; gap: 10px; max-width: 100%;
   background: #1f2937; color: #fff; padding: 9px 12px 9px 14px; border-radius: 8px; box-shadow: var(--shadow);
-  border-left: 4px solid #60a5fa; overflow-wrap: anywhere; animation: toast-in 200ms ease-in-out;
+  border-left: 4px solid #60a5fa; animation: toast-in 200ms ease-in-out;
 }
 .toast.success { border-left-color: #4ade80; }
 .toast.warn { border-left-color: #fbbf24; }
@@ -671,7 +671,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 /* Markup notes: the user's text in a box joined to its point by a leader. */
 .m-label.m-note {
   white-space: pre-wrap; max-width: 240px; font: 500 12px/1.35 var(--font, system-ui, sans-serif);
-  padding: 4px 8px; cursor: move; touch-action: none; overflow-wrap: anywhere; z-index: 1;
+  padding: 4px 8px; cursor: move; touch-action: none; z-index: 1;
 }
 .m-leader {
   position: absolute; left: 0; top: 0; height: 0; border-top: 1.5px solid var(--c);
@@ -1014,7 +1014,7 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 #vault-panel .v-start .row input, .v-user input { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
 .v-user { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: var(--fs-caption); color: var(--muted); }
 .v-title { display: flex; align-items: center; gap: 8px; }
-.v-title b { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.v-title b { flex: 0 1 auto; min-width: 0; }
 .v-who { flex: 1; min-width: 0; font-size: var(--fs-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .v-more { min-width: 34px; }
 .mc-menu .v-menu-main { font-weight: 600; }
@@ -1025,7 +1025,7 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .v-bh-help { margin: 2px 0 4px; font-size: var(--fs-caption); }
 .v-behind { list-style: none; padding-left: 0; max-height: 40vh; }
 .v-behind > li { padding: 6px 0; border-bottom: 1px solid var(--line); }
-.v-bh-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; overflow-wrap: anywhere; }
+.v-bh-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .v-bh-refs { margin: 2px 0 0; padding-left: 16px; color: var(--muted); }
 .v-multi .v-acts-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .v-h { margin: 12px 0 4px; font-size: var(--fs-caption); color: var(--muted); }
@@ -1040,7 +1040,7 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .v-details ul { margin: 2px 0; padding-left: 16px; }
 .v-details .v-h { margin: 6px 0 2px; }
 .v-latest { margin: 4px 0; color: var(--muted); }
-.v-link { background: none; border: 0; padding: 0; font: inherit; color: var(--accent-text); text-decoration: underline; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.v-link { background: none; border: 0; padding: 0; font: inherit; color: var(--accent-text); text-decoration: underline; cursor: pointer; text-align: left; }
 .v-folder { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 5px 10px 5px calc(10px + var(--d, 0) * 14px); border: 0; border-bottom: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
 .v-folder .muted { font-weight: 400; font-size: var(--fs-caption); }
 .v-twist { display: inline-block; width: 10px; color: var(--muted); }
@@ -1050,14 +1050,14 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .v-chip-n { color: var(--muted); }
 .v-chip.on .v-chip-n { color: inherit; }
 .v-row.sel { background: var(--accent-soft); }
-.v-name { overflow-wrap: anywhere; }
+.v-name { }
 .v-meta { font-size: var(--fs-caption); color: var(--muted); }
 .v-lock { white-space: nowrap; }
 .v-lock.mine { color: var(--accent-text); }
 .v-acts { padding: 8px 10px; }
 /* The selected file's commands stay in view at the foot of the panel, however long the file list. */
 #vault-panel > .v-acts { position: sticky; bottom: 0; z-index: 2; background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.08); max-height: 48vh; overflow: auto; }
-.v-acts-h { font-weight: 600; overflow-wrap: anywhere; }
+.v-acts-h { font-weight: 600; }
 .v-dlg { max-width: min(760px, 94vw); }
 .v-scroll { max-height: 50vh; overflow: auto; }
 .v-table { border-collapse: collapse; width: 100%; font-size: var(--fs-caption); }
@@ -1102,7 +1102,7 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .v-trs { align-items: center; }
 .v-card { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 8px 0 0; font-size: var(--fs-caption); }
 .v-card dt { color: var(--muted); }
-.v-card dd { margin: 0; overflow-wrap: anywhere; }
+.v-card dd { margin: 0; }
 .v-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 8px 0; }
 .v-form label { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-caption); }
 .v-form input:not([type="checkbox"]), .v-form select, #vault-panel .v-search input, .v-cmp select, #vault-dlg .row select { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; min-width: 0; }
@@ -1184,7 +1184,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .v-geo3d { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); min-height: 120px; }
 .v-geo3d canvas { display: block; max-width: 100%; height: auto; }
 .v-pick { display: grid; gap: 2px; max-height: min(50vh, 420px); overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
-.v-pick .chk { display: flex; white-space: normal; overflow-wrap: anywhere; }
+.v-pick .chk { display: flex; white-space: normal; }
 .v-refs { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 8px 0 0; display: grid; gap: 4px; }
 .v-refs legend { font-size: 12px; padding: 0 4px; }
 /* View navigation (FR-UI-103/104): Zoom to area box and the Space orientation picker. */
@@ -1734,15 +1734,15 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-cmptable { width: 100%; border-collapse: collapse; font-size: 11px; }
 .sim-cmptable th, .sim-cmptable td { padding: 2px 3px; text-align: right; border-bottom: 1px solid var(--line); font-family: var(--mono); }
 .sim-cmptable th { color: var(--muted); font: 500 11px inherit; }
-.sim-cmptable th:first-child, .sim-cmptable td:first-child { text-align: left; white-space: normal; overflow-wrap: anywhere; font-family: inherit; }
-.sim-cmptable td { white-space: normal; overflow-wrap: anywhere; }
+.sim-cmptable th:first-child, .sim-cmptable td:first-child { text-align: left; white-space: normal; font-family: inherit; }
+.sim-cmptable td { white-space: normal; }
 .sim-comptable { table-layout: fixed; width: 100%; }
 .sim-comptable th:first-child { width: 38%; }
 .sim-comptable th:first-child, .sim-comptable td:first-child { text-align: left; }
 .sim-comptable td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sim-comptable tbody tr { cursor: pointer; }
 .sim-comptable tbody tr.sel { font-weight: 600; }
-.sim-meta { color: var(--muted); font-size: 11px; text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.sim-meta { color: var(--muted); font-size: 11px; text-align: right; min-width: 0; }
 .sim-ib { width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; }
 .sim-ib:hover { background: var(--panel-2); color: var(--text); }
 .sim-none { padding: 2px 6px; }
@@ -1831,6 +1831,11 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-bolttable th:first-child, .sim-bolttable td:first-child { text-align: left; }
 .sim-bolttable td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sim-bolttable tr.bad td[data-v=bsf] { color: var(--danger, #c92a2a); font-weight: 600; }
+.sim-paths td { white-space: nowrap; }
+.sim-paths th { vertical-align: bottom; }
+.sim-comptable.sim-paths th:first-child { width: 22%; }
+.sim-comptable.sim-paths th:nth-child(2) { width: 14%; }
+.sim-paths td:not(:first-child), .sim-paths th:not(:first-child) { text-align: right; }
 .sim-tcomps tr.bad td[data-v=tcmax] { color: var(--danger, #c92a2a); font-weight: 600; }
 .sim-pkparts { width: 100%; border-collapse: collapse; }
 .sim-pkparts th, .sim-pkparts td { padding: 2px 4px; text-align: left; font-size: 12px; }

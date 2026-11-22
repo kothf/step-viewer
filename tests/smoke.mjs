@@ -17355,6 +17355,10 @@ try {
     check(!b1.error && Math.abs(b1.applied - 29.17) < 1e-6 && Math.abs(outSum - 29.17) < 0.05 && b1.out.every(x => x > 1) && b1.comps.length === 7 && b1.bad.length >= 1 && b1.bad.every(n => /^(R14|R20|V3|Q2)</.test(n)) && /over/.test(b1.over ?? "")
       && b1.limits.filter(Boolean).length === 6 && b1.wide <= 0,
       `thermal 1.655: the board study solves: the 29.17 W of the package leave by convection and radiation, every part has its temperature beside its limit and the ones over are marked (${JSON.stringify(b1)})`);
+    // 1.657: heat paths: where each part's heat went (board, air, elsewhere), the package's split in the row's title
+    const hp1 = await bp.evaluate(() => ({ paths: window.__sv.sim.state().thermal?.paths, rows: [...document.querySelectorAll("#sim-tree .sim-paths tr[data-path]")].map(r => [r.dataset.path, r.querySelector('[data-v="pboard"]').textContent, r.querySelector('[data-v="pair"]').textContent, !!r.title]), note: document.querySelector('#sim-tree [data-v="pathnote"]')?.textContent }));
+    check(hp1.rows.length === 6 && hp1.paths.every(x => Math.abs(x.board + x.air + x.other - x.p) < 1e-9 && x.air > 0) && hp1.paths.filter(x => x.board > 0.1 * x.p).length >= 2 && hp1.rows.every(r => r[3]) && /conductances/.test(hp1.note ?? ""),
+      `thermal 1.657: the Heat paths table says, for each package part, the share of its heat conducted into the board (a cool part on the hot board takes heat in) and the share off its own surface, with the package's split in the row title (${JSON.stringify(hp1)})`);
     // the heat table: a part left out makes no heat; a heatsink by its thermal resistance on the transistor
     await bp.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
     await bp.waitForSelector("#sim-pm .sim-pkparts tr[data-pk]");
@@ -17365,6 +17369,17 @@ try {
     const less = await bp.evaluate(() => ({ row: document.querySelector('#sim-tree .sim-row[data-id="l1"]').innerText.replace(/\s+/g, " ").trim(), stale: window.__sv.sim.state().stale }));
     check(tbl.length === 6 && tbl[0][0] === "V3" && tbl[0][1] === "18.2" && tbl.every(r => r[2]) && /5 parts.*10\.97 W|5 parts.*11 W/.test(less.row) && less.stale,
       `thermal 1.655: the Heat from package panel lists every part with its power; unticking the valve leaves 5 parts and the results go stale (${JSON.stringify({ tbl, less })})`);
+    // 1.657: Keep the package's split: the board shares go into the board under each part as fixed powers
+    await bp.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
+    await bp.waitForSelector('#sim-pm input[data-k="split"]');
+    await bp.click('#sim-pm input[data-k="split"]');
+    await bp.click("#sim-pm .pm-ok");
+    await bp.click('#sim-tools [data-s="solve"]');
+    await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 400000 });
+    await bp.waitForTimeout(500);
+    const hp2 = await bp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, applied: s.thermal?.applied, paths: s.thermal?.paths, note: document.querySelector('#sim-tree [data-v="pathnote"]')?.textContent }; });
+    check(!hp2.error && hp2.paths.length === 5 && hp2.paths.some(x => x.name === "R14" && Math.abs(x.board - 1.6) < 0.05) && hp2.paths.some(x => x.name === "R20" && Math.abs(x.board - 1.9) < 0.05) && /kept/.test(hp2.note ?? "") && hp2.applied > 5 && hp2.applied <= 10.98,
+      `thermal 1.657: with the package's split kept the study solves again and says so under the Heat paths table (${JSON.stringify(hp2)})`);
     await ctx.close();
   }
 

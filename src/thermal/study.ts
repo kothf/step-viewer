@@ -56,6 +56,49 @@ export function plateAxis(tris: ArrayLike<number>): { axis: number; t: number } 
 }
 
 /**
+ * Where a part sits on the board (FR-TBRD-003): the board's face towards the part, square to the board's thin
+ * axis, cut to the part's footprint (its box grown by `grow` mm across the board). Null when the board is not a
+ * flat plate or nothing of it lies under the part.
+ */
+export function contactPatch(board: ArrayLike<number>, part: ArrayLike<number>, grow = 0.5): Float64Array | null {
+  const pl = plateAxis(board);
+  if (!pl || part.length < 9) return null;
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < part.length; i++) { const a = i % 3, v = part[i]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
+  const ax = pl.axis, a1 = (ax + 1) % 3, a2 = (ax + 2) % 3, mid = (lo[ax] + hi[ax]) / 2, keep: number[] = [];
+  // the footprint's four sides as half-planes over (u, v) = the two in-plane coordinates
+  const sides: [number, number, number][] = [[0, 1, lo[a1] - grow], [0, -1, -(hi[a1] + grow)], [1, 1, lo[a2] - grow], [1, -1, -(hi[a2] + grow)]];
+  for (let o = 0; o + 8 < board.length; o += 9) {
+    const ux = board[o + 3] - board[o], uy = board[o + 4] - board[o + 1], uz = board[o + 5] - board[o + 2];
+    const vx = board[o + 6] - board[o], vy = board[o + 7] - board[o + 1], vz = board[o + 8] - board[o + 2];
+    const n = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx], a2n = Math.hypot(n[0], n[1], n[2]);
+    if (!(a2n > 0) || Math.abs(n[ax]) < 0.99 * a2n) continue;
+    const at = (board[o + ax] + board[o + 3 + ax] + board[o + 6 + ax]) / 3;
+    // the face looking towards the part
+    if (n[ax] * (mid - at) <= 0) continue;
+    let poly: number[][] = [0, 3, 6].map(k => [board[o + k + a1], board[o + k + a2]]);
+    for (const [c, sg, k] of sides) {
+      const next: number[][] = [];
+      for (let i = 0; i < poly.length; i++) {
+        const p = poly[i], q = poly[(i + 1) % poly.length], dp = sg * p[c] - k, dq = sg * q[c] - k;
+        if (dp >= 0) next.push(p);
+        if (dp >= 0 !== dq >= 0) { const t = dp / (dp - dq); next.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])]); }
+      }
+      poly = next;
+      if (poly.length < 3) break;
+    }
+    if (poly.length < 3) continue;
+    const pt = (q: number[]) => { const r = [0, 0, 0]; r[ax] = at; r[a1] = q[0]; r[a2] = q[1]; return r; };
+    // the cut keeps the triangle's winding: a fan from its first corner
+    for (let i = 1; i + 1 < poly.length; i++) {
+      const A = poly[0], B = poly[i], C = poly[i + 1];
+      if (Math.abs((B[0] - A[0]) * (C[1] - A[1]) - (C[0] - A[0]) * (B[1] - A[1])) > 1e-12) keep.push(...pt(A), ...pt(B), ...pt(C));
+    }
+  }
+  return keep.length ? Float64Array.from(keep) : null;
+}
+
+/**
  * What a board conducts, W/(m·K), from its surface and copper (FR-TBRD-010): `k3` along world X, Y, Z when it
  * lies square to an axis (in-plane along it, the series value through it); a tilted board gets the in-plane
  * value every way.
@@ -108,7 +151,7 @@ export function guessMaterial(part: Pick<ThermalPart, "designator" | "part" | "m
 }
 
 /** One package part's heat in the study. */
-export interface PlanHeat { id: number; name: string; bodies: number[]; p: number; limit?: number }
+export interface PlanHeat { id: number; name: string; bodies: number[]; p: number; limit?: number; board?: number; sink?: number; path?: ThermalPart["path"] }
 export interface BoardPlan {
   /** Body index of the board, −1 = none found. */
   board: number;
@@ -139,7 +182,7 @@ export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelB
   for (const p of man.parts) {
     if (p.id === 0) continue;
     const list = (match.bodies.get(p.id) ?? []).filter(i => i !== board), w = p.p ?? 0;
-    heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}) });
+    heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}) });
     if (list.length) power += w;
   }
   return { board, thickness: board >= 0 ? sizes(bodies[board].box)[0] : 0, mats, names, heat, ambient: man.settings.ambient, emissivity: man.settings.emissivity, power };

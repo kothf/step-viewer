@@ -192,3 +192,49 @@ test("a board study: heat from the package, cooling of every open surface, a hea
   st.supports[1].rth = 0;
   assert.deepEqual(thermalSetup(st, asmBody, ["c1", "c2"]).problems, [{ id: "s2", code: "E-TH-VALUE" }]);
 });
+
+test("heat paths of a board study: where a part's heat goes, and the package's split kept (FR-TBRD-003)", () => {
+  const boxBody = (l: number[], h: number[], comp: string) => {
+    const t: number[] = [], f: number[] = [], n: string[] = [];
+    for (let a = 0; a < 3; a++) for (const end of [0, 1]) {
+      const q = rectFace(a, end ? h[a] : l[a], l, h, !!end);
+      n.push(`${comp}@${"xyz"[a]}${end}`);
+      t.push(...q);
+      for (let k = 0; k < q.length / 9; k++) f.push(n.length - 1);
+    }
+    return { tris: t, face: f, names: n };
+  };
+  // a board 60 × 40 × 1.6 and a part 10 × 10 × 10 standing on it
+  const P = boxBody([0, 0, 0], [60, 40, 1.6], "pcb"), Q = boxBody([20, 15, 1.6], [30, 25, 11.6], "r1");
+  const body = { tris: Float64Array.from([...P.tris, ...Q.tris]), face: Int32Array.from([...P.face, ...Q.face.map(i => i + 6)]), names: [...P.names, ...Q.names], lo: [0, 0, 0], hi: [60, 40, 11.6] };
+  const regs = [{ tris: Float64Array.from(P.tris), mat: { name: "pcb", E: 0, nu: 0, rho: 0 } }, { tris: Float64Array.from(Q.tris), mat: { name: "r", E: 0, nu: 0, rho: 0 } }];
+  const st = newStudy([], "thermal");
+  st.settings.ambient = 25;
+  st.loads.push({ id: "l1", type: "pkgheat", faces: [], board: "pcb", parts: [{ id: 1, name: "R1", comps: ["r1"], p: 2, board: 1.2, sink: 0.5, path: "chassis" }] });
+  st.supports.push({ id: "s1", type: "conv", faces: [], all: true, h: 10 });
+  const solve = () => {
+    const set = thermalSetup(st, body, ["pcb", "r1"]);
+    return { set, r: [...runThermal({ body, mat: regs[0].mat, problem: studyProblem(st, body), passes: 2, energyTol: 0, pos, nrm, regions: regs, thermal: { k: 0.0003, setup: set, ks: [0.0003, 0.0003], gap: 0.1 } })].at(-1)! };
+  };
+  // without the split all the heat is made in the part; what leaves each component adds up to the heat put in
+  const a = solve(), ca = a.r.thermal!.comps!;
+  assert.deepEqual(a.set.sources, [{ power: 2, doms: [1] }]);
+  assert.ok(Math.abs(ca[1].power - 2) < 1e-9 && ca[0].power === 0);
+  assert.ok(Math.abs(ca[0].out! + ca[1].out! - 2) < 0.02, `out ${ca[0].out} + ${ca[1].out}`);
+  // the part conducts some of its heat into the board, the board loses it to the air
+  assert.ok(ca[0].out! > 0.1 && ca[1].out! < 2, `board ${ca[0].out}, part ${ca[1].out}`);
+  // kept: 1.2 W enters the board under the part, 0.5 W goes to the chassis, 0.3 W is made in the part
+  st.loads[0].split = true;
+  const b = solve(), patch = b.set.sources.find(s => s.tris)!;
+  assert.equal(b.set.sources.length, 2);
+  assert.equal(patch.power, 1.2);
+  assert.equal(patch.dom, 0);
+  for (let o = 0; o < patch.tris.length; o += 3) {
+    assert.ok(Math.abs(patch.tris[o + 2] - 1.6) < 1e-9, "on the board's top face");
+    assert.ok(patch.tris[o] >= 0 && patch.tris[o] <= 60);
+  }
+  assert.deepEqual(b.set.sources.find(s => !s.tris), { power: 2 - 1.2 - 0.5, doms: [1] });
+  const cb = b.r.thermal!.comps!;
+  assert.ok(Math.abs(cb[0].power - 1.2) < 1e-9 && Math.abs(cb[1].power - 0.3) < 1e-9);
+  assert.ok(Math.abs(b.r.thermal!.applied - 1.5) < 0.01, `applied ${b.r.thermal!.applied}`);
+});
