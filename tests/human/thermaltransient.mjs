@@ -92,6 +92,13 @@ const s4 = await sim(), T4 = s4.transient, end4 = T4 ? T4.max[T4.max.length - 1]
 check("TT-4", !s4.error && T4 && f > 0.42 && f < 0.58,
   "with the heater on 30 s in every 60 s the block rises about half as much in 30 min", { meta, error: s4.error, end2, end4, f }, await snap(pg, "transient-duty"));
 
+// TT-6: the warm-up saved as an animated GIF, one frame per output time.
+await pg.click('#sim-legend [data-a="gif"]');
+await pg.waitForFunction(() => window.__sv.sim.state().gifs > 0, null, { timeout: 120000 });
+const s6 = await sim();
+check("TT-6", s6.gif && s6.gif.frames === T4.times.length && s6.gif.bytes > 1000,
+  "the GIF button in the legend saves the warm-up, one frame per output time", { gif: s6.gif, times: T4?.times.length }, await snap(pg, "transient-gif"));
+
 // TT-5: Russian.
 await pg.click("#lang-btn");
 const ru = await pg.evaluate(() => [...document.querySelectorAll("#tab-sim *, #sim-tools *, #sim-legend *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
