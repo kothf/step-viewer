@@ -326,14 +326,22 @@ export const offComps = (st: Study | null | undefined) => new Set(Object.entries
  * `pad` = an interface material `t` mm thick of conductivity `k`, W/(m·K); `none` = insulated. Without a link
  * the contact is perfect.
  */
-export interface StudyLink { a: string; b: string; type: "sliding" | "none" | "adhesive" | "resist" | "pad"; t?: number; E?: number; h?: number; k?: number }
+/**
+ * Bolted joints (FR-TCON-003): a pair a toolbox bolt clamps passes heat by the contact conductance `h` of a
+ * bolted joint unless another type is typed; `bolted` keeps that with a typed `h`, `perfect` turns it off.
+ */
+export interface StudyLink { a: string; b: string; type: "sliding" | "none" | "adhesive" | "resist" | "pad" | "bolted" | "perfect"; t?: number; E?: number; h?: number; k?: number }
+/** Link types only thermal studies use (a structural solve leaves them out). */
+export const THERMAL_LINK_TYPES: ReadonlySet<string> = new Set(["resist", "pad", "bolted", "perfect"]);
 /** A dry metal-to-metal contact under light pressure, W/(m²·K), and a silicone pad. */
 export const DEFAULT_TCC = 3000;
+/** A dry bolted metal joint, W/(m²·K): clamped harder than a resting contact (FR-TCON-003). */
+export const BOLTED_TCC = 5000;
 export const DEFAULT_PAD = { t: 0.5, k: 3 };
 /** What a thermal link passes per area and kelvin, W/(mm²·K). */
 export function linkConductance(l: { type: string; t?: number; h?: number; k?: number }): number {
   if (l.type === "pad") return ((l.k && l.k > 0 ? l.k : DEFAULT_PAD.k) * 1e-3) / (l.t && l.t > 0 ? l.t : DEFAULT_PAD.t);
-  return (l.h && l.h > 0 ? l.h : DEFAULT_TCC) * 1e-6;
+  return (l.h && l.h > 0 ? l.h : l.type === "bolted" ? BOLTED_TCC : DEFAULT_TCC) * 1e-6;
 }
 export const DEFAULT_GLUE = { t: 0.2, E: 2000 };
 /** Poisson's ratio taken for an adhesive layer. */

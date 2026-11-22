@@ -17547,6 +17547,117 @@ try {
     await ctx.close();
   }
 
+  // --- bolted joints 1.673 (FRS-thermal FR-TCON-003): plates a toolbox bolt clamps pass heat by a bolted joint's conductance ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const bp = await ctx.newPage();
+    bp.on("pageerror", e => errors.push(e.message));
+    bp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await bp.goto(`${origin}/index.html?debug`);
+    await bp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await bp.goto(`${origin}/index.html?debug`);
+    await bp.waitForFunction(() => window.__sv);
+    await bp.click("#new-part");
+    await bp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    await bp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const pt = (id, x, y) => ({ id, t: "point", x, y }), ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("a", 0, 0), pt("b", 40, 0), pt("c", 40, 20), pt("d", 0, 20), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a"), pt("h1", 20, 10), { id: "k1", t: "circle", c: "h1", r: 3.3 }] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 5 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50 };
+    }));
+    await bp.waitForTimeout(150);
+    await bp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await bp.click("#new-more");
+    await bp.click("#new-asm-part");
+    const shown = n => bp.waitForFunction(k => window.__sv.asm.doc && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await shown(1);
+    await bp.evaluate(() => window.__sv.asm.change(d => { const c = d.components[0], tf = [...c.tf]; tf[11] += 5; d.components.push({ ...c, id: "c2", name: "Plate<2>", tf, fixed: true }); }));
+    await bp.waitForTimeout(300);
+    await shown(2);
+    await bp.click('#asm-tools [data-ac="fastener"]');
+    await bp.evaluate(() => window.__sv.asm.setFastener({ kind: "iso4762", size: "M6", length: 16 }));
+    const hole = (i, z) => bp.evaluate(([i, z]) => { const a = window.__sv.asm, d = window.__sv.viewer.parts[i].data; a.fastenHole(i, d.faces.findIndex(f => f.type === "cylinder"), [23.3, 10, z]); }, [i, z]);
+    await hole(1, 9.5);
+    await shown(3);
+    await bp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 2 && !window.__sv.asm.building, null, { timeout: 120000 });
+    await bp.evaluate(() => window.__sv.asm.setFastener({ kind: "iso4032" }));
+    await hole(0, 0.5);
+    await shown(4);
+    await bp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 4 && !window.__sv.asm.building, null, { timeout: 120000 });
+    await bp.evaluate(() => window.__sv.asm.closeTools());
+    { const r = await bp.$eval("#viewport", e => { const b = e.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; }); await bp.mouse.move(r[0], r[1]); }
+    await bp.keyboard.press("f");
+    await bp.waitForTimeout(900);
+    const sim = () => bp.evaluate(() => window.__sv.sim.state());
+    const solved = async () => { await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await bp.waitForTimeout(400); };
+    const at = (i, axis, sign) => bp.evaluate(([i, axis, sign]) => {
+      const v = window.__sv.viewer, part = v.parts[i];
+      let best = null, top = -Infinity;
+      for (const f of part.data.faces) { const w = v.toWorld(part, f.center), q = sign * w.getComponent(axis); if (q > top) { top = q; best = w.clone(); } }
+      const s = best.project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, [i, axis, sign]);
+    await bp.click("#cm-t-simulation");
+    await bp.waitForTimeout(300);
+    await bp.click('#sim-tools [data-s="mode-thermal"]');
+    await bp.waitForTimeout(200);
+    // a side of the lower plate held at 20 °C, 4 W made throughout the upper plate
+    // the plates by height: the lower one is the first component
+    const [lo, up] = await bp.evaluate(() => { const v = window.__sv.viewer, w = i => [v.toWorld(v.parts[i], v.parts[i].data.bboxMin), v.toWorld(v.parts[i], v.parts[i].data.bboxMax)];
+      return v.parts.map((p, i) => i).filter(i => { const [a, b] = w(i); return Math.abs(b.x - a.x) > 30; }).sort((a, b) => Math.min(w(a)[0].z, w(a)[1].z) - Math.min(w(b)[0].z, w(b)[1].z)); });
+    await bp.click('#sim-tools [data-s="temp"]');
+    // a side face of the lower plate that looks at the eye (the end away from it is hidden behind the upper plate)
+    let p = await bp.evaluate(i => {
+      const v = window.__sv.viewer, part = v.parts[i], eye = v.camera.getWorldDirection(v.camera.position.clone()).negate();
+      let best = null, top = -Infinity;
+      for (const f of part.data.faces) { if (f.type !== "plane" || !f.normal) continue; const n = v.dirToWorld(part, f.normal); if (Math.abs(n.z) > 0.5) continue; const q = n.dot(eye); if (q > top) { top = q; best = v.toWorld(part, f.center); } }
+      const s = best.project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, lo);
+    await bp.mouse.click(p.x, p.y);
+    await bp.fill('#sim-pm [data-q="temp"]', "20");
+    await bp.keyboard.press("Tab");
+    await bp.click("#sim-pm .pm-ok");
+    await bp.waitForTimeout(400);
+    await bp.click('#sim-tools [data-s="heat"]');
+    p = await at(up, 0, 1);
+    await bp.mouse.click(p.x, p.y);
+    await bp.waitForTimeout(200);
+    await bp.check('#sim-pm [data-k="body"]');
+    await bp.fill('#sim-pm [data-n="value"]', "4");
+    await bp.keyboard.press("Tab");
+    await bp.click("#sim-pm .pm-ok");
+    await bp.waitForTimeout(400);
+    await bp.selectOption('#sim-tree select[data-k="passes"]', "1");
+    await bp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const pair = () => bp.evaluate(() => { const s = window.__sv.sim.state(), c = s.thermal?.contacts?.find(x => x.area > 500);
+      const row = [...document.querySelectorAll("#sim-tree .sim-tlinks select[data-k=tlink]")].find(sel => /Part1<1> – Plate<2>|Plate<2> – Part1<1>/.test(sel.closest("tr").innerText));
+      return { error: s.error, max: s.thermal?.max, c: c ? { type: c.type, area: Math.round(c.area), heat: c.heat, drop: c.ta - c.tb } : null, sel: row?.value, opts: row ? [...row.options].map(o => o.value) : [], h: row?.closest("tr").nextElementSibling?.querySelector('input[data-k="tcch"]')?.value,
+        note: document.querySelector('#sim-tree [data-v="boltnote"]')?.textContent, links: window.__sv.asm.doc.studies.at(-1).links ?? null, ab: row ? [row.dataset.a, row.dataset.b] : null }; });
+    const j1 = await pair();
+    // the contact passes most of the 4 W over about 766 mm² at 5000 W/(m²·K): about 1 K across it
+    check(!j1.error && j1.c?.type === "resistance" && Math.abs(j1.c.drop) > 0.5 && Math.abs(j1.c.drop) < 1.3 && j1.sel === "bolted" && j1.opts.includes("bolted") && j1.h === "5000" && /bolted joint/.test(j1.note ?? "") && j1.links === null,
+      `bolted joints 1.673: two plates clamped by a toolbox screw and nut are a bolted joint by default: 5000 W/(m²·K) across their contact, about 1 K for 4 W (${JSON.stringify(j1)})`);
+    await bp.selectOption(`#sim-tree .sim-tlinks select[data-k=tlink][data-a="${j1.ab[0]}"][data-b="${j1.ab[1]}"]`, "perfect");
+    await bp.waitForTimeout(300);
+    await bp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const j2 = await pair();
+    check(!j2.error && j2.c?.type === "perfect" && Math.abs(j2.c.drop) < 0.2 && j2.sel === "perfect" && JSON.stringify(j2.links?.map(l => l.type)) === '["perfect"]' && j2.max < j1.max - 0.4,
+      `bolted joints 1.673: set to Perfect, the bolted pair keeps that choice and the upper plate runs cooler (${JSON.stringify(j2)})`);
+    await bp.keyboard.press("Control+z");
+    await bp.waitForTimeout(400);
+    const j3 = await pair();
+    await bp.fill(`#sim-tree input[data-k="tcch"][data-a="${j1.ab[0]}"][data-b="${j1.ab[1]}"]`, "20000");
+    await bp.press(`#sim-tree input[data-k="tcch"][data-a="${j1.ab[0]}"][data-b="${j1.ab[1]}"]`, "Enter");
+    await bp.waitForTimeout(300);
+    const j4 = await pair();
+    check(j3.sel === "bolted" && j3.links === null && j4.sel === "bolted" && JSON.stringify(j4.links) === JSON.stringify([{ a: j1.ab[0], b: j1.ab[1], type: "bolted", h: 20000 }]),
+      `bolted joints 1.673: undo brings the bolted default back; a typed conductance is kept on the bolted joint (${JSON.stringify({ j3, j4 })})`);
+    await ctx.close();
+  }
+
   // --- thermal stress 1.663 (FRS-thermal TH5, FR-LOAD-011): a Temperature load, uniform or from a thermal study ---
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.673.0] - 2026-11-22
+
+### Added
+
+- Bolted joints in thermal studies. Two parts that a screw and nut (or a tapped hole) from the toolbox clamp together now pass heat through their contact as a bolted joint: a contact conductance of 5000 W/(m²·K) by default instead of a perfect contact, which is closer to two machined faces held by a bolt. The Connections table shows Bolted joint for such a pair with its conductance to type over, and Perfect, a pad or no contact can still be picked. Toolbox screws, nuts and washers now carry steel's thermal conductivity and heat capacity, so they no longer stop a thermal study.
+
 ## [1.672.0] - 2026-11-22
 
 ### Added
@@ -4424,7 +4430,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.672.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.673.0...HEAD
+[1.673.0]: https://github.com/kothf/step-viewer/compare/v1.672.0...v1.673.0
 [1.672.0]: https://github.com/kothf/step-viewer/compare/v1.671.0...v1.672.0
 [1.671.0]: https://github.com/kothf/step-viewer/compare/v1.670.0...v1.671.0
 [1.670.0]: https://github.com/kothf/step-viewer/compare/v1.669.0...v1.670.0
