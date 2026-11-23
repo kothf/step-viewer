@@ -817,6 +817,8 @@ export interface RunInput {
   nrm: Float32Array;
   /** Cells aimed for (default 150). */
   cells?: number;
+  /** Helper workers for the work that can be shared out (`parPool.ts`): 0 = none, absent = by the device. */
+  threads?: number;
   /** A thermal study: conductivity W/(mm·K) and its set-up. `mat`, `problem` and the structural parts are not used. */
   /**
    * Assemblies: `ks` = each region's conductivity (the regions are then solved as bodies joined where they
@@ -1262,6 +1264,14 @@ export function thermalBoost(inp: RunInput, h: number, inside: (x: number, y: nu
   }
   return { grid, level: near };
 }
+/** A steady thermal study's cell size and the bodies its grid is cut against (`runThermal` and the helpers that cut the cells ahead). */
+export function thermalFrame(inp: RunInput): { h: number; tris: Float64Array[] } {
+  const T = inp.thermal!, R = T.ks && inp.regions && inp.regions.length > 1 ? inp.regions : null;
+  const pads = T.setup.sources.some(q => q.tris && (q.fine ?? 0) > 0);
+  const h = inp.cells || !R ? cellSize(inp.body, inp.cells) : thermalCellSize(inp.body, R.map(r => r.tris), pads);
+  return { h, tris: R ? R.map(r => r.tris) : [inp.body.tris] };
+}
+
 
 export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: number, y: number, z: number) => boolean) => void): Generator<PassResult> {
   const T = inp.thermal!, set = T.setup, exchanges = exchangesOf(set, inp.body);
@@ -1274,8 +1284,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0 || (s.density ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
   const inside = insideOf(new MeshBody(inp.body.tris));
-  const pads = set.sources.some(q => q.tris && (q.fine ?? 0) > 0);
-  const h = inp.cells || !R ? cellSize(inp.body, inp.cells) : thermalCellSize(inp.body, R.map(r => r.tris), pads);
+  const h = thermalFrame(inp).h;
   const passes = Math.max(1, Math.min(MAX_PASSES, Math.round(inp.passes)));
   let grid: Grid | undefined, prev: Float64Array | undefined, before: Float32Array | null = null;
   const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };

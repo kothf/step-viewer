@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.717.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies use more than one processor core for the first time: before a steady thermal solve starts, the cells of the grid are cut against the bodies by helper workers on the other cores (the device's threads less two, at most 8; none on a device with fewer than four threads). The grid is the same as before, so the results are too. On a 100 × 60 mm board with three parts this step went from 78 s to 27 s on four cores. `?simthreads=N` in the address sets the number of helpers (0 = none).
+
 ## [1.716.0] - 2026-11-23
 
 ### Changed
@@ -4727,7 +4733,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.716.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.717.0...HEAD
+[1.717.0]: https://github.com/kothf/step-viewer/compare/v1.716.0...v1.717.0
 [1.716.0]: https://github.com/kothf/step-viewer/compare/v1.715.0...v1.716.0
 [1.715.0]: https://github.com/kothf/step-viewer/compare/v1.714.0...v1.715.0
 [1.714.0]: https://github.com/kothf/step-viewer/compare/v1.713.0...v1.714.0

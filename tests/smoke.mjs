@@ -17492,9 +17492,9 @@ try {
     const ap = await ctx.newPage();
     ap.on("pageerror", e => errors.push(e.message));
     ap.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
-    await ap.goto(`${origin}/index.html?debug`);
+    await ap.goto(`${origin}/index.html?debug&simthreads=2`);
     await ap.evaluate(() => localStorage.setItem("sv:tips", "off"));
-    await ap.goto(`${origin}/index.html?debug`);
+    await ap.goto(`${origin}/index.html?debug&simthreads=2`);
     await ap.waitForFunction(() => window.__sv);
     await ap.click("#new-part");
     await ap.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
@@ -17573,6 +17573,8 @@ try {
       && res1.rows.length === 2 && Math.abs(res1.heat - 4) < 0.05 && res1.wide <= 0 && ru.length === 0
       && hout.head.length === 4 && hout.rows.length === 2 && hout.rows.every(r => r.air === "0") && Math.abs(hout.rows[0].held - 4) < 0.05 && Math.abs(hout.rows[0].cond + 4) < 0.05 && Math.abs(hout.rows[1].cond - 4) < 0.05 && /: [34][.\d]* W$/.test(hout.rows[1].tip),
       `thermal 1.654: a thermal study of an assembly: 4 W made in one bar leave through the other, which is held at 20 °C; components with their conductivity, the contact with the heat through it; translated; where each bar's heat goes (${JSON.stringify({ tb, kept, tree0, error: t1.error, thermal: t1.thermal, res1, ru, hot, hout })})`);
+    // 1.717: the cells were cut by helper workers (asked for with ?simthreads=2), with the same answer as above
+    check(t1.helpers?.helpers === 2 && t1.helpers.ms >= 0, `thermal 1.717: the cells of a thermal study of an assembly are cut by two helper workers (${JSON.stringify(t1.helpers)})`);
     // a pad between the bars: 0.5 mm of 3 W/(m·K) adds P·t / (k·A)
     await ap.selectOption('#sim-tree select[data-k="tlink"]', "pad");
     await ap.waitForTimeout(400);

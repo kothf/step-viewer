@@ -1,18 +1,25 @@
 // A thermal study saved in an assembly file, solved in node as the Simulation tab solves it (no bolts, no typed k tables):
 //   node bench/run.mjs bench/thboard.bench.ts <file.mcadasm> [study index]
+// THBOARD_THREADS=n cuts the grid's cells in n helper threads first.
 // Prints each pass and the hottest temperature of every component. THBOARD_PASSES overrides the study's passes.
 import { readFileSync } from "node:fs";
 import { MeshBody, insideOf } from "../src/sim/body";
 import { Assembler } from "../src/kernel/assembly";
 import { asmSimGeometry } from "../src/kernel/simgeo";
 import { unpackAsm } from "../src/asm/file";
-import { thermalSetup, runThermal } from "../src/sim/run";
+import { thermalSetup, runThermal, thermalFrame } from "../src/sim/run";
+import { prepareCells } from "../src/sim/par";
+import { usePrepared } from "../src/sim/grid";
+import { helperThread, nodePool } from "./nodePool";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_GAP } from "../src/sim/types";
 import { boardK } from "../src/thermal/study";
 import { boardMap } from "../src/thermal/copper";
 // @ts-expect-error no types
 import init from "opencascade.js/dist/node.js";
 
+// a helper thread of the pool (THBOARD_THREADS): it only answers the pool's messages
+if (helperThread()) await new Promise(() => {});
 const oc = await init();
 const b = readFileSync(process.argv[2]);
 const doc = await unpackAsm(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
@@ -48,11 +55,14 @@ for (const l of st.loads) for (const q of l.parts ?? []) for (const r of q.into 
 const inBoard = insideOf(new MeshBody(Float64Array.from(bt)));
 let sampler: any = null;
 const t0 = performance.now(), passes = Number(process.env.THBOARD_PASSES ?? st.settings.passes);
-for (const p of runThermal({
+const input = {
   body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] } as any, passes, energyTol: st.settings.energyTol ?? 0, pos, nrm: new Float32Array(pos.length),
   mat: { name: "", E: 0, nu: 0, rho: 0 }, regions: bodies.map((q: any) => ({ tris: q.tris, mat: { name: "", E: 0, nu: 0, rho: 0 } })),
   thermal: { k: kOf(0) * 1e-3, setup, ks: bodies.map((_q: any, i: number) => kOf(i) * 1e-3), k3s, gap: st.settings.gap ?? DEFAULT_GAP, links: [], ...(kmaps.some(Boolean) ? { kmaps } : {}) },
-} as any, (sm: any) => { sampler = sm; })) {
+} as any;
+const threads = Number(process.env.THBOARD_THREADS ?? 0), pool = threads > 0 ? nodePool(threads, fileURLToPath(import.meta.url)) : null;
+if (pool) { const tp = performance.now(), F = thermalFrame(input); usePrepared(await prepareCells(pool, F.tris, geo.lo, geo.hi, F.h)); console.log(`cells cut by ${threads} helpers in ${((performance.now() - tp) / 1000).toFixed(1)} s`); }
+for (const p of runThermal(input, (sm: any) => { sampler = sm; })) {
   const comps = p.thermal?.comps?.map((c: any, i: number) => `${bodies[i].name} ${c.max.toFixed(1)}/${c.mean.toFixed(1)}`).join(", ");
   if (sampler && spots.length) {
     const pos = Float32Array.from(spots.flatMap(q => q.p)), r = sampler(pos, new Float32Array(pos.length));
@@ -73,3 +83,4 @@ for (const p of runThermal({
   }
   console.log(`pass ${p.pass}: p ${p.p}, ${p.dofs} unknowns, err ${p.err?.toFixed?.(1) ?? "-"} %, change ${p.change?.toFixed(2)}, ${comps}, ${((performance.now() - t0) / 1000).toFixed(1)} s`);
 }
+pool?.close();

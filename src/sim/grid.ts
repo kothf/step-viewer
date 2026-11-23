@@ -134,31 +134,55 @@ export interface GridOptions {
 const LEAF_RICH = 5;
 
 /** Cells of size h over [lo, hi] for the body `inside`. */
-export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, o: GridOptions): Grid {
+/** What the grid over a box is: cells per direction and its low corner (centred on the box, the leftover shared by both ends). */
+export function gridFrame(lo: number[], hi: number[], h: number): { n: number[]; lo0: number[] } {
   const n = [0, 1, 2].map(a => Math.max(1, Math.ceil((hi[a] - lo[a]) / h - 1e-4)));
-  // centre the grid on the box so the leftover is shared by both ends
-  const lo0 = [0, 1, 2].map(a => (lo[a] + hi[a]) / 2 - n[a] * h / 2);
+  return { n, lo0: [0, 1, 2].map(a => (lo[a] + hi[a]) / 2 - n[a] * h / 2) };
+}
+
+/** A cell's state against the body (1 inside, −1 cut) and, when cut, its points on the geometry; null = no cell here. */
+export interface CellPrep { st: number; fine: Points | null }
+export function cellFine(clo: number[], chi: number[], inside: Inside, depth: number, leafQ: number): CellPrep | null {
+  const s0 = boxState(clo, chi, inside);
+  // exact for a mesh body; else the 27 samples can miss thin material, so an "outside" cell still has
+  // its Gauss points tested
+  if (s0 === 0 && inside.hint) return null;
+  const st = s0 === 0 ? -1 : s0;
+  const fine = st === 1 ? null : volumePoints(clo, chi, leafQ, inside, s0 === -1 ? depth : 0, new Points(), st, 3, LEAF_RICH);
+  if (fine && !fine.n) return null;
+  return { st, fine };
+}
+
+/**
+ * Cells worked out ahead (by helper workers, `par.ts`): `makeGrid` takes them instead of cutting each cell itself
+ * when the grid and the settings are the same. `cells[dom][index]`: undefined = not prepared, null = no cell.
+ */
+export interface Prepared { lo0: number[]; h: number; n: number[]; depth: number; leafQ: number; cells: (CellPrep | null | undefined)[][] }
+let prepared: Prepared | null = null;
+export function usePrepared(p: Prepared | null) { prepared = p; }
+
+export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, o: GridOptions): Grid {
+  const { n, lo0 } = gridFrame(lo, hi, h);
   const g = new Grid(lo0, h, n);
   const vol = h * h * h;
   const doms = o.domains && o.domains.length > 1 ? o.domains : [inside];
   if (doms.length > 1) g.doms = doms;
+  const leafQ = o.leafQ ?? 3, P = prepared;
+  const ready = P && P.h === h && P.depth === o.depth && P.leafQ === leafQ && P.cells.length === doms.length && [0, 1, 2].every(a => P.n[a] === n[a] && P.lo0[a] === lo0[a]) ? P.cells : null;
   for (let dom = 0; dom < doms.length; dom++) {
   const inside = doms[dom], map = dom ? g.addMap() : g.map;
   for (let k = 0; k < n[2]; k++) for (let j = 0; j < n[1]; j++) for (let i = 0; i < n[0]; i++) {
     const clo = [lo0[0] + i * h, lo0[1] + j * h, lo0[2] + k * h];
     const chi = [clo[0] + h, clo[1] + h, clo[2] + h];
-    const s0 = boxState(clo, chi, inside);
-    // exact for a mesh body; else the 27 samples can miss thin material, so an "outside" cell still has
-    // its Gauss points tested
-    if (s0 === 0 && inside.hint) continue;
-    const st = s0 === 0 ? -1 : s0;
-    const fine = st === 1 ? null : volumePoints(clo, chi, o.leafQ ?? 3, inside, s0 === -1 ? o.depth : 0, new Points(), st, 3, LEAF_RICH);
-    if (fine && !fine.n) continue;
+    const at = (k * n[1] + j) * n[0] + i, had = ready?.[dom][at];
+    const cf = had !== undefined ? had : cellFine(clo, chi, inside, o.depth, leafQ);
+    if (!cf) continue;
+    const { st, fine } = cf;
     const pts = fine ? (o.fit && fine.n > o.fit ** 3 ? fitPoints(fine, clo, chi, o.fit) : fine) : volumePoints(clo, chi, o.q, inside, 0, new Points(), 1);
     const frac = pts.weight() / vol;
     // a face lying on a grid plane leaves a film of no volume in the cell beyond it
     if (!(frac > 1e-9)) continue;
-    map[(k * n[1] + j) * n[0] + i] = g.cells.length;
+    map[at] = g.cells.length;
     g.cells.push({ ijk: [i, j, k], lo: clo, hi: chi, state: st, pts, fine, frac, el: -1, dom });
   }
   }
