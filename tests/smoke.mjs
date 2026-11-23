@@ -17143,7 +17143,7 @@ try {
     const b1 = await bar();
     const empty = await tp.evaluate(() => !!document.querySelector('#sim-tree .sim-empty [data-a="newthermal"]'));
     check(b0.on === "mode-structural" && b0.ids.includes("force") && b0.ids.includes("fixed") && !b0.ids.includes("heat") && b0.checked === 1 && !b0.wide && b0.words === 2
-      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "vheat", "hflux", "temp", "conv", "fan", "rad", "radx", "chassis", "solve", "results", "report"]) && empty,
+      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "vheat", "hflux", "temp", "conv", "fan", "rad", "radx", "chassis", "insul", "solve", "results", "report"]) && empty,
       `thermal 1.651: the Simulation bar has a Structural | Thermal switch; Thermal shows the thermal study's commands in place of supports and loads (${JSON.stringify({ b0, b1, empty })})`);
     // 8 W made in the whole bar (a thermal study is made on the way), the top face held at 30 °C
     await tp.click('#sim-tools [data-s="heat"]');
@@ -18426,6 +18426,86 @@ try {
       && !c1.error && Math.abs(c1.thermal.out[0] / 120 - 1) < 0.01 && kept === JSON.stringify(ui.k3) && ru.length === 0
       && !c2.error && Math.abs(c2.thermal.out[0] / 40 - 1) < 0.01,
       `conductivity by direction 1.689: three times k along the bar passes 120 W instead of 40 W; a bad value is refused; back to one k; translated (${JSON.stringify({ pre, ui, e1: c1.error, o1: c1.thermal?.out, kept, ru, e2: c2.error, o2: c2.thermal?.out })})`);
+    await ctx.close();
+  }
+
+  // --- insulated faces and power by an expression 1.691 (FRS-thermal FR-TBC-002, FR-TLOAD-005) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const ip = await ctx.newPage();
+    ip.on("pageerror", e => errors.push(e.message));
+    ip.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await ip.goto(`${origin}/index.html?debug`);
+    await ip.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await ip.goto(`${origin}/index.html?debug`);
+    await ip.waitForFunction(() => window.__sv);
+    await ip.click("#new-part");
+    await ip.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // a 20 × 20 × 100 bar along Y, 10 W into its far end, convection on all open surfaces
+    await ip.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50, cp: 460, alpha: 12 };
+      d.studies = [{ id: "st1", name: "Thermal 1", kind: "thermal", supports: [{ id: "a1", name: "Convection 1", type: "conv", faces: [], all: true, h: 10 }], loads: [{ id: "l1", name: "Heat power 1", type: "heat", faces: [{ name: "f1:side:s1l3" }], value: { v: 10 } }], settings: { passes: 2, energyTol: 1, ambient: 25 } }];
+    }));
+    await ip.waitForTimeout(150);
+    await ip.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const solved = async () => { await ip.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await ip.waitForTimeout(400); };
+    await ip.click("#cm-t-simulation");
+    await ip.waitForTimeout(300);
+    await ip.click('#sim-tools [data-s="mode-thermal"]');
+    await ip.waitForTimeout(300);
+    await ip.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const open = await ip.evaluate(() => window.__sv.sim.state().thermal);
+    // the Insulated button: a panel with only the faces and its help; Russian throughout
+    await ip.click('#sim-tools [data-s="insul"]');
+    await ip.waitForSelector("#sim-pm .sim-faces");
+    const panel = await ip.evaluate(() => ({ help: [...document.querySelectorAll("#sim-pm .pm-help")].map(p => p.textContent).join(" "), inputs: document.querySelectorAll("#sim-pm input[data-q]").length }));
+    await ip.click("#lang-btn");
+    await ip.waitForTimeout(200);
+    const ru = await ip.evaluate(() => [...document.querySelectorAll("#sim-pm *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await ip.click("#lang-btn");
+    await ip.waitForTimeout(200);
+    await ip.click("#sim-pm .pm-cancel");
+    await ip.waitForTimeout(200);
+    // the near end and two long sides insulated: the heat leaves by the rest, and the bar runs hotter
+    await ip.evaluate(() => window.__sv.model.store.change("Insulated", d => { d.studies[0].supports.push({ id: "i1", name: "Insulated 1", type: "insul", faces: [{ name: "f1:side:s1l1" }, { name: "f1:side:s1l2" }, { name: "f1:side:s1l4" }] }); }));
+    await ip.waitForTimeout(400);
+    const row = await ip.evaluate(() => document.querySelector('#sim-tree .sim-row[data-id="i1"]')?.textContent ?? "");
+    await ip.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const ins = await ip.evaluate(() => window.__sv.sim.state());
+    check(/no heat crosses/i.test(panel.help) && panel.inputs === 0 && ru.length === 0 && /no heat crosses/.test(row)
+      && !ins.error && Math.abs(ins.thermal.out[0] / 10 - 1) < 0.02 && ins.thermal.max > open.max + 1,
+      `insulated 1.691: faces left out of all open surfaces; the bar runs hotter and all 10 W still leave (${JSON.stringify({ panel, ru, row, e: ins.error, out: ins.thermal?.out, max: ins.thermal?.max, open: open?.max })})`);
+    // over time: the heater's power by an expression of t, typed in its panel
+    await ip.evaluate(() => window.__sv.model.store.change("Transient", d => { d.studies[0].settings.transient = { end: 600, out: 60 }; }));
+    await ip.waitForTimeout(400);
+    await ip.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
+    await ip.waitForSelector('#sim-pm select[data-k="profile"]');
+    await ip.selectOption('#sim-pm select[data-k="profile"]', "expr");
+    await ip.waitForSelector('#sim-pm input[data-k="pexpr"]');
+    const def = await ip.evaluate(() => document.querySelector('#sim-pm input[data-k="pexpr"]').value);
+    await ip.fill('#sim-pm input[data-k="pexpr"]', "1 +");
+    await ip.press('#sim-pm input[data-k="pexpr"]', "Tab");
+    await ip.waitForTimeout(200);
+    const bad = await ip.evaluate(() => ({ inv: document.querySelector('#sim-pm input[data-k="pexpr"]')?.getAttribute("aria-invalid"), f: window.__sv.sim.state().edit?.draft?.profile?.f ?? null }));
+    await ip.fill('#sim-pm input[data-k="pexpr"]', "min(1, t/300)");
+    await ip.press('#sim-pm input[data-k="pexpr"]', "Tab");
+    await ip.waitForTimeout(200);
+    await ip.click("#sim-pm .pm-ok");
+    await ip.waitForTimeout(300);
+    const prof = await ip.evaluate(() => ({ p: window.__sv.model.store.doc.studies[0].loads[0].profile, row: document.querySelector('#sim-tree .sim-row[data-id="l1"]')?.textContent ?? "" }));
+    await ip.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const tr = await ip.evaluate(() => window.__sv.sim.state().transient);
+    // the power ramps up over 5 minutes: what goes in at 2 min is 0.4 of the full 10 W
+    const put = tr?.put ?? [], i2 = tr?.times.indexOf(120) ?? -1;
+    check(def === "0.5 + 0.5*sin(2*pi*t/60)" && bad.inv === "true" && prof.p?.kind === "expr" && prof.p.f === "min(1, t/300)" && /min\(1, t\/300\)/.test(prof.row)
+      && tr && i2 > 0 && Math.abs(put[i2] / 4 - 1) < 0.05 && Math.abs(put.at(-1) / 10 - 1) < 0.02 && tr.max.at(-1) > tr.max[1],
+      `expression profile 1.691: typed in the panel, a bad one refused; the heat put in follows min(1, t/300) (${JSON.stringify({ def, bad, prof, times: tr?.times, put, max: tr?.max })})`);
     await ctx.close();
   }
 

@@ -46,7 +46,7 @@ import { copperFromGerber } from "../thermal/copperRaster";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
-import { BOARD_RC, SERIES_COLORS, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
+import { BOARD_RC, SERIES_COLORS, exprProblem, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
 import { fluxArrows } from "./arrows";
 import { parseKTable, kTableText, ktFactors, type KTable } from "./ktable";
 import { DEFAULT_CHASSIS_RTH, DEFAULT_GAP, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
@@ -120,7 +120,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "remote", "hydro", "gravity", "centrifugal", "temperature"];
-const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", vheat: "▣", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", fan: "⤳", rad: "☼", radx: "⇌", chassis: "▥", transient: "◷", temperature: "ϑ" };
+const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", vheat: "▣", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", fan: "⤳", rad: "☼", radx: "⇌", chassis: "▥", insul: "▨", transient: "◷", temperature: "ϑ" };
 /** A forced air condition's speed, m/s (from the fan when it has one). */
 const forcedSpeed = (f: ForcedAir) => (f.fan ? fanSpeed(f.fan.q, f.fan.a) : f.speed);
 /** The flow direction's label (+X…−Z), or the nearest. */
@@ -157,6 +157,7 @@ const TIP: Record<string, string> = {
   rad: "Radiation: the faces radiate heat to the surroundings",
   radx: "Radiation between faces: two sets of faces exchange heat by radiation, like a valve bulb and the board under it",
   chassis: "Chassis wall: the faces a part is bolted or wired to, held at a temperature or passing heat to the room through a resistance; a board package's chassis shares go there",
+  insul: "Insulated: no heat crosses the picked faces, so convection and radiation on all open surfaces leave them out",
   newthermal: "New thermal study: the temperatures of this part and where its heat goes",
   ambient: "Ambient temperature: the surroundings that convection and radiation give heat to",
 };
@@ -791,7 +792,7 @@ export class SimController {
     if ((THERMAL_SUPPORTS as string[]).includes(c)) {
       const type = c as SupportType, amb = st.settings.ambient ?? DEFAULT_AMBIENT;
       this.connSide = 1;
-      this.edit = { kind: "support", isNew: true, draft: { id: nextId(st, "s"), name: itemName(st, type), type, faces: [], ...(type === "temp" ? { temp: amb } : type === "conv" ? { h: FILM_PRESETS[0][1] } : type === "radx" ? { faces2: [], emis: 0.9, emis2: 0.9 } : type === "chassis" ? { rth: DEFAULT_CHASSIS_RTH } : { emis: 0.9 }) } };
+      this.edit = { kind: "support", isNew: true, draft: { id: nextId(st, "s"), name: itemName(st, type), type, faces: [], ...(type === "temp" ? { temp: amb } : type === "conv" ? { h: FILM_PRESETS[0][1] } : type === "radx" ? { faces2: [], emis: 0.9, emis2: 0.9 } : type === "chassis" ? { rth: DEFAULT_CHASSIS_RTH } : type === "insul" ? {} : { emis: 0.9 }) } };
       this.renderAll(); this.drawMarks();
       return;
     }
@@ -3522,11 +3523,12 @@ export class SimController {
     if (!this.study()?.settings.transient) return "";
     const p = l.profile, kind = p?.kind ?? "";
     const qf = (q: string, label: string, v: number | undefined) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="${q}" value="${v != null ? trim(v) : ""}" spellcheck="false" /><span class="muted">s</span></span></label>`;
-    let inner = `<label class="pm-field"><span>${esc(t("Power"))}</span><select data-k="profile">${[["", "Constant"], ["step", "Switched on later"], ["duty", "Duty cycle"], ["table", "Table"]].map(([v, l2]) => `<option value="${v}"${v === kind ? " selected" : ""}>${esc(t(l2))}</option>`).join("")}</select></label>`;
+    let inner = `<label class="pm-field"><span>${esc(t("Power"))}</span><select data-k="profile">${[["", "Constant"], ["step", "Switched on later"], ["duty", "Duty cycle"], ["table", "Table"], ["expr", "Expression of t"]].map(([v, l2]) => `<option value="${v}"${v === kind ? " selected" : ""}>${esc(t(l2))}</option>`).join("")}</select></label>`;
     if (p?.kind === "step") inner += qf("pat", t("On from"), p.at ?? 0);
     else if (p?.kind === "duty") inner += qf("pon", t("On for"), p.on) + qf("pper", t("Every"), p.period) + qf("pdel", t("Starting at"), p.delay ?? 0);
+    else if (p?.kind === "expr") { const bad = exprProblem(p.f); inner += `<label class="pm-field pm-col"><span>${esc(t("Share of the power at t, s"))}</span><input type="text" data-k="pexpr" value="${esc(p.f)}" spellcheck="false" aria-invalid="${!!bad}" /></label>` + (bad ? `<p class="pm-help sim-bad" data-v="pexprbad">${esc(t(bad))}</p>` : ""); }
     else if (p?.kind === "table") inner += `<label class="pm-field pm-col"><span>${esc(t("Time, s and share of the power"))}</span><textarea data-k="ptable" rows="5" spellcheck="false">${esc(p.pts.map(r => `${trim(r[0])} ${trim(r[1])}`).join("\n"))}</textarea></label>`;
-    inner += `<p class="pm-help muted">${esc(kind === "duty" ? t("Full power for the on time of every cycle, none for the rest.") : kind === "table" ? t("One row per line: time and the share of the power (1 = full), straight between rows.") : kind === "step" ? t("No power until then, full power after.") : t("Full power from the start."))}</p>`;
+    inner += `<p class="pm-help muted">${esc(kind === "duty" ? t("Full power for the on time of every cycle, none for the rest.") : kind === "table" ? t("One row per line: time and the share of the power (1 = full), straight between rows.") : kind === "expr" ? t("An expression of the time t in seconds, 1 = full power, e.g. 0.5 + 0.5*sin(2*pi*t/60) or min(1, t/120). sin and cos take radians; below 0 counts as 0.") : kind === "step" ? t("No power until then, full power after.") : t("Full power from the start."))}</p>`;
     return group(t("Over time"), inner);
   }
 
@@ -3557,6 +3559,7 @@ export class SimController {
   private thermalText(it: StudySupport | StudyLoad, st: Study): string {
     const amb = (s: StudySupport) => `${sig(s.ambient ?? st.settings.ambient ?? DEFAULT_AMBIENT)} °C`;
     if (it.type === "temp") return `${sig(it.temp ?? 0)} °C`;
+    if (it.type === "insul") return t("no heat crosses");
     if (it.type === "chassis") return it.rth !== undefined ? `${sig(it.rth)} K/W, ${amb(it)}` : `${sig(it.temp ?? 0)} °C`;
     if (it.type === "conv" && it.rth !== undefined && !it.all) return `${sig(it.rth)} K/W, ${amb(it)}`;
     if (it.type === "conv" && it.natural) return `${t("natural convection")}, ${amb(it)}`;
@@ -4141,6 +4144,7 @@ export class SimController {
       const ambient = `<label class="pm-field"><span>${esc(t("Ambient temperature"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="amb" value="${s.ambient === undefined ? "" : trim(s.ambient)}" placeholder="${trim(amb)}" title="${esc(t("Empty: the study's ambient temperature"))}" spellcheck="false" /><span class="muted">°C</span></span></label>`;
       if (s.type === "temp") body += group(t("Temperature"), q("temp", t("Temperature"), s.temp ?? amb, "°C")
         + `<p class="pm-help muted">${esc(t("The faces are held at this temperature, like a cold plate or a mounting surface whose temperature is known."))}</p>`);
+      if (s.type === "insul") body += group(t("Insulated"), `<p class="pm-help muted">${esc(t("No heat crosses the picked faces: convection and radiation on all open surfaces leave them out. Use it for faces lying on foam, plastic or a part that is not modelled."))}</p>`);
       if (s.type === "chassis") {
         const held = s.rth === undefined;
         body += group(t("Chassis wall"), `<label class="pm-field"><span>${esc(t("Given by"))}</span><select data-k="cmode"><option value="rth"${held ? "" : " selected"}>${esc(t("Resistance"))}</option><option value="temp"${held ? " selected" : ""}>${esc(t("Temperature"))}</option></select></label>`
@@ -4643,7 +4647,17 @@ export class SimController {
       if (el.value === "step") l.profile = { kind: "step", at: 60 };
       else if (el.value === "duty") l.profile = { kind: "duty", on: 30, period: 60 };
       else if (el.value === "table") l.profile = { kind: "table", pts: [[0, 0], [60, 1], [600, 1], [660, 0]] };
+      else if (el.value === "expr") l.profile = { kind: "expr", f: "0.5 + 0.5*sin(2*pi*t/60)" };
       else delete l.profile;
+    }
+    else if (k === "pexpr") {
+      const l = e.draft as StudyLoad, bad = exprProblem(el.value);
+      el.setAttribute("aria-invalid", String(!!bad));
+      if (bad) { toast(`${t("The expression cannot be read")}: ${t(bad)}`, "warn"); return; }
+      if (l.profile?.kind !== "expr") return;
+      l.profile = { kind: "expr", f: el.value.trim() };
+      this.renderTree();
+      return;
     }
     else if (k === "ptable") {
       const l = e.draft as StudyLoad, pts = parseProfile(el.value), bad = !pts;

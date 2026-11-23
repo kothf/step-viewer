@@ -587,10 +587,10 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
     for (let t = 0; t < face.length; t++) if (want.has(face[t])) idx.push(t);
     return idx;
   };
-  // "all open surfaces": the whole surface without the faces a fixed temperature or another item of its kind is on
+  // "all open surfaces": the whole surface without the faces a fixed temperature, a chassis wall, an insulated item or another item of its kind is on
   const openIdx = (s: Study["supports"][number]) => {
     const taken = new Set<string>();
-    for (const o of st.supports) if (o !== s && !off.has(o.id) && !o.all && (o.type === "temp" || o.type === "chassis" || o.type === s.type)) for (const f of o.faces) taken.add(f.name);
+    for (const o of st.supports) if (o !== s && !off.has(o.id) && !o.all && (o.type === "temp" || o.type === "chassis" || o.type === "insul" || o.type === s.type)) for (const f of o.faces) taken.add(f.name);
     const gone = b.names.map(n => taken.has(n)), keep: number[] = [];
     for (let i = 0; i < b.face.length; i++) if (!gone[b.face[i]]) keep.push(i);
     return keep;
@@ -606,6 +606,8 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
   const walls: { tris: Float64Array; area: number }[] = [];
   for (const s of st.supports) {
     if (off.has(s.id) || !isThermalType(s.type)) continue;
+    // insulated faces (FR-TBC-002) carry no condition: they only keep "all open surfaces" items off
+    if (s.type === "insul") { idxOf(s); continue; }
     if (s.type === "radx") {
       // radiation between two face sets: both picked, emissivities in (0, 1]
       const ia = idxOf(s), ib = ia ? idxOf({ id: s.id, faces: s.faces2 ?? [] }) : null;
@@ -1248,7 +1250,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const h = cellSize(inp.body, inp.cells);
   const times = outputTimes(Tr.end, Tr.out);
   const prof = set.sources.map(s => (s.id ? Tr.profiles[s.id] : undefined));
-  const maxStep = Math.min(...prof.map(profileStep));
+  const maxStep = Math.min(...prof.map(x => profileStep(x, Tr.end)));
   const frames: Float32Array[] = [], min: number[] = [], max: number[] = [], put: number[] = [], out: number[] = [];
   const comps: number[][] = [];
   let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint8Array | undefined, flows: SinkFlow[] = [];

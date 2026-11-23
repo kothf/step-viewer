@@ -6313,4 +6313,13 @@ export const RU: Record<string, string> = {
   "The package's chassis share, put on the chassis walls": "Доля тепла на шасси из пакета, поданная на стенки шасси",
   "The chassis shares, {w} W, enter the model on the chassis walls.": "Доли тепла на шасси, {w} Вт, входят в модель на стенках шасси.",
   "The chassis shares, {w} W, leave the model: add a Chassis wall on the faces the parts are fixed to, to see how warm it gets.": "Доли тепла на шасси, {w} Вт, уходят из модели: добавьте стенку шасси на грани, к которым закреплены детали, чтобы увидеть, насколько она нагреется.",
+  "Insulated": "Теплоизоляция",
+  "Insulated: no heat crosses the picked faces, so convection and radiation on all open surfaces leave them out": "Теплоизоляция: через выбранные грани тепло не проходит, поэтому конвекция и излучение на всех открытых поверхностях их не учитывают",
+  "no heat crosses": "тепло не проходит",
+  "No heat crosses the picked faces: convection and radiation on all open surfaces leave them out. Use it for faces lying on foam, plastic or a part that is not modelled.": "Через выбранные грани тепло не проходит: конвекция и излучение на всех открытых поверхностях их не учитывают. Применяйте для граней, лежащих на пенопласте, пластике или на детали, которой нет в модели.",
+  "Expression of t": "Выражение от t",
+  "Share of the power at t, s": "Доля мощности в момент t, с",
+  "An expression of the time t in seconds, 1 = full power, e.g. 0.5 + 0.5*sin(2*pi*t/60) or min(1, t/120). sin and cos take radians; below 0 counts as 0.": "Выражение от времени t в секундах, 1 = полная мощность, например 0.5 + 0.5*sin(2*pi*t/60) или min(1, t/120). sin и cos принимают радианы; значения ниже 0 считаются 0.",
+  "The expression cannot be read": "Не удаётся прочитать выражение",
+  "Empty expression": "Пустое выражение",
 };
