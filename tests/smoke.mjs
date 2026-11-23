@@ -18369,7 +18369,7 @@ try {
   }
 
   // --- conductivity by direction 1.689 (FRS-thermal FR-TMAT-003): k along X, Y and Z typed for the study ---
-  if (inShard(1)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const kp = await ctx.newPage();
     kp.on("pageerror", e => errors.push(e.message));
@@ -18483,7 +18483,7 @@ try {
   }
 
   // --- isotherm clip 1.685 (FRS-thermal FR-TMAP-010): only surfaces hotter (or cooler) than a temperature, the rest see-through ---
-  if (inShard(1)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const cp = await ctx.newPage();
     cp.on("pageerror", e => errors.push(e.message));
