@@ -76,8 +76,10 @@ export interface PackageHeat {
   /** Power, W. */
   p: number;
   off?: boolean;
-  /** Temperature limit of the part, °C, from the package. */
+  /** Temperature limit of the part, °C, from the package (FR-TBRD-022: editable in the load's parts table). */
   limit?: number;
+  /** An electrolytic's rated life, h, at its `limit` (FR-TBRD-022): the result shows its life by the 10 °C rule. */
+  life?: number;
   /** The package's split of the power (FR-TBRD-003): W into the board, W into a heatsink or the chassis, and the path. */
   board?: number;
   sink?: number;

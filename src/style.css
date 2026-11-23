@@ -1886,7 +1886,12 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-tcomps tr.bad td[data-v=tcmax] { color: var(--danger, #c92a2a); font-weight: 600; }
 .sim-pkparts { width: 100%; border-collapse: collapse; }
 .sim-pkparts th, .sim-pkparts td { padding: 2px 4px; text-align: left; font-size: 12px; }
-.sim-pkparts td input[type=text] { width: 5.5em; }
+.sim-pkparts { table-layout: fixed; }
+.sim-pkparts th:first-child { width: 22px; }
+.sim-pkparts th:nth-child(2) { width: 2.8em; }
+.sim-pkparts th { font-size: 11px; hyphens: auto; }
+.sim-pkparts td input[type=text] { width: 100%; min-width: 0; box-sizing: border-box; }
+.sim-ptemps tr.warn td[data-v=ptlife] { color: var(--warn, #e8590c); font-weight: 600; }
 .sim-pkparts tr.muted td { opacity: 0.6; }
 .sim-contacts { width: 100%; border-collapse: collapse; font-size: 11px; }
 .sim-contacts th, .sim-contacts td { padding: 2px 3px; text-align: left; border-bottom: 1px solid var(--line); }

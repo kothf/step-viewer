@@ -11689,8 +11689,8 @@ try {
     await ctx.close();
   }
 
-  // --- 1.116: Recognize Holes turns the holes of a body into Hole features (FR-FT-102) ---
-  if (inShard(1)) {
+  // --- 1.116: Recognize Holes turns the holes of a body into Hole features (FR-FT-102) (shard 3 since 1.701.0: shard 1 neared the 12 minute limit) ---
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -17645,6 +17645,25 @@ try {
     check(JSON.stringify(pt.junction) === '["Q2"]' && pt.parts?.length === 6 && pt.parts.find(x => x[0] === "Q2")?.[1] === "case" && pt.parts.filter(x => x[2]).length === 1 && pt.parts.filter(x => x[0] !== "Q2").every(x => x[1] === "body")
       && pt.rows.length === 6 && pt.rows.find(r => r[0] === "Q2")?.[1] === "Case*" && pt.note,
       `thermal 1.693: Part temperatures lists each package part's temperature; Q2, whose package temperature is a junction, has no Rjc, so its case is reported and marked (${JSON.stringify(pt)})`);
+    // 1.701 (FR-TBRD-022): limits and rated lives edited in the load's parts table change the verdicts, not the solve
+    await bp.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
+    await bp.waitForSelector('#sim-pm .sim-pkparts input[data-q="pklife"]');
+    const lp = await bp.evaluate(() => ({ heads: [...document.querySelectorAll("#sim-pm .sim-pkparts th")].map(e => e.textContent), life: [...document.querySelectorAll('#sim-pm .sim-pkparts input[data-q="pklife"]')].map(e => e.closest("tr").children[1].textContent),
+      lim: document.querySelector('#sim-pm .sim-pkparts tr:has(td[translate="no"]) input[data-q="pklim"]')?.value, wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    const c13 = await bp.evaluate(() => document.querySelector('#sim-pm .sim-pkparts input[data-q="pklife"][aria-label^="C13"]')?.closest("tr").dataset.pk);
+    const r20 = await bp.evaluate(() => [...document.querySelectorAll("#sim-pm .sim-pkparts tr[data-pk]")].find(r => r.children[1].textContent === "R20")?.dataset.pk);
+    await bp.fill(`#sim-pm .sim-pkparts tr[data-pk="${c13}"] input[data-q="pklife"]`, "2000");
+    await bp.press(`#sim-pm .sim-pkparts tr[data-pk="${c13}"] input[data-q="pklife"]`, "Tab");
+    await bp.fill(`#sim-pm .sim-pkparts tr[data-pk="${r20}"] input[data-q="pklim"]`, "400");
+    await bp.press(`#sim-pm .sim-pkparts tr[data-pk="${r20}"] input[data-q="pklim"]`, "Tab");
+    await bp.click("#sim-pm .pm-ok");
+    await bp.waitForTimeout(300);
+    const lf = await bp.evaluate(() => { const s = window.__sv.sim.state(), p = s.thermal?.parts ?? [], c = p.find(x => x.name === "C13");
+      return { stale: s.stale, c13: c ? [c.t, c.limit, Math.round(c.life)] : null, r20: p.find(x => x.name === "R20")?.over, bad: [...document.querySelectorAll("#sim-tree .sim-ptemps tr.bad")].map(r => r.dataset.ptemp),
+        cell: document.querySelector('#sim-tree .sim-ptemps tr[data-ptemp="C13"] [data-v="ptlife"]')?.textContent, warn: document.querySelector('#sim-tree .sim-ptemps tr[data-ptemp="C13"]')?.className, note: !!document.querySelector('#sim-tree [data-v="lifenote"]') }; });
+    const want = lf.c13 ? Math.round(2000 * 2 ** ((lf.c13[1] - lf.c13[0]) / 10)) : NaN;
+    check(lp.heads.length === 6 && lp.life.length === 2 && lp.wide <= 0 && !lf.stale && lf.c13 && Math.abs(lf.c13[2] - want) <= want * 0.02 && lf.r20 === false && !lf.bad.includes("R20") && lf.cell === String(Math.round(+lf.c13[2].toPrecision(2))) && (lf.c13[2] < 10000) === /warn/.test(lf.warn ?? "") && lf.note === (lf.c13[2] < 10000),
+      `thermal 1.701: the parts table takes a limit and an electrolytic's rated life; the results stay fresh, R20 under its new limit is no longer marked and C13 gets its life by the 10 °C rule (${JSON.stringify({ lp, lf, want })})`);
     // 1.657: heat paths: where each part's heat went (board, air, elsewhere), the package's split in the row's title
     // 1.658: natural convection with the package's enclosure and orientation
     const nc = await bp.evaluate(() => { const s = window.__sv.sim.state(), d = window.__sv.asm.doc, st = d.studies.find(x => x.kind === "thermal");
