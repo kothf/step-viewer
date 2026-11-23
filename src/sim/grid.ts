@@ -73,6 +73,13 @@ export class Grid {
   }
   /** Active cell holding a point; when its own cell is not active, the nearest active cell around it.
    * With several domains the cell is the one of the point's domain, or of `dom` when given. */
+  /** Whether cell c is full of its body and the point lies inside it, clear of its faces. */
+  private fills(c: number, x: number, y: number, z: number) {
+    const cl = this.cells[c];
+    if (cl.frac < 1 - 1e-9) return false;
+    const m = 1e-7 * this.h;
+    return x > cl.lo[0] + m && x < cl.hi[0] - m && y > cl.lo[1] + m && y < cl.hi[1] - m && z > cl.lo[2] + m && z < cl.hi[2] - m;
+  }
   cellOf(x: number, y: number, z: number, dom = -1) {
     const [i, j, k] = this.index(x, y, z);
     if (dom < 0 && this.maps.length > 1) {
@@ -81,7 +88,8 @@ export class Grid {
       for (let d = 0; d < this.maps.length; d++) if (this.at(i, j, k, d) >= 0) { only = d; n++; }
       // one domain's cell here does not make the point that domain's: a cell of a thin body reaches past it, and
       // a point on another body's face just across a cell plane would read the first body's field
-      dom = n === 1 && (!this.doms || this.doms[only](x, y, z)) ? only : this.domainOf(x, y, z);
+      // (a point well inside a cell that body fills needs no asking)
+      dom = n === 1 && (!this.doms || this.fills(this.at(i, j, k, only), x, y, z) || this.doms[only](x, y, z)) ? only : this.domainOf(x, y, z);
     }
     const one = dom >= 0 ? dom : 0, all = dom < 0 && this.maps.length > 1;
     const c = this.at(i, j, k, one);

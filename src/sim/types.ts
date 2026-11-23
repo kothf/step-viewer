@@ -250,8 +250,8 @@ export function enclosureFactor(s: StudySettings): number {
 }
 /** Gravity directions offered in the study (FR-TBC-011). */
 export const DOWNS: [string, [number, number, number]][] = [["−Z", [0, 0, -1]], ["+Z", [0, 0, 1]], ["−Y", [0, -1, 0]], ["+Y", [0, 1, 0]], ["−X", [-1, 0, 0]], ["+X", [1, 0, 0]]];
-/** Passes of a thermal study: degree 2, 3, 4 over the whole body. */
-export const THERMAL_PASSES = 3;
+/** Passes of a thermal study: degree 2, 3, 4 over the whole body, then local ones (FR-TSOL-003, run.ts `MAX_PASSES`). */
+export const THERMAL_PASSES = 6;
 /** Film coefficients people reach for, W/(m²·K). */
 export const FILM_PRESETS: [string, number][] = [["Still air (natural convection)", 8], ["Moving air (fan)", 40], ["Still water", 500], ["Flowing water", 3000]];
 

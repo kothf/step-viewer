@@ -47,14 +47,14 @@ export class Basis {
     this.v = new Float64Array(this.n);
     this.g = new Float64Array(3 * this.n);
   }
-  /** Evaluates at x for a cell centred at c with half size s (cube cells). */
-  eval(x: number, y: number, z: number, c: ArrayLike<number>, s: number) {
+  /** Evaluates at x for a cell centred at c with half size s (cube cells): the first `n` functions (all by default; they span a lower degree). */
+  eval(x: number, y: number, z: number, c: ArrayLike<number>, s: number, n = this.n) {
     const p = this.p, ex = this.ex, lx = this.lx, ly = this.ly, lz = this.lz;
     legendre(p, (x - c[0]) / s, lx);
     legendre(p, (y - c[1]) / s, ly);
     legendre(p, (z - c[2]) / s, lz);
     const inv = 1 / s;
-    for (let b = 0; b < this.n; b++) {
+    for (let b = 0; b < n; b++) {
       const i = ex[3 * b], j = ex[3 * b + 1], k = ex[3 * b + 2];
       const X = lx[2 * i], Y = ly[2 * j], Z = lz[2 * k];
       this.v[b] = X * Y * Z;
