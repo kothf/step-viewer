@@ -17569,6 +17569,16 @@ try {
     check(padRow.t === "0.5" && padRow.k === "3" && t2.stale && !t3.error && t3.thermal.contacts[0].type === "resistance" && Math.abs(t3.thermal.max - t1.thermal.max - step) < 0.05 * step && Math.abs(Math.abs(t3.thermal.contacts[0].ta - t3.thermal.contacts[0].tb) - step) < 0.03 * step
       && /E-TH-LOOSE/.test(t4.error ?? "") && /Bar<2>/.test(said) && /Nothing takes the heat away from/.test(said),
       `thermal 1.654: a pad on the contact adds its P·t / (k·A) to the hot bar; with no contact the bar nothing cools is named (${JSON.stringify({ padRow, stale: t2.stale, error: t3.error, max: [t1.thermal.max, t3.thermal?.max], contact: t3.thermal?.contacts, step, loose: t4.error, said })})`);
+    // 1.708 (FR-TBC-012): no cooling at all stops before solving and names every component
+    await ap.evaluate(() => document.querySelectorAll(".toast").forEach(x => x.remove()));
+    await ap.click('#sim-tree .sim-cool .sim-row:not(.off) [data-a="toggle"]');
+    await ap.waitForTimeout(400);
+    await ap.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t5 = await sim();
+    const said5 = await ap.evaluate(() => [...document.querySelectorAll(".toast")].map(x => x.textContent).join(" | ") + " | " + (document.querySelector("#sim-tree .sim-prob")?.textContent ?? ""));
+    check(/^E-TH-NOSINK: 0,1$/.test(t5.error ?? "") && /<1>/.test(said5) && /Bar<2>/.test(said5) && !t5.thermal,
+      `thermal 1.708: an assembly study with no cooling is refused before solving, naming both bars (${JSON.stringify({ error: t5.error, said5, thermal: !!t5.thermal })})`);
     await ctx.close();
   }
 
@@ -19321,7 +19331,7 @@ try {
   }
 
   // --- Structural analysis 1.637 (FR-CON-020/021): a toolbox screw with its nut is analysed as a bolt ---
-  // In shard 4 since 1.708.0 (shard 3 since 1.700.0): shards 5, then 3 reached the 12 minute limit.
+  // In shard 4 since 1.710.0 (shard 3 since 1.700.0): shards 5, then 3 reached the 12 minute limit.
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();

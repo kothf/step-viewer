@@ -1431,6 +1431,8 @@ export class SimController {
         for (const p of r.setup.problems) this.problems.set(p.id, p.code);
         throw new Error(`${r.setup.problems[0].code}: ${r.setup.problems[0].id}`);
       }
+      // FR-TBC-012: no way out for the heat stops here, before the worker, naming the bodies that would heat up for ever
+      if (runs.some(r => !r.setup.sinks.length)) throw new Error(asm ? `E-TH-NOSINK: ${bodies.map((_b, i) => i).join(",")}` : "E-TH-NOSINK");
       // a transient study needs each body's heat capacity ρ·cp, J/(mm³·K): g/cm³ × 1e-6 × J/(kg·K)
       const tr = st.settings.transient;
       let transient: NonNullable<NonNullable<Parameters<SimClient["solve"]>[0]["thermal"]>["transient"]> | undefined;
@@ -2165,7 +2167,9 @@ export class SimController {
       case "E-TH-COMPALPHA": return t("{name} has no thermal expansion coefficient: pick a material that gives one.", { name: rest });
       case "E-TH-NOFIELD": return t("The thermal study the temperature load takes its temperatures from cannot be solved. Open it and solve it first.");
       case "E-SIM-ONETEMP": return t("A study takes one temperature load.");
-      case "E-TH-NOSINK": return t("Nothing takes the heat away. Add convection, radiation or a fixed temperature: without one the part would heat up for ever.");
+      case "E-TH-NOSINK": return rest.trim()
+        ? t("Nothing takes the heat away from {names}. Add convection, radiation or a fixed temperature: without one they would heat up for ever.", { names: rest.split(",").map(i => this.comps[Number(i)]?.name ?? i).join(", ") })
+        : t("Nothing takes the heat away from {name}. Add convection, radiation or a fixed temperature: without one the part would heat up for ever.", { name: this.host.doc()?.name ?? "" });
       case "E-TH-NOHEAT": return t("Nothing heats or cools the part. Add a heat source, or surface conditions at different temperatures.");
       case "E-TH-NOK": return t("The material has no thermal conductivity. Pick another material or add the value to it.");
       case "E-TH-NOCP": return rest ? t("Set a material with density and specific heat for {name} (needed for transient studies).", { name: rest }) : t("A transient study needs a material with a density and a specific heat.");

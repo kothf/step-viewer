@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.708.0] - 2026-11-23
+## [1.710.0] - 2026-11-23
 
 ### Added
 
 - A part file renamed or moved within the assembly's folder (into a subfolder too) is found again: opening the assembly looks through the folder for the file that holds the same part and points the reference at it, with a message saying which parts moved; Save keeps the new places. **Pack and Go** keeps the subfolders of an assembly's part files, and **Save to vault** of an assembly adds its part files to the vault at the paths its references name.
+
+## [1.708.0] - 2026-11-23
+
+### Changed
+
+- A thermal study with nothing to take the heat away (no convection, radiation, fixed temperature or heatsink, or all of them turned off) now stops before solving and names what would heat up for ever: the part, or every component of an assembly.
 
 ## [1.707.0] - 2026-11-23
 
@@ -4674,7 +4680,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.708.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.710.0...HEAD
+[1.710.0]: https://github.com/kothf/step-viewer/compare/v1.708.0...v1.710.0
 [1.708.0]: https://github.com/kothf/step-viewer/compare/v1.707.0...v1.708.0
 [1.707.0]: https://github.com/kothf/step-viewer/compare/v1.706.0...v1.707.0
 [1.706.0]: https://github.com/kothf/step-viewer/compare/v1.705.0...v1.706.0
