@@ -17229,7 +17229,7 @@ try {
   }
 
   // --- Transient thermal 1.661 (FRS-thermal TH4): warm-up over time with a heater switched on later ---
-  if (inShard(1)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
     tp.on("pageerror", e => errors.push(e.message));
