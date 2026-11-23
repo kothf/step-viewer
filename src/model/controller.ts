@@ -401,8 +401,9 @@ export class ModelController {
   returnTo: { label: string; back(doc: PartDoc): void } | null = null;
 
   /** Opens a component's part for editing; Return to assembly hands the edited part back. */
-  editIn(doc: PartDoc, fileName: string, ret: { label: string; back(doc: PartDoc): void }, ctx?: PartContext) {
-    this.load(doc, fileName, null);
+  editIn(doc: PartDoc, fileName: string, ret: { label: string; back(doc: PartDoc): void }, ctx?: PartContext, handle?: FileSystemFileHandle) {
+    // a part the assembly references: Save writes its own file
+    this.load(doc, fileName, handle ?? null);
     this.store!.markSaved();
     this.returnTo = ret;
     this.setContext(ctx ?? null);

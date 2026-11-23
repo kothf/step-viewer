@@ -1665,6 +1665,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 /* Isolate in assemblies (gap list A1/A2): a small bar at the bottom of the view while isolated. */
 .asm-iso { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 8px; align-items: center; padding: 5px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); font-size: 12px; }
 .asm-iso select, .asm-iso button { font-size: 12px; }
+.asm-refs { bottom: 54px; max-width: min(720px, calc(100% - 32px)); }
+.asm-refs span { min-width: 0; }
 
 /* Selection list (gap list U2): the Ctrl+click picks in the part view's lower left. */
 .mc-sellist { position: absolute; left: 8px; bottom: 8px; z-index: 6; min-width: 190px; max-width: 280px; max-height: 40%; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.18); font-size: 12px; }
