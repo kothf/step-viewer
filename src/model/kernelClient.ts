@@ -288,6 +288,7 @@ export class ModelKernel {
     }
     const todo = all.filter(k => !cached[k]);
     this.cacheHits += all.length - todo.length;
+    const cacheMs = Math.round(performance.now() - t);
     const pool = todo.length > 1 ? kernelPool(this.base) : null;
     pool?.warm(todo.length - 1);
     await this.start();
@@ -305,7 +306,7 @@ export class ModelKernel {
     const pb = lap();
     const r = await this.call<{ parts: { id: string; data: PartData; faces: string[]; bodies?: OwnBody[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1, pre });
     // The worker now holds these part sources; a new worker (after a crash) knows none.
-    this.timing = { start, prebuild: pb, asm: lap(), worker: Math.round((r as any).ms) };
+    this.timing = { cache: cacheMs, start, prebuild: pb, asm: lap(), worker: Math.round((r as any).ms), ...((r as any).steps ?? {}) };
     if (this.worker === worker) this.known = new Map(Object.entries(doc.parts).map(([k, p]) => [k, JSON.stringify(p.doc)]));
     return r;
   }
