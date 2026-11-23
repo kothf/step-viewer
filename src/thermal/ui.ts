@@ -23,6 +23,8 @@ import { partsCsv } from "./csv";
 import { mapReport, type MapReportData } from "./report";
 import { reportHtml, reportPdf, type SimReport } from "../sim/report";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
+import { capValues, sliceMap } from "./caps";
+import type { SectionManager, SectionPlane } from "../viewer/Section";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "../sim/plotmesh";
 
 export interface ThermalHost {
@@ -45,7 +47,13 @@ export interface ThermalHost {
   gerber?(files: { name: string; data: ArrayBuffer }[]): void;
   /** Opens the board's Gerber set in the PCB view with this map's board-face temperatures under it (FR-TMAP-040). */
   pcbView?(pkg: ThermalPackage, du: number, dv: number): void;
+  /** The view's section planes: their caps show the map's temperatures along the cut outline (FR-TMAP-041). */
+  section?(): SectionManager;
 }
+
+type Cap = { mesh: THREE.Mesh; sp: SectionPlane };
+/** Cap grid points per side, and the colour of a cap's inside, which a package says nothing about. */
+const CAP_GRID = 200, CAP_PLAIN = 0.72;
 
 type V3 = [number, number, number];
 interface Probe { p: V3; t: number; part: number }
@@ -199,6 +207,13 @@ export class ThermalMaps {
   private nearCache = new WeakMap<Attached, Map<string, { mesh: PlotMesh; near: Int32Array }>>();
   /** Package triangle of each drawn triangle. */
   private drawn: Uint32Array | null = null;
+  // section caps (FR-TMAP-041): the caps of the view, their painted grids and what the last paint did
+  private caps: Cap[] = [];
+  private capGeos = new Map<THREE.Mesh, THREE.BufferGeometry>();
+  private capHooked = false;
+  private capQueued = false;
+  private capPainted = false;
+  private capInfo = { painted: 0, slice: 0, banded: 0, band: 0 };
   private visKey = "";
   private probing = false;
   private layer: HTMLElement | null = null;
@@ -450,7 +465,84 @@ export class ThermalMaps {
     this.drawn = null;
     this.visKey = "";
     this.hideCard();
+    // painted caps go back to plain ones (show() paints them again)
+    if (this.capPainted) this.capsAgain();
     this.host.viewer.invalidate();
+  }
+
+  // ---------- section caps (FR-TMAP-041) ----------
+
+  /** The caps are made again (plain), which paints them when a map is shown. */
+  private capsAgain() {
+    const sec = this.host.section?.();
+    if (!sec) return;
+    if (!this.capHooked) { this.capHooked = true; sec.capHooks.push(caps => this.capsChanged(caps)); }
+    if (this.capQueued) return;
+    this.capQueued = true;
+    queueMicrotask(() => {
+      this.capQueued = false;
+      if (sec.planes.some(p => p.enabled)) sec.rebuild();
+    });
+  }
+
+  private capsChanged(caps: Cap[]) {
+    const had = this.caps.length > 0;
+    this.caps = caps;
+    this.capPainted = false;
+    for (const [m, g] of this.capGeos) if (!caps.some(c => c.mesh === m)) { g.dispose(); this.capGeos.delete(m); }
+    if (!caps.length) this.capInfo = { painted: 0, slice: 0, banded: 0, band: 0 };
+    if (had !== caps.length > 0) this.renderLegend();
+    this.paintCaps();
+  }
+
+  /**
+   * Colours each cap from the map: the package's temperature where the cut meets the map's surface, in a band along
+   * the outline; the inside stays plain grey (a package has no values inside the parts).
+   */
+  private paintCaps() {
+    const a = this.cur(), ov = this.overlay, v = this.host.viewer;
+    if (!a || !a.on || !ov || !this.caps.length) return;
+    const m = a.pkg.mesh, sh = this.shiftOf(a), T = this.tempOf(a), [lo, hi] = this.rangeOf(a), span = hi - lo || 1;
+    const pal = this.delta(a) ? "diverging" : this.prefs.palette;
+    const size = v.modelSize * 1.3, band = Math.max(v.modelSize / 60, 1e-3), step = band / 3;
+    ov.updateMatrixWorld(true);
+    const inv = ov.matrixWorld.clone().invert(), p = new THREE.Vector3();
+    const info = { painted: 0, slice: 0, banded: 0, band };
+    for (const { mesh, sp } of this.caps) {
+      // the plane in the package's own coordinates (the map is drawn moved by its shift)
+      const pl = sp.plane.clone().applyMatrix4(ov.matrixWorld.clone().invert());
+      const n = [pl.normal.x, pl.normal.y, pl.normal.z] as const;
+      const slice = sliceMap(m.pos, m.tri, T, this.drawn, n, pl.constant + n[0] * sh[0] + n[1] * sh[1] + n[2] * sh[2], step);
+      let geo = this.capGeos.get(mesh);
+      if (!geo) {
+        geo = new THREE.PlaneGeometry(size, size, CAP_GRID, CAP_GRID);
+        geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(3 * geo.getAttribute("position").count), 3));
+      }
+      const pa = geo.getAttribute("position"), nq = pa.count, q = new Float32Array(3 * nq);
+      mesh.updateMatrixWorld(true);
+      const to = new THREE.Matrix4().multiplyMatrices(inv, mesh.matrixWorld);
+      for (let i = 0; i < nq; i++) { p.fromBufferAttribute(pa, i).applyMatrix4(to); q[3 * i] = p.x - sh[0]; q[3 * i + 1] = p.y - sh[1]; q[3 * i + 2] = p.z - sh[2]; }
+      const val = capValues(q, slice, band), ca = geo.getAttribute("color") as THREE.BufferAttribute, col = ca.array as Float32Array;
+      for (let i = 0; i < nq; i++) {
+        if (Number.isNaN(val[i])) { col.fill(CAP_PLAIN, 3 * i, 3 * i + 3); continue; }
+        paletteColor(pal, (val[i] - lo) / span, col, 3 * i);
+        info.banded++;
+      }
+      ca.needsUpdate = true;
+      if (mesh.geometry !== geo) {
+        mesh.geometry.dispose();
+        mesh.geometry = geo;
+        this.capGeos.set(mesh, geo);
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        mat.vertexColors = true; mat.color.set(0xffffff); mat.map = null; mat.needsUpdate = true;
+        mesh.userData.thermalCap = true;
+      }
+      info.painted++;
+      info.slice += slice.t.length;
+    }
+    this.capInfo = info;
+    this.capPainted = true;
+    v.invalidate();
   }
 
   /** Bodies of the model hidden by the user, as a key: the map leaves their parts out too. */
@@ -530,6 +622,7 @@ export class ThermalMaps {
     this.drawn = drawn;
     this.visKey = vis;
     this.colour();
+    this.capsAgain();
     if (!this.bound) {
       this.bound = true;
       v.onRender(() => {
@@ -555,6 +648,7 @@ export class ThermalMaps {
       for (let j = 0; j < f.near.length; j++) { const i = f.near[j]; if (i >= 0) c.set(arr.subarray(i * 3, i * 3 + 3), j * 3); else c.fill(0.6, j * 3, j * 3 + 3); }
       ca.needsUpdate = true;
     }
+    if (this.capPainted) this.paintCaps();
     this.host.viewer.invalidate();
   }
 
@@ -1167,6 +1261,7 @@ export class ThermalMaps {
       + `<div class="ana-ramp" style="background:${paletteCss(dl ? "diverging" : this.prefs.palette)}"></div>`
       + (dl ? `<div class="ana-scale"><span data-v="min" translate="no">${esc(this.here(a!, lo).replace(" K", ""))}</span><span>K</span><span data-v="max" translate="no">${esc(this.here(a!, hi).replace(" K", ""))}</span></div>`
         : `<div class="ana-scale"><span data-v="min" translate="no">${mr[0] < lo - 1e-6 ? "▼ " : ""}${rise ? "+" : ""}${esc(deg(lo - off))}</span><span>°C</span><span data-v="max" translate="no">${mr[1] > hi + 1e-6 ? "▲ " : ""}${rise ? "+" : ""}${esc(deg(hi - off))}</span></div>`)
+      + (this.caps.length && this.overlay ? `<p class="ana-note" data-v="capnote">${esc(t("Section caps show the map's surface temperatures along the cut only: a package has no values inside the parts."))}</p>` : "")
       + (cmp ? `<p class="ana-note" data-v="cmpnote">${esc(dl ? t("Blue: cooler in B, red: hotter in B.") : t("A and B share one colour range."))}</p><button class="btn small" data-a="uncompare">${esc(t("Stop comparing"))}</button>` : "")
       + (src ? `<p class="ana-note" data-v="source">${esc(t("From {app}", { app: "\u0001" })).replace("\u0001", `<span translate="no">${esc(src)}</span>`)}</p>` : "")
       + (amb !== undefined ? `<p class="ana-note" data-v="ambient">${esc(t("Ambient {v} °C", { v: deg(amb) }))}${mf.settings.operatingPoint ? ` · ${esc(t("operating point {v}", { v: mf.settings.operatingPoint }))}` : ""}</p>` : "")
@@ -1450,7 +1545,7 @@ export class ThermalMaps {
       name: a.pkg.name, partsCsv: this.partsCsvText(a), on: a.on, own: a.own, sourcesOnly: !!a.pkg.sourcesOnly, drawn: !!this.overlay, tris: this.overlay ? this.overlay.geometry.getIndex()!.count / 3 : 0,
       range: this.rangeOf(a), parts: a.pkg.manifest.parts.length, matched: a.match.bodies.size, missing: a.match.missing, changed: a.match.changed, off: a.match.off, fitted: a.fitted,
       hidden: this.saved.length, problems: this.problemsOf(a).map(p => ({ kind: p.kind, id: p.id, value: p.value })), hottest: sm.hottest, peak: sm.peak, power: sm.power,
-      sel: a.sel, iso: a.iso, faces: this.prefs.faces, faceMeshes: this.faceMeshes.length, faceTris: this.faceMeshes.reduce((s, f) => s + f.mesh.geometry.getIndex()!.count / 3, 0), faceFaded: this.faceMeshes.reduce((s, f) => s + (f.fade ? f.fade.geometry.getIndex()!.count / 3 : 0), 0), clip: a.clip ? { ...a.clip } : null, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), report: this.lastReport, probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
+      sel: a.sel, iso: a.iso, faces: this.prefs.faces, faceMeshes: this.faceMeshes.length, faceTris: this.faceMeshes.reduce((s, f) => s + f.mesh.geometry.getIndex()!.count / 3, 0), faceFaded: this.faceMeshes.reduce((s, f) => s + (f.fade ? f.fade.geometry.getIndex()!.count / 3 : 0), 0), clip: a.clip ? { ...a.clip } : null, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), caps: { ...this.capInfo, n: this.caps.length }, report: this.lastReport, probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
       pcb: a.pcb ? { name: a.pcb.layers.name, shown: a.pcb.shown, mix: this.prefs.pcbMix, du: a.pcb.du, dv: a.pcb.dv, labels: a.pcb.layers.labels, w: a.pcb.layers.w, h: a.pcb.layers.h, box: a.pcb.layers.box, board: this.pcbBoard, textured: !!this.atlasTex } : null,
       compare: a.cmp ? { name: a.cmp.pkg.name, view: a.cmp.view, rows: a.cmp.changes.rows.map(r => ({ name: r.name, a: r.a, b: r.b, d: r.d })), onlyA: a.cmp.changes.onlyA, onlyB: a.cmp.changes.onlyB } : null,
     };

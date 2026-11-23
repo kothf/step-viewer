@@ -18774,6 +18774,21 @@ try {
     check(f1.faces && f1.meshes > 0 && f1.tris > 0 && f1.faded === 0 && f1.ovShown === false && f1.spread > 0.05 && f1.drawn
       && f2.faded > 0 && f2.tris + f2.faded === f1.tris && !f3.faces && f3.meshes === 0 && f3.ovShown === true,
       `model faces 1.686: Colour the model's faces draws the STEP's own triangles from the map, clips them too, and turns off (${JSON.stringify({ f1, f2, f3 })})`);
+    // --- section caps 1.698 (FR-TMAP-041): a cut shows the map's surface temperatures along its outline only, with a note ---
+    await cp.evaluate(() => document.querySelector('[data-sec="x"]').click());
+    await cp.waitForFunction(() => window.__sv.thermal.state()?.caps.painted > 0, null, { timeout: 20000 }).catch(() => {});
+    await cp.waitForTimeout(300);
+    const sc1 = await cp.evaluate(() => {
+      const s = window.__sv.thermal.state(), caps = [];
+      window.__sv.viewer.scene.traverse(o => { if (o.userData.sectionCap) caps.push({ th: !!o.userData.thermalCap, colors: !!o.material.vertexColors, pts: o.geometry.getAttribute("position").count }); });
+      return { caps: s.caps, meshes: caps, note: document.querySelector('#th-legend [data-v="capnote"]')?.textContent ?? "" };
+    });
+    await cp.evaluate(() => window.__sv.section.clear());
+    await cp.waitForTimeout(200);
+    const sc2 = await cp.evaluate(() => ({ caps: window.__sv.thermal.state().caps, note: !!document.querySelector('#th-legend [data-v="capnote"]') }));
+    check(sc1.caps.n > 0 && sc1.caps.painted === sc1.caps.n && sc1.caps.slice > 20 && sc1.caps.banded > 0 && sc1.caps.banded < 0.5 * sc1.meshes.reduce((n, m) => n + m.pts, 0)
+      && sc1.meshes.length && sc1.meshes.every(m => m.th && m.colors) && /surface temperatures along the cut only/.test(sc1.note) && sc2.caps.n === 0 && !sc2.note,
+      `section caps 1.698: a section through the board shows the map's temperatures along the cut, the inside plain, with a note in the legend (${JSON.stringify({ sc1, sc2 })})`);
     // --- parts CSV 1.687 (FR-TREP-011): the map's Parts list as CSV, in the table's order ---
     await cp.click("#t-thermal");
     await cp.waitForTimeout(200);
@@ -19195,7 +19210,8 @@ try {
   }
 
   // --- Structural analysis 1.630 (FRS-structural SA3): a static study of an assembly, components joined across a gap ---
-  if (inShard(4)) {
+  // In shard 5 since 1.698.0: shard 4 reached the 12 minute limit.
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));

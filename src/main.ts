@@ -112,6 +112,7 @@ const thermal = new ThermalMaps({
   snapshot: () => (viewer.parts.length ? snapshot(viewer, annotations, { scale: 1, transparent: false, background: bgColor() }) : null),
   gerber: files => { if (state.fileKey) boardGerbers.set(state.fileKey, files); },
   pcbView: (pkg, du, dv) => void openPcbThermal(pkg, du, dv),
+  section: () => section,
 });
 /**
  * Simulate in MöbiusCAD (FRS-thermal J5): the board's STEP becomes an assembly, one component per body with a

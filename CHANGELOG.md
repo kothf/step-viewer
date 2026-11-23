@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.698.0] - 2026-11-23
+
+### Added
+
+- Section planes through a board thermal map: the cut faces show the map's surface temperatures in a band along the cut outline, in the map's colours, and stay plain grey inside (a thermal package has no values inside the parts); the legend says so.
+
 ## [1.697.0] - 2026-11-23
 
 ### Added
@@ -4600,7 +4606,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.697.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.698.0...HEAD
+[1.698.0]: https://github.com/kothf/step-viewer/compare/v1.697.0...v1.698.0
 [1.697.0]: https://github.com/kothf/step-viewer/compare/v1.696.0...v1.697.0
 [1.696.0]: https://github.com/kothf/step-viewer/compare/v1.695.0...v1.696.0
 [1.695.0]: https://github.com/kothf/step-viewer/compare/v1.694.0...v1.695.0

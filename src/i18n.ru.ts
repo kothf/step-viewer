@@ -6145,6 +6145,7 @@ export const RU: Record<string, string> = {
   "Save picture": "Сохранить снимок",
   "Save the view as a PNG with the colour scale, the hottest part and the accuracy drawn in": "Сохранить вид в PNG со шкалой цветов, самой горячей деталью и точностью",
   "Showing {name} only": "Показана только {name}",
+  "Section caps show the map's surface temperatures along the cut only: a package has no values inside the parts.": "Сечения показывают температуры поверхности карты только вдоль линии разреза: внутри деталей в пакете значений нет.",
   "Show only the surfaces hotter or cooler than a temperature, the rest see-through": "Показывать только поверхности горячее или холоднее заданной температуры, остальное полупрозрачно",
   "Clip at a temperature": "Отсечь по температуре",
   "Colour the model's faces": "Раскрасить грани модели",
