@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.692.0] - 2026-11-23
+
+### Added
+
+- Thermal conditions are drawn on the model. In the Simulation tab every heat source, held temperature, convection, radiation, chassis wall and insulated face of a thermal study shows a callout on its faces with its symbol and value ("15 W", "40 °C", "10 W/(m²·K)", "ε 0.9"), in its own colour: red for heat, blue for held temperatures, cyan for convection, amber for radiation. Radiation sends dashed rays from its faces and a heat flux has an arrow into its face. Conditions on the whole body or on all open surfaces sit at the model's centre, and callouts that would cover one another are stacked. They give way to the temperature plot.
+
 ## [1.691.0] - 2026-11-23
 
 ### Added
@@ -4544,6 +4550,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.691.0...HEAD
+[1.692.0]: https://github.com/kothf/step-viewer/compare/v1.691.0...v1.692.0
 [1.691.0]: https://github.com/kothf/step-viewer/compare/v1.690.0...v1.691.0
 [1.690.0]: https://github.com/kothf/step-viewer/compare/v1.689.0...v1.690.0
 [1.689.0]: https://github.com/kothf/step-viewer/compare/v1.688.0...v1.689.0

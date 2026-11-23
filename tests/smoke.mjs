@@ -18509,6 +18509,49 @@ try {
     await ctx.close();
   }
 
+  // --- thermal conditions on the model 1.692 (FRS-thermal FR-TLOAD-011, FR-TBC-013): a callout with its glyph and value per condition ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const gp = await ctx.newPage();
+    gp.on("pageerror", e => errors.push(e.message));
+    gp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await gp.goto(`${origin}/index.html?debug`);
+    await gp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await gp.goto(`${origin}/index.html?debug`);
+    await gp.waitForFunction(() => window.__sv);
+    await gp.click("#new-part");
+    await gp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    await gp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50, cp: 460, alpha: 12 };
+      d.studies = [{ id: "st1", name: "Thermal 1", kind: "thermal", settings: { passes: 2, energyTol: 1, ambient: 25 },
+        supports: [{ id: "a1", name: "Convection 1", type: "conv", faces: [], all: true, h: 10 }, { id: "a2", name: "Temperature 1", type: "temp", faces: [{ name: "f1:side:s1l1" }], temp: 40 },
+          { id: "a3", name: "Radiation 1", type: "rad", faces: [{ name: "f1:side:s1l2" }], emis: 0.8 }, { id: "a4", name: "Insulated 1", type: "insul", faces: [{ name: "f1:side:s1l4" }] }],
+        loads: [{ id: "l1", name: "Heat power 1", type: "heat", faces: [{ name: "f1:side:s1l3" }], value: { v: 15 } }, { id: "l2", name: "Heat flux 1", type: "hflux", faces: [{ name: "f1:end" }], value: { v: 2000 } }] }];
+    }));
+    await gp.waitForTimeout(150);
+    await gp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await gp.click("#cm-t-simulation");
+    await gp.waitForTimeout(300);
+    await gp.click('#sim-tools [data-s="mode-thermal"]');
+    await gp.waitForTimeout(500);
+    const on = await gp.evaluate(() => {
+      const s = window.__sv.sim.state(), r = document.querySelector("#viewport").getBoundingClientRect();
+      const boxes = [...document.querySelectorAll("#sim-tags .sim-tag")].map(e => { const b = e.getBoundingClientRect(); return b.left >= r.left - 1 && b.right <= r.right + 1 && b.top >= r.top - 1 && b.bottom <= r.bottom + 1; });
+      return { tags: s.tags, rays: s.rays, arrows: s.arrowsOn, inside: boxes.every(Boolean) };
+    });
+    const by = k => on.tags.find(x => x.kind === k);
+    await gp.click("#cm-t-features");
+    await gp.waitForTimeout(300);
+    const off = await gp.evaluate(() => window.__sv.sim.state().tags.filter(x => x.shown).length);
+    check(on.tags.length === 6 && on.tags.every(x => x.shown) && on.inside && by("heat")?.text === "15 W" && by("temp")?.text === "40 °C" && by("hflux")?.text === "2000 W/m²"
+      && by("rad")?.text === "ε 0.8" && by("conv")?.text === "10 W/(m²·K)" && by("insul")?.text === "" && on.rays === 1 && on.arrows === 1 && off === 0,
+      `thermal marks 1.692: each thermal condition gets a callout with its glyph and value, radiation dashed rays, a heat flux arrows; gone outside the Simulation tab (${JSON.stringify({ on, off })})`);
+    await ctx.close();
+  }
+
   // --- chassis wall 1.690 (FRS-thermal FR-TBC-009): a part's end on a chassis wall of 2 K/W; held at a temperature ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -19093,7 +19136,7 @@ try {
   }
 
   // --- Structural analysis 1.630 (FRS-structural SA3): a static study of an assembly, components joined across a gap ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
