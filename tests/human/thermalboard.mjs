@@ -68,28 +68,18 @@ const of = (tb, n) => (tb.find(r => r.name.startsWith(n)) ?? {}).max;
 check("TB-4", /7\.12 W\/\(m·K\).*PCB \(effective\)/.test(plain) && !/0\.314/.test(plain) && !s3.error && Math.abs(of(t3, "C12") - of(t2, "C12")) > 0.5 && Math.abs(s3.thermal.out.reduce((a, x) => a + x, 0) - 29.17) < 0.05,
   "with Board unticked the board is an ordinary body of one conductivity; the temperatures of the parts on it differ from the ones with the copper layers taken by direction", { plain, error: s3.error, board: [of(t2, "PCB"), of(t3, "PCB")], c12: [of(t2, "C12"), of(t3, "C12")], r14: [of(t2, "R14"), of(t3, "R14")] }, shot4);
 
-// TB-5: heat paths: the table says where each part's heat goes; Keep the package's split puts the board shares into the board under the parts.
+// TB-5: heat paths: the table says where each part's heat goes; the package's split is always kept, so the board shares enter the board under the parts.
 await pg.click(`#sim-tree .sim-complist li[data-comp="${pcb}"] [data-a="compboard"]`);
 await idle(pg);
 await pg.click('#sim-tools [data-s="solve"]');
 await solved();
 const paths = async () => pg.evaluate(() => [...document.querySelectorAll("#sim-tree .sim-paths tr[data-path]")].map(r => ({ name: r.dataset.path, board: r.querySelector('[data-v="pboard"]').textContent, surface: r.querySelector('[data-v="pair"]').textContent, title: r.title })));
-const p1 = await paths();
+const p1 = await paths(), s5 = await sim();
 await pg.locator("#sim-tree .sim-paths").scrollIntoViewIfNeeded();
-const shot5 = await snap(pg, "heat-paths");
-await pg.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
-await pg.waitForSelector('#sim-pm input[data-k="split"]');
-await pg.click('#sim-pm input[data-k="split"]');
-await pg.click("#sim-pm .pm-ok");
-await pg.click('#sim-tools [data-s="solve"]');
-await solved();
-const p2 = await paths(), s5 = await sim();
-await pg.locator("#sim-tree .sim-paths").scrollIntoViewIfNeeded();
-const shot6 = await snap(pg, "heat-paths-package-split");
+const shot5 = await snap(pg, "heat-paths-package-split");
 const pathRow = (ps, n) => ps.find(r => r.name === n) ?? {};
-check("TB-5", p1.length === 6 && p1.every(r => /package's split/.test(r.title)) && pathRow(p1, "R14").board === "0" && parseInt(pathRow(p1, "V3").board) > 10
-  && pathRow(p2, "R14").board === "52" && pathRow(p2, "R20").board === "56" && !s5.error && Math.abs(s5.thermal.applied - 29.17) < 0.01,
-  "the Heat paths table shows each part's share into the board and off its own surface (R14 lies clear of the board, so none goes into it; the valve stands in it); with the package's split kept, R14 and R20 put the package's board shares into the board", { p1, p2, applied: s5.thermal?.applied, shot5 }, shot6);
+check("TB-5", p1.length === 6 && p1.every(r => /package's split/.test(r.title)) && pathRow(p1, "R14").board === "52" && pathRow(p1, "R20").board === "56" && !s5.error && Math.abs(s5.thermal.applied - 29.17) < 0.01,
+  "the Heat paths table shows each part's share into the board and off its own surface; the package's split is always kept, so R14 and R20 put the package's board shares into the board", { p1, applied: s5.thermal?.applied }, shot5);
 
 // TB-6: natural convection: the package's closed chassis is the study's enclosure; picking Open frame sets 25 °C and the parts run cooler.
 const enc = await pg.evaluate(() => ({ enc: document.querySelector('#sim-tree select[data-k="enclosure"]').value, down: document.querySelector('#sim-tree select[data-k="down"]').value, h: document.querySelector('#sim-tree [data-v="hnat"]')?.textContent ?? "" }));

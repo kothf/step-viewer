@@ -219,15 +219,18 @@ test("heat paths of a board study: where a part's heat goes, and the package's s
     const set = thermalSetup(st, body, ["pcb", "r1"]);
     return { set, r: [...runThermal({ body, mat: regs[0].mat, problem: studyProblem(st, body), passes: 2, energyTol: 0, pos, nrm, regions: regs, thermal: { k: 0.0003, setup: set, ks: [0.0003, 0.0003], gap: 0.1 } })].at(-1)! };
   };
-  // without the split all the heat is made in the part; what leaves each component adds up to the heat put in
+  // without a board there is no split: all the heat is made in the part; what leaves each component adds up to the heat put in
+  delete st.loads[0].board;
   const a = solve(), ca = a.r.thermal!.comps!;
   assert.deepEqual(a.set.sources, [{ power: 2, doms: [1], id: "l1" }]);
   assert.ok(Math.abs(ca[1].power - 2) < 1e-9 && ca[0].power === 0);
   assert.ok(Math.abs(ca[0].out! + ca[1].out! - 2) < 0.02, `out ${ca[0].out} + ${ca[1].out}`);
   // the part conducts some of its heat into the board, the board loses it to the air
   assert.ok(ca[0].out! > 0.1 && ca[1].out! < 2, `board ${ca[0].out}, part ${ca[1].out}`);
-  // kept: 1.2 W enters the board under the part, 0.5 W goes to the chassis, 0.3 W is made in the part
-  st.loads[0].split = true;
+  // with a board the split is always kept, even saved off (1.711): 1.2 W enters the board under the part, 0.5 W goes
+  // to the chassis, 0.3 W is made in the part
+  st.loads[0].board = "pcb";
+  st.loads[0].split = false;
   const b = solve(), patch = b.set.sources.find(s => s.tris)!;
   assert.equal(b.set.sources.length, 2);
   assert.equal(patch.power, 1.2);

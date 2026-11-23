@@ -17,15 +17,15 @@ const comps = await pg.evaluate(() => [...document.querySelectorAll("#sim-tree .
 check("HS-1", comps.length === 8 && comps.some(c => /heatsink.*Alumin/i.test(c)),
   "Simulate makes the board's study with the heatsink block as a component of its own, in aluminium", comps, await snap(pg, "study"));
 
-// HS-2: the package's split kept: tick it in the Heat from package panel.
+// HS-2: the package's split is always kept: the Heat from package panel says so and has no switch for it.
 await pg.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
-await pg.waitForSelector('#sim-pm input[data-k="split"]');
-await pg.click('#sim-pm input[data-k="split"]');
-const shot = await snap(pg, "split-ticked");
+await pg.waitForSelector('#sim-pm [data-v="splithelp"]');
+const shot = await snap(pg, "split-always-kept");
+const box = await pg.evaluate(() => !!document.querySelector('#sim-pm input[data-k="split"]'));
 await pg.click("#sim-pm .pm-ok");
 await idle(pg);
 const split = await pg.evaluate(() => window.__sv.asm.doc.studies.find(x => x.kind === "thermal").loads.find(l => l.type === "pkgheat").split);
-check("HS-2", split === true, "Keep the package's split is ticked in the Heat from package panel", { split }, shot);
+check("HS-2", split === true && !box, "the package's split is always kept: the Heat from package panel says so and has no switch", { split, box }, shot);
 
 // HS-3: Solve: Q2's 4.2 W heatsink share enters the heatsink; the Heat paths table has a Heatsink column.
 await pg.click('#sim-tools [data-s="solve"]');

@@ -6,7 +6,7 @@ import { MeshBody, insideOf } from "./body";
 import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support, type TempField } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
-import { DEFAULT_AMBIENT, DEFAULT_REF, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { DEFAULT_AMBIENT, DEFAULT_REF, keepsSplit, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch, facingPatch } from "../thermal/study";
 import { forcedH, kmapMean, ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
 import { viewFactor } from "./viewfactor";
@@ -679,10 +679,10 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
     const v = l.value?.v ?? 0;
     if (l.type === "pkgheat") {
       // a board's package: each part's power is made throughout the components its bodies became; with the
-      // package's split kept, its board share enters the board under the part and a chassis share leaves the model
+      // package's split (always kept with a board), its board share enters the board under the part and a chassis share leaves the model
       let any = false;
       const boardDom = l.board ? (regions ?? []).findIndex(k => compOf(k) === l.board) : -1;
-      const boardTris = l.split && boardDom >= 0 ? compTris(b, new Set([l.board!])) : null;
+      const boardTris = keepsSplit(l) && boardDom >= 0 ? compTris(b, new Set([l.board!])) : null;
       // heatsink candidates: components that are neither the board nor a part making heat
       const makers = new Set((l.parts ?? []).filter(x => x.p >= PACKAGE_MIN_POWER).flatMap(x => x.comps));
       const cands = [...new Set((regions ?? []).map(k => compOf(k)))].filter(c => c !== l.board && !makers.has(c));
