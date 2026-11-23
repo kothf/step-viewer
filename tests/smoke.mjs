@@ -19136,7 +19136,7 @@ try {
   }
 
   // --- Structural analysis 1.630 (FRS-structural SA3): a static study of an assembly, components joined across a gap ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
