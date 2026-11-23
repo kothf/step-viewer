@@ -132,6 +132,8 @@ export interface StudyLoad {
   flip?: boolean;
   /** Heat power: made throughout the whole body instead of entering through faces. */
   body?: boolean;
+  /** Heat power (FR-TLOAD-001): the value is each picked item's (each face, or each component with `body`), not the total. */
+  each?: boolean;
   /** Heat from package: the power of each part of a board's thermal package, made throughout its components. */
   parts?: PackageHeat[];
   /** Heat from package: the component that is the board (its contact patches take the parts' board shares). */

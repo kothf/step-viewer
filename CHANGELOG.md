@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.705.0] - 2026-11-23
+
+### Added
+
+- **Heat power** per item: with **Power of each face** ticked, every picked face takes the typed power instead of sharing it (two faces at 2 W make 4 W). In an assembly with **Throughout the whole component**, **Power of each component** makes the power in every component the picked faces are on. The study row says "2 W each".
+
 ## [1.704.0] - 2026-11-23
 
 ### Added
@@ -4650,7 +4656,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.704.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.705.0...HEAD
+[1.705.0]: https://github.com/kothf/step-viewer/compare/v1.704.0...v1.705.0
 [1.704.0]: https://github.com/kothf/step-viewer/compare/v1.703.0...v1.704.0
 [1.703.0]: https://github.com/kothf/step-viewer/compare/v1.702.0...v1.703.0
 [1.702.0]: https://github.com/kothf/step-viewer/compare/v1.701.0...v1.702.0

@@ -3745,7 +3745,7 @@ export class SimController {
     if (it.type === "rad") return `ε ${sig(it.emis ?? 0)}, ${amb(it)}`;
     if (it.type === "radx") return `ε ${sig(it.emis ?? 0.9)} / ${sig(it.emis2 ?? it.emis ?? 0.9)}`;
     const prof = (l: StudyLoad) => (st.settings.transient && l.profile ? `, ${profileText(l.profile, t)}` : "");
-    if (it.type === "heat") return `${sig(it.value?.v ?? 0)} W${prof(it)}`;
+    if (it.type === "heat") return `${sig(it.value?.v ?? 0)} W${it.each && !(it.body && !this.host.asm()) ? ` ${t("each")}` : ""}${prof(it)}`;
     if (it.type === "vheat") return `${sig(it.value?.v ?? 0)} W/m³${prof(it)}`;
     if (it.type === "hflux") return `${sig(it.value?.v ?? 0)} W/m²${prof(it)}`;
     if (it.type === "pkgheat") return `${sig((it.parts ?? []).reduce((a, x) => a + (x.off || !(x.p >= PACKAGE_MIN_POWER) || !x.comps.length ? 0 : x.p), 0))} W${prof(it)}`;
@@ -4399,7 +4399,8 @@ export class SimController {
           + `<p class="pm-help muted">${esc(t("The part grows by its expansion coefficient α times how much warmer it is than the stress-free temperature. Where the supports stop it growing, it is stressed. Uses the material's α."))}</p>`);
       }
       else if (l.type === "heat") body += group(t("Heat"), chk("body", l.body, this.host.asm() ? t("Throughout the whole component") : t("Throughout the whole body")) + nf("value", t("Power"), l.value, "W")
-        + `<p class="pm-help muted">${esc(l.body ? (this.host.asm() ? t("The total power, made evenly throughout the components the picked faces are on.") : t("The total power, made evenly throughout the part's volume.")) : t("The total power, spread evenly over the picked faces."))}</p>`) + this.profileGroup(l, group);
+        + (l.body && !this.host.asm() ? "" : chk("each", l.each, l.body ? t("Power of each component") : t("Power of each face")))
+        + `<p class="pm-help muted">${esc(l.each && !(l.body && !this.host.asm()) ? (l.body ? t("Each component the picked faces are on makes this power, evenly throughout its volume.") : t("Each picked face takes this power, spread evenly over it.")) : l.body ? (this.host.asm() ? t("The total power, made evenly throughout the components the picked faces are on.") : t("The total power, made evenly throughout the part's volume.")) : t("The total power, spread evenly over the picked faces."))}</p>`) + this.profileGroup(l, group);
       else if (l.type === "pkgheat") {
         const parts = l.parts ?? [], lifeCol = parts.some(x => x.elyt || x.life !== undefined);
         body += group(t("Parts"), `<table class="sim-pkparts"><thead><tr><th></th><th>${esc(t("Part"))}</th><th>${esc(t("Power, W"))}</th><th title="${esc(t("Junction to case, K/W: the part's temperature is then its case plus power × Rjc"))}">Rjc, K/W</th><th title="${esc(t("Temperature limit, °C: the result marks the part when it runs hotter"))}">${esc(t("Limit"))}, °C</th>${lifeCol ? `<th title="${esc(t("Rated life of an electrolytic at its limit, h: the result gives its life by the 10 °C rule"))}">${esc(t("Life"))}, h</th>` : ""}</tr></thead><tbody>${parts.map((x, i) => {
@@ -4848,6 +4849,7 @@ export class SimController {
     }
     else if (k === "flip") d.flip = el.checked || undefined;
     else if (k === "body") { const l = e.draft as StudyLoad; l.body = el.checked || undefined; if (l.body && !this.host.asm()) l.faces = []; }
+    else if (k === "each") { const l = e.draft as StudyLoad; l.each = el.checked || undefined; }
     else if (k === "all") { const sp = e.draft as StudySupport; sp.all = el.checked || undefined; if (sp.all) { sp.faces = []; delete sp.rth; } }
     else if (k === "split") { const l = e.draft as StudyLoad; l.split = el.checked || undefined; }
     else if (k === "pkon") { const x = (e.draft as StudyLoad).parts?.[Number(el.dataset.i)]; if (x) x.off = el.checked ? undefined : true; }

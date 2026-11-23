@@ -17225,6 +17225,23 @@ try {
     check(!t5.error && loc.opts === 6 && t5.passes.length === 5 && t5.passes.map(q => q.p).join() === "2,3,4,5,6" && t5.passes[3].raised > 0 && t5.passes[3].raised < t5.passes[3].cells && t5.passes[4].dofs < t5.passes[4].cells * 84 && loc.rows === 5 && loc.notes.length === 2 && /Pass 4: accuracy raised in/.test(loc.notes[0])
       && Math.abs(t5.thermal.out[0] + t5.thermal.out[1] - 8) < 0.01 && Math.abs(t5.thermal.max - t2b.thermal.max) < 0.02 * (t2b.thermal.max - 20),
       `thermal 1.695: five passes: the last two raise the degree in some cells only, say so, and the heat still balances (${JSON.stringify({ error: t5.error, passes: t5.passes, loc, max: [t5.thermal?.max, t2b.thermal.max] })})`);
+    // FR-TLOAD-001 (1.705.0): Heat power per face: two picked faces, 2 W each = 4 W made
+    await tp.click('#sim-tools [data-s="heat"]');
+    await tp.waitForSelector("#sim-pm .pm-ok");
+    for (const f of ["f1:end", "f1:side:s1l2"]) { p = await at(f); await tp.mouse.click(p.x, p.y); await tp.waitForTimeout(200); }
+    await tp.fill('#sim-pm [data-n="value"]', "2");
+    await tp.press('#sim-pm [data-n="value"]', "Tab");
+    const each0 = await tp.evaluate(() => ({ box: !!document.querySelector('#sim-pm [data-k="each"]'), help: [...document.querySelectorAll("#sim-pm .pm-help")].map(e => e.textContent).join(" ") }));
+    await tp.check('#sim-pm [data-k="each"]');
+    await tp.waitForTimeout(150);
+    const each1 = await tp.evaluate(() => ({ help: [...document.querySelectorAll("#sim-pm .pm-help")].map(e => e.textContent).join(" ") }));
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    const each2 = await tp.evaluate(() => { const st = window.__sv.model.store.doc.studies[0], l = st.loads.at(-1); return { each: l.each, faces: l.faces.length, metas: [...document.querySelectorAll("#sim-tree .sim-heat .sim-meta")].map(e => e.textContent) }; });
+    check(each0.box && /spread evenly over the picked faces/.test(each0.help) && /Each picked face takes this power/.test(each1.help) && each2.each === true && each2.faces === 2 && /2 faces · 2 W each/.test(each2.metas.at(-1) ?? ""),
+      `thermal 1.705: Heat power on two faces takes Power of each face; the row says 2 W each (${JSON.stringify({ each0, each1, each2 })})`);
+    await tp.click('#sim-tree .sim-heat .sim-row:last-child [data-a="del"]');
+    await settle();
     // a structural command starts a static study of its own; the switch goes back to the thermal one; undo removes it
     await tp.click('#sim-tools [data-s="mode-structural"]');
     await tp.waitForTimeout(150);
