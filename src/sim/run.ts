@@ -1225,7 +1225,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   if (set.problems.length) throw new Error(`${set.problems[0].code}: ${set.problems[0].id}`);
   const R = T.ks && inp.regions && inp.regions.length > 1 ? inp.regions : null;
   if (R ? T.ks!.some(v => !(v > 0)) : !((T.ks?.[0] ?? T.k) > 0)) throw new Error("E-TH-NOK");
-  if (!set.sinks.length) throw new Error("E-TH-NOSINK");
+  if (!set.sinks.length) throw new Error(R ? `E-TH-NOSINK: ${R.map((_r, i) => i).join(",")}` : "E-TH-NOSINK");
   const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), ...(T.kmaps?.[i] ? { kmap: T.kmaps[i]! } : {}), ...(T.kts?.[i] ? { kt: T.kts[i]! } : {}), tris: r.tris }));
   // nothing brings heat and nothing differs: every point would just sit at the one temperature
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
@@ -1335,7 +1335,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const R = T.ks && inp.regions && inp.regions.length > 1 ? inp.regions : null;
   if (R ? T.ks!.some(v => !(v > 0)) : !((T.ks?.[0] ?? T.k) > 0)) throw new Error("E-TH-NOK");
   if (R ? (Tr.rcs ?? []).length !== R.length || Tr.rcs!.some(v => !(v > 0)) : !(Tr.rc > 0)) throw new Error("E-TH-NOCP");
-  if (!set.sinks.length) throw new Error("E-TH-NOSINK");
+  if (!set.sinks.length) throw new Error(R ? `E-TH-NOSINK: ${R.map((_r, i) => i).join(",")}` : "E-TH-NOSINK");
   if (!(Tr.end > 0)) throw new Error("E-TH-TIME");
   const heat = set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0 || (s.density ?? 0) !== 0);
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));

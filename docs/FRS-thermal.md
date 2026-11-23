@@ -339,7 +339,7 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 
 - **FR-TBC-010** (TH2, M) Ambient temperature is one study value shown at the top of the tree, used by every convection and radiation unless overridden; enclosure presets **Open frame (25 °C)**, **Vented chassis (35 °C)**, **Closed chassis (40 °C)** set ambient and the enclosure factor in one pick.
 - **FR-TBC-011** (TH2, M) Gravity direction for natural convection: −Z of the model by default, or "down" of the current view, or a typed direction; a board's orientation preset (horizontal parts up, parts down, vertical) sets it for boards.
-- **FR-TBC-012** (TH2, M) A study with no path for heat to leave (all faces insulated and no fixed temperature) stops with E-TH-NOSINK naming the bodies, before solving.
+- **FR-TBC-012** (TH2, M) A study with no path for heat to leave (all faces insulated and no fixed temperature) stops with E-TH-NOSINK naming the bodies, before solving. Built in 1.708.0: the check runs before the study goes to the solver; the message names the part, or every component of an assembly (`E-TH-NOSINK: 0,1,…`).
 - **FR-TBC-013** (TH2, M) Boundary conditions are drawn with their own glyphs (fixed temperature: a thermometer; convection: wavy arrows; radiation: dashed rays; heatsink: fins) with a value callout. Built in 1.692.0: callouts with the condition's symbol and value in its own colour, dashed rays for radiation; callouts that would overlap are stacked.
 
 ### 9.4 Thermal connections (assemblies)

@@ -157,6 +157,9 @@ test("thermal study of an assembly: components in series, a pad between them, he
   const v = go();
   assert.ok(Math.abs(v.thermal!.comps![1].power - 4) < 1e-9 && v.thermal!.comps![0].power === 0);
   assert.ok(Math.abs(v.thermal!.flows[0].out - 4) < 0.02, `out ${v.thermal!.flows[0].out}`);
+  // no cooling at all: stopped before solving, naming every component (FR-TBC-012)
+  st.supports = [];
+  assert.throws(() => go(), /^Error: E-TH-NOSINK: 0,1$/);
 });
 
 test("a board study: heat from the package, cooling of every open surface, a heatsink by its resistance (FR-TLOAD-004, FR-TBC-008)", () => {
