@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.713.0] - 2026-11-23
+
+### Added
+
+- **Heat from package** can say where each part's board share enters the board: through its pads (discs) and the air gap under its body (rectangles), each with its watts, as a board export may write them. The share then goes into the board at those places instead of spread under the whole part; a place that misses the board puts its watts under the part as before.
+
 ## [1.712.0] - 2026-11-23
 
 ### Changed
@@ -4702,7 +4708,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.712.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.713.0...HEAD
+[1.713.0]: https://github.com/kothf/step-viewer/compare/v1.712.0...v1.713.0
 [1.712.0]: https://github.com/kothf/step-viewer/compare/v1.711.0...v1.712.0
 [1.711.0]: https://github.com/kothf/step-viewer/compare/v1.710.0...v1.711.0
 [1.710.0]: https://github.com/kothf/step-viewer/compare/v1.709.0...v1.710.0

@@ -66,9 +66,48 @@ export function contactPatch(board: ArrayLike<number>, part: ArrayLike<number>, 
   if (!pl || part.length < 9) return null;
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < part.length; i++) { const a = i % 3, v = part[i]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
-  const ax = pl.axis, a1 = (ax + 1) % 3, a2 = (ax + 2) % 3, mid = (lo[ax] + hi[ax]) / 2, keep: number[] = [];
-  // the footprint's four sides as half-planes over (u, v) = the two in-plane coordinates
-  const sides: [number, number, number][] = [[0, 1, lo[a1] - grow], [0, -1, -(hi[a1] + grow)], [1, 1, lo[a2] - grow], [1, -1, -(hi[a2] + grow)]];
+  const ax = pl.axis, a1 = (ax + 1) % 3, a2 = (ax + 2) % 3;
+  // the footprint as a polygon over (u, v) = the two in-plane coordinates
+  const box = [[lo[a1] - grow, lo[a2] - grow], [hi[a1] + grow, lo[a2] - grow], [hi[a1] + grow, hi[a2] + grow], [lo[a1] - grow, hi[a2] + grow]];
+  return clipFacing(board, ax, (lo[ax] + hi[ax]) / 2, box);
+}
+
+/** Where a package part's board share enters the board (FR-TBRD-003): a pad as a disc [x, y, r] or the air gap under
+ * the body as a rectangle [x0, y0, x1, y1], mm, in the board's plane (x, y when it lies square to z), with its watts. */
+export interface HeatInto { disc?: [number, number, number]; rect?: [number, number, number, number]; w: number }
+
+/** Sides of the polygon standing in for a pad's disc (inscribed, scaled to keep the disc's area). */
+const DISC_SIDES = 24;
+
+/**
+ * The board's face towards the part clipped to one `into` region (FR-TBRD-003): a disc as a polygon of
+ * `DISC_SIDES` sides with the disc's area, a rectangle as it is. Null when nothing of the board lies there.
+ */
+export function intoPatch(board: ArrayLike<number>, part: ArrayLike<number>, into: HeatInto): Float64Array | null {
+  const pl = plateAxis(board);
+  if (!pl || part.length < 9) return null;
+  const ax = pl.axis;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = ax; i < part.length; i += 3) { if (part[i] < lo) lo = part[i]; if (part[i] > hi) hi = part[i]; }
+  let poly: number[][];
+  if (into.disc) {
+    const [x, y, r] = into.disc, n = DISC_SIDES, R = r * Math.sqrt((2 * Math.PI) / (n * Math.sin((2 * Math.PI) / n)));
+    if (!(r > 0)) return null;
+    poly = Array.from({ length: n }, (_, k) => [x + R * Math.cos((2 * Math.PI * k) / n), y + R * Math.sin((2 * Math.PI * k) / n)]);
+  } else if (into.rect) {
+    const [x0, y0, x1, y1] = into.rect, u0 = Math.min(x0, x1), u1 = Math.max(x0, x1), v0 = Math.min(y0, y1), v1 = Math.max(y0, y1);
+    if (!(u1 > u0 && v1 > v0)) return null;
+    poly = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+  } else return null;
+  return clipFacing(board, ax, (lo + hi) / 2, poly);
+}
+
+/** The board's triangles square to `ax` on the side looking towards `mid`, clipped to the ccw convex polygon `clip`. */
+function clipFacing(board: ArrayLike<number>, ax: number, mid: number, clip: number[][]): Float64Array | null {
+  const a1 = (ax + 1) % 3, a2 = (ax + 2) % 3, keep: number[] = [];
+  // the polygon's sides as half-planes: inside is left of each side
+  const sides = clip.map((p, i) => { const q = clip[(i + 1) % clip.length]; return [p[0], p[1], q[0] - p[0], q[1] - p[1]]; });
+  const side = (s: number[], p: number[]) => s[2] * (p[1] - s[1]) - s[3] * (p[0] - s[0]);
   for (let o = 0; o + 8 < board.length; o += 9) {
     const ux = board[o + 3] - board[o], uy = board[o + 4] - board[o + 1], uz = board[o + 5] - board[o + 2];
     const vx = board[o + 6] - board[o], vy = board[o + 7] - board[o + 1], vz = board[o + 8] - board[o + 2];
@@ -78,10 +117,10 @@ export function contactPatch(board: ArrayLike<number>, part: ArrayLike<number>, 
     // the face looking towards the part
     if (n[ax] * (mid - at) <= 0) continue;
     let poly: number[][] = [0, 3, 6].map(k => [board[o + k + a1], board[o + k + a2]]);
-    for (const [c, sg, k] of sides) {
+    for (const s of sides) {
       const next: number[][] = [];
       for (let i = 0; i < poly.length; i++) {
-        const p = poly[i], q = poly[(i + 1) % poly.length], dp = sg * p[c] - k, dq = sg * q[c] - k;
+        const p = poly[i], q = poly[(i + 1) % poly.length], dp = side(s, p), dq = side(s, q);
         if (dp >= 0) next.push(p);
         if (dp >= 0 !== dq >= 0) { const t = dp / (dp - dq); next.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])]); }
       }
