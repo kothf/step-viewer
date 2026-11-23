@@ -1,14 +1,30 @@
 // Transient thermal studies (FRS-thermal TH4): power profiles and output times. Pure.
+import { evaluate } from "../model/expr";
 
 /**
  * How a heat load's power changes with time (FR-TLOAD-005), as a share of its power: `step` = off until `at`, s,
  * then on; `duty` = on for `on` s of every `period` s (after `delay` s); `table` = (time s, share) rows, linear
- * between them, the ends held.
+ * between them, the ends held; `expr` = an expression of t, s (`f`; sin/cos take radians of t, below 0 counts as 0).
  */
 export type PowerProfile =
   | { kind: "step"; at?: number }
   | { kind: "duty"; on: number; period: number; delay?: number }
-  | { kind: "table"; pts: [number, number][] };
+  | { kind: "table"; pts: [number, number][] }
+  | { kind: "expr"; f: string };
+
+/** An expression profile's share at time t, s; throws on an expression that cannot be read. */
+export function exprShare(f: string, t: number): number {
+  return evaluate(f, "number", "mm", { t: { v: t, unit: true } });
+}
+
+/** An expression that reads at t = 0 and a few later times and gives finite numbers (null), else the error's key. */
+export function exprProblem(f: string): string | null {
+  if (!f.trim()) return "Empty expression";
+  try {
+    for (const t of [0, 1, 7.5, 60, 3600]) if (!Number.isFinite(exprShare(f, t))) return "Not a number";
+    return null;
+  } catch (e) { return (e as { key?: string; message?: string }).key ?? (e as Error).message ?? "Not a number"; }
+}
 
 /** A transient study's times (FR-TSOL-006): end and output interval, s; start temperature, °C (absent = ambient). */
 export interface TransientSettings { end: number; out: number; t0?: number }
@@ -25,6 +41,7 @@ export function profileFactor(p: PowerProfile | undefined, t: number): number {
     if (s < 0 || !(p.period > 0)) return 0;
     return s % p.period < p.on ? 1 : 0;
   }
+  if (p.kind === "expr") { let v = NaN; try { v = exprShare(p.f, t); } catch { /* reported by the panel */ } return Number.isFinite(v) ? Math.max(0, v) : 0; }
   const pts = p.pts;
   if (!pts.length) return 1;
   if (t <= pts[0][0]) return pts[0][1];
@@ -35,10 +52,11 @@ export function profileFactor(p: PowerProfile | undefined, t: number): number {
   return pts[pts.length - 1][1];
 }
 
-/** The longest time step that still sees the profile's changes, s (Infinity = any). */
-export function profileStep(p: PowerProfile | undefined): number {
+/** The longest time step that still sees the profile's changes, s (Infinity = any); an expression's is end / 400. */
+export function profileStep(p: PowerProfile | undefined, end = Infinity): number {
   if (!p) return Infinity;
   if (p.kind === "step") return Infinity;
+  if (p.kind === "expr") return end / 400;
   if (p.kind === "duty") return Math.max(1e-6, Math.min(p.on, p.period - p.on > 0 ? p.period - p.on : p.on) / 4);
   let d = Infinity;
   for (let i = 1; i < p.pts.length; i++) { const g = p.pts[i][0] - p.pts[i - 1][0]; if (g > 0) d = Math.min(d, g); }
@@ -47,7 +65,7 @@ export function profileStep(p: PowerProfile | undefined): number {
 
 /** Times the profile jumps or turns, s (a duty cycle's are left to its short steps). */
 export function profileBreaks(p: PowerProfile | undefined): number[] {
-  if (!p || p.kind === "duty") return [];
+  if (!p || p.kind === "duty" || p.kind === "expr") return [];
   if (p.kind === "step") return p.at ? [p.at] : [];
   return p.pts.map(r => r[0]);
 }
@@ -69,6 +87,7 @@ export function profileText(p: PowerProfile | undefined, t: (s: string, v?: Reco
   if (!p) return t("constant");
   if (p.kind === "step") return p.at ? t("on from {s} s", { s: p.at }) : t("constant");
   if (p.kind === "duty") return t("{on} s on every {period} s", { on: p.on, period: p.period });
+  if (p.kind === "expr") return `P × (${p.f})`;
   return t("table of {n} rows", { n: p.pts.length });
 }
 

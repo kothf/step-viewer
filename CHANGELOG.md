@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.691.0] - 2026-11-23
+
+### Added
+
+- Insulated faces in thermal studies. **Insulated** on the Thermal bar takes faces no heat crosses, such as a face lying on foam, plastic or a part that is not modelled: convection and radiation on all open surfaces leave them out.
+- Power by an expression of time in transient thermal studies. A heat load's **Over time** choice **Expression of t** takes the share of its power as an expression of t in seconds, such as `0.5 + 0.5*sin(2*pi*t/60)` or `min(1, t/120)` (sin and cos in radians, below 0 counts as 0); an expression that cannot be read is refused.
+
 ## [1.690.0] - 2026-11-23
 
 ### Added
@@ -4536,7 +4543,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.690.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.691.0...HEAD
+[1.691.0]: https://github.com/kothf/step-viewer/compare/v1.690.0...v1.691.0
 [1.690.0]: https://github.com/kothf/step-viewer/compare/v1.689.0...v1.690.0
 [1.689.0]: https://github.com/kothf/step-viewer/compare/v1.688.0...v1.689.0
 [1.688.0]: https://github.com/kothf/step-viewer/compare/v1.687.0...v1.688.0

@@ -8,12 +8,12 @@ import type { CopperMap } from "../thermal/copper";
 import type { FaceRef, Num, V3 } from "../model/types";
 import type { MatRef } from "../tools/materials";
 
-/** `temp`, `conv` and `rad` are a thermal study's surface conditions: a fixed temperature, convection to air, radiation to the surroundings; `radx` = radiation between two face sets; `chassis` = a chassis wall (FR-TBC-009): a fixed temperature (`temp`) or a thermal resistance to ambient (`rth`), which takes a board package's chassis shares. */
-export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp" | "temp" | "conv" | "rad" | "radx" | "chassis";
+/** `insul` = insulated faces (FR-TBC-002): no heat crosses them, so "all open surfaces" items leave them out. `temp`, `conv` and `rad` are a thermal study's surface conditions: a fixed temperature, convection to air, radiation to the surroundings; `radx` = radiation between two face sets; `chassis` = a chassis wall (FR-TBC-009): a fixed temperature (`temp`) or a thermal resistance to ambient (`rth`), which takes a board package's chassis shares. */
+export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp" | "temp" | "conv" | "rad" | "radx" | "chassis" | "insul";
 /** `heat` (W), `vheat` (W/m³) and `hflux` (W/m²) are a thermal study's heat sources. */
 /** `temperature` (structural): thermal expansion from a uniform temperature (`value` °C) or a thermal study's result (`from`). */
 export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote" | "heat" | "vheat" | "hflux" | "pkgheat" | "temperature";
-export const THERMAL_SUPPORTS: SupportType[] = ["temp", "conv", "rad", "radx", "chassis"];
+export const THERMAL_SUPPORTS: SupportType[] = ["temp", "conv", "rad", "radx", "chassis", "insul"];
 export const THERMAL_LOADS: LoadType[] = ["heat", "vheat", "hflux", "pkgheat"];
 /** Whether a support or load type belongs to thermal studies. */
 export const isThermalType = (type: string) => (THERMAL_SUPPORTS as string[]).includes(type) || (THERMAL_LOADS as string[]).includes(type);
@@ -426,7 +426,7 @@ export function nextId(st: Study, prefix: "s" | "l" | "r" | "w" | "k" | "m"): st
   return `${prefix}${n}`;
 }
 
-export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement", temp: "Fixed temperature", conv: "Convection", rad: "Radiation", radx: "Radiation between faces", chassis: "Chassis wall" };
+export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement", temp: "Fixed temperature", conv: "Convection", rad: "Radiation", radx: "Radiation between faces", chassis: "Chassis wall", insul: "Insulated" };
 export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure", remote: "Remote load", heat: "Heat power", vheat: "Volume heat", hflux: "Heat flux", pkgheat: "Heat from package", temperature: "Temperature" };
 
 export const REFINE_LABEL = "Local accuracy";
