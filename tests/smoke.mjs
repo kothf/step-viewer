@@ -19210,7 +19210,8 @@ try {
   }
 
   // --- Structural analysis 1.630 (FRS-structural SA3): a static study of an assembly, components joined across a gap ---
-  if (inShard(4)) {
+  // In shard 5 since 1.698.0: shard 4 reached the 12 minute limit.
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
