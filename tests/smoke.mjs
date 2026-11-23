@@ -18368,6 +18368,67 @@ try {
     await ctx.close();
   }
 
+  // --- conductivity by direction 1.689 (FRS-thermal FR-TMAT-003): k along X, Y and Z typed for the study ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const kp = await ctx.newPage();
+    kp.on("pageerror", e => errors.push(e.message));
+    kp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await kp.goto(`${origin}/index.html?debug`);
+    await kp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await kp.goto(`${origin}/index.html?debug`);
+    await kp.waitForFunction(() => window.__sv);
+    await kp.click("#new-part");
+    await kp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // the 20 × 20 × 100 bar along Y of the 1.665 block, its ends held at 20 and 220 °C
+    await kp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50, cp: 460, alpha: 12 };
+      d.studies = [{ id: "st1", name: "Thermal 1", kind: "thermal", supports: [{ id: "t1", type: "temp", faces: [{ name: "f1:side:s1l1" }], temp: 20 }, { id: "t2", type: "temp", faces: [{ name: "f1:side:s1l3" }], temp: 220 }], loads: [], settings: { passes: 2, energyTol: 1, ambient: 25 } }];
+    }));
+    await kp.waitForTimeout(150);
+    await kp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const solved = async () => { await kp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await kp.waitForTimeout(400); };
+    await kp.click("#cm-t-simulation");
+    await kp.waitForTimeout(300);
+    await kp.click('#sim-tools [data-s="mode-thermal"]');
+    await kp.waitForTimeout(300);
+    // along Y three times the material's k, across it the material's: 3 × 40 W flows
+    await kp.click('#sim-tree [data-a="k3"][data-b=""]');
+    await kp.waitForSelector('#sim-tree input[data-k="k3y"]');
+    const pre = await kp.evaluate(() => ["x", "y", "z"].map(a => document.querySelector(`#sim-tree input[data-k="k3${a}"]`).value));
+    await kp.fill('#sim-tree input[data-k="k3y"]', "150");
+    await kp.keyboard.press("Tab");
+    await kp.waitForTimeout(300);
+    const ui = await kp.evaluate(() => ({ k3: window.__sv.model.store.doc.studies[0].k3, k: document.querySelector('#sim-tree [data-v="kcond"]')?.textContent ?? "", wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await kp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const c1 = await kp.evaluate(() => window.__sv.sim.state());
+    // a bad value is refused and the values kept
+    await kp.fill('#sim-tree input[data-k="k3z"]', "-1");
+    await kp.keyboard.press("Tab");
+    await kp.waitForTimeout(300);
+    const kept = await kp.evaluate(() => JSON.stringify(window.__sv.model.store.doc.studies[0].k3));
+    await kp.click("#lang-btn");
+    await kp.waitForTimeout(200);
+    const ru = await kp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-mat *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await kp.click("#lang-btn");
+    await kp.waitForTimeout(200);
+    // Same in every direction: back to 40 W
+    await kp.click('#sim-tree [data-a="k3clear"]');
+    await kp.waitForTimeout(300);
+    await kp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const c2 = await kp.evaluate(() => window.__sv.sim.state());
+    check(JSON.stringify(pre) === JSON.stringify(["50", "50", "50"]) && JSON.stringify(ui.k3) === JSON.stringify({ "": [50, 150, 50] }) && /X 50 · Y 150 · Z 50 W\/\(m·K\)/.test(ui.k) && ui.wide <= 0
+      && !c1.error && Math.abs(c1.thermal.out[0] / 120 - 1) < 0.01 && kept === JSON.stringify(ui.k3) && ru.length === 0
+      && !c2.error && Math.abs(c2.thermal.out[0] / 40 - 1) < 0.01,
+      `conductivity by direction 1.689: three times k along the bar passes 120 W instead of 40 W; a bad value is refused; back to one k; translated (${JSON.stringify({ pre, ui, e1: c1.error, o1: c1.thermal?.out, kept, ru, e2: c2.error, o2: c2.thermal?.out })})`);
+    await ctx.close();
+  }
+
   // --- thermal isolate and picture 1.660 (FRS-thermal FR-TMAP-020/042): one part alone; a PNG with the colour scale drawn in ---
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

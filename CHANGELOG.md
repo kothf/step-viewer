@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.689.0] - 2026-11-23
+
+### Added
+
+- Conductivity by direction in thermal studies. **Conductivity differs by direction…** in a part study's Material section (and an **XYZ** button on each component of an assembly study) takes the thermal conductivity along the model's X, Y and Z axes, for a laminate, a graphite pad or a heat spreader that conducts far better along its layers than through them. The values replace the material's conductivity for that study only; a conductivity table by temperature then scales all three. **Same in every direction** goes back to the material's value. A temperature load that takes its temperatures from such a study uses the same values.
+
 ## [1.688.0] - 2026-11-23
 
 ### Added
@@ -4524,7 +4530,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.688.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.689.0...HEAD
+[1.689.0]: https://github.com/kothf/step-viewer/compare/v1.688.0...v1.689.0
 [1.688.0]: https://github.com/kothf/step-viewer/compare/v1.687.0...v1.688.0
 [1.687.0]: https://github.com/kothf/step-viewer/compare/v1.686.0...v1.687.0
 [1.686.0]: https://github.com/kothf/step-viewer/compare/v1.685.0...v1.686.0
