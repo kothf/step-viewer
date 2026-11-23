@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.690.0] - 2026-11-23
+
+### Added
+
+- Chassis wall in thermal studies. **Chassis wall** on the Thermal bar takes the faces a part is bolted or wired to and either passes their heat to the room through a thermal resistance (1.5 K/W to begin with, about right for a folded steel or aluminium chassis) or holds them at a temperature. Its faces are left out of "all open surfaces", and the results show the heat it takes away and its mean temperature. In a board study that keeps the thermal package's split, each part's chassis share now enters the model on the chassis walls (shared by area) instead of leaving it; the Heat paths table gets a Chassis column, and a note says how many watts leave the model when there is no chassis wall yet.
+
 ## [1.689.0] - 2026-11-23
 
 ### Added
@@ -4530,7 +4536,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.689.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.690.0...HEAD
+[1.690.0]: https://github.com/kothf/step-viewer/compare/v1.689.0...v1.690.0
 [1.689.0]: https://github.com/kothf/step-viewer/compare/v1.688.0...v1.689.0
 [1.688.0]: https://github.com/kothf/step-viewer/compare/v1.687.0...v1.688.0
 [1.687.0]: https://github.com/kothf/step-viewer/compare/v1.686.0...v1.687.0

@@ -17143,7 +17143,7 @@ try {
     const b1 = await bar();
     const empty = await tp.evaluate(() => !!document.querySelector('#sim-tree .sim-empty [data-a="newthermal"]'));
     check(b0.on === "mode-structural" && b0.ids.includes("force") && b0.ids.includes("fixed") && !b0.ids.includes("heat") && b0.checked === 1 && !b0.wide && b0.words === 2
-      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "vheat", "hflux", "temp", "conv", "fan", "rad", "radx", "solve", "results", "report"]) && empty,
+      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "vheat", "hflux", "temp", "conv", "fan", "rad", "radx", "chassis", "solve", "results", "report"]) && empty,
       `thermal 1.651: the Simulation bar has a Structural | Thermal switch; Thermal shows the thermal study's commands in place of supports and loads (${JSON.stringify({ b0, b1, empty })})`);
     // 8 W made in the whole bar (a thermal study is made on the way), the top face held at 30 °C
     await tp.click('#sim-tools [data-s="heat"]');
@@ -18426,6 +18426,67 @@ try {
       && !c1.error && Math.abs(c1.thermal.out[0] / 120 - 1) < 0.01 && kept === JSON.stringify(ui.k3) && ru.length === 0
       && !c2.error && Math.abs(c2.thermal.out[0] / 40 - 1) < 0.01,
       `conductivity by direction 1.689: three times k along the bar passes 120 W instead of 40 W; a bad value is refused; back to one k; translated (${JSON.stringify({ pre, ui, e1: c1.error, o1: c1.thermal?.out, kept, ru, e2: c2.error, o2: c2.thermal?.out })})`);
+    await ctx.close();
+  }
+
+  // --- chassis wall 1.690 (FRS-thermal FR-TBC-009): a part's end on a chassis wall of 2 K/W; held at a temperature ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const cp = await ctx.newPage();
+    cp.on("pageerror", e => errors.push(e.message));
+    cp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await cp.goto(`${origin}/index.html?debug`);
+    await cp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await cp.goto(`${origin}/index.html?debug`);
+    await cp.waitForFunction(() => window.__sv);
+    await cp.click("#new-part");
+    await cp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // a 20 × 20 × 100 bar along Y, 10 W into its far end
+    await cp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 100), P(4, -10, 100), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50, cp: 460, alpha: 12 };
+      d.studies = [{ id: "st1", name: "Thermal 1", kind: "thermal", supports: [], loads: [{ id: "l1", type: "heat", faces: [{ name: "f1:side:s1l3" }], value: { v: 10 } }], settings: { passes: 2, energyTol: 1, ambient: 25 } }];
+    }));
+    await cp.waitForTimeout(150);
+    await cp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const solved = async () => { await cp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await cp.waitForTimeout(400); };
+    await cp.click("#cm-t-simulation");
+    await cp.waitForTimeout(300);
+    await cp.click('#sim-tools [data-s="mode-thermal"]');
+    await cp.waitForTimeout(300);
+    // the bar button opens a chassis wall by its resistance; the other choice holds it at a temperature
+    await cp.click('#sim-tools [data-s="chassis"]');
+    await cp.waitForSelector('#sim-pm select[data-k="cmode"]');
+    const p1 = await cp.evaluate(() => ({ mode: document.querySelector('#sim-pm select[data-k="cmode"]').value, rth: document.querySelector('#sim-pm input[data-q="rth"]')?.value, amb: !!document.querySelector('#sim-pm input[data-q="amb"]') }));
+    await cp.selectOption('#sim-pm select[data-k="cmode"]', "temp");
+    await cp.waitForTimeout(200);
+    const p2 = await cp.evaluate(() => ({ temp: document.querySelector('#sim-pm input[data-q="temp"]')?.value, rth: !!document.querySelector('#sim-pm input[data-q="rth"]') }));
+    await cp.click("#lang-btn");
+    await cp.waitForTimeout(200);
+    const ru = await cp.evaluate(() => [...document.querySelectorAll("#sim-pm *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await cp.click("#lang-btn");
+    await cp.waitForTimeout(200);
+    await cp.click("#sim-pm .pm-cancel");
+    await cp.waitForTimeout(200);
+    // the near end on a 2 K/W chassis wall: all 10 W leave there, the wall at 25 + 10 × 2 °C
+    await cp.evaluate(() => window.__sv.model.store.change("Chassis wall", d => { d.studies[0].supports.push({ id: "c1", name: "Chassis wall 1", type: "chassis", faces: [{ name: "f1:side:s1l1" }], rth: 2 }); }));
+    await cp.waitForTimeout(400);
+    const row = await cp.evaluate(() => document.querySelector('#sim-tree .sim-cool .sim-row[data-id="c1"]')?.textContent ?? "");
+    await cp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const c1 = await cp.evaluate(() => window.__sv.sim.state());
+    // held at 60 °C instead
+    await cp.evaluate(() => window.__sv.model.store.change("Chassis wall", d => { const s = d.studies[0].supports[0]; delete s.rth; s.temp = 60; }));
+    await cp.waitForTimeout(400);
+    await cp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const c2 = await cp.evaluate(() => window.__sv.sim.state());
+    check(p1.mode === "rth" && p1.rth === "1.5" && p1.amb && p2.temp === "40" && !p2.rth && ru.length === 0 && /2 K\/W/.test(row)
+      && !c1.error && Math.abs(c1.thermal.flows[0].out / 10 - 1) < 0.01 && Math.abs(c1.thermal.flows[0].mean - 45) < 0.5
+      && !c2.error && Math.abs(c2.thermal.flows[0].mean - 60) < 0.3 && Math.abs(c2.thermal.flows[0].out / 10 - 1) < 0.01,
+      `chassis wall 1.690: a resistance of 2 K/W takes the 10 W at 45 °C; held at 60 °C; panel defaults and Russian (${JSON.stringify({ p1, p2, ru, row, e1: c1.error, f1: c1.thermal?.flows, e2: c2.error, f2: c2.thermal?.flows })})`);
     await ctx.close();
   }
 

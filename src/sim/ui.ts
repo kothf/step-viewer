@@ -49,7 +49,7 @@ import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES,
 import { BOARD_RC, SERIES_COLORS, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
 import { fluxArrows } from "./arrows";
 import { parseKTable, kTableText, ktFactors, type KTable } from "./ktable";
-import { DEFAULT_GAP, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
+import { DEFAULT_CHASSIS_RTH, DEFAULT_GAP, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 /** What a study needs of its document: a part's, or an assembly's (which has no material or bodies of its own). */
 export type SimDoc = Pick<PartDoc, "id" | "name"> & Partial<Pick<PartDoc, "studies" | "vars" | "material" | "bodies">>;
@@ -120,7 +120,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "remote", "hydro", "gravity", "centrifugal", "temperature"];
-const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", vheat: "▣", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", fan: "⤳", rad: "☼", radx: "⇌", transient: "◷", temperature: "ϑ" };
+const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", vheat: "▣", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", fan: "⤳", rad: "☼", radx: "⇌", chassis: "▥", transient: "◷", temperature: "ϑ" };
 /** A forced air condition's speed, m/s (from the fan when it has one). */
 const forcedSpeed = (f: ForcedAir) => (f.fan ? fanSpeed(f.fan.q, f.fan.a) : f.speed);
 /** The flow direction's label (+X…−Z), or the nearest. */
@@ -156,6 +156,7 @@ const TIP: Record<string, string> = {
   fan: "Forced air: a fan blows air over the faces; each face's film coefficient comes from the air speed and its length along the flow",
   rad: "Radiation: the faces radiate heat to the surroundings",
   radx: "Radiation between faces: two sets of faces exchange heat by radiation, like a valve bulb and the board under it",
+  chassis: "Chassis wall: the faces a part is bolted or wired to, held at a temperature or passing heat to the room through a resistance; a board package's chassis shares go there",
   newthermal: "New thermal study: the temperatures of this part and where its heat goes",
   ambient: "Ambient temperature: the surroundings that convection and radiation give heat to",
 };
@@ -790,7 +791,7 @@ export class SimController {
     if ((THERMAL_SUPPORTS as string[]).includes(c)) {
       const type = c as SupportType, amb = st.settings.ambient ?? DEFAULT_AMBIENT;
       this.connSide = 1;
-      this.edit = { kind: "support", isNew: true, draft: { id: nextId(st, "s"), name: itemName(st, type), type, faces: [], ...(type === "temp" ? { temp: amb } : type === "conv" ? { h: FILM_PRESETS[0][1] } : type === "radx" ? { faces2: [], emis: 0.9, emis2: 0.9 } : { emis: 0.9 }) } };
+      this.edit = { kind: "support", isNew: true, draft: { id: nextId(st, "s"), name: itemName(st, type), type, faces: [], ...(type === "temp" ? { temp: amb } : type === "conv" ? { h: FILM_PRESETS[0][1] } : type === "radx" ? { faces2: [], emis: 0.9, emis2: 0.9 } : type === "chassis" ? { rth: DEFAULT_CHASSIS_RTH } : { emis: 0.9 }) } };
       this.renderAll(); this.drawMarks();
       return;
     }
@@ -1935,7 +1936,7 @@ export class SimController {
     if (!r?.comps || !rows || !l || (r.env && r.passes === r.env)) return [];
     const board = r.comps.findIndex(c => compOf(c.key) === l.board), contacts = last!.thermal!.contacts ?? [];
     if (board < 0) return [];
-    const out: { name: string; p: number; board: number; air: number; other: number; pkg: { board: number; air: number; sink: number } | null }[] = [];
+    const out: { name: string; p: number; board: number; air: number; chassis: number; other: number; pkg: { board: number; air: number; sink: number } | null }[] = [];
     for (const x of l.parts ?? []) {
       if (x.off || !(x.p >= PACKAGE_MIN_POWER) || !x.comps.length) continue;
       const comps = new Set(x.comps), doms = new Set<number>();
@@ -1947,7 +1948,7 @@ export class SimController {
       const chassis = l.split && x.path === "chassis" ? Math.min(x.p, Math.max(0, x.sink ?? 0)) : 0;
       const direct = l.split ? Math.max(0, x.p - own - chassis) : 0;
       const b = toBoard + direct, pkg = x.board !== undefined || x.sink !== undefined ? { board: x.board ?? 0, sink: x.sink ?? 0, air: Math.max(0, x.p - (x.board ?? 0) - (x.sink ?? 0)) } : null;
-      out.push({ name: x.name, p: x.p, board: b, air, other: x.p - b - air, pkg });
+      out.push({ name: x.name, p: x.p, board: b, air, chassis, other: x.p - b - air - chassis, pkg });
     }
     return out;
   }
@@ -1956,11 +1957,14 @@ export class SimController {
     const rows = this.heatPaths();
     if (!rows.length) return "";
     const share = (v: number, p: number) => `${Math.round((100 * v) / p)}`;
-    const split = !!this.study()?.loads.find(x => x.type === "pkgheat" && x.split);
+    const st = this.study(), split = !!st?.loads.find(x => x.type === "pkgheat" && x.split), off = new Set(st?.suppressed ?? []);
+    const chassis = rows.reduce((a, x) => a + x.chassis, 0), walls = (st?.supports ?? []).some(x => x.type === "chassis" && !off.has(x.id) && x.faces.length);
+    const cCol = chassis > 0;
     return `<h5 class="sim-sub">${esc(t("Heat paths"))}</h5>`
-      + `<table class="sim-comptable sim-paths"><thead><tr><th>${esc(t("Part"))}</th><th title="${esc(t("Heat made in the part"))}">W</th><th title="${esc(t("Conducted into the board"))}">${esc(t("Board"))}<br />%</th><th title="${esc(t("Off the part's own surface: convection, radiation, or a heatsink resistance on it"))}">${esc(t("Surface"))}<br />%</th><th title="${esc(t("Into a heatsink, other parts or the chassis"))}">${esc(t("Other"))}<br />%</th></tr></thead><tbody>`
-      + rows.map(x => `<tr data-path="${esc(x.name)}"${x.pkg ? ` title="${esc(t("The package's split: board {b} %, air {a} %, heatsink or chassis {s} %", { b: share(x.pkg.board, x.p), a: share(x.pkg.air, x.p), s: share(x.pkg.sink, x.p) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td>${sig(x.p)}</td><td data-v="pboard"${x.board < 0 ? ` title="${esc(t("It takes heat in from the board"))}"` : ""}>${share(x.board, x.p).replace("-", "−")}</td><td data-v="pair">${share(x.air, x.p)}</td><td data-v="pother">${share(Math.max(0, x.other), x.p)}</td></tr>`).join("") + `</tbody></table>`
-      + `<p class="sim-note muted" data-v="pathnote">${esc(split ? t("The package's split is kept: its board shares enter the board under each part as fixed powers.") : t("The heat goes where the conductances send it; hover a row for the package's split."))}</p>`;
+      + `<table class="sim-comptable sim-paths"><thead><tr><th>${esc(t("Part"))}</th><th title="${esc(t("Heat made in the part"))}">W</th><th title="${esc(t("Conducted into the board"))}">${esc(t("Board"))}<br />%</th><th title="${esc(t("Off the part's own surface: convection, radiation, or a heatsink resistance on it"))}">${esc(t("Surface"))}<br />%</th>${cCol ? `<th title="${esc(t("The package's chassis share, put on the chassis walls"))}">${esc(t("Chassis"))}<br />%</th>` : ""}<th title="${esc(t("Into a heatsink, other parts or the chassis"))}">${esc(t("Other"))}<br />%</th></tr></thead><tbody>`
+      + rows.map(x => `<tr data-path="${esc(x.name)}"${x.pkg ? ` title="${esc(t("The package's split: board {b} %, air {a} %, heatsink or chassis {s} %", { b: share(x.pkg.board, x.p), a: share(x.pkg.air, x.p), s: share(x.pkg.sink, x.p) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td>${sig(x.p)}</td><td data-v="pboard"${x.board < 0 ? ` title="${esc(t("It takes heat in from the board"))}"` : ""}>${share(x.board, x.p).replace("-", "−")}</td><td data-v="pair">${share(x.air, x.p)}</td>${cCol ? `<td data-v="pchassis">${share(x.chassis, x.p)}</td>` : ""}<td data-v="pother">${share(Math.max(0, x.other), x.p)}</td></tr>`).join("") + `</tbody></table>`
+      + `<p class="sim-note muted" data-v="pathnote">${esc(split ? t("The package's split is kept: its board shares enter the board under each part as fixed powers.") : t("The heat goes where the conductances send it; hover a row for the package's split."))}</p>`
+      + (cCol ? `<p class="sim-note${walls ? " muted" : ""}" data-v="chassisnote">${esc(walls ? t("The chassis shares, {w} W, enter the model on the chassis walls.", { w: sig(chassis) }) : t("The chassis shares, {w} W, leave the model: add a Chassis wall on the faces the parts are fixed to, to see how warm it gets.", { w: sig(chassis) }))}</p>` : "");
   }
 
   /** Box of each component on the plot mesh (min x, y, z, max x, y, z), by component id; an assembly only. */
@@ -3553,6 +3557,7 @@ export class SimController {
   private thermalText(it: StudySupport | StudyLoad, st: Study): string {
     const amb = (s: StudySupport) => `${sig(s.ambient ?? st.settings.ambient ?? DEFAULT_AMBIENT)} °C`;
     if (it.type === "temp") return `${sig(it.temp ?? 0)} °C`;
+    if (it.type === "chassis") return it.rth !== undefined ? `${sig(it.rth)} K/W, ${amb(it)}` : `${sig(it.temp ?? 0)} °C`;
     if (it.type === "conv" && it.rth !== undefined && !it.all) return `${sig(it.rth)} K/W, ${amb(it)}`;
     if (it.type === "conv" && it.natural) return `${t("natural convection")}, ${amb(it)}`;
     if (it.type === "conv" && it.forced) return `${t("forced air")} ${sig(forcedSpeed(it.forced))} m/s ${flowLabel(it.forced.dir)}, ${amb(it)}`;
@@ -3617,7 +3622,8 @@ export class SimController {
     if (paths.length) {
       const sh = (v: number, p: number) => `${Math.round((100 * v) / p)} %`;
       blocks.push({ kind: "h", text: t("Heat paths") });
-      blocks.push({ kind: "table", widths: [3, 1, 2, 2, 2], rows: [[t("Part"), "W", t("Board"), t("Surface"), t("Other")], ...paths.map(x => [x.name, sig(x.p), sh(x.board, x.p), sh(x.air, x.p), sh(Math.max(0, x.other), x.p)])] });
+      const cc = paths.some(x => x.chassis > 0);
+      blocks.push({ kind: "table", widths: cc ? [3, 1, 2, 2, 2, 2] : [3, 1, 2, 2, 2], rows: [[t("Part"), "W", t("Board"), t("Surface"), ...(cc ? [t("Chassis")] : []), t("Other")], ...paths.map(x => [x.name, sig(x.p), sh(x.board, x.p), sh(x.air, x.p), ...(cc ? [sh(x.chassis, x.p)] : []), sh(Math.max(0, x.other), x.p)])] });
     }
     const was = { ...this.plot };
     for (const k of ["temp", "flux"] as PlotKind[]) this.pushImage(blocks, this.capture(k));
@@ -4135,6 +4141,13 @@ export class SimController {
       const ambient = `<label class="pm-field"><span>${esc(t("Ambient temperature"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="amb" value="${s.ambient === undefined ? "" : trim(s.ambient)}" placeholder="${trim(amb)}" title="${esc(t("Empty: the study's ambient temperature"))}" spellcheck="false" /><span class="muted">°C</span></span></label>`;
       if (s.type === "temp") body += group(t("Temperature"), q("temp", t("Temperature"), s.temp ?? amb, "°C")
         + `<p class="pm-help muted">${esc(t("The faces are held at this temperature, like a cold plate or a mounting surface whose temperature is known."))}</p>`);
+      if (s.type === "chassis") {
+        const held = s.rth === undefined;
+        body += group(t("Chassis wall"), `<label class="pm-field"><span>${esc(t("Given by"))}</span><select data-k="cmode"><option value="rth"${held ? "" : " selected"}>${esc(t("Resistance"))}</option><option value="temp"${held ? " selected" : ""}>${esc(t("Temperature"))}</option></select></label>`
+          + (held ? q("temp", t("Temperature"), s.temp ?? amb, "°C") : q("rth", t("Thermal resistance"), s.rth!, "K/W") + ambient)
+          + `<p class="pm-help muted">${esc(held ? t("The picked faces are held at this temperature, like a chassis whose temperature was measured.") : t("The picked faces pass their heat to the room through this resistance: about 1 to 3 K/W for a folded steel or aluminium chassis, less with fins."))}</p>`
+          + `<p class="pm-help muted">${esc(t("Pick the faces a part is bolted or wired to. With a board package's split kept, the chassis share of each part (heat path chassis) enters the model here instead of leaving it."))}</p>`);
+      }
       if (s.type === "conv" || s.type === "rad") body += group(t("Surfaces"), chk("all", s.all, t("All surfaces open to the air"))
         + (s.all ? `<p class="pm-help muted">${esc(t("Every surface of the model, without the areas where components lie on each other."))}</p>` : ""));
       const nat = !!s.natural, fan = !nat && !!s.forced, sink = s.rth !== undefined && !s.all && !nat && !fan, worked = nat || fan;
@@ -4639,6 +4652,11 @@ export class SimController {
       l.profile = { kind: "table", pts: pts! };
       this.renderTree();
       return;
+    }
+    else if (k === "cmode") {
+      const sp = e.draft as StudySupport;
+      if (el.value === "temp") { delete sp.rth; sp.temp ??= (this.study()?.settings.ambient ?? DEFAULT_AMBIENT) + 15; }
+      else sp.rth ??= DEFAULT_CHASSIS_RTH;
     }
     else if (k === "film") {
       const sp = e.draft as StudySupport;
