@@ -21,3 +21,16 @@ test("the rim slivers of a plate thinner than a cell join a neighbour", () => {
   // the thick block is aggregated as before: its roots are the cells a quarter full
   for (const e of g.elems) if (g.cells[e.cells[0]].dom === 0) assert.ok(g.cells[e.cells[0]].frac >= 0.25 || e.cells.length === 1);
 });
+
+test("a point on a body's face reads that body, not a thin neighbour whose cell reaches there", () => {
+  // a plate 1 mm thick under a block: across x = 5 only the plate has a cell, yet (5, 3, 3) is on the block's face
+  const plate = (x: number, y: number, z: number) => x >= 0 && x <= 10 && y >= 0 && y <= 10 && z >= 0 && z <= 1;
+  const block = (x: number, y: number, z: number) => x >= 1 && x <= 5 && y >= 1 && y <= 5 && z >= 1 && z <= 4;
+  const g = makeGrid([0, 0, 0], [10, 10, 5], 5, (x, y, z) => plate(x, y, z) || block(x, y, z), { q: 3, depth: 2, domains: [plate, block] });
+  assert.equal(g.cells[g.cellOf(5, 3, 3)].dom, 1);
+  // on an edge and a corner of the block (no step along one axis goes in)
+  assert.equal(g.cells[g.cellOf(5, 5, 3)].dom, 1);
+  assert.equal(g.cells[g.cellOf(5, 5, 4)].dom, 1);
+  // inside the plate it stays the plate
+  assert.equal(g.cells[g.cellOf(7, 3, 0.5)].dom, 0);
+});

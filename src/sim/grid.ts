@@ -60,6 +60,9 @@ export class Grid {
       const e = s * this.h;
       for (let d = 0; d < D.length; d++)
         if (D[d](x + e, y, z) || D[d](x - e, y, z) || D[d](x, y + e, z) || D[d](x, y - e, z) || D[d](x, y, z + e) || D[d](x, y, z - e)) return d;
+      // on an edge or a corner of a box-like body no step along one axis goes in: try the diagonals too
+      for (let d = 0; d < D.length; d++)
+        for (let m = 0; m < 8; m++) if (D[d](x + (m & 1 ? e : -e), y + (m & 2 ? e : -e), z + (m & 4 ? e : -e))) return d;
     }
     return -1;
   }
@@ -76,7 +79,9 @@ export class Grid {
       // only where two domains share the cell does the point itself have to be asked
       let only = -1, n = 0;
       for (let d = 0; d < this.maps.length; d++) if (this.at(i, j, k, d) >= 0) { only = d; n++; }
-      dom = n === 1 ? only : this.domainOf(x, y, z);
+      // one domain's cell here does not make the point that domain's: a cell of a thin body reaches past it, and
+      // a point on another body's face just across a cell plane would read the first body's field
+      dom = n === 1 && (!this.doms || this.doms[only](x, y, z)) ? only : this.domainOf(x, y, z);
     }
     const one = dom >= 0 ? dom : 0, all = dom < 0 && this.maps.length > 1;
     const c = this.at(i, j, k, one);

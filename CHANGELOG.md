@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.694.0] - 2026-11-23
+
+### Fixed
+
+- Study results at the edges and faces of a part sitting on a board (or of any body touching a thinner one) could be read from the neighbouring body's field carried past it, so a part's top corner showed a wrong, often much hotter, temperature. Each point is now read from its own body. This also applies to the stresses of assemblies.
+
+### Added
+
+- Thermal solver validation (`docs/thermal-validation.md`): closed-form benchmarks for a pin fin, an annular fin and a heated cylinder (all within 0.02 % of the rise), and a comparison with CalculiX on a heatsink (within 0.14 %) and two boards, with what still limits the boards.
+
 ## [1.693.0] - 2026-11-23
 
 ### Added
@@ -4555,7 +4565,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.693.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.694.0...HEAD
+[1.694.0]: https://github.com/kothf/step-viewer/compare/v1.693.0...v1.694.0
 [1.693.0]: https://github.com/kothf/step-viewer/compare/v1.692.0...v1.693.0
 [1.692.0]: https://github.com/kothf/step-viewer/compare/v1.691.0...v1.692.0
 [1.691.0]: https://github.com/kothf/step-viewer/compare/v1.690.0...v1.691.0
