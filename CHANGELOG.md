@@ -5,12 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.719.0] - 2026-11-23
+## [1.720.0] - 2026-11-23
 
 ### Changed
 
 - Thermal studies use all processor cores as well. Their equations (conduction in each element and the terms of the faces between elements) are built on every thread, and they are solved by the direct solver that shares its work between threads, wherever it is the cheaper one (as structural studies decide). With radiation or natural convection a pass now factors its matrix once: the later steps of the loop are solved with that factorisation in a few iterations instead of a new one each. A board with five parts, four passes: 30 s before, 16 s on four cores. Temperatures agree with before to the solver's tolerance, and are the same bit for bit whatever the number of threads.
 - The first pass of every study finds its cells on all cores (the cubes the body fills or cuts, and the points inside the cut ones): the longest step of a first pass. A bracket's first pass took 7.5 s and takes 2.7 s on four cores; five passes 24 s → 19 s, the board above 16 s → 14 s.
+
+## [1.719.0] - 2026-11-23
+
+### Changed
+
+- Parts, assemblies, STEP files and drawings opened before now open from the disk cache after the app updates too. The cache used to be thrown away with every new version (several a day); it is now kept until the modelling kernel itself changes, which none of the last 49 releases did.
 
 ## [1.718.0] - 2026-11-23
 
@@ -4751,7 +4757,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.719.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.720.0...HEAD
+[1.720.0]: https://github.com/kothf/step-viewer/compare/v1.719.0...v1.720.0
 [1.719.0]: https://github.com/kothf/step-viewer/compare/v1.718.0...v1.719.0
 [1.718.0]: https://github.com/kothf/step-viewer/compare/v1.717.0...v1.718.0
 [1.717.0]: https://github.com/kothf/step-viewer/compare/v1.716.0...v1.717.0
