@@ -21,6 +21,8 @@ export interface ExportPart {
   p?: number;
   /** Highest temperature of its bodies in the solve, °C. */
   t?: number;
+  /** What `t` is of: body (default), case, or junction = case + p × Rjc (FR-TBRD-021). */
+  tKind?: "body" | "case" | "junction";
   limit?: number;
 }
 
@@ -53,7 +55,7 @@ export function sourcesCsv(parts: ExportPart[]): string {
     const b = p.box, c = b ? [0, 1, 2].map(i => (b[i] + b[i + 3]) / 2) : [], d = b ? [0, 1, 2].map(i => b[i + 3] - b[i]) : [];
     const margin = p.limit !== undefined && p.t !== undefined ? p.limit - p.t : undefined;
     return [String(p.id), cell(p.designator), cell(p.bodies.join(";")), cell(p.part ?? ""), p.path ?? "", p.mount ?? "",
-      r3(c[0]), r3(c[1]), r3(c[2]), r3(d[0]), r3(d[1]), r3(d[2]), r3(p.volume), r3(p.p), "", "", "", r3(p.t), p.t === undefined ? "" : "body", r3(p.limit), r3(margin), "", "dc"].join(",");
+      r3(c[0]), r3(c[1]), r3(c[2]), r3(d[0]), r3(d[1]), r3(d[2]), r3(p.volume), r3(p.p), "", "", "", r3(p.t), p.t === undefined ? "" : p.tKind ?? "body", r3(p.limit), r3(margin), "", "dc"].join(",");
   });
   return [CSV_HEAD, ...rows].join("\n") + "\n";
 }
@@ -79,7 +81,7 @@ export function manifestText(inp: ExportInput, files: Record<string, string>): s
   const parts = inp.parts.map(p => ({
     part_id: p.id, designator: p.designator, step_bodies: p.bodies, ...(p.part ? { part: p.part } : {}),
     ...(p.box ? { bbox_mm: p.box.map(v => +v.toFixed(3)) } : {}), ...(p.volume !== undefined ? { volume_mm3: +p.volume.toFixed(3) } : {}),
-    ...(p.p !== undefined ? { p_total_W: +p.p.toFixed(6) } : {}), ...(p.t !== undefined ? { t_body_C: +p.t.toFixed(3), t_kind: "body" } : {}),
+    ...(p.p !== undefined ? { p_total_W: +p.p.toFixed(6) } : {}), ...(p.t !== undefined ? { t_body_C: +p.t.toFixed(3), t_kind: p.tKind ?? "body" } : {}),
     ...(p.limit !== undefined ? { t_limit_C: p.limit } : {}), ...(p.limit !== undefined && p.t !== undefined ? { margin_C: +(p.limit - p.t).toFixed(3) } : {}),
     ...(p.path ? { heat_path: p.path } : {}), ...(p.mount ? { mount: p.mount } : {}),
   }));

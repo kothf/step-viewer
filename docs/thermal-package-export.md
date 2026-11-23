@@ -57,6 +57,7 @@ With the STEP and the `gerber/` folder inside, opening the ZIP alone does everyt
 - **Heat-source CSV** with the columns in section 15.2. It carries:
   - `p_board_W` / `p_air_W` / `p_sink_W`: the split of each part's heat. A board study uses it to put each part's board share into the board under its footprint.
   - `t_limit_C`, `t_kind` and `life_h`: the limits and capacitor life shown in the Parts and Problems lists.
+  - `rjc_KW` (optional): junction-to-case resistance of a part whose `t_kind` is `junction`. A board study then reports the junction as its case temperature plus power × Rjc; without it the user can type it, else the case is reported.
 - **`settings`** in the manifest:
   - `ambient_C`, `enclosure` (`open` / `vented` / `closed`) and `orientation` (`horizontal-up`, `horizontal-down`, `vertical`). A board study takes its ambient, natural convection and gravity from these.
   - `emissivity`.

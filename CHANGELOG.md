@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.693.0] - 2026-11-23
+
+### Added
+
+- Junction temperatures in board studies. After solving a study made from a board's thermal package, **Part temperatures** lists each package part's temperature beside its limit: the hottest point of its bodies, or, for a part whose package temperature is a junction (a transistor, a regulator), its case plus power × Rjc. Type Rjc (junction to case, K/W) in the new column of the Parts table of the Heat from package load; without it the case temperature is shown, marked with an asterisk. The package's heat-source table may give it in an `rjc_KW` column. The over-limit count, the report and the exported thermal package use these temperatures.
+
 ## [1.692.0] - 2026-11-23
 
 ### Added
@@ -4549,7 +4555,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.691.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.693.0...HEAD
+[1.693.0]: https://github.com/kothf/step-viewer/compare/v1.692.0...v1.693.0
 [1.692.0]: https://github.com/kothf/step-viewer/compare/v1.691.0...v1.692.0
 [1.691.0]: https://github.com/kothf/step-viewer/compare/v1.690.0...v1.691.0
 [1.690.0]: https://github.com/kothf/step-viewer/compare/v1.689.0...v1.690.0

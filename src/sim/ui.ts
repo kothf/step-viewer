@@ -40,7 +40,7 @@ import { compareRows, noteSummary, parseSummaries, type CompareRow, type Summary
 import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, type PathRow } from "./path";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { MEMORY_LIMIT } from "./static";
-import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardK, plateAxis, type BoardStack } from "../thermal/study";
+import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardK, partTemps, plateAxis, type BoardStack, type PartTemp } from "../thermal/study";
 import { boardMap, gerberName, mapPicture, stackK, type CopperMap } from "../thermal/copper";
 import { copperFromGerber } from "../thermal/copperRaster";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
@@ -431,10 +431,12 @@ export class SimController {
         parts.push({ id, designator: name, bodies: [...new Set(doms.map(d => bodyName(res.comps![d].name)))], p: rows.reduce((a, x) => a + (x.power ?? 0), 0), t: rows.length ? Math.max(...rows.map(x => x.max)) : undefined, ...extra });
       };
       let next = 1;
+      const ptemps = this.partTempRows(res);
       for (const x of pk?.parts ?? []) next = Math.max(next, x.id + 1);
       for (const x of pk?.parts ?? []) {
         const doms = x.comps.flatMap(c => byComp.get(c) ?? []).filter(d => idOf[d] < 0);
-        if (doms.length) add(x.id, doms, { path: x.path, limit: x.limit }, x.name);
+        const pt = ptemps.find(y => y.name === x.name), tj = pt && pt.kind !== "body" ? { t: pt.t, tKind: pt.kind } : {};
+        if (doms.length) add(x.id, doms, { path: x.path, limit: x.limit, ...tj }, x.name);
       }
       for (const [, doms] of byComp) { const left = doms.filter(d => idOf[d] < 0); if (left.length) add(next++, left, {}, bodyName(res.comps[left[0]].name)); }
       // a triangle belongs to the component whose mesh it came from (the sampled domain is ambiguous where two touch)
@@ -644,7 +646,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, arrows: this.arrows, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), near: this.nearHotRows(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), parts: this.partTempRows(), near: this.nearHotRows(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -1931,6 +1933,31 @@ export class SimController {
   }
 
   /**
+   * Each package part's temperature in the solve (FR-TBRD-021): its bodies' maximum, or for a junction part its case
+   * maximum plus p × Rjc (the case alone, marked, without an Rjc). Empty without a package heat load.
+   */
+  private partTempRows(r: Results | null = this.res && !this.stale() ? this.res : null): PartTemp[] {
+    const last = r?.passes.at(-1), rows = last?.thermal?.comps, st = this.study(), off = new Set(st?.suppressed ?? []);
+    const l = st?.loads.find(x => x.type === "pkgheat" && !off.has(x.id));
+    if (!r?.comps || !rows || !l?.parts?.length) return [];
+    const max = new Map<string, number>();
+    r.comps.forEach((c, d) => { const id = compOf(c.key), m = rows[d]?.max; if (m !== undefined && Number.isFinite(m)) max.set(id, Math.max(max.get(id) ?? -Infinity, m)); });
+    const env = !!r.env && r.passes === r.env;
+    return partTemps(l.parts.filter(x => x.comps.length && (x.p >= PACKAGE_MIN_POWER || x.limit !== undefined)).map(x => ({ ...x, ...(env ? { off: true } : {}) })), c => max.get(c));
+  }
+
+  private partTempsHtml(): string {
+    const rows = this.partTempRows();
+    if (!rows.length) return "";
+    const kind = (x: PartTemp) => x.kind === "junction" ? t("Junction") : x.kind === "case" ? t("Case") : t("Body");
+    const lim = rows.some(x => x.limit !== undefined);
+    return `<h5 class="sim-sub">${esc(t("Part temperatures"))}</h5>`
+      + `<table class="sim-comptable sim-ptemps"><thead><tr><th>${esc(t("Part"))}</th><th>°C</th><th title="${esc(t("What the temperature is of"))}">${esc(t("Kind"))}</th>${lim ? `<th title="${esc(t("Temperature limit from the package"))}">${esc(t("Limit"))}, °C</th>` : ""}</tr></thead><tbody>`
+      + rows.map(x => `<tr data-ptemp="${esc(x.name)}" class="${x.over ? "bad" : ""}"${x.kind === "junction" ? ` title="${esc(t("Case {c} °C + power × Rjc", { c: sig(x.body) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td data-v="pttemp">${sig(x.t)}</td><td data-v="ptkind"${x.caseOnly ? ` title="${esc(t("The package gives a junction temperature, but no Rjc is known: this is the case only."))}"` : ""}>${esc(kind(x))}${x.caseOnly ? "*" : ""}</td>${lim ? `<td data-v="ptlimit">${x.limit === undefined ? "" : sig(x.limit)}</td>` : ""}</tr>`).join("") + `</tbody></table>`
+      + (rows.some(x => x.caseOnly) ? `<p class="sim-note muted" data-v="ptnote">${esc(t("* Case temperature only: type the part's Rjc (junction to case, K/W) in the Parts table of the package heat load to get its junction temperature."))}</p>` : "");
+  }
+
+  /**
    * Where each package part's heat went in the solve (FR-TBRD-003): conducted into the board, off its own surface
    * into the air, and elsewhere (a heatsink, other parts, the chassis share left out), beside the package's split.
    */
@@ -2019,12 +2046,18 @@ export class SimController {
     const rows = last.thermal?.comps;
     if (!r.comps || !rows || rows.length < 2) return "";
     const alone = this.aloneDom(), power = rows.some(x => x.power), limits = this.compLimits();
-    const lim = (d: number) => limits.get(compOf(r.comps![d].key)), over = rows.filter((x, d) => lim(d) !== undefined && x.max > lim(d)!).length;
+    const pts = this.partTempRows(r), st = this.study(), off = new Set(st?.suppressed ?? []);
+    const pk = st?.loads.find(x => x.type === "pkgheat" && !off.has(x.id));
+    const overComps = new Set<string>();
+    for (const x of pts) if (x.over) for (const c of pk?.parts?.find(y => y.name === x.name)?.comps ?? []) overComps.add(c);
+    const lim = (d: number) => limits.get(compOf(r.comps![d].key));
+    const bad = (x: { max: number }, d: number) => pts.length ? overComps.has(compOf(r.comps![d].key)) : lim(d) !== undefined && x.max > lim(d)!;
+    const over = pts.length ? pts.filter(x => x.over).length : rows.filter((x, d) => bad(x, d)).length;
     return `<h5 class="sim-sub">${esc(t("By component"))}</h5>`
       + (limits.size ? `<p class="${over ? "sim-warn" : "sim-note muted"}" data-v="tover">${esc(over ? t("{n} part is over its temperature limit.|{n} parts are over their temperature limits.", { n: over }) : t("Every part is within its temperature limit."))}</p>` : "")
-      + this.nearHtml(r)
+      + this.nearHtml(r) + this.partTempsHtml()
       + `<table class="sim-comptable sim-tcomps"><thead><tr><th>${esc(t("Component"))}</th><th title="${esc(t("Highest temperature"))}">${esc(t("Max"))}, °C</th>${limits.size ? `<th title="${esc(t("Temperature limit from the package"))}">${esc(t("Limit"))}, °C</th>` : `<th title="${esc(t("Mean temperature of its surface"))}">${esc(t("Mean"))}, °C</th>`}${power ? `<th title="${esc(t("Heat made in the component"))}">${esc(t("Heat"))}, W</th>` : ""}</tr></thead><tbody>`
-      + rows.map((x, d) => `<tr data-a="rcomp" data-rcomp="${d}" tabindex="0" class="${d === alone ? "sel" : ""}${lim(d) !== undefined && x.max > lim(d)! ? " bad" : ""}"><td translate="no" title="${esc(r.comps![d].name)}">${esc(r.comps![d].name)}</td><td data-v="tcmax">${sig(x.max)}</td>${limits.size ? `<td data-v="tclimit">${lim(d) === undefined ? "" : sig(lim(d)!)}</td>` : `<td>${sig(x.mean)}</td>`}${power ? `<td data-v="tcpower">${x.power ? sig(x.power) : ""}</td>` : ""}</tr>`).join("") + `</tbody></table>`
+      + rows.map((x, d) => `<tr data-a="rcomp" data-rcomp="${d}" tabindex="0" class="${d === alone ? "sel" : ""}${bad(x, d) ? " bad" : ""}"><td translate="no" title="${esc(r.comps![d].name)}">${esc(r.comps![d].name)}</td><td data-v="tcmax">${sig(x.max)}</td>${limits.size ? `<td data-v="tclimit">${lim(d) === undefined ? "" : sig(lim(d)!)}</td>` : `<td>${sig(x.mean)}</td>`}${power ? `<td data-v="tcpower">${x.power ? sig(x.power) : ""}</td>` : ""}</tr>`).join("") + `</tbody></table>`
       + `<p class="sim-note muted" data-v="compnote">${alone >= 0 ? `${esc(t("Showing {name} alone, on its own colour scale.", { name: r.comps[alone].name }))} <button class="btn small" data-a="rcompall">${esc(t("Show all"))}</button>` : esc(t("Click a row to show that component alone."))}</p>`;
   }
 
@@ -3685,6 +3718,12 @@ export class SimController {
       blocks.push({ kind: "table", widths: [3, 2, 2, 3], rows: [[t("Name"), t("View factor"), `${t("Heat")}, W`, `${t("Mean temperatures")}, °C`], ...T.exchanges.map((x, i) => [this.nameOf(res.xids?.[i] ?? ""), sig(x.f), sig(x.heat), Number.isFinite(x.ta) ? `${sig(x.ta)} → ${sig(x.tb)}` : "–"])] });
     }
     if (res.comps && T.comps) blocks.push({ kind: "table", widths: [3, 2, 2, 2], rows: [[t("Component"), `${t("Max")}, °C`, `${t("Mean")}, °C`, `${t("Heat")}, W`], ...T.comps.map((c, i) => [res.comps![i]?.name ?? "", sig(c.max), sig(c.mean), c.power ? sig(c.power) : "–"])] });
+    const pts = this.partTempRows(res);
+    if (pts.length) {
+      blocks.push({ kind: "h", text: t("Part temperatures") });
+      blocks.push({ kind: "table", widths: [3, 2, 2, 2], rows: [[t("Part"), "°C", t("Kind"), `${t("Limit")}, °C`], ...pts.map(x => [x.name, sig(x.t), (x.kind === "junction" ? t("Junction") : x.kind === "case" ? t("Case") : t("Body")) + (x.caseOnly ? "*" : ""), x.limit === undefined ? "–" : sig(x.limit)])] });
+      if (pts.some(x => x.caseOnly)) blocks.push({ kind: "p", text: t("* Case temperature only: type the part's Rjc (junction to case, K/W) in the Parts table of the package heat load to get its junction temperature.") });
+    }
     if (res.comps && T.contacts?.length) {
       blocks.push({ kind: "h", text: t("Connections") });
       blocks.push({ kind: "table", widths: [4, 2, 2, 2, 2], rows: [[t("Components"), t("Contact"), `${t("Area")}, mm²`, `${t("Heat")}, W`, "ΔT, °C"],
@@ -4269,11 +4308,12 @@ export class SimController {
         + `<p class="pm-help muted">${esc(l.body ? (this.host.asm() ? t("The total power, made evenly throughout the components the picked faces are on.") : t("The total power, made evenly throughout the part's volume.")) : t("The total power, spread evenly over the picked faces."))}</p>`) + this.profileGroup(l, group);
       else if (l.type === "pkgheat") {
         const parts = l.parts ?? [];
-        body += group(t("Parts"), `<table class="sim-pkparts"><thead><tr><th></th><th>${esc(t("Part"))}</th><th>${esc(t("Power, W"))}</th></tr></thead><tbody>${parts.map((x, i) => {
+        body += group(t("Parts"), `<table class="sim-pkparts"><thead><tr><th></th><th>${esc(t("Part"))}</th><th>${esc(t("Power, W"))}</th><th title="${esc(t("Junction to case, K/W: the part's temperature is then its case plus power × Rjc"))}">Rjc, K/W</th></tr></thead><tbody>${parts.map((x, i) => {
           const low = !(x.p >= PACKAGE_MIN_POWER), lost = !x.comps.length;
-          return `<tr data-pk="${x.id}" class="${low || lost ? "muted" : ""}"${lost ? ` title="${esc(t("No body of the model was matched to this part."))}"` : low ? ` title="${esc(t("Under 10 mW: left out."))}"` : ""}><td><input type="checkbox" data-k="pkon" data-i="${i}" aria-label="${esc(x.name)}"${x.off ? "" : " checked"}${lost ? " disabled" : ""} /></td><td translate="no">${esc(x.name)}</td><td><input type="text" inputmode="decimal" data-q="pkp" data-i="${i}" value="${trim(x.p)}" spellcheck="false"${lost ? " disabled" : ""} /></td></tr>`;
+          return `<tr data-pk="${x.id}" class="${low || lost ? "muted" : ""}"${lost ? ` title="${esc(t("No body of the model was matched to this part."))}"` : low ? ` title="${esc(t("Under 10 mW: left out."))}"` : ""}><td><input type="checkbox" data-k="pkon" data-i="${i}" aria-label="${esc(x.name)}"${x.off ? "" : " checked"}${lost ? " disabled" : ""} /></td><td translate="no">${esc(x.name)}</td><td><input type="text" inputmode="decimal" data-q="pkp" data-i="${i}" value="${trim(x.p)}" spellcheck="false"${lost ? " disabled" : ""} /></td><td><input type="text" inputmode="decimal" data-q="pkrjc" data-i="${i}" value="${x.rjc === undefined ? "" : trim(x.rjc)}" placeholder="${x.junction ? esc(t("none")) : ""}" spellcheck="false" aria-label="${esc(t("{name}: Rjc", { name: x.name }))}"${lost ? " disabled" : ""} /></td></tr>`;
         }).join("")}</tbody></table>`
-          + `<p class="pm-help muted">${esc(t("The power of each part from the board's thermal package, made throughout the part's bodies. Untick a part to leave it out, or type another power."))}</p>`)
+          + `<p class="pm-help muted">${esc(t("The power of each part from the board's thermal package, made throughout the part's bodies. Untick a part to leave it out, or type another power."))}</p>`
+          + (parts.some(x => x.junction) ? `<p class="pm-help muted" data-v="rjchelp">${esc(t("The package gives junction temperatures for some parts: type their Rjc to report the junction, else the case is reported."))}</p>` : ""))
           + (l.board ? group(t("Heat paths"), chk("split", l.split, t("Keep the package's split"))
             + `<p class="pm-help muted">${esc(l.split ? t("Each part's board share enters the board under the part as a fixed power, and a chassis share leaves the model; the rest is made in the part.") : t("Off: all the heat is made in the parts and goes where the conductances send it."))}</p>`) : "")
           + this.profileGroup(l, group);
@@ -4758,6 +4798,12 @@ export class SimController {
     else if (k === "up") { const l = e.draft as StudyLoad; l.axis = el.value.slice(-1) as "x" | "y" | "z"; l.flip = el.value.length > 1 || undefined; }
     else if (el.dataset.q) {
       const q = el.dataset.q, v = num(el.value), sup = e.draft as StudySupport;
+      if (q === "pkrjc") {
+        const x = (e.draft as StudyLoad).parts?.[Number(el.dataset.i)], empty = !el.value.trim(), bad = !empty && (v == null || v < 0);
+        el.setAttribute("aria-invalid", String(bad));
+        if (!bad && x) { if (empty) delete x.rjc; else x.rjc = v!; this.renderTree(); }
+        return;
+      }
       if (q === "pkp") {
         const x = (e.draft as StudyLoad).parts?.[Number(el.dataset.i)], bad = v == null || v < 0;
         el.setAttribute("aria-invalid", String(bad));
