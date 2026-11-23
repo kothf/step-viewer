@@ -26,7 +26,7 @@ import { refreshExprs } from "../model/params";
 import { ctxEdgeRefs, ctxRefs, findCtxEdge, moveEdgeGeo, syncCtx, type CtxComp, type CtxEdgeSeen, type PartContext } from "../model/context";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
-import { fileIn, fsaDir, hasRefs, resolveRefs, writeRefs, type RefBase, type ResolveResult } from "./refs";
+import { fileIn, fsaDir, hasRefs, resolveRefs, findMoved, writeRefs, type RefBase, type ResolveResult } from "./refs";
 import { asmFolder, folderAccess, foldersOk, pickFolder, rememberAsmFolder } from "./folders";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
 import { pickMaterial } from "../materialPicker";
@@ -3183,20 +3183,35 @@ export class AsmController {
     if (await folderAccess(folder, false) !== "granted") return null;
     this.refsBusy = true;
     let r: ResolveResult;
-    try { r = await resolveRefs(doc, fsaDir(folder), this.refBase); }
+    let moved: string[] = [];
+    try {
+      const dir = fsaDir(folder);
+      r = await resolveRefs(doc, dir, this.refBase);
+      // files renamed or moved within the folder take over their references
+      if (r.missing.length) {
+        const m = await findMoved(r.doc, dir, r.missing);
+        if (m.found.length) {
+          moved = m.found;
+          const again = await resolveRefs(m.doc, dir, this.refBase);
+          r = { ...again, updated: [...new Set([...r.updated, ...again.updated])], conflicts: [...new Set([...r.conflicts, ...again.conflicts])] };
+        }
+      }
+    }
     catch { return null; }
     finally { this.refsBusy = false; }
     if (this.doc !== doc) return null;
-    this.takeParts(r, opening);
+    this.takeParts(r, opening, moved.length > 0);
+    if (moved.length) toast(t("Found part files that were renamed or moved: {names}. Save the assembly to keep the new places.", { names: moved.join(", ") }), "success");
     return r;
   }
 
   /** Puts the parts read from files into the assembly and says what happened. */
-  private takeParts(r: ResolveResult, opening: boolean) {
+  private takeParts(r: ResolveResult, opening: boolean, moved = false) {
     if (!this.doc) return;
     const clean = !this.dirty;
     this.missingLinks = new Set(r.missing);
-    if (r.updated.length && !(opening && clean)) this.change(d => { d.parts = r.doc.parts; });
+    // moved files: an undo step, so the assembly asks to be saved with the new places
+    if ((r.updated.length && !(opening && clean)) || moved) this.change(d => { d.parts = r.doc.parts; });
     else {
       // hashes moved on, or the assembly was just opened: no undo step, and an unsaved assembly stays unsaved
       const changed = JSON.stringify(r.doc.parts) !== JSON.stringify(this.doc.parts);

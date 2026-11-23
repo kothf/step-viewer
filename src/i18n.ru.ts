@@ -4780,6 +4780,7 @@ export const RU: Record<string, string> = {
   "Part files not found: {names}. The assembly shows the last copy.": "Файлы деталей не найдены: {names}. Сборка показывает последнюю копию.",
   "MöbiusCAD may not use that folder.": "MöbiusCAD не получил доступ к этой папке.",
   "The part files are up to date.": "Файлы деталей не изменились.",
+  "Found part files that were renamed or moved: {names}. Save the assembly to keep the new places.": "Найдены переименованные или перемещённые файлы деталей: {names}. Сохраните сборку, чтобы запомнить новые места.",
   "Saved {name} and {n} part files in {folder}": "Сохранено: {name} и файлов деталей: {n} в папке {folder}",
   "Choose folder…": "Выбрать папку…",
   "Pack and Go": "Упаковать",

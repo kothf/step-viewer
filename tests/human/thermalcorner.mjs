@@ -1,4 +1,4 @@
-// Hottest points and heat flux at sharp corners (FRS-thermal FR-TRES-003, 1.710.0): an L-shaped bar drawn by hand,
+// Hottest points and heat flux at sharp corners (FRS-thermal FR-TRES-003, 1.711.0): an L-shaped bar drawn by hand,
 // one end held at 20 °C and 20 W into the other end; the heat turns the sharp inside corner, where the flux keeps rising.
 import { open, snap, idle, screenOf, clickAt, check, finish, cmd, eyeDir } from "./lib.mjs";
 const { browser, pg } = await open("thermalcorner");
