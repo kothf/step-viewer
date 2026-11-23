@@ -6225,6 +6225,8 @@ export const RU: Record<string, string> = {
   "Over time: warm-up, cool-down and heaters switched on and off, from a start temperature": "Во времени: прогрев, остывание и включаемые и выключаемые нагреватели, от начальной температуры",
   "Results every": "Результаты каждые",
   "Save the temperatures over time (hottest point and probes) as a CSV file": "Сохранить температуры во времени (самая горячая точка и пробы) в файл CSV",
+  "Save the temperatures over time (hottest point, probes and each component's highest) as a CSV file": "Сохранить температуры во времени (самая горячая точка, пробы и максимум каждого компонента) в файл CSV",
+  "Components on the chart ({n} of {m})": "Компоненты на графике ({n} из {m})",
   "Set a material with density and specific heat for {name} (needed for transient studies).": "Задайте для {name} материал с плотностью и удельной теплоёмкостью (нужно для расчёта во времени).",
   "Shortest {a}, longest {b}": "Самый короткий {a}, самый длинный {b}",
   "Start temperature": "Начальная температура",

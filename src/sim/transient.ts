@@ -122,6 +122,13 @@ export function transientCsv(times: number[], cols: { name: string; v: ArrayLike
   const head = ["Time, s", ...cols.map(c => `${c.name}, °C`)].map(s => `"${s}"`).join(",");
   return [head, ...times.map((t, i) => [t, ...cols.map(c => c.v[i])].map(v => String(Number(v.toPrecision(6)))).join(","))].join("\n") + "\n";
 }
+/** Each component's highest temperature over a run (FR-TRES-006) from the per-time domain statistics; components with no points left out; hottest at the end first. */
+export function componentSeries(cstats: { min: number; max: number; mean: number }[][], names: string[]): { d: number; name: string; v: Float32Array }[] {
+  if (!cstats.length) return [];
+  const out = names.map((name, d) => ({ d, name, v: Float32Array.from(cstats, s => s[d]?.max ?? NaN) }));
+  return out.filter(x => cstats.some(s => s[x.d] && (s[x.d].max !== 0 || s[x.d].min !== 0 || s[x.d].mean !== 0))).sort((a, b) => b.v[b.v.length - 1] - a.v[a.v.length - 1]);
+}
+
 export const BOARD_RC = 1.85e-6 * 1100;
 
 /** A time for display: seconds, minutes or hours. */
