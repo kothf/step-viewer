@@ -107,4 +107,16 @@ const said = await pg.evaluate(() => [...document.querySelectorAll(".toast")].ma
 check("THA-5", /E-TH-LOOSE/.test(s5.error ?? "") && /Nothing takes the heat away from/.test(said),
   "with No contact the solve stops and names the block that nothing cools", { error: s5.error, said }, await snap(pg, "thermal-asm-loose"));
 
+// THA-6: with the held temperature turned off nothing cools either block: refused before solving, both named (FR-TBC-012).
+await pg.evaluate(() => document.querySelectorAll(".toast").forEach(x => x.remove()));
+await pg.click('#sim-tree .sim-cool .sim-row:not(.off) [data-a="toggle"]');
+await idle(pg);
+await pg.click('#sim-tools [data-s="solve"]');
+await solved();
+const s6 = await sim();
+const said6 = await pg.evaluate(() => [...document.querySelectorAll(".toast")].map(x => x.textContent).join(" | ") + " | " + (document.querySelector("#sim-tree .sim-prob")?.textContent ?? ""));
+const names = (s6.comps ?? []).map(c => c.name ?? c);
+check("THA-6", /^E-TH-NOSINK: 0,1$/.test(s6.error ?? "") && !s6.thermal && /Nothing takes the heat away from/.test(said6),
+  "with no cooling at all the solve is refused before it starts and the message names both blocks", { error: s6.error, said6, names }, await snap(pg, "thermal-asm-nosink"));
+
 await finish(browser, pg);
