@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.707.0] - 2026-11-23
+
+### Added
+
+- Board studies with **Keep the package's split**: a part whose heat path is a heatsink now puts its heatsink share into the heatsink body it touches, under the part, instead of making it in the part itself. The heatsink is found in the model as the body against the part that makes no heat of its own, so a transistor bent over onto a heatsink and one standing beside it both work without extra input. The **Heat paths** table gets a **Heatsink** column and a note with the total. With no heatsink body in the model, the share stays in the part as before.
+
 ## [1.706.0] - 2026-11-23
 
 ### Changed
@@ -4662,7 +4668,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.706.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.707.0...HEAD
+[1.707.0]: https://github.com/kothf/step-viewer/compare/v1.706.0...v1.707.0
 [1.706.0]: https://github.com/kothf/step-viewer/compare/v1.705.0...v1.706.0
 [1.705.0]: https://github.com/kothf/step-viewer/compare/v1.704.0...v1.705.0
 [1.704.0]: https://github.com/kothf/step-viewer/compare/v1.703.0...v1.704.0

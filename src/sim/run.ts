@@ -7,7 +7,7 @@ import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNorma
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { DEFAULT_AMBIENT, DEFAULT_REF, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
-import { contactPatch } from "../thermal/study";
+import { contactPatch, facingPatch } from "../thermal/study";
 import { forcedH, kmapMean, ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
 import { viewFactor } from "./viewfactor";
 
@@ -513,6 +513,8 @@ export interface ThermalSetup {
   exchanges?: { a: Float64Array; b: Float64Array; ea: number; eb: number }[];
   exchangeIds?: string[];
   problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-TH-VALUE" }[];
+  /** Package parts whose heatsink share went into a heatsink body (FR-TBRD-003): part id → the heatsink's component and the share, W. */
+  heatsinks?: Record<string, { comp: string; w: number }>;
 }
 
 /** Area of a triangle soup (9 numbers per triangle), mm². */
@@ -681,6 +683,21 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
       let any = false;
       const boardDom = l.board ? (regions ?? []).findIndex(k => compOf(k) === l.board) : -1;
       const boardTris = l.split && boardDom >= 0 ? compTris(b, new Set([l.board!])) : null;
+      // heatsink candidates: components that are neither the board nor a part making heat
+      const makers = new Set((l.parts ?? []).filter(x => x.p >= PACKAGE_MIN_POWER).flatMap(x => x.comps));
+      const cands = [...new Set((regions ?? []).map(k => compOf(k)))].filter(c => c !== l.board && !makers.has(c));
+      const candTris = new Map<string, Float64Array>();
+      const sinkFor = (comps: Set<string>) => {
+        const mine = compTris(b, comps);
+        let best: { comp: string; patch: Float64Array; dom: number; area: number } | null = null;
+        for (const c of cands) {
+          let ct = candTris.get(c);
+          if (!ct) candTris.set(c, ct = compTris(b, new Set([c])));
+          const patch = facingPatch(ct, mine), area = patch ? surfaceArea(patch) : 0;
+          if (patch && area > (best?.area ?? 0)) best = { comp: c, patch, dom: (regions ?? []).findIndex(k => compOf(k) === c), area };
+        }
+        return best;
+      };
       for (const part of l.parts ?? []) {
         if (part.off || !(part.p >= PACKAGE_MIN_POWER)) continue;
         const comps = new Set(part.comps), doms: number[] = [];
@@ -691,6 +708,12 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
           const share = Math.min(own, Math.max(0, part.board ?? 0));
           const patch = share > 0 ? contactPatch(boardTris, compTris(b, comps)) : null;
           if (patch) { out.sources.push({ tris: patch, power: share, dom: boardDom, id: l.id }); own -= share; }
+          if (part.path === "heatsink") {
+            // the heatsink share enters the body the part sits on that makes no heat itself, where it touches the part
+            const w = Math.min(own, Math.max(0, part.sink ?? 0));
+            const hs = w > 0 ? sinkFor(comps) : null;
+            if (hs) { out.sources.push({ tris: hs.patch, power: w, dom: hs.dom, id: l.id }); own -= w; (out.heatsinks ??= {})[part.id] = { comp: hs.comp, w }; }
+          }
           if (part.path === "chassis") {
             // the chassis share leaves through the chassis walls, shared by area; with none it leaves the model
             const share = Math.min(own, Math.max(0, part.sink ?? 0)), total = walls.reduce((a, w) => a + w.area, 0);

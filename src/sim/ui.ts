@@ -104,7 +104,7 @@ interface CaseResult { id: string; name: string; passes: PassResult[]; job: numb
 type BoltKept = { id: string; name: string; members: string[]; d: number; pitch: number; tapped: boolean };
 /** A bolt found among the fasteners, with the patches it joins. */
 interface BoltUse extends BoltKept { a: Float64Array; b: Float64Array; E: number; /** Components of the patch under the head and of the nut or thread. */ ca: string; cb: string }
-interface Results { /** Transient thermal studies: the last pass as solved (every output time); the last entry of `passes` is the time shown. */ tr?: PassResult; /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; /** Thermal: radiation between face sets, in the order of `thermal.exchanges`. */ xids?: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[] }
+interface Results { /** Board studies: package parts whose heatsink share went into a heatsink body, by part id. */ heatsinks?: Record<string, { comp: string; w: number }>; /** Transient thermal studies: the last pass as solved (every output time); the last entry of `passes` is the time shown. */ tr?: PassResult; /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; /** Thermal: radiation between face sets, in the order of `thermal.exchanges`. */ xids?: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[] }
 const BOLT_NOTE = "Tension, shear and bending of each bolt as a beam. The safety factor compares their combined stress on the thread's stress area with the proof stress of the property class.";
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 /** Solve on change: how long after the last change the solve starts, ms. */
@@ -124,7 +124,7 @@ const RELIEF_NOTE = "The part is held by nothing: its supports are left out and 
 /** The most load cases a study has. */
 export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { xids?: string[]; welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
+interface Kept { heatsinks?: Record<string, { comp: string; w: number }>; xids?: string[]; welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
 
 /** A time in the UI's language. */
 const timeText = (s: number) => timeIn(s, { s: t("s"), min: t("min"), h: t("h") });
@@ -752,7 +752,7 @@ export class SimController {
     const kept = await cacheGet<Kept>(await cacheKey("sim", key));
     const now = this.host.doc(), s2 = this.study();
     if (!kept?.passes?.length || !kept.mesh || this.res || this.running || now !== doc && now?.id !== doc.id || !s2 || s2.id !== st.id || !now || this.keyOf(now, s2) !== key) return;
-    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ...(kept.xids ? { xids: kept.xids } : {}), ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.comps ? { comps: kept.comps } : {}), ...(kept.off ? { off: kept.off } : {}), ...(kept.bolts ? { bolts: kept.bolts } : {}), ...(kept.welds ? { welds: kept.welds } : {}), ...(kept.conns ? { conns: kept.conns } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
+    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ...(kept.xids ? { xids: kept.xids } : {}), ...(kept.heatsinks ? { heatsinks: kept.heatsinks } : {}), ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.comps ? { comps: kept.comps } : {}), ...(kept.off ? { off: kept.off } : {}), ...(kept.bolts ? { bolts: kept.bolts } : {}), ...(kept.welds ? { welds: kept.welds } : {}), ...(kept.conns ? { conns: kept.conns } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
       ...(kept.cases?.length ? { cases: kept.cases.map(c => ({ ...c, job: 0 })) } : {}) };
     this.caseSel = -1; this.compSel = -1;
     this.applyCase();
@@ -1463,7 +1463,7 @@ export class SimController {
       }
       const mesh = refineMesh(p0, n0, idx, plotTarget(meshArea(p0, idx), size / 70));
       const total = Math.max(1, Math.min(THERMAL_PASSES, Math.round(st.settings.passes)));
-      const res: Results = { study: st.id, key, passes: [], ids: setup.sinkIds, ...(setup.exchangeIds?.length ? { xids: setup.exchangeIds } : {}), ms: 0, mesh, ...(asm ? { comps: this.comps, bodyMats: bodies.map((_b, i) => ({ name: nameOf(i), sy: 0, k: kOf(i), ...(bks[i]?.k3 ? { kz: bks[i]!.through } : {}) })) } : {}), ...(off.size ? { off: [...off] } : {}), ...(cases.length ? { cases: [] } : {}) };
+      const res: Results = { study: st.id, key, passes: [], ids: setup.sinkIds, ...(setup.exchangeIds?.length ? { xids: setup.exchangeIds } : {}), ms: 0, mesh, ...(asm ? { comps: this.comps, bodyMats: bodies.map((_b, i) => ({ name: nameOf(i), sy: 0, k: kOf(i), ...(bks[i]?.k3 ? { kz: bks[i]!.through } : {}) })) } : {}), ...(off.size ? { off: [...off] } : {}), ...(cases.length ? { cases: [] } : {}), ...(setup.heatsinks ? { heatsinks: setup.heatsinks } : {}) };
       this.frame = -1; this.stopPlay();
       for (let ci = 0; ci < runs.length; ci++) {
       const run = runs[ci], setup = run.setup, pre = run.c ? `${run.c.name}: ` : "";
@@ -1494,7 +1494,7 @@ export class SimController {
       if (res.cases) { this.caseSel = res.cases.length > 1 ? -1 : 0; this.hot = null; this.applyCase(); if ((this.res as Results | null) === res) this.showPlot(); }
       done = true;
       if ((this.res as Results | null) === res) { this.solved = res; this.running = false; this.capsSoon(); this.syncPath(); }
-      const keep: Kept = { passes: res.tr ? [...res.passes.slice(0, -1), res.tr] : res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ...(res.xids ? { xids: res.xids } : {}), ms: res.ms, mesh: res.mesh, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}), ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
+      const keep: Kept = { passes: res.tr ? [...res.passes.slice(0, -1), res.tr] : res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ...(res.xids ? { xids: res.xids } : {}), ...(res.heatsinks ? { heatsinks: res.heatsinks } : {}), ms: res.ms, mesh: res.mesh, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}), ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
       void cacheKey("sim", key).then(k => cachePut(k, keep));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1996,7 +1996,7 @@ export class SimController {
     if (!r?.comps || !rows || !l || (r.env && r.passes === r.env) || last?.transient) return [];
     const board = r.comps.findIndex(c => compOf(c.key) === l.board), contacts = last!.thermal!.contacts ?? [];
     if (board < 0) return [];
-    const out: { name: string; p: number; board: number; air: number; chassis: number; other: number; pkg: { board: number; air: number; sink: number } | null }[] = [];
+    const out: { name: string; p: number; board: number; air: number; chassis: number; sink: number; sinkPut: number; other: number; pkg: { board: number; air: number; sink: number } | null }[] = [];
     for (const x of l.parts ?? []) {
       if (x.off || !(x.p >= PACKAGE_MIN_POWER) || !x.comps.length) continue;
       const comps = new Set(x.comps), doms = new Set<number>();
@@ -2006,9 +2006,13 @@ export class SimController {
       for (const d of doms) { own += rows[d]?.power ?? 0; air += rows[d]?.out ?? 0; }
       for (const c of contacts) { if (doms.has(c.a) && c.b === board) toBoard += c.heat; else if (doms.has(c.b) && c.a === board) toBoard -= c.heat; }
       const chassis = l.split && x.path === "chassis" ? Math.min(x.p, Math.max(0, x.sink ?? 0)) : 0;
-      const direct = l.split ? Math.max(0, x.p - own - chassis) : 0;
+      // into a heatsink: the share put there, less what came back from it into the part (net, through their contact)
+      const hs = l.split ? r.heatsinks?.[x.id] : undefined, hd = hs ? r.comps.findIndex(c => compOf(c.key) === hs.comp) : -1;
+      let sink = hs ? Math.min(x.p, hs.w) : 0;
+      if (hd >= 0) for (const c of contacts) { if (doms.has(c.a) && c.b === hd) sink += c.heat; else if (doms.has(c.b) && c.a === hd) sink -= c.heat; }
+      const direct = l.split ? Math.max(0, x.p - own - chassis - (hs ? Math.min(x.p, hs.w) : 0)) : 0;
       const b = toBoard + direct, pkg = x.board !== undefined || x.sink !== undefined ? { board: x.board ?? 0, sink: x.sink ?? 0, air: Math.max(0, x.p - (x.board ?? 0) - (x.sink ?? 0)) } : null;
-      out.push({ name: x.name, p: x.p, board: b, air, chassis, other: x.p - b - air - chassis, pkg });
+      out.push({ name: x.name, p: x.p, board: b, air, chassis, sink, sinkPut: hs ? Math.min(x.p, hs.w) : 0, other: x.p - b - air - chassis - sink, pkg });
     }
     return out;
   }
@@ -2019,11 +2023,12 @@ export class SimController {
     const share = (v: number, p: number) => `${Math.round((100 * v) / p)}`;
     const st = this.study(), split = !!st?.loads.find(x => x.type === "pkgheat" && x.split), off = new Set(st?.suppressed ?? []);
     const chassis = rows.reduce((a, x) => a + x.chassis, 0), walls = (st?.supports ?? []).some(x => x.type === "chassis" && !off.has(x.id) && x.faces.length);
-    const cCol = chassis > 0;
+    const cCol = chassis > 0, hCol = rows.some(x => x.sinkPut > 0);
     return `<h5 class="sim-sub">${esc(t("Heat paths"))}</h5>`
-      + `<table class="sim-comptable sim-paths"><thead><tr><th>${esc(t("Part"))}</th><th title="${esc(t("Heat made in the part"))}">W</th><th title="${esc(t("Conducted into the board"))}">${esc(t("Board"))}<br />%</th><th title="${esc(t("Off the part's own surface: convection, radiation, or a heatsink resistance on it"))}">${esc(t("Surface"))}<br />%</th>${cCol ? `<th title="${esc(t("The package's chassis share, put on the chassis walls"))}">${esc(t("Chassis"))}<br />%</th>` : ""}<th title="${esc(t("Into a heatsink, other parts or the chassis"))}">${esc(t("Other"))}<br />%</th></tr></thead><tbody>`
-      + rows.map(x => `<tr data-path="${esc(x.name)}"${x.pkg ? ` title="${esc(t("The package's split: board {b} %, air {a} %, heatsink or chassis {s} %", { b: share(x.pkg.board, x.p), a: share(x.pkg.air, x.p), s: share(x.pkg.sink, x.p) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td>${sig(x.p)}</td><td data-v="pboard"${x.board < 0 ? ` title="${esc(t("It takes heat in from the board"))}"` : ""}>${share(x.board, x.p).replace("-", "−")}</td><td data-v="pair">${share(x.air, x.p)}</td>${cCol ? `<td data-v="pchassis">${share(x.chassis, x.p)}</td>` : ""}<td data-v="pother">${share(Math.max(0, x.other), x.p)}</td></tr>`).join("") + `</tbody></table>`
+      + `<table class="sim-comptable sim-paths"><thead><tr><th>${esc(t("Part"))}</th><th title="${esc(t("Heat made in the part"))}">W</th><th title="${esc(t("Conducted into the board"))}">${esc(t("Board"))}<br />%</th><th title="${esc(t("Off the part's own surface: convection, radiation, or a heatsink resistance on it"))}">${esc(t("Surface"))}<br />%</th>${hCol ? `<th title="${esc(t("Into the heatsink: the package's heatsink share, put into it where the part touches it, less what flows back into the part"))}">${esc(t("Heatsink"))}<br />%</th>` : ""}${cCol ? `<th title="${esc(t("The package's chassis share, put on the chassis walls"))}">${esc(t("Chassis"))}<br />%</th>` : ""}<th title="${esc(t("Into a heatsink, other parts or the chassis"))}">${esc(t("Other"))}<br />%</th></tr></thead><tbody>`
+      + rows.map(x => `<tr data-path="${esc(x.name)}"${x.pkg ? ` title="${esc(t("The package's split: board {b} %, air {a} %, heatsink or chassis {s} %", { b: share(x.pkg.board, x.p), a: share(x.pkg.air, x.p), s: share(x.pkg.sink, x.p) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td>${sig(x.p)}</td><td data-v="pboard"${x.board < 0 ? ` title="${esc(t("It takes heat in from the board"))}"` : ""}>${share(x.board, x.p).replace("-", "−")}</td><td data-v="pair">${share(x.air, x.p)}</td>${hCol ? `<td data-v="psink">${share(Math.max(0, x.sink), x.p)}</td>` : ""}${cCol ? `<td data-v="pchassis">${share(x.chassis, x.p)}</td>` : ""}<td data-v="pother">${share(Math.max(0, x.other), x.p)}</td></tr>`).join("") + `</tbody></table>`
       + `<p class="sim-note muted" data-v="pathnote">${esc(split ? t("The package's split is kept: its board shares enter the board under each part as fixed powers.") : t("The heat goes where the conductances send it; hover a row for the package's split."))}</p>`
+      + (hCol ? `<p class="sim-note muted" data-v="sinknote">${esc(t("The heatsink shares, {w} W, enter the heatsinks where the parts touch them.", { w: sig(rows.reduce((a, x) => a + x.sinkPut, 0)) }))}</p>` : "")
       + (cCol ? `<p class="sim-note${walls ? " muted" : ""}" data-v="chassisnote">${esc(walls ? t("The chassis shares, {w} W, enter the model on the chassis walls.", { w: sig(chassis) }) : t("The chassis shares, {w} W, leave the model: add a Chassis wall on the faces the parts are fixed to, to see how warm it gets.", { w: sig(chassis) }))}</p>` : "");
   }
 
