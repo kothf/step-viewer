@@ -17831,7 +17831,7 @@ try {
   }
 
   // --- plain vtu 1.677 (FRS-thermal FR-TPKG-014): a .vtu from another tool opens as a map; the temperature array is picked ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const vp = await ctx.newPage();
     vp.on("pageerror", e => errors.push(e.message));
@@ -18004,7 +18004,7 @@ try {
   }
 
   // --- bolted joints 1.673 (FRS-thermal FR-TCON-003): plates a toolbox bolt clamps pass heat by a bolted joint's conductance ---
-  if (inShard(4)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
