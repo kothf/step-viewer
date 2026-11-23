@@ -17796,7 +17796,7 @@ try {
   }
 
   // --- heat sources 1.672 (FRS-thermal FR-TPKG-015): a heat-source CSV alone gives a board's STEP its powers ---
-  if (inShard(2)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const hp = await ctx.newPage();
     hp.on("pageerror", e => errors.push(e.message));
@@ -17831,7 +17831,7 @@ try {
   }
 
   // --- plain vtu 1.677 (FRS-thermal FR-TPKG-014): a .vtu from another tool opens as a map; the temperature array is picked ---
-  if (inShard(2)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const vp = await ctx.newPage();
     vp.on("pageerror", e => errors.push(e.message));
@@ -18004,7 +18004,7 @@ try {
   }
 
   // --- bolted joints 1.673 (FRS-thermal FR-TCON-003): plates a toolbox bolt clamps pass heat by a bolted joint's conductance ---
-  if (inShard(2)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
