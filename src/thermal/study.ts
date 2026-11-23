@@ -100,6 +100,40 @@ export function contactPatch(board: ArrayLike<number>, part: ArrayLike<number>, 
 }
 
 /**
+ * The part of a body's surface a part sits on (FR-TBRD-003/004, FR-TBC-008): each triangle of `body` clipped to the
+ * part's box grown by `grow` mm, kept where it looks towards the part's centre, so a heatsink takes a tab's heat
+ * under the tab and not on its fins. Null when nothing of `body` lies there.
+ */
+export function facingPatch(body: ArrayLike<number>, part: ArrayLike<number>, grow = 1): Float64Array | null {
+  if (part.length < 9 || body.length < 9) return null;
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < part.length; i++) { const a = i % 3, v = part[i]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
+  const c = [0, 1, 2].map(a => (lo[a] + hi[a]) / 2), keep: number[] = [];
+  for (let o = 0; o + 8 < body.length; o += 9) {
+    let poly: number[][] = [0, 3, 6].map(k => [body[o + k], body[o + k + 1], body[o + k + 2]]);
+    const u = [0, 1, 2].map(a => poly[1][a] - poly[0][a]), v = [0, 1, 2].map(a => poly[2][a] - poly[0][a]);
+    const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], nn = Math.hypot(n[0], n[1], n[2]);
+    if (!(nn > 0)) continue;
+    for (let a = 0; a < 3 && poly.length >= 3; a++) for (const [sg, k] of [[1, lo[a] - grow], [-1, -(hi[a] + grow)]] as const) {
+      const next: number[][] = [];
+      for (let i = 0; i < poly.length; i++) {
+        const p = poly[i], q = poly[(i + 1) % poly.length], dp = sg * p[a] - k, dq = sg * q[a] - k;
+        if (dp >= 0) next.push(p);
+        if (dp >= 0 !== dq >= 0) { const t = dp / (dp - dq); next.push(p.map((x, j) => x + t * (q[j] - x))); }
+      }
+      poly = next;
+      if (poly.length < 3) break;
+    }
+    if (poly.length < 3) continue;
+    // looking towards the part: the piece's normal within 60° of the way to the part's centre
+    const m = [0, 1, 2].map(a => poly.reduce((s, p) => s + p[a], 0) / poly.length), d = [0, 1, 2].map(a => c[a] - m[a]), dd = Math.hypot(d[0], d[1], d[2]);
+    if (dd > 0 && (n[0] * d[0] + n[1] * d[1] + n[2] * d[2]) < 0.5 * nn * dd) continue;
+    for (let i = 1; i + 1 < poly.length; i++) keep.push(...poly[0], ...poly[i], ...poly[i + 1]);
+  }
+  return keep.length ? Float64Array.from(keep) : null;
+}
+
+/**
  * What a board conducts, W/(m·K), from its surface and copper (FR-TBRD-010): `k3` along world X, Y, Z when it
  * lies square to an axis (in-plane along it, the series value through it); a tilted board gets the in-plane
  * value every way.
