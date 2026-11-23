@@ -1504,7 +1504,7 @@ export class SimController {
       if (msg !== SIM_STOPPED) { this.error = msg; toast((this.errorIn ? `${this.errorIn}: ` : "") + this.errorText(msg), "error"); }
     } finally {
       this.running = false;
-      void done;
+      if (done) this.noteResult();
       this.renderAll();
       this.drawMarks();
     }
@@ -3822,6 +3822,7 @@ export class SimController {
     for (const k of ["temp", "flux"] as PlotKind[]) this.pushImage(blocks, this.capture(k));
     this.plot = was;
     this.showPlot();
+    this.compareBlocks(blocks);
     blocks.push({ kind: "h", text: t("Convergence") });
     blocks.push({ kind: "table", widths: [1, 2, 2, 2, 2], rows: [[t("Pass"), t("Unknowns"), t("Temperature change"), t("Est. error"), t("Time")],
       ...res.passes.map((p, i) => [String(p.pass), String(p.dofs), p.change == null ? "–" : `${pct(p.change)} %`, last.errors[i] == null ? "–" : `${pct(last.errors[i]!)} %`, `${(p.ms / 1000).toFixed(1)} s`])] });
@@ -4010,12 +4011,18 @@ export class SimController {
   /** Keeps the shown results' peak values, so that a later result or another study can be compared with them (FR-STU-023). */
   private noteResult() {
     const st = this.study(), r = this.res, last = r?.passes.at(-1);
-    if (!st || !r || !last || r.study !== st.id || this.running || last.thermal) return;
+    if (!st || !r || !last || r.study !== st.id || this.running || (last.thermal && this.enveloped)) return;
     let h = 5381;
     for (let i = 0; i < r.key.length; i++) h = ((h << 5) + h + r.key.charCodeAt(i)) | 0;
     const base = { name: st.name, key: String(h >>> 0), at: Date.now() };
     let s: Summary;
-    if (last.modes) s = { ...base, kind: "modal", mass: (last.mass ?? 0) * 1000, freqs: last.modes.filter(m => !m.rigid).map(m => m.hz) };
+    if (last.thermal) {
+      // a warm-up is kept at its end time, whatever time is shown
+      const T = last.thermal, tr = r.tr?.transient, end = tr ? tr.times.length - 1 : -1;
+      const max = tr ? tr.max[end] : T.max, min = tr ? tr.min[end] : T.min;
+      const cs = r.comps ? (tr ? componentSeries(tr.cstats ?? [], r.comps.map(c => c.name)).map(c => ({ name: c.name, max: c.v[c.v.length - 1] })) : (T.comps ?? []).map((c, i) => ({ name: r.comps![i]?.name ?? `#${i + 1}`, max: c.max }))) : [];
+      s = { ...base, kind: tr ? "warm" : "thermal", tmax: max, tmin: min, heat: T.applied, ...(cs.length ? { comps: cs.filter(c => Number.isFinite(c.max)) } : {}) };
+    } else if (last.modes) s = { ...base, kind: "modal", mass: (last.mass ?? 0) * 1000, freqs: last.modes.filter(m => !m.rigid).map(m => m.hz) };
     else {
       const hs = this.hotList(), real = hs.some(x => x.singular) ? hs.find(x => !x.singular) : undefined;
       s = { ...base, kind: "static", maxU: last.maxU, maxVm: last.maxVm, sf: this.lowSf(last, real?.vm ?? last.maxVm) };
@@ -4025,16 +4032,16 @@ export class SimController {
   }
   /** What the shown results can be compared with, and the pick. */
   private compareWith(st: Study): { opts: { v: string; label: string; s: Summary }[]; sel: string; mine: Summary | null } {
-    const store = this.sumStore(), me = store[st.id], kind = st.kind === "modal" ? "modal" : "static";
+    const store = this.sumStore(), me = store[st.id], kind = st.kind === "modal" ? "modal" : st.kind === "thermal" ? (st.settings.transient ? "warm" : "thermal") : "static";
     const opts: { v: string; label: string; s: Summary }[] = [];
     if (me?.before && me.before.kind === kind) opts.push({ v: "prev", label: t("Before the last change"), s: me.before });
     for (const o of this.host.doc()?.studies ?? []) { const n = store[o.id]?.now; if (o.id !== st.id && n && n.kind === kind) opts.push({ v: o.id, label: o.name, s: n }); }
     const want = this.cmpSel[st.id];
     return { opts, sel: opts.some(o => o.v === want) ? want : opts[0]?.v ?? "", mine: me?.now && me.now.kind === kind ? me.now : null };
   }
-  private compareLabel(k: string) { return k === "maxvm" ? t("von Mises stress") : k === "maxu" ? t("Displacement") : k === "sf" ? t("Safety factor") : k === "mass" ? t("Mass") : t("Mode {n}", { n: k.slice(1) }); }
-  private compareValue(k: string, v: number | null) { return v == null ? "–" : k === "maxvm" ? `${sig(v)} MPa` : k === "maxu" ? this.lenText(v) : k === "sf" ? sig(v) : k === "mass" ? `${sig(v)} kg` : `${sig(v)} Hz`; }
-  private compareChange(r: CompareRow) { return r.change == null ? "–" : Math.abs(r.change) < 0.05 ? "0 %" : `${r.change > 0 ? "+" : "−"}${Math.abs(r.change) < 10 ? Math.abs(r.change).toFixed(1) : Math.abs(r.change).toFixed(0)} %`; }
+  private compareLabel(k: string) { return k.startsWith("c:") ? k.slice(2) : k === "tmax" ? t("Highest temperature") : k === "tmin" ? t("Lowest temperature") : k === "heat" ? t("Heat put in") : k === "maxvm" ? t("von Mises stress") : k === "maxu" ? t("Displacement") : k === "sf" ? t("Safety factor") : k === "mass" ? t("Mass") : t("Mode {n}", { n: k.slice(1) }); }
+  private compareValue(k: string, v: number | null) { return v == null ? "–" : k === "tmax" || k === "tmin" || k.startsWith("c:") ? `${sig(v)} °C` : k === "heat" ? `${sig(v)} W` : k === "maxvm" ? `${sig(v)} MPa` : k === "maxu" ? this.lenText(v) : k === "sf" ? sig(v) : k === "mass" ? `${sig(v)} kg` : `${sig(v)} Hz`; }
+  private compareChange(r: CompareRow) { return r.diff !== undefined ? (r.diff == null ? "–" : Math.abs(r.diff) < 0.05 ? "0 K" : `${r.diff > 0 ? "+" : "−"}${sig(Math.abs(r.diff))} K`) : r.change == null ? "–" : Math.abs(r.change) < 0.05 ? "0 %" : `${r.change > 0 ? "+" : "−"}${Math.abs(r.change) < 10 ? Math.abs(r.change).toFixed(1) : Math.abs(r.change).toFixed(0)} %`; }
   private compared(): { with: string; label: string; rows: CompareRow[] } | null {
     const st = this.study();
     if (!st || !this.res || this.running || this.stale()) return null;
@@ -4050,7 +4057,7 @@ export class SimController {
     if (!cmp) return html + `<p class="sim-note muted" data-v="cmpnone">${esc(t("Nothing to compare with yet: solve another study of this kind, or change the model and solve again."))}</p>`;
     html += `<label class="pm-field"><span>${esc(t("With"))}</span><select data-k="cmp">${c.opts.map(o => `<option value="${esc(o.v)}"${o.v === c.sel ? " selected" : ""}${o.v === "prev" ? "" : ' translate="no"'}>${esc(o.label)}</option>`).join("")}</select></label>`;
     html += `<table class="sim-cmptable"><thead><tr><th></th><th>${esc(t("This"))}</th><th>${esc(t("Other"))}</th><th>${esc(t("Difference"))}</th></tr></thead><tbody>`
-      + cmp.rows.map(r => `<tr data-cmp="${r.key}"><td>${esc(this.compareLabel(r.key))}</td><td>${esc(this.compareValue(r.key, r.a))}</td><td>${esc(this.compareValue(r.key, r.b))}</td><td data-v="cmpchange">${esc(this.compareChange(r))}</td></tr>`).join("") + `</tbody></table>`;
+      + cmp.rows.map(r => `<tr data-cmp="${esc(r.key)}"><td${r.key.startsWith("c:") ? ' translate="no"' : ""}>${esc(this.compareLabel(r.key))}</td><td>${esc(this.compareValue(r.key, r.a))}</td><td>${esc(this.compareValue(r.key, r.b))}</td><td data-v="cmpchange">${esc(this.compareChange(r))}</td></tr>`).join("") + `</tbody></table>`;
     return html;
   }
   private compareBlocks(blocks: ReportBlock[]) {
@@ -4177,7 +4184,7 @@ export class SimController {
       const k = Math.max(0, this.frame);
       html += `<dt>${esc(t("Time shown"))}</dt><dd data-v="ttime">${esc(timeText(run.times[k]))}</dd><dt>${esc(t("Heat put in"))}</dt><dd data-v="heatin">${sig(run.put[k])} W</dd><dt>${esc(t("Heat taken away"))}</dt><dd data-v="heatout">${sig(run.out[k])} W</dd><dt title="${esc(t("Heat put in less heat taken away: what warms the part at this time"))}">${esc(t("Heat stored"))}</dt><dd data-v="stored">${sig(run.put[k] - run.out[k])} W</dd></dl>`;
       // the components and parts at the time shown (no heat paths: those need the steady flows)
-      return html + this.transientHtml() + this.thermalCompsHtml(r, last) + this.thermalPassesHtml(r, last);
+      return html + this.transientHtml() + this.compareHtml() + this.thermalCompsHtml(r, last) + this.thermalPassesHtml(r, last);
     }
     html += `<dt>${esc(t("Heat put in"))}</dt><dd data-v="heatin">${sig(T.applied)} W</dd>`;
     T.flows.forEach((f, i) => {
@@ -4186,7 +4193,7 @@ export class SimController {
     });
     if (T.flows.length > 1) html += `<dt>${esc(t("Heat taken away in total"))}</dt><dd data-v="heatout">${sig(out)} W</dd>`;
     if (off != null) html += `<dt title="${esc(t("How far the heat taken away is from the heat put in, as a share of it"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${off > 1 ? ' class="sim-low"' : ""}>${pct(off).replace("<", "&lt;")} %</dd>`;
-    html += `</dl><div class="sim-probebar"><button class="btn small" data-a="balcsv" title="${esc(t("Save the heat balance (heat put in, taken away by each item, contacts and components) as a CSV file"))}">${esc(t("Export heat balance CSV"))}</button></div>` + this.exchangeHtml(r, last) + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
+    html += `</dl>${this.compareHtml()}<div class="sim-probebar"><button class="btn small" data-a="balcsv" title="${esc(t("Save the heat balance (heat put in, taken away by each item, contacts and components) as a CSV file"))}">${esc(t("Export heat balance CSV"))}</button></div>` + this.exchangeHtml(r, last) + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
     return html + this.thermalPassesHtml(r, last);
   }
 

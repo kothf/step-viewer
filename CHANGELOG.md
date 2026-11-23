@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.704.0] - 2026-11-23
+
+### Added
+
+- Thermal results can be compared: the Study tab's **Compare** table (also in the report) sets a thermal result beside the same study's result before the last change, or beside another thermal study of the document. It lists the highest and lowest temperature and each component's highest, with the difference in K, and the heat put in with its change in %. Warm-up studies are compared at their end time, with other warm-up studies only.
+
 ## [1.703.0] - 2026-11-23
 
 ### Changed
@@ -4644,7 +4650,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.703.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.704.0...HEAD
+[1.704.0]: https://github.com/kothf/step-viewer/compare/v1.703.0...v1.704.0
 [1.703.0]: https://github.com/kothf/step-viewer/compare/v1.702.0...v1.703.0
 [1.702.0]: https://github.com/kothf/step-viewer/compare/v1.701.0...v1.702.0
 [1.701.0]: https://github.com/kothf/step-viewer/compare/v1.700.0...v1.701.0
