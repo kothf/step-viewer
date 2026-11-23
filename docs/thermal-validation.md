@@ -1,6 +1,7 @@
 # Thermal solver validation
 
-FRS-thermal NFR-TH-020 (analytic answers) and NFR-TH-021 (an open-source FEA solver). First measured in 1.694.0.
+FRS-thermal NFR-TH-020 (analytic answers) and NFR-TH-021 (an open-source FEA solver). First measured in 1.694.0;
+the CalculiX comparison was run again in 1.695.0 after the fixes it led to (see "1.695.0" below).
 
 ## Analytic answers (NFR-TH-020, AT-TH0-1)
 
@@ -65,8 +66,7 @@ CalculiX, and the difference shrinks as the degree or the number of cells grows,
 Heat from a part that conducts far better than the board leaves through the rim of its footprint and spreads in a
 1.6 mm board; the temperature has a kink along that rim, which raising the degree on cells several millimetres across
 resolves only slowly. The chassis case is worse by default because its cells are sized by the whole assembly
-(8.8 mm against a 1.6 mm board). Next: degrees raised where the error is largest (FR-TSOL-003, as structural passes
-do) and cells sized by the thinnest body of a board study; the comparison is then run again.
+(8.8 mm against a 1.6 mm board). Both were addressed in 1.695.0, with a third cause found on the way (see below).
 
 ### Found and fixed while comparing
 
@@ -75,3 +75,40 @@ reached that point (a thin board's cell spans the space above it): the part's ed
 on past the board (U1 297 °C in place of 155 °C at its top corner). `Grid.cellOf` now asks the point's own body
 whenever a single body's cell is there, and steps along the diagonals as well as the axes to find the body of a point
 on an edge or a corner (`tests/unit/sim-thin.test.ts`). It applies to structural results of assemblies too.
+
+## 1.695.0: weighted joints, local passes, cells by the thinnest body
+
+Three changes followed from the comparison above:
+
+1. **Weighted joints.** Where two bodies meet, each side's heat flux is now weighed by the other side's normal
+   conductivity (`thermal.ts` `joinWeights`, the weighted interior-penalty form), and so is the penalty. With plain
+   averages the poorly conducting board took half the say in the flux leaving a copper or silicon part, which made
+   the parts too cool; this was the largest single cause.
+2. **Local passes (FR-TSOL-003).** After three passes over every cell, passes 4 to 6 raise the degree only in the
+   cells holding most of the remaining change, up to degree 6, as structural studies do. A study still runs three
+   passes by default; the passes setting goes up to 6.
+3. **Cells by the thinnest body.** An assembly with a body thinner than a third of the default cell (a 1.6 mm
+   board) gets cells three times that body's thickness, up to 400 cells (`run.ts` `thermalCellSize`). A transient
+   study keeps the old size.
+
+Hottest body, difference of its rise against CalculiX (same CalculiX answers as above):
+
+| Case, body | 1.694.0 default | 1.695.0 default (3 passes) | 1.695.0, 6 passes |
+|---|---|---|---|
+| heatsink, heater | −0.08 % | −0.08 % | −0.04 % |
+| board, U1 | −3.6 % | −1.95 % | −0.76 % |
+| board, Q1 | −6.8 % | −3.2 % | −1.55 % |
+| board, R1 | −1.1 % | −0.9 % | −0.4 % |
+| chassis, A | −13.2 % | −4.0 % | −2.4 % |
+| chassis, B | −11.4 % | −3.8 % | −2.5 % |
+| chassis, C | −2.4 % | −0.7 % | −0.6 % |
+
+| Case | Cells | Unknowns (3 / 6 passes) | Largest difference anywhere (3 / 6 passes) | RMS (3 / 6) | Time in node (3 / 6 passes) |
+|---|---|---|---|---|---|
+| heatsink | 298 | 10,430 / 13,741 | 0.14 % / 0.10 % | 0.04 % / 0.03 % | 19 s / 76 s |
+| board | 668 | 23,380 / 26,544 | 7.5 % / 5.4 % | 0.77 % / 0.39 % | 31 s / 112 s |
+| chassis | 753 | 26,355 / 28,119 | 8.6 % / 6.5 % | 0.65 % / 0.41 % | 45 s / 162 s |
+
+With six passes every hottest body is within the 3 % target; with the default three, within about 4 %. The largest difference anywhere stays at a
+part's bottom corner, where it meets the board along a re-entrant edge; the RMS over all nodes is under 1 %. The
+heat balance closes in every run.

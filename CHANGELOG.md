@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.695.0] - 2026-11-23
+
+### Added
+
+- Thermal studies take up to 6 passes. After three passes over every cell, passes 4 to 6 raise the accuracy only in the cells where the temperatures still move, and the Study tab and the report say in how many cells, as structural studies do.
+
+### Changed
+
+- Thermal results where bodies of very different conductivity touch (a part on a board, a board on a standoff) are more accurate: the joint now weighs each side by the other's conductivity. On the CalculiX comparison boards the hottest parts moved from 4 to 13 % too cool to within about 4 % with the default settings.
+- A thermal study of an assembly with a thin body (a 1.6 mm board) makes its cells to suit that body rather than the whole assembly, up to 400 cells.
+- Passes after the first build faster.
+
 ## [1.694.0] - 2026-11-23
 
 ### Fixed
@@ -4565,7 +4577,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.694.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.695.0...HEAD
+[1.695.0]: https://github.com/kothf/step-viewer/compare/v1.694.0...v1.695.0
 [1.694.0]: https://github.com/kothf/step-viewer/compare/v1.693.0...v1.694.0
 [1.693.0]: https://github.com/kothf/step-viewer/compare/v1.692.0...v1.693.0
 [1.692.0]: https://github.com/kothf/step-viewer/compare/v1.691.0...v1.692.0

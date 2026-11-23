@@ -17208,6 +17208,18 @@ try {
     const t2b = await sim(), again = await tp.evaluate(() => document.querySelector('#sim-tree [data-v="reused"]')?.textContent ?? "");
     check(!before && !t2b.error && /same grid and matrix/.test(again) && Math.abs(t2b.thermal.out[0] + t2b.thermal.out[1] - 8) < 0.01 && t2b.thermal.min > t2.thermal.min,
       `thermal 1.674: with only the ambient changed the study is solved again on the same matrix, says so, and the heat still balances (${JSON.stringify({ before, again, error: t2b.error, thermal: t2b.thermal })})`);
+    // FR-TSOL-003 (1.695.0): passes 4 to 6 raise the degree only where the temperatures still move
+    await tp.selectOption('#sim-tree [data-k="passes"]', "5");
+    await settle();
+    await tp.fill('#sim-tree [data-k="tol"]', "0");
+    await tp.press('#sim-tree [data-k="tol"]', "Tab");
+    await settle();
+    await tp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const t5 = await sim(), loc = await tp.evaluate(() => ({ opts: document.querySelectorAll('#sim-tree [data-k="passes"] option').length, notes: [...document.querySelectorAll("#sim-tree .sim-local")].map(e => e.textContent), rows: document.querySelectorAll("#sim-tree .sim-passes tbody tr").length }));
+    check(!t5.error && loc.opts === 6 && t5.passes.length === 5 && t5.passes.map(q => q.p).join() === "2,3,4,5,6" && t5.passes[3].raised > 0 && t5.passes[3].raised < t5.passes[3].cells && t5.passes[4].dofs < t5.passes[4].cells * 84 && loc.rows === 5 && loc.notes.length === 2 && /Pass 4: accuracy raised in/.test(loc.notes[0])
+      && Math.abs(t5.thermal.out[0] + t5.thermal.out[1] - 8) < 0.01 && Math.abs(t5.thermal.max - t2b.thermal.max) < 0.02 * (t2b.thermal.max - 20),
+      `thermal 1.695: five passes: the last two raise the degree in some cells only, say so, and the heat still balances (${JSON.stringify({ error: t5.error, passes: t5.passes, loc, max: [t5.thermal?.max, t2b.thermal.max] })})`);
     // a structural command starts a static study of its own; the switch goes back to the thermal one; undo removes it
     await tp.click('#sim-tools [data-s="mode-structural"]');
     await tp.waitForTimeout(150);

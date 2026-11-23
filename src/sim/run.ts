@@ -819,6 +819,26 @@ export function passError(known: number[]): number | null {
   return b > 0 ? e * Math.min(1, e / b) : 0;
 }
 
+/**
+ * Cell size of a thermal study of several bodies: a hot part on a thin board makes a kink in the temperature along its
+ * footprint, which cells sized by the whole assembly (a chassis plate under it) resolve poorly
+ * (docs/thermal-validation.md). The cells are made no larger than three times the thinnest body's thickness, but not
+ * smaller than `THERMAL_MAX_CELLS` cells of material give.
+ */
+export const THERMAL_MAX_CELLS = 400;
+export function thermalCellSize(body: SimBody, regions: ArrayLike<number>[]): number {
+  const h0 = cellSize(body), floor = cellSize(body, THERMAL_MAX_CELLS);
+  let t = Infinity;
+  for (const tris of regions) {
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < tris.length; i++) { const a = i % 3; if (tris[i] < lo[a]) lo[a] = tris[i]; if (tris[i] > hi[a]) hi[a] = tris[i]; }
+    t = Math.min(t, hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+  }
+  if (!(t > 0) || 3 * t >= h0) return h0;
+  const vol = Math.abs(meshVolume(body.tris));
+  return vol > 0 ? Math.max(floor, cellSize(body, Math.min(THERMAL_MAX_CELLS, vol / (3 * t) ** 3))) : h0;
+}
+
 /** Whole-body passes (degree 2, 3, 4), then local ones up to this many passes and this degree. */
 export const GLOBAL_PASSES = 3, MAX_PASSES = 6, LOCAL_DEGREE = 6;
 
@@ -1161,15 +1181,29 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0 || (s.density ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
   const inside = insideOf(new MeshBody(inp.body.tris));
-  const h = cellSize(inp.body, inp.cells);
-  const passes = Math.max(1, Math.min(GLOBAL_PASSES, Math.round(inp.passes)));
+  const h = inp.cells || !R ? cellSize(inp.body, inp.cells) : thermalCellSize(inp.body, R.map(r => r.tris));
+  const passes = Math.max(1, Math.min(MAX_PASSES, Math.round(inp.passes)));
   let grid: Grid | undefined, prev: Float64Array | undefined, before: Float32Array | null = null;
   const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
   const reuse = reuseKey(inp, h);
+  // FR-TSOL-003 local passes (as runStatic): each element's degree, and its share of the error when its degree was last raised
+  let degrees: Int8Array | undefined, ind: Float64Array | undefined;
   for (let k = 0; k < passes; k++) {
-    const t0 = Date.now(), p = k + 2;
-    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), grid, prev, sinks: set.sinks, sources: set.sources, ...(exchanges ? { exchanges } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}), reuse });
+    const t0 = Date.now();
+    let p = k + 2, raised: number | undefined, marked: number[] = [];
+    if (k >= GLOBAL_PASSES && grid && ind) {
+      degrees ??= new Int8Array(grid.elems.length).fill(GLOBAL_PASSES + 1);
+      marked = markElements(ind, degrees);
+      if (!marked.length) return;
+      for (const e of marked) degrees[e]++;
+      raised = marked.length;
+      p = 0;
+      for (let e = 0; e < degrees.length; e++) p = Math.max(p, degrees[e]);
+    }
+    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), grid, prev, ...(degrees ? { degrees } : {}), sinks: set.sinks, sources: set.sources, ...(exchanges ? { exchanges } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}), reuse });
     grid = r.grid; prev = r.x;
+    if (!ind || !degrees || k < GLOBAL_PASSES) ind = Float64Array.from(r.eta);
+    else for (const e of marked) ind[e] = r.eta[e];
     if (r.prevError != null) known.push(r.prevError);
     const sampler: Sampler = (pos, nrm, hits) => { const s = r.sample(pos, nrm, hits); return { u: s.flux, vm: s.temp, err: s.err, ...(s.hit ? { hit: s.hit } : {}), ...(s.dom ? { dom: s.dom } : {}) }; };
     keep?.(sampler, inside);
@@ -1209,11 +1243,20 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
     const change = before ? (100 * moved) / Math.max(hi - lo, 1e-9) : null;
     before = s.temp.slice(); // a copy: the worker hands the pass's own arrays over
     const converged = change != null && change <= inp.energyTol;
-    const need = !converged && k + 1 < passes ? thermalMemory(r.grid, p + 1) : 0;
+    let need = 0, more = k + 1 < passes;
+    if (!converged && more) {
+      if (k + 1 < GLOBAL_PASSES) need = thermalMemory(r.grid, p + 1);
+      else {
+        const d = degrees ? Int8Array.from(degrees) : new Int8Array(ind.length).fill(GLOBAL_PASSES + 1), mk = markElements(ind, d);
+        for (const e of mk) d[e]++;
+        more = mk.length > 0;
+        if (more) need = thermalMemory(r.grid, d.reduce((a, v) => Math.max(a, v), 0), d);
+      }
+    }
     const capped = need > (inp.memory ?? MEMORY_LIMIT) ? Math.ceil(need / 2 ** 20) : 0;
     yield {
-      pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, ...(capped ? { capped } : {}), energy: r.energy, change, ms: Date.now() - t0, reactions: [], applied: none,
-      u: s.flux, vm: s.temp, err: s.err, errors: [...known, passError(known)], maxU, maxVm: max, converged, done: converged || capped > 0 || k === passes - 1,
+      pass: k + 1, p, ...(raised ? { raised } : {}), dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, ...(capped ? { capped } : {}), energy: r.energy, change, ms: Date.now() - t0, reactions: [], applied: none,
+      u: s.flux, vm: s.temp, err: s.err, errors: [...known, passError(known)], maxU, maxVm: max, converged, done: converged || capped > 0 || !more,
       ...(s.dom ? { dom: s.dom } : {}),
       thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations, ...(r.kSteps ? { kSteps: r.kSteps } : {}), ...(r.reused ? { reused: true } : {}), ...(r.airSteps ? { airSteps: r.airSteps } : {}), ...(domains ? { contacts: r.contacts, comps } : {}), ...(r.exchanges ? { exchanges: r.exchanges } : {}) },
     };
@@ -1239,7 +1282,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   if (!heat && temps.size < 2 && temps.has(Tr.t0)) throw new Error("E-TH-NOHEAT");
   let p = 2, pass = 0, steady: number | null = null;
   if (heat) {
-    for (const r of runThermal({ ...inp, passes: Math.min(2, Math.max(1, Math.round(inp.passes))) })) {
+    for (const r of runThermal({ ...inp, cells: inp.cells ?? 150, passes: Math.min(2, Math.max(1, Math.round(inp.passes))) })) {
       pass = r.pass; p = r.p; steady = r.thermal?.max ?? null;
       yield { ...r, done: false, converged: false };
     }

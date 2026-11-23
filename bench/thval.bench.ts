@@ -85,7 +85,7 @@ for (const c of CASES) {
   const pos = Float32Array.from(o.pos);
   const inp: RunInput = {
     body: { tris: all, face: new Int32Array(all.length / 9), names: [""], lo, hi }, mat: { E: 1, nu: 0.3, rho: 0 }, regions,
-    problem: {} as RunInput["problem"], passes: Number(process.env.THVAL_PASSES ?? 3), cells: Number(process.env.THVAL_CELLS ?? 150), energyTol: 0, pos, nrm: new Float32Array(pos.length),
+    problem: {} as RunInput["problem"], passes: Number(process.env.THVAL_PASSES ?? 5), ...(process.env.THVAL_CELLS ? { cells: Number(process.env.THVAL_CELLS) } : {}), energyTol: 0, pos, nrm: new Float32Array(pos.length),
     thermal: { k: c.bodies[0].k / 1000, ks: c.bodies.map(b => b.k / 1000), setup, gap: 0.1 },
   };
   const t1 = Date.now();

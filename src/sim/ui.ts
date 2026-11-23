@@ -3743,6 +3743,7 @@ export class SimController {
     blocks.push({ kind: "h", text: t("Convergence") });
     blocks.push({ kind: "table", widths: [1, 2, 2, 2, 2], rows: [[t("Pass"), t("Unknowns"), t("Temperature change"), t("Est. error"), t("Time")],
       ...res.passes.map((p, i) => [String(p.pass), String(p.dofs), p.change == null ? "–" : `${pct(p.change)} %`, last.errors[i] == null ? "–" : `${pct(last.errors[i]!)} %`, `${(p.ms / 1000).toFixed(1)} s`])] });
+    for (const line of this.localNotes(res.passes)) blocks.push({ kind: "p", muted: true, text: line });
     blocks.push({ kind: "p", text: t(THERMAL_ASSUMPTIONS) });
     return { title: t("Thermal analysis report"), sub: `${doc.name} · ${st.name} · ${new Date().toLocaleString(lang())} · MöbiusCAD ${__APP_VERSION__}`, blocks };
   }
@@ -4139,6 +4140,7 @@ export class SimController {
     let html = `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th title="${esc(t("Temperature change"))}">${esc(t("Temp. change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
       + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td${p.memory ? ` title="${esc(t("Memory: about {n} MB", { n: Math.max(1, Math.round(p.memory / 2 ** 20)) }))}"` : ""}>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${pct(p.change).replace("<", "&lt;")} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 && !pct(errs[i]!).startsWith("<") ? "≈ " : ""}${pct(errs[i]!).replace("<", "&lt;")} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
       + chartSvg(errs, t("Estimated error per pass"));
+    for (const line of this.localNotes(r.passes)) html += `<p class="sim-note muted sim-local">${esc(line)}</p>`;
     html += this.cappedNote(last);
     if (r.passes.length && r.passes.every(q => q.thermal?.reused)) html += `<p class="sim-note muted" data-v="reused">${esc(t("Only powers or temperatures changed: solved again on the same grid and matrix, so it took a fraction of the time."))}</p>`;
     if (T.airSteps) html += `<p class="sim-note muted" data-v="airsteps">${esc(t("Air gaps conduct by air's k at their temperature: the last pass was solved {n} times until it settled.", { n: T.airSteps }))}</p>`;
