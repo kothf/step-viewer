@@ -17436,8 +17436,10 @@ try {
     await solved();
     const t1 = await sim();
     const res1 = await ap.evaluate(() => ({ rows: [...document.querySelectorAll("#sim-tree .sim-tcomps tbody tr")].map(tr => [...tr.children].map(td => td.textContent)), heat: parseFloat(document.querySelector("#sim-tree .sim-contacts [data-v=cheat]")?.textContent ?? ""), drop: document.querySelector("#sim-tree .sim-contacts [data-v=cdrop]")?.textContent ?? "", wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    // where each bar's heat goes (1.700.0, FR-TRES-005): the hot bar passes its 4 W on, the held one gives them to the fixed end
+    const hout = await ap.evaluate(() => ({ head: [...document.querySelectorAll("#sim-tree .sim-heatout th")].map(th => th.textContent), rows: [...document.querySelectorAll("#sim-tree .sim-heatout tbody tr")].map(tr => ({ air: tr.querySelector("[data-v=hoair]")?.textContent, held: parseFloat((tr.querySelector("[data-v=hoheld]")?.textContent ?? "").replace("−", "-")), cond: parseFloat((tr.querySelector("[data-v=hocond]")?.textContent ?? "").replace("−", "-")), tip: tr.querySelector("[data-v=hocond]")?.title ?? "" })), state: window.__sv.sim.state().thermal.comps.map(c => [c.conv, c.rad, c.held, c.cond]) }));
     await ap.click("#lang-btn");
-    const ru = await ap.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-tlinks *, #tab-sim .sim-comps *, #tab-sim .sim-tcomps *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    const ru = await ap.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-tlinks *, #tab-sim .sim-comps *, #tab-sim .sim-tcomps *, #tab-sim .sim-heatout *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
     await ap.click("#lang-btn");
     await ap.waitForTimeout(300);
     // the first bar carries 4 W over 100 mm: 20 K; the second makes them along its length: 10 K more at its far end
@@ -17446,8 +17448,9 @@ try {
       && tree0.kind === "thermal" && tree0.comps.length === 2 && tree0.comps.every(c => /50/.test(c.k) && !c.warn && !c.rigid) && !tree0.bolts && tree0.tlinks && tree0.load?.[0]?.body && /^c2@/.test(tree0.load[0].faces[0])
       && !t1.error && t1.thermal && Math.abs(t1.thermal.max - hot) < 0.3 && Math.abs(t1.thermal.min - 20) < 0.1 && t1.thermal.contacts.length === 1 && t1.thermal.contacts[0].type === "perfect" && Math.abs(Math.abs(t1.thermal.contacts[0].heat) - 4) < 0.05 && Math.abs(t1.thermal.contacts[0].area / 400 - 1) < 0.02
       && t1.thermal.comps.length === 2 && Math.abs(t1.thermal.comps[1].power - 4) < 1e-6 && !t1.thermal.comps[0].power && Math.abs(t1.thermal.out[0] - 4) < 0.05
-      && res1.rows.length === 2 && Math.abs(res1.heat - 4) < 0.05 && res1.wide <= 0 && ru.length === 0,
-      `thermal 1.654: a thermal study of an assembly: 4 W made in one bar leave through the other, which is held at 20 °C; components with their conductivity, the contact with the heat through it; translated (${JSON.stringify({ tb, kept, tree0, error: t1.error, thermal: t1.thermal, res1, ru, hot })})`);
+      && res1.rows.length === 2 && Math.abs(res1.heat - 4) < 0.05 && res1.wide <= 0 && ru.length === 0
+      && hout.head.length === 4 && hout.rows.length === 2 && hout.rows.every(r => r.air === "0") && Math.abs(hout.rows[0].held - 4) < 0.05 && Math.abs(hout.rows[0].cond + 4) < 0.05 && Math.abs(hout.rows[1].cond - 4) < 0.05 && /: [34][.\d]* W$/.test(hout.rows[1].tip),
+      `thermal 1.654: a thermal study of an assembly: 4 W made in one bar leave through the other, which is held at 20 °C; components with their conductivity, the contact with the heat through it; translated; where each bar's heat goes (${JSON.stringify({ tb, kept, tree0, error: t1.error, thermal: t1.thermal, res1, ru, hot, hout })})`);
     // a pad between the bars: 0.5 mm of 3 W/(m·K) adds P·t / (k·A)
     await ap.selectOption('#sim-tree select[data-k="tlink"]', "pad");
     await ap.waitForTimeout(400);

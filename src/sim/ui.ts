@@ -2063,7 +2063,35 @@ export class SimController {
       + this.nearHtml(r) + this.partTempsHtml()
       + `<table class="sim-comptable sim-tcomps"><thead><tr><th>${esc(t("Component"))}</th><th title="${esc(t("Highest temperature"))}">${esc(t("Max"))}, °C</th>${limits.size ? `<th title="${esc(t("Temperature limit from the package"))}">${esc(t("Limit"))}, °C</th>` : `<th title="${esc(t("Mean temperature of its surface"))}">${esc(t("Mean"))}, °C</th>`}${power ? `<th title="${esc(t("Heat made in the component"))}">${esc(t("Heat"))}, W</th>` : ""}</tr></thead><tbody>`
       + rows.map((x, d) => `<tr data-a="rcomp" data-rcomp="${d}" tabindex="0" class="${d === alone ? "sel" : ""}${bad(x, d) ? " bad" : ""}"><td translate="no" title="${esc(r.comps![d].name)}">${esc(r.comps![d].name)}</td><td data-v="tcmax">${sig(x.max)}</td>${limits.size ? `<td data-v="tclimit">${lim(d) === undefined ? "" : sig(lim(d)!)}</td>` : `<td>${sig(x.mean)}</td>`}${power ? `<td data-v="tcpower">${x.power ? sig(x.power) : ""}</td>` : ""}</tr>`).join("") + `</tbody></table>`
+      + this.heatOutHtml(r, last, alone)
       + `<p class="sim-note muted" data-v="compnote">${alone >= 0 ? `${esc(t("Showing {name} alone, on its own colour scale.", { name: r.comps[alone].name }))} <button class="btn small" data-a="rcompall">${esc(t("Show all"))}</button>` : esc(t("Click a row to show that component alone."))}</p>`;
+  }
+
+  /** Each component's neighbours by conduction: heat it passes to each, W (negative = takes in). */
+  private neighbourHeat(r: Results, last: PassResult, d: number): { name: string; heat: number }[] {
+    const by = new Map<number, number>();
+    for (const c of last.thermal?.contacts ?? []) {
+      if (c.a === d) by.set(c.b, (by.get(c.b) ?? 0) + c.heat);
+      else if (c.b === d) by.set(c.a, (by.get(c.a) ?? 0) - c.heat);
+    }
+    return [...by].map(([o, heat]) => ({ name: r.comps?.[o]?.name ?? `#${o + 1}`, heat })).sort((a, b) => Math.abs(b.heat) - Math.abs(a.heat));
+  }
+
+  /** Where each component's heat goes (FR-TRES-005): to the air, by radiation, to fixed temperatures, to its neighbours. */
+  private heatOutHtml(r: Results, last: PassResult, alone: number): string {
+    const rows = last.thermal?.comps;
+    if (!r.comps || !rows || rows.length < 2 || rows.some(x => x.conv === undefined)) return "";
+    const tiny = 1e-4 * Math.max(1e-9, ...rows.map(x => Math.abs(x.power) + Math.abs(x.conv!) + Math.abs(x.rad!) + Math.abs(x.cond!)));
+    const w = (v: number) => (Math.abs(v) < tiny ? "0" : sig(v).replace("-", "−"));
+    const rad = rows.some(x => Math.abs(x.rad!) >= tiny), held = rows.some(x => Math.abs(x.held!) >= tiny);
+    return `<h5 class="sim-sub">${esc(t("Where the heat goes"))}, W</h5>`
+      + `<table class="sim-comptable sim-heatout"><thead><tr><th>${esc(t("Component"))}</th><th title="${esc(t("Taken away by convection from its own surface"))}">${esc(t("Air"))}</th>${rad ? `<th title="${esc(t("Radiated to the surroundings and, net, to other components"))}">${esc(t("Radiation"))}</th>` : ""}${held ? `<th title="${esc(t("Taken by fixed temperatures on its faces"))}">${esc(t("Fixed T"))}</th>` : ""}<th title="${esc(t("Conducted to the components it touches, net"))}">${esc(t("Neighbours"))}</th></tr></thead><tbody>`
+      + rows.map((x, d) => {
+        const nb = this.neighbourHeat(r, last, d);
+        const tip = nb.map(n => t("{name}: {w} W", { name: n.name, w: w(n.heat) })).join("\n");
+        return `<tr data-a="rcomp" data-rcomp="${d}" data-hout="${d}" tabindex="0" class="${d === alone ? "sel" : ""}"><td translate="no" title="${esc(r.comps![d].name)}">${esc(r.comps![d].name)}</td><td data-v="hoair">${w(x.conv!)}</td>${rad ? `<td data-v="horad">${w(x.rad!)}</td>` : ""}${held ? `<td data-v="hoheld">${w(x.held!)}</td>` : ""}<td data-v="hocond"${tip ? ` title="${esc(tip)}"` : ""}>${w(x.cond!)}</td></tr>`;
+      }).join("") + `</tbody></table>`
+      + `<p class="sim-note muted" data-v="houtnote">${esc(t("A component's heat leaves by these paths; a negative value is heat it takes in. Hover the Neighbours cell for each one."))}</p>`;
   }
 
   /** The part's material as the active study takes it: the study's own when it has one (FR-SMAT-003). */
@@ -3741,6 +3769,12 @@ export class SimController {
       blocks.push({ kind: "table", widths: [3, 2, 2, 3], rows: [[t("Name"), t("View factor"), `${t("Heat")}, W`, `${t("Mean temperatures")}, °C`], ...T.exchanges.map((x, i) => [this.nameOf(res.xids?.[i] ?? ""), sig(x.f), sig(x.heat), Number.isFinite(x.ta) ? `${sig(x.ta)} → ${sig(x.tb)}` : "–"])] });
     }
     if (res.comps && T.comps) blocks.push({ kind: "table", widths: [3, 2, 2, 2], rows: [[t("Component"), `${t("Max")}, °C`, `${t("Mean")}, °C`, `${t("Heat")}, W`], ...T.comps.map((c, i) => [res.comps![i]?.name ?? "", sig(c.max), sig(c.mean), c.power ? sig(c.power) : "–"])] });
+    if (res.comps && T.comps && T.comps.length > 1 && T.comps.every(c => c.conv !== undefined)) {
+      const held = T.comps.some(c => Math.abs(c.held!) > 1e-9), w = (v: number) => sig(v).replace("-", "−");
+      blocks.push({ kind: "h", text: t("Where the heat goes") });
+      blocks.push({ kind: "table", widths: held ? [3, 2, 2, 2, 2] : [3, 2, 2, 2], rows: [[t("Component"), `${t("Air")}, W`, `${t("Radiation")}, W`, ...(held ? [`${t("Fixed T")}, W`] : []), `${t("Neighbours")}, W`],
+        ...T.comps.map((c, i) => [res.comps![i]?.name ?? "", w(c.conv!), w(c.rad!), ...(held ? [w(c.held!)] : []), w(c.cond!)])] });
+    }
     const pts = this.partTempRows(res);
     if (pts.length) {
       blocks.push({ kind: "h", text: t("Part temperatures") });
@@ -4139,7 +4173,7 @@ export class SimController {
       flows: T.flows.map((f, i) => ({ name: this.nameOf(r.ids[i] ?? ""), out: f.out, area: f.area, mean: f.mean, h: f.h })),
       exchanges: (T.exchanges ?? []).map((x, i) => ({ name: this.nameOf(r.xids?.[i] ?? ""), heat: x.heat, ta: x.ta, tb: x.tb })),
       contacts: (T.contacts ?? []).map(c => ({ a: comp(c.a), b: comp(c.b), heat: c.heat, area: c.area, ta: c.ta, tb: c.tb })),
-      comps: (r.comps ? T.comps ?? [] : []).map((c, i) => ({ name: comp(i), power: c.power, min: c.min, max: c.max, mean: c.mean })),
+      comps: (r.comps ? T.comps ?? [] : []).map((c, i) => ({ name: comp(i), power: c.power, min: c.min, max: c.max, mean: c.mean, ...(c.conv !== undefined ? { conv: c.conv, rad: c.rad, held: c.held, cond: c.cond } : {}) })),
     }));
   }
   private exportBalance() {
