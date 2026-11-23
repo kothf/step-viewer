@@ -112,3 +112,28 @@ Hottest body, difference of its rise against CalculiX (same CalculiX answers as 
 With six passes every hottest body is within the 3 % target; with the default three, within about 4 %. The largest difference anywhere stays at a
 part's bottom corner, where it meets the board along a re-entrant edge; the RMS over all nodes is under 1 %. The
 heat balance closes in every run.
+
+## 1.715.0: finer around pads
+
+A part's heat enters a board through its pads, a few square millimetres each. With the board's cells three times its
+thickness (4.8 mm on a 1.6 mm board) and degree 2 to 4 everywhere, the temperature peak over a pad was smeared out
+and the hottest parts came out cool. The bench case `pads` checks this: a board 80 × 60 × 1.6 mm (0.8 W/(m·K)) with
+copper pads 0.05 mm thick under three parts, 3 W put on the pads (U1 eight pads 1.4 W, Q1 a tab 1.2 W, R1 two pads
+0.4 W) and 1 W in the bodies, open faces at 10 W/(m²·K); CalculiX 55,589 nodes, 28,483 tetrahedra.
+
+Now, when heat comes in through patches (Heat from package: the footprint, the package's own regions or the heatsink
+faces), the cells under those patches start `PAD_FINE` 2 degrees ahead and their neighbours 1 (`run.ts`
+`thermalBoost`, the structural local refinement's `boostOf`), and the board's cells are sized by its thickness up to
+1500 cells instead of 400 (`thermalCellSize(..., pads)`).
+
+Hottest body, difference of its rise against CalculiX, 3 passes:
+
+| Body | before (401 cells) | finer degree only | 1.715.0 (1580 cells + finer degree) |
+|---|---|---|---|
+| board | −4.87 % | −2.60 % | +0.35 % |
+| U1 | −3.82 % | −2.21 % | −0.02 % |
+| Q1 | −4.87 % | −2.60 % | +0.35 % |
+| R1 | −5.81 % | −1.20 % | +0.32 % |
+
+The largest difference anywhere is 4.5 % at Q1's tab corner, the RMS over all nodes 0.16 %, the heat balance closes;
+60,130 unknowns in the last pass, 88 s in node. Studies without heat on patches keep their cells.

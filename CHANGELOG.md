@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.715.0] - 2026-11-23
+
+### Changed
+
+- Board thermal studies are finer where a part's heat enters the board: the solution starts two degrees higher in the cells under each part's footprint, pads or heatsink faces (one higher around them), and the board's cells follow its thickness. Against CalculiX on a board with copper pads, the hottest parts went from about 5 % too cool to within 0.4 %.
+
 ## [1.714.0] - 2026-11-23
 
 ### Added
@@ -4715,7 +4721,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.714.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.715.0...HEAD
+[1.715.0]: https://github.com/kothf/step-viewer/compare/v1.714.0...v1.715.0
 [1.714.0]: https://github.com/kothf/step-viewer/compare/v1.713.0...v1.714.0
 [1.713.0]: https://github.com/kothf/step-viewer/compare/v1.712.0...v1.713.0
 [1.712.0]: https://github.com/kothf/step-viewer/compare/v1.711.0...v1.712.0
