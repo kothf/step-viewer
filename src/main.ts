@@ -52,8 +52,10 @@ import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
 import { packageMeshes, readPackageAsking, thermalErrorText, ThermalMaps } from "./thermal/ui";
 import { PcbThermal } from "./thermal/pcbOverlayUi";
-import { findManifest, isSourcesCsv, type ThermalPackage } from "./thermal/package";
-import type { ModelBody, PartMatch } from "./thermal/match";
+import { findManifest, isSourcesCsv, partStats, type ThermalPackage } from "./thermal/package";
+import { partBox, type ModelBody, type PartMatch } from "./thermal/match";
+import { standIns, standInPart } from "./thermal/standins";
+import { gerberName } from "./thermal/copper";
 import { findMaterial, toRef, type MatRef } from "./tools/materials";
 import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardPlan } from "./thermal/study";
 import { unzipLimited, zip as zipFiles } from "./model/zip";
@@ -117,20 +119,29 @@ const thermal = new ThermalMaps({
 async function simulateBoard(pkg: ThermalPackage, match: PartMatch, bodies: ModelBody[]) {
   const src = modelSrc;
   if (!src) { toast(t("Open the board's STEP to measure it or simulate it."), "warn"); return; }
-  const plan = boardPlan(pkg.manifest, match, bodies);
+  // parts the STEP does not have (a bare board, such as MöbiusCAD writes from Gerbers) stand in as their package boxes
+  const stats = partStats(pkg.mesh), byId = new Map(pkg.manifest.parts.map(p => [p.id, p]));
+  const stand = standIns(pkg.manifest.parts, match.missing, id => partBox(byId.get(id) ?? null, id, stats), match.shift);
+  const plan = boardPlan(pkg.manifest, match, bodies, stand);
   const bk = boardConductivity(plan.thickness || 1.6, { ...DEFAULT_STACK, ...plan.stack });
   const boardMat: MatRef = { name: BOARD_MATERIAL, density: Math.round(bk.density * 1000) / 1000, k: Math.round(bk.along * 100) / 100, cp: Math.round(bk.cp) };
   const mats = plan.mats.map((name, i) => { if (i === plan.board) return boardMat; const m = findMaterial(name); return m ? toRef(m) : null; });
   const gerbers = boardGerbers.get(`sv:m:${src.name}:${src.data.byteLength || ""}`);
-  const ids = await asm.fromModel(src.data.slice(0), src.name, mats, plan.names);
-  if (!ids) return;
-  const heat = plan.heat.map(h => ({ id: h.id, name: h.name, comps: h.bodies.map(i => ids[i]).filter((x): x is string => !!x), p: h.p, ...(h.limit !== undefined ? { limit: h.limit } : {}), ...(h.board !== undefined ? { board: h.board } : {}), ...(h.sink !== undefined ? { sink: h.sink } : {}), ...(h.path ? { path: h.path } : {}), ...(h.elyt ? { elyt: true } : {}), ...(h.junction ? { junction: true } : {}), ...(h.rjc !== undefined ? { rjc: h.rjc } : {}) }));
-  sim.boardStudy({ ambient: plan.ambient, emissivity: plan.emissivity, enclosure: plan.enclosure, down: plan.down, heat, ...(plan.board >= 0 && ids[plan.board] ? { board: { comp: ids[plan.board]!, t: plan.thickness, ...(plan.stack ? { stack: plan.stack } : {}) } } : {}) });
+  const extra = stand.map((x, j) => { const m = findMaterial(plan.standMats?.[j] ?? ""); return { ...standInPart(x), name: x.name, mat: m ? toRef(m) : null, color: [0.62, 0.64, 0.68] as [number, number, number] }; });
+  const got = await asm.fromModel(src.data.slice(0), src.name, mats, plan.names, extra);
+  if (!got) return;
+  // the file's bodies first, then the stand-ins
+  const made = got.length - extra.length, ids = (i: number) => (i >= bodies.length ? got[made + i - bodies.length] : got[i]);
+  const heat = plan.heat.map(h => ({ id: h.id, name: h.name, comps: h.bodies.map(ids).filter((x): x is string => !!x), p: h.p, ...(h.limit !== undefined ? { limit: h.limit } : {}), ...(h.board !== undefined ? { board: h.board } : {}), ...(h.sink !== undefined ? { sink: h.sink } : {}), ...(h.path ? { path: h.path } : {}), ...(h.elyt ? { elyt: true } : {}), ...(h.junction ? { junction: true } : {}), ...(h.rjc !== undefined ? { rjc: h.rjc } : {}) }));
+  const boardId = plan.board >= 0 ? ids(plan.board) : null;
+  // a stand-in has no leads: the package's board share of its heat goes into the board under it
+  sim.boardStudy({ ambient: plan.ambient, emissivity: plan.emissivity, enclosure: plan.enclosure, down: plan.down, heat, ...(stand.length ? { split: true } : {}), ...(boardId ? { board: { comp: boardId, t: plan.thickness, ...(plan.stack ? { stack: plan.stack } : {}) } } : {}) });
   // the board's Gerber set, when one came with the STEP, gives the board its copper (FR-TBRD-020)
-  if (gerbers && plan.board >= 0 && ids[plan.board]) await sim.readGerber(ids[plan.board]!, gerbers);
+  if (gerbers && boardId) await sim.readGerber(boardId, gerbers);
   selectCmTab("simulation");
   showLeftTab("sim");
   const lost = heat.filter(h => !h.comps.length && h.p >= 0.01).length;
+  if (stand.length) toast(t("The STEP has no body for {n} part; it stands in as a block of its package box.|The STEP has no bodies for {n} parts; they stand in as blocks of their package boxes.", { n: stand.length }));
   toast(lost ? t("Assembly and thermal study made from the package; {n} part was not found in the model and makes no heat.|Assembly and thermal study made from the package; {n} parts were not found in the model and make no heat.", { n: lost })
     : t("Assembly and thermal study made from the package. Add a heatsink or change the cooling, then press Solve."), lost ? "warn" : undefined);
 }
@@ -825,7 +836,7 @@ async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], ap
   setDoc(label, "loading");
   const ok = await gerber.load(list, append && gerber.loaded);
   if (!ok && !gerber.loaded) { setPcbMode(false); if (!viewer.parts.length) $("#empty").hidden = false; setDoc(label, "error"); return; }
-  if (!append || !gerber.name) gerber.name = list.length === 1 ? list[0].name : list[0].name.replace(/[-_.][^-_.]*$/, "") || "pcb";
+  if (!append || !gerber.name) gerber.name = list.length === 1 ? list[0].name : setName(list.map(f => f.name));
   document.title = `${gerber.name} · PCB · MöbiusCAD`;
   setDoc(gerber.name, "ready");
   pcbStats();
@@ -1320,6 +1331,12 @@ async function exportBoardStep() {
     download(new Blob([bytes], { type: "model/step" }), `${gerber.baseName()}-board.step`);
     toast(t("Saved as STEP"));
   } catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
+}
+
+/** A loose Gerber set's name: what its files' names share ("amp" for amp-F_Cu.gbr, amp-B_Cu.gbr…), else the first file's stem. */
+function setName(names: string[]) {
+  const shared = gerberName(names);
+  return shared.length >= 3 ? shared : names[0].replace(/[-_.][^-_.]*$/, "") || "pcb";
 }
 
 /** Shows parsed parts in the 3D model view (a STEP file, or a PCB's board body). */

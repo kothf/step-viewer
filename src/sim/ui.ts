@@ -43,7 +43,7 @@ import { MEMORY_LIMIT } from "./static";
 import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardK, partTemps, plateAxis, type BoardStack, type PartTemp } from "../thermal/study";
 import { boardMap, gerberName, mapPicture, stackK, type CopperMap } from "../thermal/copper";
 import { copperFromGerber } from "../thermal/copperRaster";
-import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
+import { GLOBAL_PASSES, MAX_PASSES, edgeLines, frameComps, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
 import { BOARD_RC, SERIES_COLORS, exprProblem, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
@@ -891,7 +891,7 @@ export class SimController {
    * A thermal study of a board made from its thermal package (FR-TBRD-001): the package's ambient, one Heat from
    * package load, and convection and radiation from every surface open to the air.
    */
-  boardStudy(spec: { ambient?: number; emissivity?: number; enclosure?: "open" | "vented" | "closed"; down?: [number, number, number]; heat: PackageHeat[]; board?: { comp: string; t: number; stack?: Partial<BoardStack> } }): string | null {
+  boardStudy(spec: { ambient?: number; emissivity?: number; enclosure?: "open" | "vented" | "closed"; down?: [number, number, number]; heat: PackageHeat[]; board?: { comp: string; t: number; stack?: Partial<BoardStack> }; split?: boolean }): string | null {
     const doc = this.host.doc();
     if (!doc) return null;
     const st = newStudy(doc.studies ?? [], "thermal");
@@ -900,7 +900,7 @@ export class SimController {
     st.settings.ambient = spec.ambient !== undefined && Number.isFinite(spec.ambient) ? spec.ambient : ENCLOSURES.find(x => x.id === spec.enclosure)?.ambient ?? DEFAULT_AMBIENT;
     if (spec.down) st.settings.down = spec.down;
     if (spec.board?.comp) st.comps = { [spec.board.comp]: { board: { ...DEFAULT_STACK, ...(spec.board.stack ?? {}), ...(spec.board.t > 0 ? { t: Math.round(spec.board.t * 1000) / 1000 } : {}) } } };
-    st.loads.push({ id: "l1", name: itemName(st, "pkgheat"), type: "pkgheat", faces: [], parts: spec.heat, ...(spec.board?.comp ? { board: spec.board.comp } : {}) });
+    st.loads.push({ id: "l1", name: itemName(st, "pkgheat"), type: "pkgheat", faces: [], parts: spec.heat, ...(spec.board?.comp ? { board: spec.board.comp, ...(spec.split ? { split: true } : {}) } : {}) });
     st.supports.push({ id: "s1", name: itemName(st, "conv"), type: "conv", faces: [], all: true, natural: true, h: FILM_PRESETS[0][1] });
     const emis = spec.emissivity !== undefined && spec.emissivity > 0 && spec.emissivity <= 1 ? spec.emissivity : 0.9;
     st.supports.push({ id: "s2", name: itemName(st, "rad"), type: "rad", faces: [], all: true, emis });
@@ -1964,7 +1964,8 @@ export class SimController {
   private heatPaths(r: Results | null = this.res && !this.stale() ? this.res : null) {
     const last = r?.passes.at(-1), rows = last?.thermal?.comps, st = this.study(), off = new Set(st?.suppressed ?? []);
     const l = st?.loads.find(x => x.type === "pkgheat" && !off.has(x.id) && x.board);
-    if (!r?.comps || !rows || !l || (r.env && r.passes === r.env)) return [];
+    // a warm-up has no steady heat flows to split (its component rows give temperatures only)
+    if (!r?.comps || !rows || !l || (r.env && r.passes === r.env) || last?.transient) return [];
     const board = r.comps.findIndex(c => compOf(c.key) === l.board), contacts = last!.thermal!.contacts ?? [];
     if (board < 0) return [];
     const out: { name: string; p: number; board: number; air: number; chassis: number; other: number; pkg: { board: number; air: number; sink: number } | null }[] = [];
@@ -2899,7 +2900,8 @@ export class SimController {
     r.tr = full;
     const T = full.transient, k = Math.max(0, Math.min(T.times.length - 1, i));
     this.frame = k;
-    r.passes[r.passes.length - 1] = { ...full, vm: T.frames[k], maxVm: T.max[k], thermal: { ...full.thermal!, min: T.min[k], max: T.max[k], applied: T.put[k] } };
+    const comps = T.cstats?.[k] ? frameComps(T.cstats[k], (full.thermal?.comps ?? []).map(c => c.power)) : full.thermal?.comps;
+    r.passes[r.passes.length - 1] = { ...full, vm: T.frames[k], maxVm: T.max[k], thermal: { ...full.thermal!, min: T.min[k], max: T.max[k], applied: T.put[k], ...(comps ? { comps } : {}) } };
   }
 
   /** Steps the shown time; `paint` = only the colours (playback), else the whole plot, probes and labels. */
@@ -4092,7 +4094,8 @@ export class SimController {
       // over time: what goes in, what the surfaces take at the time shown, and the rest warming the part
       const k = Math.max(0, this.frame);
       html += `<dt>${esc(t("Time shown"))}</dt><dd data-v="ttime">${esc(timeText(run.times[k]))}</dd><dt>${esc(t("Heat put in"))}</dt><dd data-v="heatin">${sig(run.put[k])} W</dd><dt>${esc(t("Heat taken away"))}</dt><dd data-v="heatout">${sig(run.out[k])} W</dd><dt title="${esc(t("Heat put in less heat taken away: what warms the part at this time"))}">${esc(t("Heat stored"))}</dt><dd data-v="stored">${sig(run.put[k] - run.out[k])} W</dd></dl>`;
-      return html + this.transientHtml() + this.thermalPassesHtml(r, last);
+      // the components and parts at the time shown (no heat paths: those need the steady flows)
+      return html + this.transientHtml() + this.thermalCompsHtml(r, last) + this.thermalPassesHtml(r, last);
     }
     html += `<dt>${esc(t("Heat put in"))}</dt><dd data-v="heatin">${sig(T.applied)} W</dd>`;
     T.flows.forEach((f, i) => {

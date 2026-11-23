@@ -17679,6 +17679,35 @@ try {
     await ctx.close();
   }
 
+  // --- bare board 1.696: the board STEP MöbiusCAD writes from Gerbers, with the board's thermal package ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const bb = await ctx.newPage();
+    bb.on("pageerror", e => errors.push(e.message));
+    bb.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal");
+    await bb.goto(`${origin}/index.html?debug`);
+    await bb.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await bb.goto(`${origin}/index.html?debug`);
+    await bb.waitForFunction(() => window.__sv);
+    await bb.setInputFiles("#file-input", [join(thx, "amp-board.step"), join(thx, "amp-thermal.zip")]);
+    await bb.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    const m1 = await bb.evaluate(() => { const s = window.__sv.thermal.state(); return { matched: s.matched, missing: s.missing, fitted: s.fitted, warn: !!document.querySelector('[data-v="misfit"]') }; });
+    await bb.click('#th-tools [data-th="simulate"]');
+    await bb.waitForFunction(() => window.__sv.asm.doc?.components.length === 7 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 7, null, { timeout: 180000 });
+    await bb.waitForTimeout(600);
+    const m2 = await bb.evaluate(() => {
+      const d = window.__sv.asm.doc, l = d.studies?.[0]?.loads[0], parts = window.__sv.viewer.parts;
+      return { comps: d.components.map(c => [c.name, d.parts[c.part].doc.features.map(f => f.type).join("+"), d.parts[c.part].doc.material?.cp ?? null]), heat: l?.parts?.map(p => p.comps.length), split: l?.split,
+        v3: (() => { const i = d.components.findIndex(c => c.name === "V3<1>"); return parts[i] ? [parts[i].data.bboxMin[2], parts[i].data.bboxMax[2]] : null; })(),
+        toast: [...document.querySelectorAll("#toasts .toast")].map(e => e.textContent).join(" | ") };
+    });
+    check(m1.matched === 1 && m1.missing.join() === "1,2,3,4,5,6" && m1.fitted && !m1.warn && m2.comps.length === 7 && m2.comps.slice(1).every(c => c[1] === "sketch+extrude" && c[2] > 0) && m2.heat?.join() === "1,1,1,1,1,1" && m2.split
+      && m2.v3 && Math.abs(m2.v3[0] - 0.8) < 0.01 && Math.abs(m2.v3[1] - 60.8) < 0.01 && /stand in as blocks/.test(m2.toast) && !/not found/.test(m2.toast),
+      `bare board 1.696: a board STEP from the PCB view with its thermal package finds the board by its outline, and Simulate stands the six parts in as their package boxes, every one heated and with a specific heat (${JSON.stringify({ m1, m2 })})`);
+    await ctx.close();
+  }
+
   // --- PCB thermal 1.684 (FRS-thermal FR-TMAP-040): the package's board-face temperatures under the PCB view's layers ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

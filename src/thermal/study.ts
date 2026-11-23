@@ -1,6 +1,7 @@
 // A thermal study from a board's STEP and its thermal package (FRS-thermal J5, FR-TBRD-001/002/010/011):
 // which body is the board, what each body is made of, and the heat every package part makes. Pure.
 
+import type { StandIn } from "./standins";
 import type { ModelBody, PartMatch } from "./match";
 import { isElectrolytic, type ThermalManifest, type ThermalPart } from "./package";
 
@@ -149,7 +150,8 @@ export const GUESS = {
   resistor: "Alumina 99.5 %",
   can: "Aluminium 6061",
   glass: "Glass (borosilicate 3.3)",
-  plastic: "Epoxy resin (cast)",
+  // moulded part bodies: a glass-filled moulding compound with a specific heat, so warm-ups run (cast epoxy has none)
+  plastic: "Nylon PA66-GF30",
   metal: "Copper",
   sink: "Aluminium 6061",
   iron: "Steel (carbon)",
@@ -165,8 +167,14 @@ export function guessMaterial(part: Pick<ThermalPart, "designator" | "part" | "m
   if (/^(v|vt|tube)\d/i.test(d) || /valve|tube|bulb|envelope|лампа|el\d\d|ecc\d\d|6l6|kt\d\d|12a[xtu]7/.test(text)) return GUESS.glass;
   if (/^(t|tr|l)\d/i.test(d) || /transformer|choke|inductor|трансформатор|дроссель/.test(text)) return GUESS.iron;
   if (/^r\d/i.test(d) || /resistor|резистор|\d+ ?[rkm]\b.*\d ?w/.test(text)) return GUESS.resistor;
-  if (/^c\d/i.test(d) && /electrolytic|elko|can|µf|uf|мкф/.test(text)) return GUESS.can;
+  if (/^c\d/i.test(d) && (/electrolytic|elko|can|µf|uf|мкф/.test(text) || bigCap(text))) return GUESS.can;
   return GUESS.plastic;
+}
+
+/** "47u 450V", "100µ 63V": a microfarad value of 1 or more with a voltage, as electrolytics are written. */
+function bigCap(text: string) {
+  const m = /(\d+(?:[.,]\d+)?)\s*(?:u|µ)\b/.exec(text);
+  return !!m && parseFloat(m[1].replace(",", ".")) >= 1 && /\d\s*v\b/.test(text);
 }
 
 /** One package part's heat in the study. */
@@ -191,6 +199,9 @@ export interface BoardPlan {
   power: number;
   /** The board's copper stack from the manifest, where it gives one. */
   stack?: Partial<BoardStack>;
+  /** Bodies made from package boxes for parts the STEP lacks (body index = bodies.length + their index), and their materials. */
+  stand?: StandIn[];
+  standMats?: string[];
 }
 
 /**
@@ -217,7 +228,7 @@ export function boardDown(orientation: string | undefined, bodies: ModelBody[], 
 }
 
 /** The study a board's package describes, over the bodies of its STEP (in the viewer's order). */
-export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelBody[]): BoardPlan {
+export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelBody[], stand: StandIn[] = []): BoardPlan {
   const owner = new Map<number, ThermalPart>();
   for (const p of man.parts) for (const i of match.bodies.get(p.id) ?? []) if (!owner.has(i)) owner.set(i, p);
   // the package's part 0 is the board; else it is found among the bodies no part owns
@@ -229,11 +240,15 @@ export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelB
   let power = 0;
   for (const p of man.parts) {
     if (p.id === 0) continue;
-    const list = (match.bodies.get(p.id) ?? []).filter(i => i !== board), w = p.p ?? 0;
+    const si = stand.findIndex(x => x.id === p.id);
+    const list = si >= 0 && !match.bodies.get(p.id)?.length ? [bodies.length + si] : (match.bodies.get(p.id) ?? []).filter(i => i !== board), w = p.p ?? 0;
     heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}), ...(isElectrolytic(p) ? { elyt: true } : {}), ...(p.tKind === "junction" ? { junction: true } : {}), ...(p.rjc !== undefined && p.rjc >= 0 ? { rjc: p.rjc } : {}) });
     if (list.length) power += w;
   }
+  const partOf = new Map(man.parts.map(p => [p.id, p]));
+  const standMats = stand.map(x => guessMaterial(partOf.get(x.id) ?? null, ""));
   return { board, thickness: board >= 0 ? sizes(bodies[board].box)[0] : 0, mats, names, heat, ambient: man.settings.ambient, emissivity: man.settings.emissivity, power,
+    ...(stand.length ? { stand, standMats } : {}),
     ...(["open", "vented", "closed"].includes(man.settings.enclosure ?? "") ? { enclosure: man.settings.enclosure as "open" | "vented" | "closed" } : {}),
     ...(() => { const down = boardDown(man.settings.orientation, bodies, board); return down ? { down } : {}; })(),
     ...(man.board ? { stack: { ...man.board } } : {}) };

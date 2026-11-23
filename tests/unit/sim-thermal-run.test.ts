@@ -2,7 +2,7 @@
 // converge to the closed-form answers of a bar.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { thermalSetup, runThermal, studyProblem, faceSizes } from "../../src/sim/run";
+import { thermalSetup, runThermal, runTransient, studyProblem, faceSizes } from "../../src/sim/run";
 import { newStudy, enclosureFactor } from "../../src/sim/types";
 import { typedValue, shownValue } from "../../src/sim/values";
 
@@ -266,4 +266,38 @@ test("thermal study: natural convection from every open surface, face sizes, enc
   st.settings.enclosure = "closed";
   const closed = run(st).at(-1)!;
   assert.ok(closed.thermal!.max > open.thermal!.max + 5, `${closed.thermal!.max} vs ${open.thermal!.max}`);
+});
+
+test("a board warm-up gives each component's temperatures at every output time (part temperatures and the report need them)", () => {
+  const boxBody = (l: number[], h: number[], comp: string) => {
+    const t: number[] = [], f: number[] = [], n: string[] = [];
+    for (let a = 0; a < 3; a++) for (const end of [0, 1]) {
+      const q = rectFace(a, end ? h[a] : l[a], l, h, !!end);
+      n.push(`${comp}@${"xyz"[a]}${end}`);
+      t.push(...q);
+      for (let k = 0; k < q.length / 9; k++) f.push(n.length - 1);
+    }
+    return { tris: t, face: f, names: n };
+  };
+  const P = boxBody([0, 0, 0], [60, 40, 1.6], "pcb"), Q = boxBody([20, 15, 1.6], [30, 25, 11.6], "r1");
+  const body = { tris: Float64Array.from([...P.tris, ...Q.tris]), face: Int32Array.from([...P.face, ...Q.face.map(i => i + 6)]), names: [...P.names, ...Q.names], lo: [0, 0, 0], hi: [60, 40, 11.6] };
+  const regs = [{ tris: Float64Array.from(P.tris), mat: { name: "pcb", E: 0, nu: 0, rho: 0 } }, { tris: Float64Array.from(Q.tris), mat: { name: "r", E: 0, nu: 0, rho: 0 } }];
+  const st = newStudy([], "thermal");
+  st.settings.ambient = 25;
+  st.settings.transient = { end: 600, out: 120 };
+  st.loads.push({ id: "l1", type: "pkgheat", faces: [], board: "pcb", parts: [{ id: 1, name: "R1", comps: ["r1"], p: 2 }] });
+  st.supports.push({ id: "s1", type: "conv", faces: [], all: true, h: 10 });
+  const set = thermalSetup(st, body, ["pcb", "r1"]);
+  const pts = new Float32Array([5, 5, 1.6, 55, 35, 1.6, 25, 20, 11.6, 25, 15, 6]), nn = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, -1, 0]);
+  const passes = [...runTransient({ body, mat: regs[0].mat, problem: studyProblem(st, body), passes: 2, energyTol: 0, pos: pts, nrm: nn, regions: regs,
+    thermal: { k: 0.0003, setup: set, ks: [0.0003, 0.0003], gap: 0.1, transient: { rc: 2e-3, rcs: [2e-3, 3e-3], t0: 25, end: 600, out: 120, profiles: {} } } })];
+  const last = passes.at(-1)!, tr = last.transient!, steady = passes.at(-2)!.thermal!.comps!;
+  assert.equal(tr.cstats?.length, tr.times.length);
+  const c = last.thermal!.comps!;
+  assert.equal(c.length, 2);
+  // the part is hotter than the board, both warm with time, and the rows carry the steady powers
+  assert.ok(c[1].max > c[0].max && c[1].min <= c[1].mean && c[1].mean <= c[1].max, JSON.stringify(c));
+  assert.ok(tr.cstats![1][1].max < tr.cstats!.at(-1)![1].max);
+  assert.ok(Math.abs(c[1].power - steady[1].power) < 1e-9 && Math.abs(c[1].power - 2) < 1e-9);
+  assert.equal(c[1].max, tr.comps!.at(-1)![1]);
 });
