@@ -85,6 +85,7 @@ import { FileMenu, type LiveKind, type PackDoc } from "./fileMenu";
 import { recentAdd, recentFiles, recentItem, recentList } from "./recent";
 import { drawingOf, peekDrawing, uniqueDrawings, type FoundDrawing, type ModelKey } from "./drawing/findDrawing";
 import { packAsm, ASM_EXT } from "./asm/file";
+import { memDir, writeRefs } from "./asm/refs";
 import { bindValueDrops, dragValue } from "./valueDrop";
 import { bindLongPress } from "./longPress";
 
@@ -262,7 +263,7 @@ const asm = new AsmController({
   opened: label => docs?.opened("asm", label),
   openParts: () => (docs?.tabs ?? []).filter(x => x.kind === "part" && x.state).map(x => { const st = x.state as PartTab; return { doc: st.store.doc, fileName: st.fileName || `${st.store.doc.name}.mcadprt` }; }),
   // Edit part in place: the part takes over the assembly's tab, and Return to assembly takes it back.
-  editPart: (doc, file, label, back, ctx) => (docs ? docs.inPlaceSwitch(() => modeller.editIn(doc, file, { label, back: d => docs!.inPlaceSwitch(() => back(d)) }, ctx)) : modeller.editIn(doc, file, { label, back }, ctx)),
+  editPart: (doc, file, label, back, ctx, handle) => (docs ? docs.inPlaceSwitch(() => modeller.editIn(doc, file, { label, back: d => docs!.inPlaceSwitch(() => back(d)) }, ctx, handle)) : modeller.editIn(doc, file, { label, back }, ctx, handle)),
   openPart: () => modeller.openPart(),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
@@ -3933,14 +3934,18 @@ const fileMenu = new FileMenu({
       if (tab.kind === "asm") {
         const st = tab.state as AsmTab | null;
         const doc = () => (st ? st.doc : asm.doc!);
+        let made: Promise<{ name: string; files: Map<string, Uint8Array> }> | null = null;
+        const folder = () => (made ??= (async () => {
+          const name = (st ? st.fileName : asm.title) || `${doc().name}${ASM_EXT}`, dir = memDir();
+          const w = await writeRefs(doc(), dir, new Map(), appGen, "", name);
+          dir.files.set(name, await packAsm(w.doc, appGen));
+          return { name, files: dir.files };
+        })());
         return {
           label, kind: "asm", live,
-          async files() { return [{ name: (st ? st.fileName : asm.title) || `${doc().name}${ASM_EXT}`, data: await packAsm(doc(), appGen) }]; },
-          async parts() {
-            return Promise.all(Object.values(doc().parts).map(async p => p.asm
-              ? { name: `${p.asm.name || p.name}${ASM_EXT}`, data: await packAsm(p.asm, appGen) }
-              : { name: /\.mcadprt$/i.test(p.file) ? p.file : `${p.doc.name || p.name}${PART_EXT}`, data: await packPart(p.doc, appGen) }));
-          },
+          // the folder as it is saved: the assembly beside its part files, which it references
+          async files() { const f = await folder(); return [{ name: f.name, data: f.files.get(f.name)! }]; },
+          async parts() { const f = await folder(); return [...f.files].filter(([n]) => n !== f.name).map(([name, data]) => ({ name, data })); },
         };
       }
       if (tab.kind === "drawing") {

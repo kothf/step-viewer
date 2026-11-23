@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.706.0] - 2026-11-23
+## [1.707.0] - 2026-11-23
 
 ### Added
 
 - Board studies with **Keep the package's split**: a part whose heat path is a heatsink now puts its heatsink share into the heatsink body it touches, under the part, instead of making it in the part itself. The heatsink is found in the model as the body against the part that makes no heat of its own, so a transistor bent over onto a heatsink and one standing beside it both work without extra input. The **Heat paths** table gets a **Heatsink** column and a note with the total. With no heatsink body in the model, the share stays in the part as before.
+
+## [1.706.0] - 2026-11-23
+
+### Changed
+
+- Assemblies reference their part files, as in other CAD apps. In Chrome and Edge, **Save** asks once for the assembly's folder and writes the assembly and every part and sub-assembly it uses there as files of their own; the assembly points at them. Opening the assembly again, switching back to its tab or coming back to the window reads the part files, so a part edited and saved in its own file updates every assembly that uses it. **Open part** on a component edits that part's file: the part's Save writes it, and Return to assembly brings the change back. A missing part file is marked ⚠, the component shows the last copy the assembly kept, and a bar over the view offers **Choose folder…**. The assembly still keeps a copy of each part, so it opens alone and in older versions. Older assemblies with their parts inside open as before and become files on their first Save. **Pack and Go** puts an assembly's part files beside it in the zip, where its references point. Toolbox fasteners stay inside the assembly; other browsers save one file with the parts inside, as before.
 
 ## [1.705.0] - 2026-11-23
 
@@ -4662,7 +4668,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.706.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.707.0...HEAD
+[1.707.0]: https://github.com/kothf/step-viewer/compare/v1.706.0...v1.707.0
 [1.706.0]: https://github.com/kothf/step-viewer/compare/v1.705.0...v1.706.0
 [1.705.0]: https://github.com/kothf/step-viewer/compare/v1.704.0...v1.705.0
 [1.704.0]: https://github.com/kothf/step-viewer/compare/v1.703.0...v1.704.0

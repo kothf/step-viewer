@@ -19838,6 +19838,88 @@ try {
       `sim 1.633: a component analysed with another material bends more; a component left out takes its load's faces with it; one component always stays (${JSON.stringify({ list: [c0.compList, c1.compList, c3.compList, c5.compList], stale: c1.stale, error: [c2.error, c4.error], maxU: [a1.maxU, c2.maxU], cRu, cWide, cSaid })})`);
     await ctx.close();
   }
+  if (inShard(6)) {
+    // Assemblies that reference their part files: Save writes them beside the assembly, Open part saves into the
+    // part's own file, and opening the assembly again reads the parts' latest files. `?asmfolder=` = a folder of
+    // the browser's private file system in place of the folder picker.
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const rp = await ctx.newPage();
+    rp.on("pageerror", e => errors.push(e.message));
+    rp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    rp.on("dialog", d => d.accept());
+    const url = `${origin}/index.html?debug&asmfolder=refs-smoke`;
+    await rp.goto(url);
+    await rp.evaluate(async () => { localStorage.setItem("sv:tips", "off"); await (await navigator.storage.getDirectory()).removeEntry("refs-smoke", { recursive: true }).catch(() => {}); });
+    await rp.goto(url);
+    await rp.waitForFunction(() => window.__sv);
+    const disk = () => rp.evaluate(async () => {
+      const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("refs-smoke", { create: true }), out = {};
+      for await (const [n, h] of d.entries()) out[n] = (await h.getFile()).size;
+      return out;
+    });
+    const read = name => rp.evaluate(async n => {
+      const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("refs-smoke");
+      const h = await d.getFileHandle(n);
+      return { data: [...new Uint8Array(await (await h.getFile()).arrayBuffer())] };
+    }, name);
+    await rp.click("#new-part");
+    await rp.waitForFunction(() => window.__sv.model?.store);
+    await rp.evaluate(() => window.__sv.model.store.change("Part", doc => {
+      const pt = (id, x, y) => ({ id, t: "point", x, y }), ln = (id, a, b) => ({ id, t: "line", a, b });
+      doc.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("a", -20, -10), pt("b", 20, -10), pt("c", 20, 10), pt("d", -20, 10), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 5 } });
+    }));
+    await rp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const pd = await rp.evaluate(() => JSON.parse(JSON.stringify(window.__sv.model.store.doc)));
+    await rp.evaluate(() => window.__sv.asm.newAssembly());
+    await rp.waitForFunction(() => window.__sv.asm.doc);
+    await rp.evaluate(pd => {
+      const a = window.__sv.asm;
+      a.insertPart({ ...structuredClone(pd), name: "Block" }, "Block.mcadprt");
+      a.insertPart({ ...structuredClone(pd), id: `${pd.id}-2`, name: "Plate" }, "Plate.mcadprt");
+    }, pd);
+    await rp.evaluate(() => window.__sv.asm.save());
+    const d1 = await disk();
+    const s1 = await rp.evaluate(() => { const a = window.__sv.asm; return { links: Object.values(a.doc.parts).map(p => p.link?.path ?? "-").sort().join(","), dirty: a.dirty, name: a.title }; });
+    check(d1["Block.mcadprt"] > 0 && d1["Plate.mcadprt"] > 0 && d1[s1.name] > 0 && Object.keys(d1).length === 3 && s1.links === "Block.mcadprt,Plate.mcadprt" && !s1.dirty,
+      `references: Save writes the assembly and each part file into its folder, and the assembly references them (${JSON.stringify({ d1, s1 })})`);
+    // Open part: its Save writes the part file; Return to assembly brings it back with nothing new to write.
+    await rp.evaluate(() => { const a = window.__sv.asm; a.editPart(a.doc.components.find(c => /Block/.test(c.name)).id); });
+    await rp.waitForFunction(() => window.__sv.modeller.active && window.__sv.modeller.returnTo);
+    await rp.evaluate(() => window.__sv.model.store.change("Props", d => { d.props = { ...d.props, description: "edited in its file" }; }));
+    await rp.evaluate(() => window.__sv.modeller.save());
+    const blockNow = await read("Block.mcadprt");
+    await rp.evaluate(() => window.__sv.modeller.returnToAssembly());
+    await rp.waitForFunction(() => Object.values(window.__sv.asm.doc?.parts ?? {}).some(p => p.doc.props?.description === "edited in its file"), null, { timeout: 30000 });
+    await rp.waitForTimeout(500);
+    await rp.evaluate(() => window.__sv.asm.save());
+    const d2 = await disk(), blockAfter = await read("Block.mcadprt");
+    check(JSON.stringify(blockNow.data) === JSON.stringify(blockAfter.data) && d2["Block.mcadprt"] !== d1["Block.mcadprt"],
+      `references: Open part saves into the part's own file, and the assembly's next Save leaves that file alone (${JSON.stringify({ d1: d1["Block.mcadprt"], d2: d2["Block.mcadprt"] })})`);
+    // The plate changes in its own file; the assembly opened again reads it.
+    const asmName = s1.name;
+    await rp.evaluate(async () => {
+      const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("refs-smoke"), h = await d.getFileHandle("Plate.mcadprt");
+      await window.__sv.modeller.openFile(await h.getFile(), h);
+    });
+    await rp.waitForFunction(() => window.__sv.modeller.active && window.__sv.model.store.doc.name === "Plate");
+    await rp.evaluate(() => window.__sv.model.store.change("Props", d => { d.props = { ...d.props, description: "changed elsewhere" }; }));
+    await rp.evaluate(() => window.__sv.modeller.save());
+    const bytes = await read(asmName);
+    await rp.evaluate(async ({ n, data }) => { await window.__sv.asm.openFile({ name: n, data: new Uint8Array(data).buffer }); }, { n: asmName, data: bytes.data });
+    await rp.waitForFunction(() => Object.values(window.__sv.asm.doc?.parts ?? {}).some(p => p.doc.props?.description === "changed elsewhere"), null, { timeout: 30000 });
+    const s3 = await rp.evaluate(() => ({ dirty: window.__sv.asm.dirty, toast: [...document.querySelectorAll(".toast")].map(x => x.textContent).join(" | ") }));
+    check(!s3.dirty && /Plate/.test(s3.toast), `references: an assembly opened again takes in a part changed in its own file (${JSON.stringify(s3)})`);
+    // Pack and Go puts the part files beside the assembly, where its references point.
+    await rp.click("#file-btn");
+    await rp.click("#file-menu [data-f=pack]");
+    await rp.waitForSelector("#pack-dlg[open]");
+    await rp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
+    const [dl] = await Promise.all([rp.waitForEvent("download"), rp.click("#pack-dlg [data-a=ok]")]);
+    const ztext = (await readFile(await dl.path())).toString("latin1");
+    check(ztext.includes("Block.mcadprt") && ztext.includes("Plate.mcadprt") && !ztext.includes("parts/Block"), `references: Pack and Go packs the part files beside the assembly, at their reference paths (${ztext.length} bytes)`);
+    await ctx.close();
+  }
   if (inShard(1)) {
     // model 1.639: holes placed by the points of a position sketch (FR-FT-052): drilled there, following the sketch.
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
