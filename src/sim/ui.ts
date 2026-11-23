@@ -17,7 +17,10 @@ import { zip } from "../model/zip";
 import { packageFiles, partBoxes, type ExportPart } from "../thermal/export";
 import type { ThermalMesh } from "../thermal/vtu";
 import { balanceCsv } from "../thermal/csv";
-import { DEFAULT_LIMITS, nearHot } from "../thermal/package";
+import { DEFAULT_LIMITS, nearHot, type ThermalPackage } from "../thermal/package";
+import { compareStudyMap, fitShift, type StudyMapCompare } from "../thermal/studyMap";
+import { deltaRange } from "../thermal/compare";
+import { paletteColor, paletteCss } from "../thermal/match";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
 import { chooseModal, toast } from "../ui";
@@ -174,9 +177,9 @@ const TIP: Record<string, string> = {
   ambient: "Ambient temperature: the surroundings that convection and radiation give heat to",
 };
 /** What a thermal study plots. */
-const THERMAL_PLOTS: PlotKind[] = ["temp", "rise", "flux", "err"];
+const THERMAL_PLOTS: PlotKind[] = ["temp", "rise", "flux", "err", "dmap"];
 const THERMAL_ASSUMPTIONS = "Steady heat conduction with constant material properties. Results are estimates for design and depend on the heat sources and the cooling chosen: film coefficients above all are rough figures. They do not replace a validated analysis where one is required.";
-const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"], ["sf", "Safety factor"], ["temp", "Temperature"], ["rise", "Temperature rise"], ["flux", "Heat flux"], ["err", "Error estimate"]];
+const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"], ["sf", "Safety factor"], ["temp", "Temperature"], ["rise", "Temperature rise"], ["flux", "Heat flux"], ["err", "Error estimate"], ["dmap", "Difference from the map"]];
 /** Safety factors above this are drawn as this (lightly loaded regions would hide the rest of the scale). */
 const SF_TOP = 10;
 /** What a mode shape can be coloured by. */
@@ -198,6 +201,8 @@ const SPOT_RESULT_NOTE = "Spot weld stress: the largest force of one spot over i
 const GLUE_NOTE = "Adhesive: the two components are joined through an elastic layer of this thickness and modulus. Set the gap tolerance to at least the layer's thickness when they are modelled apart.";
 const WELD_RESULT_NOTE = "Weld stress: the largest force per length over the throat. Compare it with the allowable stress of the weld metal.";
 const BOLT_COLOR = 0x7048e8;
+/** Parts listed against a package map, and the difference (K) a row is marked at. */
+const MAP_ROWS = 12, MAP_FAR = 5;
 /** Colours of the thermal conditions on the model (FR-TLOAD-011, FR-TBC-013): heat red, held temperature blue, convection cyan, radiation amber. */
 const THERMAL_COLOR: Record<string, number> = { heat: 0xe03131, vheat: 0xe03131, pkgheat: 0xe03131, hflux: 0xe03131, temp: 0x1c7ed6, conv: 0x1098ad, rad: 0xf08c00, radx: 0xae3ec9, chassis: 0x495057, insul: 0x8d6e63 };
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
@@ -424,14 +429,14 @@ export class SimController {
   private lastStl: { bytes: number; tris: number; scale: number } | null = null;
 
   /**
-   * The thermal result as a thermal package (FR-TREP-010): surface temperatures on the plot mesh, one part per heat
-   * load's package part or component (the board = part 0), the heat-source table, the view and the manifest.
+   * The shown thermal result as a package's mesh (FR-TREP-010, FR-TRES-030): surface temperatures on the plot mesh,
+   * one part per heat load's package part or component (the board = part 0); null when there is none to show.
    */
-  private async exportPackage() {
+  private studyMesh(): { mesh: ThermalMesh; parts: ExportPart[] } | null {
     // a component "R14<1>" came from the STEP solid "R14" (its second solid is "…#2")
     const bodyName = (n: string) => n.replace(/#\d+$/, "").replace(/<\d+>$/, "");
     const res = this.res, last = res?.passes.at(-1), T = last?.thermal, st = this.study(), doc = this.host.doc();
-    if (!res || !last || !T || !st || !doc || this.stale()) return;
+    if (!res || !last || !T || !st || !doc || this.stale()) return null;
     const tris = res.mesh.index.length / 3, part = new Int32Array(tris), dom = last.dom;
     const parts: ExportPart[] = [];
     if (res.comps && dom && T.comps) {
@@ -480,6 +485,17 @@ export class SimController {
     let lo = Infinity, hi = -Infinity;
     for (const v of temp) { if (v < lo) lo = v; if (v > hi) hi = v; }
     const mesh: ThermalMesh = { pos: Float32Array.from(res.mesh.pos), temp, tri: Uint32Array.from(res.mesh.index), part, face, power, ambient: st.settings.ambient ?? DEFAULT_AMBIENT, range: [lo, hi] };
+    return { mesh, parts };
+  }
+
+  /**
+   * The thermal result as a thermal package (FR-TREP-010): surface temperatures on the plot mesh, one part per heat
+   * load's package part or component (the board = part 0), the heat-source table, the view and the manifest.
+   */
+  private async exportPackage() {
+    const res = this.res, last = res?.passes.at(-1), st = this.study(), doc = this.host.doc(), got = this.studyMesh();
+    if (!res || !last || !st || !doc || !got) return;
+    const { mesh, parts } = got;
     const boxes = partBoxes(mesh);
     for (const x of parts) x.box = boxes.get(x.id);
     // the view, as the report draws it
@@ -662,7 +678,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, arrows: this.arrows, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), comps: this.compSeries().map(c => ({ name: c.name, v: Array.from(c.v) })), compsShown: [...this.compsShown(this.compSeries())].map(d => this.res?.comps?.[d]?.name ?? ""), speed: this.speed, reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), parts: this.partTempRows(), near: this.nearHotRows(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), mapCmp: (() => { const m = this.mapCompare(); return m ? { name: m.name, rows: m.c.rows, onlyMap: m.c.onlyMap, onlyStudy: m.c.onlyStudy, hot: m.c.hot, mean: m.c.mean, most: m.c.most, shift: this.maps.get(this.study()?.id ?? "")?.shift ?? null, missing: Array.from(m.c.delta).filter(v => !Number.isFinite(v)).length } : null; })(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), comps: this.compSeries().map(c => ({ name: c.name, v: Array.from(c.v) })), compsShown: [...this.compsShown(this.compSeries())].map(d => this.res?.comps?.[d]?.name ?? ""), speed: this.speed, reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), parts: this.partTempRows(), near: this.nearHotRows(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -916,7 +932,7 @@ export class SimController {
    * A thermal study of a board made from its thermal package (FR-TBRD-001): the package's ambient, one Heat from
    * package load, and convection and radiation from every surface open to the air.
    */
-  boardStudy(spec: { ambient?: number; emissivity?: number; enclosure?: "open" | "vented" | "closed"; down?: [number, number, number]; heat: PackageHeat[]; board?: { comp: string; t: number; stack?: Partial<BoardStack> }; split?: boolean }): string | null {
+  boardStudy(spec: { ambient?: number; emissivity?: number; enclosure?: "open" | "vented" | "closed"; down?: [number, number, number]; heat: PackageHeat[]; board?: { comp: string; t: number; stack?: Partial<BoardStack> }; split?: boolean; /** The package the study was made from: its results are compared with it (FR-TRES-030). */ map?: { pkg: ThermalPackage; name: string; shift: [number, number, number] } }): string | null {
     const doc = this.host.doc();
     if (!doc) return null;
     const st = newStudy(doc.studies ?? [], "thermal");
@@ -934,6 +950,7 @@ export class SimController {
     this.edit = null;
     this.mode = "thermal";
     this.modeFor = st.id;
+    if (spec.map) this.maps.set(st.id, spec.map);
     this.host.change(t("New thermal study"), d => { (d.studies ??= []).push(st); });
     this.changed();
     return st.id;
@@ -2471,6 +2488,7 @@ export class SimController {
     if (kind === "vm" || kind === "temp") return r.vm;
     if (kind === "err") return r.err;
     if (kind === "rise") { const amb = this.ambient(); return Float32Array.from(r.vm, v => v - amb); }
+    if (kind === "dmap") { const m = this.mapCompare(); return m && m.c.delta.length === r.vm.length ? m.c.delta : new Float32Array(r.vm.length).fill(NaN); }
     if (kind === "sf") {
       const out = new Float32Array(r.vm.length);
       for (let i = 0; i < out.length; i++) { const sy = this.yieldAt(r, i); out[i] = sy > 0 ? Math.min(SF_TOP, sy / Math.max(r.vm[i], 1e-9)) : SF_TOP; }
@@ -2682,7 +2700,7 @@ export class SimController {
     const k = this.plot.kind;
     if (this.res?.passes.at(-1)?.modes) return ["", 1];
     if (k === "temp") return ["°C", 1];
-    if (k === "rise") return ["K", 1];
+    if (k === "rise" || k === "dmap") return ["K", 1];
     if (k === "flux") return ["W/m²", 1e6];
     return k === "vm" ? ["MPa", 1] : k === "sf" ? ["", 1] : k === "err" ? ["%", 1] : [units.current, UNITS[units.current].f];
   }
@@ -2756,7 +2774,7 @@ export class SimController {
     const sing = esc(t("Stress singularity: value depends on refinement"));
     const mk = this.mask;
     let lo = -1, hi = -1;
-    for (let i = 0; i < a.length; i++) { if (mk && !mk[i]) continue; if (lo < 0 || a[i] < a[lo]) lo = i; if (hi < 0 || a[i] > a[hi]) hi = i; }
+    for (let i = 0; i < a.length; i++) { if ((mk && !mk[i]) || !Number.isFinite(a[i])) continue; if (lo < 0 || a[i] < a[lo]) lo = i; if (hi < 0 || a[i] > a[hi]) hi = i; }
     if (lo < 0) return [];
     const label = (cls: string, key: string, text: string, v: number, warn = false) => out.push({ v, html: `<div class="sim-probe sim-peak ${cls}${warn ? " warn" : ""}" data-peak="${key}"${warn ? ` title="${sing}"` : ""}><i></i><span>${warn ? "⚠ " : ""}${text}</span></div>` });
     if (this.plot.kind === "vm") {
@@ -2766,7 +2784,7 @@ export class SimController {
     } else if (this.plot.kind === "sf") label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
     else {
       label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[hi])}</span>`, hi);
-      if (a[lo] < 0 || this.plot.kind === "temp" || this.plot.kind === "rise") label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
+      if (a[lo] < 0 || this.plot.kind === "temp" || this.plot.kind === "rise" || this.plot.kind === "dmap") label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
     }
     return out;
   }
@@ -3107,7 +3125,7 @@ export class SimController {
     const r: PassResult = shape ? { ...r0, u: shape } : r0;
     if (r0.modes && !MODE_PLOTS.includes(this.plot.kind)) this.plot.kind = "u";
     // thermal results: temperature and heat flux, never a deformed shape
-    if (r0.thermal) { if (!THERMAL_PLOTS.includes(this.plot.kind)) this.plot.kind = "temp"; this.plot.deformed = false; }
+    if (r0.thermal) { if (!THERMAL_PLOTS.includes(this.plot.kind) || (this.plot.kind === "dmap" && !this.mapCompare())) this.plot.kind = "temp"; this.plot.deformed = false; }
     else if (this.plot.kind === "temp" || this.plot.kind === "rise" || this.plot.kind === "flux") this.plot.kind = "vm";
     // the safety factor needs a yield strength: without one the plot falls back to stress
     if (this.plot.kind === "sf" && !this.hasYield()) this.plot.kind = "vm";
@@ -3125,11 +3143,17 @@ export class SimController {
     const run = res.tr?.transient;
     if (run && (this.plot.kind === "temp" || this.plot.kind === "rise") && !mask) { const d = this.plot.kind === "rise" ? this.ambient() : 0; lo = Math.min(...run.min) - d; hi = Math.max(...run.max) - d; }
     if (this.plot.kind === "vm" || this.plot.kind === "u" || this.plot.kind === "err" || this.plot.kind === "flux") lo = 0;
+    // a difference: symmetric about 0, warmer than the map red, cooler blue
+    const dmap = this.plot.kind === "dmap";
+    if (dmap) [lo, hi] = deltaRange(mask ? val.filter((_v, i) => mask[i]) : val);
     this.range = [lo, hi];
     this.vals = val;
     const colors = new Float32Array(3 * n), span = hi - lo || 1;
     // a low safety factor is the red end
-    for (let i = 0; i < n; i++) ramp(sf ? 1 - (val[i] - lo) / span : (val[i] - lo) / span, colors, 3 * i);
+    for (let i = 0; i < n; i++) {
+      if (dmap) { if (Number.isFinite(val[i])) paletteColor("diverging", (val[i] - lo) / span, colors, 3 * i); else colors.fill(0.6, 3 * i, 3 * i + 3); }
+      else ramp(sf ? 1 - (val[i] - lo) / span : (val[i] - lo) / span, colors, 3 * i);
+    }
     const colorMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.75, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     colorMat.clippingPlanes = this.host.viewer.clipPlanes;
     const under = new THREE.MeshBasicMaterial({ color: 0x8a8f98, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide });
@@ -3419,7 +3443,7 @@ export class SimController {
     if (!a || !ov || !r) return [];
     const mk = this.mask;
     let lo = -1, hi = -1;
-    for (let i = 0; i < a.length; i++) { if (mk && !mk[i]) continue; if (lo < 0 || a[i] < a[lo]) lo = i; if (hi < 0 || a[i] > a[hi]) hi = i; }
+    for (let i = 0; i < a.length; i++) { if ((mk && !mk[i]) || !Number.isFinite(a[i])) continue; if (lo < 0 || a[i] < a[lo]) lo = i; if (hi < 0 || a[i] > a[hi]) hi = i; }
     if (lo < 0) return [];
     const picks: { max: boolean; i: number }[] = kind === "sf" ? [{ max: false, i: lo }] : [{ max: true, i: hi }, ...(a[lo] < a[hi] ? [{ max: false, i: lo }] : [])];
     const [unit, f] = this.plotUnit(), uf = UNITS[units.current].f, v = this.host.viewer, cv = v.renderer.domElement;
@@ -4069,7 +4093,66 @@ export class SimController {
       + cmp.rows.map(r => `<tr data-cmp="${esc(r.key)}"><td${r.key.startsWith("c:") ? ' translate="no"' : ""}>${esc(this.compareLabel(r.key))}</td><td>${esc(this.compareValue(r.key, r.a))}</td><td>${esc(this.compareValue(r.key, r.b))}</td><td data-v="cmpchange">${esc(this.compareChange(r))}</td></tr>`).join("") + `</tbody></table>`;
     return html;
   }
+  /** Thermal studies: the package map the results are compared with, by study id (view only, FR-TRES-030). */
+  private maps = new Map<string, { pkg: ThermalPackage; name: string; shift: [number, number, number] }>();
+  private mapMemo: { key: string; c: StudyMapCompare } | null = null;
+  /** Reads a thermal package the user picks (main.ts sets it); null when cancelled or unreadable. */
+  readMap: (() => Promise<{ pkg: ThermalPackage; name: string } | null>) | null = null;
+
+  /** The shown thermal result against the study's package map: ΔT per plot point and the parts (memoised). */
+  private mapCompare(): { name: string; c: StudyMapCompare } | null {
+    const st = this.study(), r = this.res, last = r?.passes.at(-1);
+    if (!st || !r || !last?.thermal || this.running || this.enveloped || this.stale()) return null;
+    const m = this.maps.get(st.id);
+    if (!m) return null;
+    const key = `${st.id}|${r.key}|${this.frame}|${m.name}|${m.shift.join(",")}|${last.vm.length}`;
+    if (this.mapMemo?.key === key) return { name: m.name, c: this.mapMemo.c };
+    const got = this.studyMesh();
+    if (!got) return null;
+    const c = compareStudyMap(got.mesh, got.parts.map(p => ({ id: p.id, designator: p.designator, t: p.t })), { mesh: m.pkg.mesh, parts: m.pkg.manifest.parts }, m.shift);
+    this.mapMemo = { key, c };
+    return { name: m.name, c };
+  }
+  /** Picks a package to compare the study with; one in another frame goes onto the model by its box centre. */
+  private async pickMap() {
+    const st = this.study(), r = this.res;
+    if (!st || !r || !this.readMap) return;
+    const got = await this.readMap();
+    if (!got) return;
+    if (!got.pkg.mesh.temp.length) { toast(t("The package has no temperature map to compare with: it holds heat sources only."), "warn"); return; }
+    this.maps.set(st.id, { ...got, shift: fitShift(r.mesh.pos, got.pkg.mesh.pos) });
+    this.mapMemo = null;
+    this.renderTree();
+    this.showPlot();
+    this.renderLegend();
+  }
+  private mapPart(name: string) { return name ? name : t("Board"); }
+  private mapHtml(): string {
+    const st = this.study();
+    if (!st || st.kind !== "thermal" || !this.res || this.running || this.enveloped || this.stale()) return "";
+    const got = this.mapCompare();
+    let html = `<h5 class="sim-sub">${esc(t("Against the package map"))}</h5>`;
+    if (!got) return html + `<p class="sim-note muted" data-v="mapnone">${esc(t("Compare this result with a thermal map made by the board design app or another tool."))}</p><div class="sim-probebar"><button class="btn small" data-a="cmpmap">${esc(t("Compare with a package map…"))}</button></div>`;
+    const { name, c } = got, K = (v: number) => (Math.abs(v) < 0.05 ? "0 K" : `${v > 0 ? "+" : "−"}${sig(Math.abs(v))} K`);
+    html += `<p class="sim-note" data-v="mapname">${esc(t("Map"))}: <span translate="no">${esc(name)}</span>. ${esc(t("A positive difference: this study is warmer than the map."))}</p>`;
+    html += `<dl class="sim-kv"><dt>${esc(t("Hottest in the map"))}</dt><dd data-v="maphot">${sig(c.hot.map)} °C</dd><dt>${esc(t("Hottest in this study"))}</dt><dd data-v="studyhot">${sig(c.hot.study)} °C</dd>`
+      + `<dt title="${esc(t("Mean of the temperature difference without its sign, over the surface"))}">${esc(t("Mean difference"))}</dt><dd data-v="mapmean">${sig(c.mean)} K</dd><dt>${esc(t("Largest difference"))}</dt><dd data-v="mapmost">${sig(c.most)} K</dd></dl>`;
+    if (c.rows.length) html += `<table class="sim-maptable"><thead><tr><th>${esc(t("Part"))}</th><th>${esc(t("Map"))}, °C</th><th>${esc(t("This study"))}, °C</th><th>${esc(t("Difference"))}</th></tr></thead><tbody>`
+      + c.rows.slice(0, MAP_ROWS).map(x => `<tr data-mapcmp="${esc(x.name || "board")}"${Math.abs(x.d) >= MAP_FAR ? ' class="warn"' : ""}><td${x.name ? ' translate="no"' : ""}>${esc(this.mapPart(x.name))}</td><td>${sig(x.a)}</td><td>${sig(x.b)}</td><td data-v="mapd">${esc(K(x.d))}</td></tr>`).join("")
+      + `</tbody></table>` + (c.rows.length > MAP_ROWS ? `<p class="sim-note muted">${esc(t("Other parts differ less: {n}.", { n: c.rows.length - MAP_ROWS }))}</p>` : "");
+    const list = (a: string[]) => esc(a.slice(0, MAP_ROWS).join(", ") + (a.length > MAP_ROWS ? " …" : ""));
+    if (c.onlyMap.length) html += `<p class="sim-note muted" data-v="maponly">${esc(t("In the map only"))}: <span translate="no">${list(c.onlyMap)}</span></p>`;
+    if (c.onlyStudy.length) html += `<p class="sim-note muted" data-v="studyonly">${esc(t("In this study only"))}: <span translate="no">${list(c.onlyStudy)}</span></p>`;
+    return html + `<div class="sim-probebar"><button class="btn small" data-a="mapplot">${esc(t("Show the difference on the model"))}</button><button class="btn small" data-a="cmpmap">${esc(t("Another map…"))}</button><button class="btn small" data-a="mapclear">${esc(t("Stop comparing"))}</button></div>`;
+  }
+
   private compareBlocks(blocks: ReportBlock[]) {
+    const mc = this.mapCompare();
+    if (mc) {
+      blocks.push({ kind: "h", text: t("Against the package map") });
+      blocks.push({ kind: "p", text: `${t("Map")}: ${mc.name}. ${t("Mean difference")} ${sig(mc.c.mean)} K, ${t("largest")} ${sig(mc.c.most)} K. ${t("A positive difference: this study is warmer than the map.")}` });
+      if (mc.c.rows.length) blocks.push({ kind: "table", widths: [4, 3, 3, 2], rows: [[t("Part"), `${t("Map")}, °C`, `${t("This study")}, °C`, `${t("Difference")}, K`], ...mc.c.rows.slice(0, MAP_ROWS).map(x => [this.mapPart(x.name), sig(x.a), sig(x.b), sig(x.d)])] });
+    }
     const cmp = this.compared();
     if (!cmp) return;
     blocks.push({ kind: "h", text: t("Compare") });
@@ -4193,7 +4276,7 @@ export class SimController {
       const k = Math.max(0, this.frame);
       html += `<dt>${esc(t("Time shown"))}</dt><dd data-v="ttime">${esc(timeText(run.times[k]))}</dd><dt>${esc(t("Heat put in"))}</dt><dd data-v="heatin">${sig(run.put[k])} W</dd><dt>${esc(t("Heat taken away"))}</dt><dd data-v="heatout">${sig(run.out[k])} W</dd><dt title="${esc(t("Heat put in less heat taken away: what warms the part at this time"))}">${esc(t("Heat stored"))}</dt><dd data-v="stored">${sig(run.put[k] - run.out[k])} W</dd></dl>`;
       // the components and parts at the time shown (no heat paths: those need the steady flows)
-      return html + this.transientHtml() + this.compareHtml() + this.thermalCompsHtml(r, last) + this.thermalPassesHtml(r, last);
+      return html + this.transientHtml() + this.compareHtml() + this.mapHtml() + this.thermalCompsHtml(r, last) + this.thermalPassesHtml(r, last);
     }
     html += `<dt>${esc(t("Heat put in"))}</dt><dd data-v="heatin">${sig(T.applied)} W</dd>`;
     T.flows.forEach((f, i) => {
@@ -4202,7 +4285,7 @@ export class SimController {
     });
     if (T.flows.length > 1) html += `<dt>${esc(t("Heat taken away in total"))}</dt><dd data-v="heatout">${sig(out)} W</dd>`;
     if (off != null) html += `<dt title="${esc(t("How far the heat taken away is from the heat put in, as a share of it"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${off > 1 ? ' class="sim-low"' : ""}>${pct(off).replace("<", "&lt;")} %</dd>`;
-    html += `</dl>${this.compareHtml()}<div class="sim-probebar"><button class="btn small" data-a="balcsv" title="${esc(t("Save the heat balance (heat put in, taken away by each item, contacts and components) as a CSV file"))}">${esc(t("Export heat balance CSV"))}</button></div>` + this.exchangeHtml(r, last) + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
+    html += `</dl>${this.compareHtml()}${this.mapHtml()}<div class="sim-probebar"><button class="btn small" data-a="balcsv" title="${esc(t("Save the heat balance (heat put in, taken away by each item, contacts and components) as a CSV file"))}">${esc(t("Export heat balance CSV"))}</button></div>` + this.exchangeHtml(r, last) + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
     return html + this.thermalPassesHtml(r, last);
   }
 
@@ -4453,13 +4536,13 @@ export class SimController {
     const [unit, f] = this.plotUnit();
     const modes = r!.modes, mi = this.modeIndex(r);
     const thermal = !!r!.thermal;
-    const plots = PLOTS.filter(([id]) => thermal ? THERMAL_PLOTS.includes(id) && (id !== "err" || r!.pass > 1) : modes ? MODE_PLOTS.includes(id) : !THERMAL_PLOTS.includes(id) || id === "err" ? (id !== "sf" || this.hasYield()) && (id !== "err" || r!.pass > 1) : false);
+    const plots = PLOTS.filter(([id]) => thermal ? THERMAL_PLOTS.includes(id) && (id !== "err" || r!.pass > 1) && (id !== "dmap" || !!this.mapCompare()) : modes ? MODE_PLOTS.includes(id) : !THERMAL_PLOTS.includes(id) || id === "err" ? (id !== "sf" || this.hasYield()) && (id !== "err" || r!.pass > 1) : false);
     const top = sf && this.range[1] >= SF_TOP ? `${SF_TOP}+` : sig(this.range[1] * f);
     const modeSel = modes ? `<label class="ana-row"><span>${esc(t("Mode shape"))}</span><select data-k="mode" aria-label="${esc(t("Mode shape"))}">${modes.map((m, i) => `<option value="${i}"${i === mi ? " selected" : ""}>${i + 1}: ${m.rigid ? esc(t("rigid body")) : `${sig(m.hz)} Hz`}</option>`).join("")}</select></label>` : "";
     el.innerHTML = modeSel + `<div class="ana-head"><select data-k="kind" aria-label="${esc(t("Result"))}">${plots.map(([id, l]) => `<option value="${id}"${id === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select>`
       + `<button class="sim-ib" data-a="close" title="${esc(t("Hide the plot"))}" aria-label="${esc(t("Hide the plot"))}">×</button></div>`
       + this.legendTimeHtml()
-      + `<div class="ana-ramp" style="background:${RAMP_CSS}${sf ? ";transform:scaleX(-1)" : ""}"></div><div class="ana-scale"><span data-v="min">${sig(this.range[0] * f)}</span><span>${esc(unit)}</span><span data-v="max">${top}</span></div>`
+      + `<div class="ana-ramp" style="background:${k === "dmap" ? paletteCss("diverging") : RAMP_CSS}${sf ? ";transform:scaleX(-1)" : ""}"></div><div class="ana-scale"><span data-v="min">${sig(this.range[0] * f)}</span><span>${esc(unit)}</span><span data-v="max">${top}</span></div>`
       + (sf ? `<p class="ana-note">${esc(t("Yield strength divided by the von Mises stress; below 1 the material yields."))}</p>` : "")
       + (this.capNote ? `<p class="ana-note" data-v="capnote">${esc(t("Solve again to see the results on the section planes."))}</p>` : "")
       + (k === "err" ? `<p class="ana-note">${esc(t("Where the last pass still changed the solution: the places that would gain most from more accuracy."))}</p>` : "")
@@ -4487,6 +4570,9 @@ export class SimController {
     const st = this.study();
     if (a === "tcsv") { this.exportTransient(); return; }
     if (a === "balcsv") { this.exportBalance(); return; }
+    if (a === "cmpmap") { void this.pickMap(); return; }
+    if (a === "mapclear" && st) { this.maps.delete(st.id); this.mapMemo = null; if (this.plot.kind === "dmap") this.plot.kind = "temp"; this.renderTree(); this.showPlot(); this.renderLegend(); return; }
+    if (a === "mapplot") { this.plot.on = true; this.plot.kind = "dmap"; this.iso.value = null; this.showPlot(); this.renderLegend(); return; }
     if (a === "new") this.command("new");
     else if (a === "newmodal") this.command("newmodal");
     else if (a === "newthermal") this.command("newthermal");

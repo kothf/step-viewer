@@ -1755,6 +1755,11 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-cmptable th { color: var(--muted); font: 500 11px inherit; }
 .sim-cmptable th:first-child, .sim-cmptable td:first-child { text-align: left; white-space: normal; font-family: inherit; }
 .sim-cmptable td { white-space: normal; }
+.sim-maptable { width: 100%; border-collapse: collapse; font-size: 11px; margin: 4px 0; }
+.sim-maptable th, .sim-maptable td { padding: 2px 3px; text-align: right; border-bottom: 1px solid var(--line); font-family: var(--mono); }
+.sim-maptable th { color: var(--muted); font: 500 11px inherit; vertical-align: bottom; }
+.sim-maptable th:first-child, .sim-maptable td:first-child { text-align: left; font-family: inherit; }
+.sim-maptable tr.warn td[data-v="mapd"] { color: var(--warn-text); font-weight: 600; }
 .sim-comptable { table-layout: fixed; width: 100%; }
 .sim-comptable th:first-child { width: 38%; }
 .sim-comptable th:first-child, .sim-comptable td:first-child { text-align: left; }

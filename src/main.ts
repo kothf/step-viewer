@@ -138,7 +138,7 @@ async function simulateBoard(pkg: ThermalPackage, match: PartMatch, bodies: Mode
   const heat = plan.heat.map(h => ({ id: h.id, name: h.name, comps: h.bodies.map(ids).filter((x): x is string => !!x), p: h.p, ...(h.limit !== undefined ? { limit: h.limit } : {}), ...(h.life !== undefined ? { life: h.life } : {}), ...(h.board !== undefined ? { board: h.board } : {}), ...(h.sink !== undefined ? { sink: h.sink } : {}), ...(h.path ? { path: h.path } : {}), ...(h.elyt ? { elyt: true } : {}), ...(h.junction ? { junction: true } : {}), ...(h.rjc !== undefined ? { rjc: h.rjc } : {}) }));
   const boardId = plan.board >= 0 ? ids(plan.board) : null;
   // a stand-in has no leads: the package's board share of its heat goes into the board under it
-  sim.boardStudy({ ambient: plan.ambient, emissivity: plan.emissivity, enclosure: plan.enclosure, down: plan.down, heat, ...(stand.length ? { split: true } : {}), ...(boardId ? { board: { comp: boardId, t: plan.thickness, ...(plan.stack ? { stack: plan.stack } : {}) } } : {}) });
+  sim.boardStudy({ map: { pkg, name: pkg.manifest.design || src.name.replace(/\.(step|stp)$/i, ""), shift: match.shift }, ambient: plan.ambient, emissivity: plan.emissivity, enclosure: plan.enclosure, down: plan.down, heat, ...(stand.length ? { split: true } : {}), ...(boardId ? { board: { comp: boardId, t: plan.thickness, ...(plan.stack ? { stack: plan.stack } : {}) } } : {}) });
   // the board's Gerber set, when one came with the STEP, gives the board its copper (FR-TBRD-020)
   if (gerbers && boardId) await sim.readGerber(boardId, gerbers);
   selectCmTab("simulation");
@@ -2733,6 +2733,25 @@ const sim = new SimController({
     return m && k >= 0 ? { kind: s.kind, point, edge: ei >= 0 ? m.edges[m.edgeOff[k] + ei] : undefined } : null;
   },
   showTab: () => { if (!$("#t-sim").hidden) showLeftTab("sim"); },
+});
+/** A thermal study's results beside a package map the user picks (FR-TRES-030): a ZIP, or the .vtu with its files. */
+sim.readMap = () => new Promise(done => {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.multiple = true; inp.accept = ".zip,.vtu,.json,.csv,.png,.txt"; inp.hidden = true; inp.id = "sim-map-input";
+  document.body.append(inp);
+  let ended = false;
+  const end = (v: { pkg: ThermalPackage; name: string } | null) => { if (ended) return; ended = true; inp.remove(); done(v); };
+  inp.addEventListener("cancel", () => end(null));
+  inp.addEventListener("change", async () => {
+    const files = [...(inp.files ?? [])];
+    try {
+      const th = files.length ? await thermalFilesOf(files) : null;
+      if (!th) { if (files.length) toast(t("No thermal map among these files: pick the package's ZIP, or its .vtu."), "warn"); end(null); return; }
+      const pkg = await readPackageAsking(th.files, th.name);
+      end(pkg ? { pkg, name: th.name } : null);
+    } catch (err) { toast(thermalErrorText(err, files[0]?.name ?? ""), true); end(null); }
+  });
+  inp.click();
 });
 asm.simHook = { active: () => sim.active, click: e => sim.click(e), changed: () => sim.changed() };
 // Enter and Esc of a study's open panel over an assembly (a part's own key handler passes them on itself)

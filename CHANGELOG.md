@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.709.0] - 2026-11-23
+
+### Added
+
+- A thermal study made from a board's thermal package is compared with that package's map after Solve: the Study tab shows the hottest point of each, the mean and largest difference over the surface, and every part with its temperature in the map and in the study. **Show the difference on the model** colours it by study − map, red warmer and blue cooler. **Compare with a package map…** compares any thermal study with a package picked by hand (a ZIP or a .vtu); one written in another frame is moved onto the model by its box. The comparison goes into the report too.
+
 ## [1.708.0] - 2026-11-23
 
 ### Changed
@@ -4674,7 +4680,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.708.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.709.0...HEAD
+[1.709.0]: https://github.com/kothf/step-viewer/compare/v1.708.0...v1.709.0
 [1.708.0]: https://github.com/kothf/step-viewer/compare/v1.707.0...v1.708.0
 [1.707.0]: https://github.com/kothf/step-viewer/compare/v1.706.0...v1.707.0
 [1.706.0]: https://github.com/kothf/step-viewer/compare/v1.705.0...v1.706.0
