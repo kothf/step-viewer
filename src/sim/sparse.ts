@@ -26,6 +26,8 @@ export class BlockMatrix {
     }
     return B;
   }
+  /** Takes `B` (already filled, of the block's size) as the diagonal block of element a. */
+  adopt(a: number, B: Float64Array) { this.blocks.set(a * this.nel + a, B); }
   get size() { return this.off[this.nel]; }
   /** y = A x. */
   mul(x: Float64Array, y = new Float64Array(this.size)) {

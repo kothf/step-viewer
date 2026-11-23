@@ -5,6 +5,7 @@
 // basis lives on a sliver and the stiffness stays well conditioned.
 
 import { progress } from "./progress";
+import { kernel, parallelFor, sharedF64, sharedI32, worthSharing, type ParJob } from "./threads";
 import { Points, boxState, fitPoints, volumePoints, type Inside } from "./quad";
 
 export interface Cell {
@@ -40,6 +41,8 @@ export class Grid {
   doms: Inside[] | null = null;
   /** Fine quadrature of the faces between cells (key cell·3 + axis), reused by later passes. */
   readonly faces = new Map<number, Points | null>();
+  /** The cut cells' fine points on shared memory (`at` = a cell's first point), once a fit was shared between threads. */
+  shared: { a: Float64Array; at: Float64Array } | null = null;
   constructor(readonly lo: number[], readonly h: number, readonly n: number[]) {
     this.addMap();
   }
@@ -174,12 +177,65 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
 export function refit(g: Grid, q: number, fit: number, degree?: (c: Cell) => number) {
   const q0 = q, fit0 = fit;
   let seen = 0;
-  for (const c of g.cells) {
-    if (!(seen++ & 15)) progress("cells", seen, g.cells.length);
+  // the cut cells whose points are fitted again: the long part, shared between the threads when there are several
+  const todo: number[] = [], fits: number[] = [];
+  let work = 0;
+  for (let i = 0; i < g.cells.length; i++) {
+    const c = g.cells[i];
+    if (!(seen++ & 15) && !todo.length) progress("cells", seen, g.cells.length);
     if (degree) { const d = degree(c); q = Math.min(q0, d + 1); fit = Math.min(fit0, 2 * d + 1); }
-    c.pts = c.fine ? (fit && c.fine.n > fit ** 3 ? fitPoints(c.fine, c.lo, c.hi, fit) : c.fine) : volumePoints(c.lo, c.hi, q, () => true, 0, new Points(), 1);
+    if (c.fine && fit && c.fine.n > fit ** 3) { todo.push(i); fits.push(fit); work += (c.fine.n * fit ** 3) / 6; continue; }
+    c.pts = c.fine ?? volumePoints(c.lo, c.hi, q, () => true, 0, new Points(), 1);
   }
+  if (!todo.length) return;
+  if (!worthSharing(work)) {
+    todo.forEach((i, t) => { const c = g.cells[i]; if (!(t & 3)) progress("cells", t, todo.length); c.pts = fitPoints(c.fine!, c.lo, c.hi, fits[t]); });
+    return;
+  }
+  // the fine points move to shared memory once and stay there for the later degrees
+  if (!g.shared) {
+    let n = 0;
+    for (const c of g.cells) if (c.fine) n += c.fine.n;
+    const a = sharedF64(4 * n), at = new Float64Array(g.cells.length);
+    n = 0;
+    g.cells.forEach((c, i) => {
+      if (!c.fine) return;
+      at[i] = n;
+      a.set(c.fine.a.subarray(0, 4 * c.fine.n), 4 * n);
+      c.fine.a = a.subarray(4 * n, 4 * (n + c.fine.n));
+      n += c.fine.n;
+    });
+    g.shared = { a, at };
+  }
+  const T = todo.length, task = sharedF64(FIT_TASK * T), outN = sharedI32(T);
+  let room = 0;
+  todo.forEach((i, t) => {
+    const c = g.cells[i], o = FIT_TASK * t;
+    task[o] = g.shared!.at[i]; task[o + 1] = c.fine!.n; task[o + 2] = fits[t]; task[o + 3] = room;
+    for (let k = 0; k < 3; k++) { task[o + 4 + k] = c.lo[k]; task[o + 7 + k] = c.hi[k]; }
+    room += fits[t] ** 3;
+  });
+  const out = sharedF64(4 * room);
+  parallelFor({ kind: "fit", n: T, fine: g.shared.a, task, out, outN } satisfies Omit<FitJob, "ctl">, d => progress("cells", d, T));
+  todo.forEach((i, t) => {
+    const P = new Points(), s = 4 * task[FIT_TASK * t + 3];
+    P.a = out.subarray(s, s + 4 * outN[t]); P.n = outN[t];
+    g.cells[i].pts = P;
+  });
 }
+
+/** Numbers per task of a shared fit: first fine point, their count, fit, first point of the output, lo, hi. */
+const FIT_TASK = 10;
+interface FitJob extends ParJob { fine: Float64Array; task: Float64Array; out: Float64Array; outN: Int32Array }
+kernel<FitJob, FitJob>("fit", {
+  init: j => j,
+  run(j, t) {
+    const k = j.task, o = FIT_TASK * t, s = 4 * k[o], n = k[o + 1];
+    const P = fitPoints({ a: j.fine.subarray(s, s + 4 * n), n } as Points, [k[o + 4], k[o + 5], k[o + 6]], [k[o + 7], k[o + 8], k[o + 9]], k[o + 2]);
+    j.out.set(P.a.subarray(0, 4 * P.n), 4 * k[o + 3]);
+    j.outN[t] = P.n;
+  },
+});
 
 function aggregate(g: Grid, minFrac: number, rigid?: boolean[]) {
   // a body thinner than a cell has no cell that full: its roots are then the cells at least half as full as its

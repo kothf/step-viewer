@@ -33,7 +33,7 @@ const PAR_STEP = 3e6, PAR_TASK = 4e5;
 
 const sharedOk = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "undefined";
 let helpers: HelperLike[] = [];
-let stats = { jobs: 0, parallelSteps: 0, joined: 0 };
+let stats = { jobs: 0, parallelSteps: 0, joined: 0, loops: 0, loopJoined: 0 };
 
 /** Whether factorisations can be shared between threads here. */
 export const canShare = () => sharedOk;
@@ -65,7 +65,8 @@ function work(j: CholJob, P: CholPlan) {
 }
 
 /** A helper thread's side of a job: works until the job says stop. */
-export function serve(j: CholJob) {
+export function serve(j: CholJob | ParJob) {
+  if ("kind" in j) { serveJob(j); return; }
   const P = planOf(j), ctl = j.ctl;
   Atomics.add(ctl, JOINED, 1);
   let seen = -1;
@@ -158,4 +159,56 @@ export function factor(P: CholPlan, data: Float64Array) {
     Atomics.store(ctl, GEN, (gen + 1) % GENS);
     Atomics.notify(ctl, GEN);
   }
+}
+
+// Loops over independent tasks (building the equations: one task per cell or element), shared the same way. A kind
+// of loop is registered once by the module that owns it (`kernel`), on every thread, since each thread imports
+// the same modules; a job names its kind and carries its arrays on shared memory. Every task writes only its own
+// part of the output and is worked through in the same order whoever runs it, so the numbers do not depend on the
+// number of threads.
+
+export interface ParJob { kind: string; ctl: Int32Array; n: number; [k: string]: unknown }
+interface Kernel<J, S> { init(job: J): S; run(state: S, i: number): void }
+const kernels = new Map<string, Kernel<never, unknown>>();
+/** Registers a kind of loop: `init` once per thread and job, `run` per task. */
+export function kernel<J, S>(kind: string, k: Kernel<J, S>) { kernels.set(kind, k as unknown as Kernel<never, unknown>); }
+
+const P_NEXT = 0, P_DONE = 1, P_FAIL = 2, P_JOINED = 3;
+function claim(j: ParJob, k: Kernel<never, unknown>, tick?: (done: number) => void) {
+  const ctl = j.ctl, n = j.n;
+  let st: unknown;
+  for (;;) {
+    const i = Atomics.add(ctl, P_NEXT, 1);
+    if (i >= n) return;
+    try { st ??= k.init(j as never); k.run(st, i); } catch { Atomics.store(ctl, P_FAIL, 1); }
+    const d = Atomics.add(ctl, P_DONE, 1) + 1;
+    if (d === n) Atomics.notify(ctl, P_DONE);
+    tick?.(d);
+  }
+}
+function serveJob(j: ParJob) {
+  const k = kernels.get(j.kind);
+  if (!k) return;
+  Atomics.add(j.ctl, P_JOINED, 1);
+  claim(j, k);
+}
+/** Whether a loop of about `work` multiplications is worth sharing between threads here. */
+export const worthSharing = (work: number) => sharedOk && helpers.length > 0 && work >= loopFloor;
+let loopFloor = 2e7;
+/** The least work a loop is shared from (tests share small ones). */
+export function setLoopFloor(n: number) { loopFloor = n; }
+/** A shared copy's memory: n doubles or 32-bit integers. */
+export const sharedF64 = (n: number) => new Float64Array(new SharedArrayBuffer(8 * n));
+export const sharedI32 = (n: number) => new Int32Array(new SharedArrayBuffer(4 * n));
+/** Runs the job's `n` tasks on all threads and returns when every one is done (`tick`: tasks done so far). */
+export function parallelFor(job: { kind: string; n: number; [k: string]: unknown }, tick?: (done: number) => void) {
+  const k = kernels.get(job.kind);
+  if (!k) throw new Error(`no loop "${job.kind}"`);
+  const j = { ...job, ctl: sharedI32(4) } as ParJob;
+  for (const h of helpers) h.postMessage(j);
+  stats.loops++;
+  claim(j, k, tick);
+  for (;;) { const d = Atomics.load(j.ctl, P_DONE); if (d >= j.n) break; Atomics.wait(j.ctl, P_DONE, d, 50); }
+  stats.loopJoined = Atomics.load(j.ctl, P_JOINED);
+  if (Atomics.load(j.ctl, P_FAIL)) throw new Error("E-SIM-THREADS");
 }
