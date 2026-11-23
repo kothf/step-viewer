@@ -173,7 +173,7 @@ Gaps to fill: no elasticity solver, no study data, no cell approximation, no res
 
 ### 4.2 Operating environment
 
-As the modeller (`FRS-modelling.md` 4.2): current desktop browsers, WebAssembly, no SharedArrayBuffer (no COOP/COEP headers on aerocat.tech and GitHub Pages), workers for heavy work, reference machine i7-4770 with 15 GB RAM (the author's desktop). Phones show results of a solved study but do not set studies up.
+As the modeller (`FRS-modelling.md` 4.2): current desktop browsers, WebAssembly, workers; SharedArrayBuffer only where the page is cross-origin isolated (aerocat.tech and GitHub Pages send no COOP/COEP headers, so the app's service worker adds them from the second visit on; nothing may depend on it, FR-SARC-005), workers for heavy work, reference machine i7-4770 with 15 GB RAM (the author's desktop). Phones show results of a solved study but do not set studies up.
 
 ### 4.3 Constraints
 
@@ -224,8 +224,9 @@ Indicative effort for one developer with AI assistance: SA0 1â€“2 weeks, SA1 3â€
 
 - **FR-SARC-001** (SA0, M) A new `src/sim/` module holds the study model, the approximation, the solver and the result evaluation as pure TypeScript where possible, so unit tests run in node (`npm run test:unit`).
 - **FR-SARC-002** (SA0, M) Solving runs in its own worker (`sim.worker.ts`), started on demand, never on the main thread. Geometry queries run on the kernel workers (`ModelKernel` for parts, the assembly worker for assemblies, `KernelPool` helpers for batches). The solver never holds OCCT objects.
-- **FR-SARC-003** (SA0, M) Data between workers moves as transferable `ArrayBuffer`s (no SharedArrayBuffer, section 4.2).
+- **FR-SARC-003** (SA0, M) Data between workers moves as transferable `ArrayBuffer`s; shared memory only as FR-SARC-005 says.
 - **FR-SARC-004** (SA0, M) A solve can be cancelled at any time; cancelling keeps the last finished pass's results.
+- **FR-SARC-005** (M) The solver uses all CPU cores where the page is cross-origin isolated: the factorisation's block work is shared between the solver's worker and helper workers over shared memory. Without isolation, or on a machine with fewer than four cores, it runs on one thread. The numbers are the same either way, bit for bit. Built in 1.716.0 (block Cholesky with a minimum-degree order; the service worker adds the isolation headers). The GPU is not used for the solve: WebGPU has only 32-bit floats, which would change the results.
 
 ### 6.2 Approximation method (decided in SA0, D-S1)
 
@@ -345,6 +346,7 @@ The recommended method, to be confirmed by the SA0 spike:
 - **FR-SOL-020** (SA1, M) Before solving, the expected DOF and memory are estimated. Over the budget (NFR-SIM-005), the user is told and offered fewer passes, global adaptation only, or excluding bodies.
 - **FR-SOL-021** (SA1, M) Error messages say what to do, in EN and RU, with codes (Appendix B): no material, free body, missing reference, load on nothing, out of memory, solver did not converge, worker stopped.
 - **FR-SOL-022** (SA1, M) A crashed or out-of-memory worker is replaced; the study keeps its last good pass.
+- **FR-SOL-023** (M) While a study is solved the page stays usable and the status bar shows the pass, the step (reading the geometry, cutting the cells, building the equations, factorising, solving, reading the results), a bar with per cent, the time so far and Stop. Built in 1.716.0.
 
 ### 9.4 Reuse and caching
 

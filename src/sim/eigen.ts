@@ -3,6 +3,7 @@
 // Each step solves K Y = M X, then the small problem on the columns of Y gives new vectors (Rayleigh–Ritz).
 // The solves may be iterative: K is always applied itself for the small matrices.
 
+import { progress } from "./progress";
 export interface EigenOptions {
   /** Pairs wanted. */
   count: number;
@@ -100,6 +101,7 @@ export function subspace(
   const Z = new Float64Array(n), guess = new Float64Array(n);
   for (; it < maxIt; ) {
     it++;
+    progress("modes", Math.min(it, 12), 14);
     const Y: Float64Array[] = [], KY: Float64Array[] = [], MY: Float64Array[] = [];
     for (let j = 0; j < X.length; j++) {
       mulM(X[j], Z);

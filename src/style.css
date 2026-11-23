@@ -442,6 +442,20 @@ details > :last-child { margin-bottom: 12px; }
 #app.sketching .st-hint, #app.mc-cmd .st-hint { display: none; }
 .st-thermal { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; flex: 0 0 auto; }
 .st-thermal[hidden] { display: none; }
+/* a running analysis: stage, bar, per cent, time, Stop (FR-SOL-022) */
+.st-sim { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; flex: 0 0 auto; min-width: 0; max-width: 100%; }
+/* a solve's line needs the room of the tool prompt and the model statistics */
+.status:has(.st-sim:not([hidden])) :is(.st-hint, #st-stats, #st-fps) { display: none; }
+.st-sim[hidden] { display: none; }
+.st-sim .st-sim-t { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.st-sim > :not(.st-sim-t) { flex-shrink: 0; }
+.st-sim .st-sim-bar { flex: 0 0 120px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.st-sim .st-sim-bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .25s linear; }
+.st-sim .st-sim-bar.wait > i { opacity: .45; animation: st-sim-wait 1.2s ease-in-out infinite alternate; }
+@keyframes st-sim-wait { from { opacity: .25; } to { opacity: .6; } }
+.st-sim .st-sim-x { background: none; border: 1px solid var(--line); border-radius: 4px; padding: 0 8px; color: var(--text); font: inherit; cursor: pointer; }
+.st-sim .st-sim-x:hover { border-color: var(--accent); }
+@media (max-width: 767px) { .st-sim .st-sim-bar { flex-basis: 60px; } .st-sim .st-sim-s { display: none; } }
 .st-thermal .st-link { background: none; border: 0; padding: 0 2px; color: var(--accent-text); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 .st-thermal .st-x { background: none; border: 0; padding: 0 4px; color: var(--muted); font: inherit; cursor: pointer; line-height: 1; }
 .st-thermal .st-x:hover { color: var(--text); }

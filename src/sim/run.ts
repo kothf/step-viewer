@@ -10,6 +10,7 @@ import { DEFAULT_AMBIENT, DEFAULT_REF, keepsSplit, enclosureFactor, fanSpeed, GR
 import { contactPatch, facingPatch, intoPatch } from "../thermal/study";
 import { forcedH, kmapMean, ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
 import { viewFactor } from "./viewfactor";
+import { progress, progressPass } from "./progress";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
 export interface SimBody {
@@ -1070,6 +1071,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     if (!boost.some(v => v > 0)) boost = undefined;
   }
   for (let k = 0; k < passes; k++) {
+    progressPass(k + 1, passes);
     const t0 = Date.now();
     let p = k + 2, raised: number | undefined, marked: number[] = [];
     if (boost && k < GLOBAL_PASSES) {
@@ -1098,6 +1100,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     if (r.prevError != null) known.push(r.prevError);
     const errors: (number | null)[] = [...known, passError(known)];
     keep?.(r.sample, inside);
+    progress("results", 0, 1);
     const { u, vm, err, dom } = r.sample(inp.pos, inp.nrm);
     let maxU = 0, maxVm = 0;
     for (let i = 0; i < vm.length; i++) {
@@ -1144,6 +1147,7 @@ export function* runModal(inp: RunInput): Generator<PassResult> {
   let grid: Grid | undefined, start: Float64Array[] | undefined, before: number[] | null = null;
   const none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
   for (let k = 0; k < passes; k++) {
+    progressPass(k + 1, passes);
     const t0 = Date.now(), p = k + 2;
     const solve = () => solveStatic({
       lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, domains, gap: inp.asm?.gap, links: inp.asm?.links, bolts: inp.bolts, welds: inp.welds, connectors: inp.problem.connectors, masses: inp.problem.masses,
@@ -1286,6 +1290,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const boost = thermalBoost(inp, h, inside, domains);
   if (boost) grid = boost.grid;
   for (let k = 0; k < passes; k++) {
+    progressPass(k + 1, passes);
     const t0 = Date.now();
     let p = k + 2, raised: number | undefined, marked: number[] = [];
     if (boost && k < GLOBAL_PASSES) {
@@ -1308,6 +1313,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
     if (r.prevError != null) known.push(r.prevError);
     const sampler: Sampler = (pos, nrm, hits) => { const s = r.sample(pos, nrm, hits); return { u: s.flux, vm: s.temp, err: s.err, ...(s.hit ? { hit: s.hit } : {}), ...(s.dom ? { dom: s.dom } : {}) }; };
     keep?.(sampler, inside);
+    progress("results", 0, 1);
     const s = r.sample(inp.pos, inp.nrm);
     let min = Infinity, max = -Infinity, maxU = 0, moved = 0;
     for (let i = 0; i < s.temp.length; i++) {
@@ -1398,6 +1404,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
       yield { ...r, done: false, converged: false };
     }
   }
+  progressPass(0, 0);
   const t0 = Date.now();
   const domains = R?.map((r, i) => ({ inside: insideOf(new MeshBody(r.tris)), k: T.ks![i], ...(T.k3s?.[i] ? { k3: T.k3s[i]! } : {}), ...(T.kmaps?.[i] ? { kmap: T.kmaps[i]! } : {}), ...(T.kts?.[i] ? { kt: T.kts[i]! } : {}), tris: r.tris }));
   const inside = insideOf(new MeshBody(inp.body.tris));

@@ -4,6 +4,7 @@
 // points to the neighbour with the most material, whose polynomial then spans both (aggregation), so no
 // basis lives on a sliver and the stiffness stays well conditioned.
 
+import { progress } from "./progress";
 import { Points, boxState, fitPoints, volumePoints, type Inside } from "./quad";
 
 export interface Cell {
@@ -145,6 +146,7 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
   for (let dom = 0; dom < doms.length; dom++) {
   const inside = doms[dom], map = dom ? g.addMap() : g.map;
   for (let k = 0; k < n[2]; k++) for (let j = 0; j < n[1]; j++) for (let i = 0; i < n[0]; i++) {
+    if (i === 0) progress("cells", dom * n[2] * n[1] + k * n[1] + j, doms.length * n[2] * n[1]);
     const clo = [lo0[0] + i * h, lo0[1] + j * h, lo0[2] + k * h];
     const chi = [clo[0] + h, clo[1] + h, clo[2] + h];
     const s0 = boxState(clo, chi, inside);
@@ -171,7 +173,9 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
  * (local refinement): then q = d + 1 and fit = 2d + 1 for that cell. */
 export function refit(g: Grid, q: number, fit: number, degree?: (c: Cell) => number) {
   const q0 = q, fit0 = fit;
+  let seen = 0;
   for (const c of g.cells) {
+    if (!(seen++ & 15)) progress("cells", seen, g.cells.length);
     if (degree) { const d = degree(c); q = Math.min(q0, d + 1); fit = Math.min(fit0, 2 * d + 1); }
     c.pts = c.fine ? (fit && c.fine.n > fit ** 3 ? fitPoints(c.fine, c.lo, c.hi, fit) : c.fine) : volumePoints(c.lo, c.hi, q, () => true, 0, new Points(), 1);
   }
