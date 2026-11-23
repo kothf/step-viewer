@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.688.0] - 2026-11-23
+
+### Added
+
+- Warning for electrolytic capacitors beside hot parts. A thermal map's problems list now warns about an electrolytic capacitor within 10 mm of a part using more than 1 W, with the distance, the hot part and how much the capacitor's surface temperature differs from one side to the other: heat from that part runs across it, so its hot side ages faster than its mean temperature says. A click on the warning selects the capacitor. A board study made from the map shows the same warning with its results.
+
 ## [1.687.0] - 2026-11-23
 
 ### Added
@@ -4518,7 +4524,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.687.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.688.0...HEAD
+[1.688.0]: https://github.com/kothf/step-viewer/compare/v1.687.0...v1.688.0
 [1.687.0]: https://github.com/kothf/step-viewer/compare/v1.686.0...v1.687.0
 [1.686.0]: https://github.com/kothf/step-viewer/compare/v1.685.0...v1.686.0
 [1.685.0]: https://github.com/kothf/step-viewer/compare/v1.684.0...v1.685.0

@@ -124,7 +124,7 @@ async function simulateBoard(pkg: ThermalPackage, match: PartMatch, bodies: Mode
   const gerbers = boardGerbers.get(`sv:m:${src.name}:${src.data.byteLength || ""}`);
   const ids = await asm.fromModel(src.data.slice(0), src.name, mats, plan.names);
   if (!ids) return;
-  const heat = plan.heat.map(h => ({ id: h.id, name: h.name, comps: h.bodies.map(i => ids[i]).filter((x): x is string => !!x), p: h.p, ...(h.limit !== undefined ? { limit: h.limit } : {}), ...(h.board !== undefined ? { board: h.board } : {}), ...(h.sink !== undefined ? { sink: h.sink } : {}), ...(h.path ? { path: h.path } : {}) }));
+  const heat = plan.heat.map(h => ({ id: h.id, name: h.name, comps: h.bodies.map(i => ids[i]).filter((x): x is string => !!x), p: h.p, ...(h.limit !== undefined ? { limit: h.limit } : {}), ...(h.board !== undefined ? { board: h.board } : {}), ...(h.sink !== undefined ? { sink: h.sink } : {}), ...(h.path ? { path: h.path } : {}), ...(h.elyt ? { elyt: true } : {}) }));
   sim.boardStudy({ ambient: plan.ambient, emissivity: plan.emissivity, enclosure: plan.enclosure, down: plan.down, heat, ...(plan.board >= 0 && ids[plan.board] ? { board: { comp: ids[plan.board]!, t: plan.thickness, ...(plan.stack ? { stack: plan.stack } : {}) } } : {}) });
   // the board's Gerber set, when one came with the STEP, gives the board its copper (FR-TBRD-020)
   if (gerbers && plan.board >= 0 && ids[plan.board]) await sim.readGerber(ids[plan.board]!, gerbers);

@@ -204,7 +204,8 @@ test("fixtures: the compressed package with its STEP inside reads like the plain
   assert.equal(a.mesh.temp.length, b.mesh.temp.length);
   // ascii keeps 3 decimals of a temperature, the binary form all of them
   for (let i = 0; i < a.mesh.temp.length; i++) assert.ok(Math.abs(a.mesh.temp[i] - b.mesh.temp[i]) < 1e-3);
-  assert.equal(problems(a, partStats(a.mesh)).length, 2, "R20 over its limit, C13 short-lived");
+  const ps = problems(a, partStats(a.mesh));
+  assert.deepEqual(ps.map(p => `${p.kind}:${p.id}${p.hot ? `>${p.hot}` : ""}`), ["over:5", "life:6", "near:6>5", "near:4>1"], "R20 over its limit, C13 short-lived, C13 beside R20 and C12 beside V3");
 });
 
 test("probe weights and colours", () => {

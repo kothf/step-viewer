@@ -17514,6 +17514,11 @@ try {
     check(!b1.error && Math.abs(b1.applied - 29.17) < 1e-6 && Math.abs(outSum - 29.17) < 0.05 && b1.out.every(x => x > 1) && b1.comps.length === 7 && b1.bad.length >= 1 && b1.bad.every(n => /^(R14|R20|V3|Q2)</.test(n)) && /over/.test(b1.over ?? "")
       && b1.limits.filter(Boolean).length === 6 && b1.wide <= 0,
       `thermal 1.655: the board study solves: the 29.17 W of the package leave by convection and radiation, every part has its temperature beside its limit and the ones over are marked (${JSON.stringify(b1)})`);
+    // 1.688 (FR-TBRD-023): electrolytics beside a part over 1 W are warned about after the solve
+    const nh = await bp.evaluate(() => ({ near: window.__sv.sim.state().thermal?.near?.map(n => [n.cap, n.hot, Math.round(n.gap * 10) / 10, n.spread > 0]), li: [...document.querySelectorAll('#sim-tree [data-v="tnear"] li')].map(e => e.textContent), note: !!document.querySelector('#sim-tree [data-v="nearnote"]'),
+      elyt: window.__sv.asm.doc.studies.find(x => x.kind === "thermal").loads.find(l => l.type === "pkgheat").parts.filter(x => x.elyt).map(x => x.name) }));
+    check(JSON.stringify(nh.elyt) === '["C12","C13"]' && nh.near?.[0]?.[0] === "C13" && nh.near[0][1] === "R20" && nh.near[0][2] < 10 && nh.near[0][3] && nh.near.every(n => n[2] <= 10) && nh.li.length === nh.near.length && /C13: .* mm from R20 \(3\.4 W\)/.test(nh.li.join("|")) && nh.note,
+      `thermal 1.688: the board study warns about the electrolytic C13 standing 5 mm from R20 (C12 sits right at 10 mm from V3) (FR-TBRD-023) (${JSON.stringify(nh)})`);
     // 1.657: heat paths: where each part's heat went (board, air, elsewhere), the package's split in the row's title
     // 1.658: natural convection with the package's enclosure and orientation
     const nc = await bp.evaluate(() => { const s = window.__sv.sim.state(), d = window.__sv.asm.doc, st = d.studies.find(x => x.kind === "thermal");
@@ -18683,8 +18688,8 @@ try {
     const u1 = await hp.evaluate(() => ({ cm: document.querySelector("#cm-tabs .on")?.dataset.cm, min: document.querySelector('#th-legend [data-v="min"]')?.textContent, max: document.querySelector('#th-legend [data-v="max"]')?.textContent,
       hottest: document.querySelector('#th-summary [data-v="hottest"]')?.textContent, badge: document.querySelector("#th-count")?.textContent, probs: document.querySelectorAll("#th-side .th-list li").length,
       wide: document.querySelector("#tab-thermal").scrollWidth - document.querySelector("#tab-thermal").clientWidth, bar: document.querySelector("#cm-body").scrollWidth - document.querySelector("#cm-body").clientWidth }));
-    check(m1.drawn && m1.parts === 6 && m1.matched === 7 && !m1.missing.length && m1.hidden === 7 && u1.cm === "thermal" && u1.min === "40" && u1.max === "182" && /V3 182/.test(u1.hottest) && u1.badge === "2" && u1.probs === 2 && u1.wide <= 0 && u1.bar <= 1,
-      `thermal map 1.653: a board's STEP and its thermal package opened together show the map on the model: every part matched, legend 40 to 182 °C, the hottest part, two problems (${JSON.stringify({ parts: m1.parts, matched: m1.matched, hidden: m1.hidden, u1 })})`);
+    check(m1.drawn && m1.parts === 6 && m1.matched === 7 && !m1.missing.length && m1.hidden === 7 && u1.cm === "thermal" && u1.min === "40" && u1.max === "182" && /V3 182/.test(u1.hottest) && u1.badge === "4" && u1.probs === 4 && u1.wide <= 0 && u1.bar <= 1,
+      `thermal map 1.653: a board's STEP and its thermal package opened together show the map on the model: every part matched, legend 40 to 182 °C, the hottest part, four problems (FR-TBRD-023 adds the two capacitors beside hot parts) (${JSON.stringify({ parts: m1.parts, matched: m1.matched, hidden: m1.hidden, u1 })})`);
     const r0 = await rows();
     await hp.click('#th-side th[data-sort="t"]');
     const r1 = await rows();

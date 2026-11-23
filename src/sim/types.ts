@@ -82,6 +82,8 @@ export interface PackageHeat {
   board?: number;
   sink?: number;
   path?: "board" | "air" | "heatsink" | "chassis";
+  /** An electrolytic capacitor (FR-TBRD-023: warned about when a part over 1 W stands next to it). */
+  elyt?: boolean;
 }
 /** Package parts under this power are left out, as the package does (FR-TBRD-002), W. */
 export const PACKAGE_MIN_POWER = 0.01;
