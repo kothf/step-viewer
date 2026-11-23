@@ -19,6 +19,7 @@ import { gerberName } from "./copper";
 import { pcbFit, pcbUvs, WHITE_PX } from "./pcbTexture";
 import { pcbAtlas, pcbFromGerber, type PcbLayers } from "./pcbRaster";
 import { meanEdges, nearestPoints, NEAREST_CELL, pointsByPart } from "./nearest";
+import { partsCsv } from "./csv";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "../sim/plotmesh";
 
 export interface ThermalHost {
@@ -1032,7 +1033,7 @@ export class ThermalMaps {
       + `</div>`
       + `<div class="th-sec th-parts"><h4>${esc(t("Parts"))} <span class="pill">${mf.parts.length}</span></h4>`
       + `<input type="search" data-k="filter" value="${esc(a.filter)}" placeholder="${esc(t("Filter by designator or value"))}" aria-label="${esc(t("Filter by designator or value"))}" />`
-      + `<div class="th-tablewrap"><table class="th-table"><thead><tr>${th("name", t("Part"))}${th("p", "W", t("Power"))}${th("t", "°C", t("Temperature"))}${th("limit", t("Limit"))}${th("margin", t("Margin"))}${th("life", t("Life, h"), t("Estimated life of electrolytic capacitors"))}</tr></thead><tbody data-v="rows">${this.rowsHtml(a)}</tbody></table></div></div>`
+      + `<div class="th-tablewrap"><table class="th-table"><thead><tr>${th("name", t("Part"))}${th("p", "W", t("Power"))}${th("t", "°C", t("Temperature"))}${th("limit", t("Limit"))}${th("margin", t("Margin"))}${th("life", t("Life, h"), t("Estimated life of electrolytic capacitors"))}</tr></thead><tbody data-v="rows">${this.rowsHtml(a)}</tbody></table></div><button class="btn small" data-a="partscsv" title="${esc(t("Save the Parts list as a CSV file"))}">${esc(t("Export CSV"))}</button></div>`
       + `<div class="th-sec th-budget"><h4>${esc(t("Heat budget"))}</h4><dl class="sim-kv"><dt>${esc(t("Total power"))}</dt><dd data-v="power" translate="no">${esc(watts(sm.power))} W</dd>`
       + (["board", "air", "heatsink", "chassis"] as const).filter(k => sm.split[k] > 0).map(k => `<dt>${esc(t("To the {path}", { path: t(PATH_LABEL[k]) }))}</dt><dd translate="no">${esc(watts(sm.split[k]))} W</dd>`).join("") + `</dl></div>`
       + (a.probes.length ? `<div class="th-sec th-probes"><h4>${esc(t("Probes"))}</h4><table class="th-table"><thead><tr><th>#</th><th>X</th><th>Y</th><th>Z</th><th>°C</th><th></th></tr></thead><tbody>${a.probes.map((p, i) => `<tr><td>${i + 1}</td><td translate="no">${p.p[0].toFixed(1)}</td><td translate="no">${p.p[1].toFixed(1)}</td><td translate="no">${p.p[2].toFixed(1)}</td><td data-v="probe" translate="no">${esc(deg(p.t))}</td><td><button class="sim-ib" data-a="rmprobe" data-i="${i}" title="${esc(t("Remove probe"))}" aria-label="${esc(t("Remove probe"))}">×</button></td></tr>`).join("")}</tbody></table><button class="btn small" data-a="probecsv">${esc(t("Export CSV"))}</button></div>` : "")
@@ -1087,6 +1088,7 @@ export class ThermalMaps {
       if (k === "fit") { a.fitted = true; this.show(); this.renderAll(); }
       else if (k === "rmprobe") { a.probes.splice(Number(act.dataset.i), 1); this.renderAll(); }
       else if (k === "probecsv") this.probeCsv(a);
+      else if (k === "partscsv") this.partsCsv(a);
       else if (k === "simulate") this.host.simulate(a.pkg, a.match, this.bodies());
       return;
     }
@@ -1118,6 +1120,16 @@ export class ThermalMaps {
     this.savePrefs();
     this.host.changed();
     this.renderAll();
+  }
+
+  /** The Parts list as shown (sorted), with the problems marked (FR-TREP-011). */
+  partsCsvText(a = this.cur()): string | null {
+    if (!a || a.pkg.sourcesOnly) return null;
+    return partsCsv(this.sorted(a), a.stats, { missing: a.own ? [] : a.match.missing, changed: a.match.changed });
+  }
+  private partsCsv(a: Attached) {
+    const text = this.partsCsvText(a);
+    if (text) download(new Blob([text], { type: "text/csv" }), `${a.pkg.name}-parts.csv`);
   }
 
   private probeCsv(a: Attached) {
@@ -1338,7 +1350,7 @@ export class ThermalMaps {
     if (!a) return null;
     const sm = summary(a.pkg, a.stats);
     return {
-      name: a.pkg.name, on: a.on, own: a.own, sourcesOnly: !!a.pkg.sourcesOnly, drawn: !!this.overlay, tris: this.overlay ? this.overlay.geometry.getIndex()!.count / 3 : 0,
+      name: a.pkg.name, partsCsv: this.partsCsvText(a), on: a.on, own: a.own, sourcesOnly: !!a.pkg.sourcesOnly, drawn: !!this.overlay, tris: this.overlay ? this.overlay.geometry.getIndex()!.count / 3 : 0,
       range: this.rangeOf(a), parts: a.pkg.manifest.parts.length, matched: a.match.bodies.size, missing: a.match.missing, changed: a.match.changed, off: a.match.off, fitted: a.fitted,
       hidden: this.saved.length, problems: this.problemsOf(a).map(p => ({ kind: p.kind, id: p.id, value: p.value })), hottest: sm.hottest, peak: sm.peak, power: sm.power,
       sel: a.sel, iso: a.iso, faces: this.prefs.faces, faceMeshes: this.faceMeshes.length, faceTris: this.faceMeshes.reduce((s, f) => s + f.mesh.geometry.getIndex()!.count / 3, 0), faceFaded: this.faceMeshes.reduce((s, f) => s + (f.fade ? f.fade.geometry.getIndex()!.count / 3 : 0), 0), clip: a.clip ? { ...a.clip } : null, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,

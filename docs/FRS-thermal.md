@@ -403,7 +403,7 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 
 - **FR-TREP-001** (TH1, M) Report (PDF / HTML, as structural): model and source, settings, summary, pictures from the current view (top and bottom for boards), Parts and Problems tables, heat budget, assumptions and accuracy. For an imported map the report says the values come from the package and its app.
 - **FR-TREP-010** (TH3, M) Export ▾ Thermal package writes the same layout as section 15.2 with `format: "mobiuscad-thermal"`, version 1: the study's surface temperatures on the display mesh as `.vtu` (ascii or compressed), the heat-source CSV (one row per heat load or package part), manifest, PNG and README; so the result opens in ParaView, PyVista and FreeCAD FEM and back in MöbiusCAD. Built in 1.668.0 (Study tab ▸ Thermal package; part temperatures by component, board = part 0).
-- **FR-TREP-011** (TH2, S) CSV exports: probes, paths, Parts list, heat balance, transient charts.
+- **FR-TREP-011** (TH2, S) CSV exports: probes, paths, Parts list, heat balance, transient charts. Built 1.687.0: map Parts list (`src/thermal/csv.ts` `partsCsv`) and study heat balance (`balanceCsv`); probes, paths and over-time CSVs came earlier.
 - **FR-TREP-012** (TH5, M) Thermal stress: Loads ▸ Temperature ▸ From study in a structural study takes the last result of a thermal study on the same model (temperature at each quadrature point by sampling the kept solution, reference temperature typed, default 20 °C) and the material's α; stale when the thermal study changes. Built for parts in 1.663.0 and for assemblies (each component's own α, the expansion mismatch carried across joined faces) in 1.664.0.
 
 ---

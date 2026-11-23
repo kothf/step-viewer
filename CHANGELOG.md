@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.687.0] - 2026-11-23
+
+### Added
+
+- CSV exports of thermal results. The thermal map's **Parts list** has **Export CSV** (one row per part in the table's order: power, highest and lowest temperature, limit, margin, capacitor life, heat path and whether it is over its limit or missing from the model), and a solved steady thermal study has **Export heat balance CSV** in the Study tab (heat put in, what each cooling item takes away with its mean temperature, area and film coefficient, the balance, radiation between faces, contacts and each component's heat and temperatures). Probes, paths and temperatures over time could already be saved.
+
 ## [1.686.0] - 2026-11-23
 
 ### Added
@@ -4512,7 +4518,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.686.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.687.0...HEAD
+[1.687.0]: https://github.com/kothf/step-viewer/compare/v1.686.0...v1.687.0
 [1.686.0]: https://github.com/kothf/step-viewer/compare/v1.685.0...v1.686.0
 [1.685.0]: https://github.com/kothf/step-viewer/compare/v1.684.0...v1.685.0
 [1.684.0]: https://github.com/kothf/step-viewer/compare/v1.683.0...v1.684.0

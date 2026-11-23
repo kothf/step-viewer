@@ -18239,6 +18239,11 @@ try {
       && item.f?.speed === 3 && JSON.stringify(item.f?.dir) === "[0,1,0]" && !item.f?.fan && item.all && /3 m\/s \+Y/.test(item.row)
       && !r.error && Math.abs(r.thermal.out[0] - 2) < 0.02 && Math.abs(max - want) < 0.04 * (want - 25) && Math.abs(r.thermal.flows[0].h * 1e6 - mean) < 0.02 * mean && /W\/\(m²·K\)/.test(hnat),
       `forced air 1.667: a 2 W bar blown at 3 m/s along its length by a Forced air item; the film coefficients follow the flat plate correlation and the fan's flow gives its speed; translated (${JSON.stringify({ icons, tools, fresh, fan, ruPm, item, error: r.error, out: r.thermal?.out, max, want, h: r.thermal?.flows?.[0]?.h, mean, hnat })})`);
+    // --- heat balance CSV 1.687 (FR-TREP-011): the steady result's balance as CSV ---
+    const bal = await fp.evaluate(() => ({ btn: !!document.querySelector('#sim-tree [data-a="balcsv"]'), csv: window.__sv.sim.state().balanceCsv ?? "" }));
+    const balRows = bal.csv.trim().split("\r\n");
+    check(bal.btn && /^Kind,Item,Heat \(W\)/.test(balRows[0]) && /^Heat put in,Total,2(\.0+)?,/.test(balRows[1]) && balRows.some(l => l.startsWith("Heat taken away,")) && balRows.some(l => l.startsWith("Out of balance (%),")),
+      `heat balance CSV 1.687: a solved thermal study offers its heat balance as CSV: heat put in, what each item takes away and the balance (${JSON.stringify(bal)})`);
     // --- thermal plots 1.669 (FR-TRES-001): temperature rise above ambient and heat flow arrows on the same result ---
     if (!(await fp.evaluate(() => window.__sv.sim.state().plot.shown))) { await fp.click('#sim-tools [data-s="results"]'); await fp.waitForTimeout(300); }
     const kinds = await fp.evaluate(() => [...document.querySelectorAll('#sim-legend select[data-k="kind"] option')].map(o => o.value));
@@ -18460,6 +18465,13 @@ try {
     check(f1.faces && f1.meshes > 0 && f1.tris > 0 && f1.faded === 0 && f1.ovShown === false && f1.spread > 0.05 && f1.drawn
       && f2.faded > 0 && f2.tris + f2.faded === f1.tris && !f3.faces && f3.meshes === 0 && f3.ovShown === true,
       `model faces 1.686: Colour the model's faces draws the STEP's own triangles from the map, clips them too, and turns off (${JSON.stringify({ f1, f2, f3 })})`);
+    // --- parts CSV 1.687 (FR-TREP-011): the map's Parts list as CSV, in the table's order ---
+    await cp.click("#t-thermal");
+    await cp.waitForTimeout(200);
+    const pc = await cp.evaluate(() => ({ btn: !!document.querySelector('#th-side [data-a="partscsv"]'), csv: window.__sv.thermal.state().partsCsv ?? "", rows: document.querySelectorAll("#th-side tbody[data-v=rows] tr").length }));
+    const pcRows = pc.csv.trim().split("\r\n");
+    check(pc.btn && /^Designator,Part,Power \(W\),Highest temperature/.test(pcRows[0]) && pcRows.length === pc.rows + 1 && pc.rows > 0,
+      `parts CSV 1.687: the Parts list exports as CSV, one row per part in the table (${JSON.stringify({ btn: pc.btn, rows: pc.rows, head: pcRows[0], first: pcRows[1] })})`);
     await ctx.close();
   }
 
