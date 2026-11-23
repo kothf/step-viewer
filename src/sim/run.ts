@@ -413,6 +413,15 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
   return out;
 }
 
+/** A component of a thermal study's results: temperatures on its surface, the heat made in it, how the heat leaves it, W. */
+export interface ThermalComp {
+  min: number; max: number; mean: number; power: number;
+  /** What leaves its own surface (power less what it conducts or radiates to other components). */
+  out?: number;
+  /** FR-TRES-005, steady solves only: to the air by convection, by radiation (to the surroundings and, net, to other components), to fixed temperatures, net by conduction to its neighbours. */
+  conv?: number; rad?: number; held?: number; cond?: number;
+}
+
 export interface PassResult {
   pass: number;
   /** Highest degree in use. */
@@ -480,7 +489,7 @@ export interface PassResult {
     /** Radiation between face sets, in the order of `ThermalSetup.exchangeIds`. */
     exchanges?: ExchangeFlow[];
     /** By component: surface temperatures, heat made, and heat leaving its own surface (W; the rest is conducted or radiated to neighbours). */
-    comps?: { min: number; max: number; mean: number; power: number; out?: number }[];
+    comps?: ThermalComp[];
   };
   /**
    * Transient thermal studies, on the last pass: the output times, s, and each one's temperatures at the sample
@@ -1220,7 +1229,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
     }
     if (!s.temp.length) { min = 0; max = 0; }
     // by component: the temperatures on its surface and the heat made in it
-    let comps: { min: number; max: number; mean: number; power: number; out?: number }[] | undefined;
+    let comps: ThermalComp[] | undefined;
     if (domains && s.dom) {
       comps = domains.map(() => ({ min: Infinity, max: -Infinity, mean: 0, power: 0 }));
       const cnt = new Float64Array(domains.length);
@@ -1238,6 +1247,11 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       comps.forEach(c => { c.out = c.power; });
       for (const c of r.contacts ?? []) { if (comps[c.a]) comps[c.a].out! -= c.heat; if (comps[c.b]) comps[c.b].out! += c.heat; }
       for (const x of r.exchanges ?? []) if (x.da !== undefined && x.db !== undefined && x.da !== x.db) { comps[x.da].out! -= x.heat; comps[x.db].out! += x.heat; }
+      // how that heat leaves (FR-TRES-005): by the sinks on its surface, by radiation to other components, by conduction
+      comps.forEach(c => { c.conv = 0; c.rad = 0; c.held = 0; c.cond = 0; });
+      for (const f of r.flows) if (f.doms) comps.forEach((c, i) => { c.conv! += f.doms![3 * i]; c.rad! += f.doms![3 * i + 1]; c.held! += f.doms![3 * i + 2]; });
+      for (const c of r.contacts ?? []) { if (comps[c.a]) comps[c.a].cond! += c.heat; if (comps[c.b]) comps[c.b].cond! -= c.heat; }
+      for (const x of r.exchanges ?? []) if (x.da !== undefined && x.db !== undefined && x.da !== x.db) { comps[x.da].rad! += x.heat; comps[x.db].rad! -= x.heat; }
     }
     // the range the change is measured against takes in the surroundings, so a nearly even part still converges
     let lo = min, hi = max;

@@ -37,7 +37,7 @@ export interface BalanceInput {
   /** Contacts between bodies: heat from a to b. */
   contacts?: { a: string; b: string; heat: number; area: number; ta: number; tb: number }[];
   /** Components or bodies: heat made in each, temperatures. */
-  comps?: { name: string; power: number; min: number; max: number; mean: number }[];
+  comps?: { name: string; power: number; min: number; max: number; mean: number; conv?: number; rad?: number; held?: number; cond?: number }[];
 }
 
 export const BALANCE_HEAD = ["Kind", "Item", "Heat (W)", "Mean temperature (°C)", "Highest temperature (°C)", "Area (mm²)", "Film coefficient (W/(m²·K))"];
@@ -53,5 +53,12 @@ export function balanceCsv(b: BalanceInput): string {
   for (const x of b.exchanges ?? []) rows.push(["Radiation between faces", x.name, r4(x.heat), Number.isFinite(x.ta) ? `${r2(x.ta)} -> ${r2(x.tb)}` : "", "", "", ""]);
   for (const c of b.contacts ?? []) rows.push(["Contact", `${c.a} -> ${c.b}`, r4(c.heat), `${r2(c.ta)} -> ${r2(c.tb)}`, "", r4(c.area), ""]);
   for (const c of b.comps ?? []) rows.push(["Component", c.name, r4(c.power), r2(c.mean), r2(c.max), "", ""]);
+  // where each component's heat goes (FR-TRES-005)
+  for (const c of b.comps ?? []) {
+    if (c.conv === undefined) continue;
+    rows.push(["Component to the air", c.name, r4(c.conv), "", "", "", ""], ["Component radiated", c.name, r4(c.rad ?? 0), "", "", "", ""]);
+    if (c.held) rows.push(["Component to fixed temperatures", c.name, r4(c.held), "", "", "", ""]);
+    rows.push(["Component conducted to neighbours", c.name, r4(c.cond ?? 0), "", "", "", ""]);
+  }
   return csvText(rows);
 }

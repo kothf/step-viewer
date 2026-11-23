@@ -1880,6 +1880,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-paths th { vertical-align: bottom; }
 .sim-comptable.sim-paths th:first-child { width: 22%; }
 .sim-comptable.sim-paths th:nth-child(2) { width: 14%; }
+.sim-comptable.sim-heatout th:first-child { width: 26%; }
+.sim-comptable.sim-heatout th { font-size: 12px; overflow-wrap: anywhere; }
 .sim-paths td:not(:first-child), .sim-paths th:not(:first-child) { text-align: right; }
 .sim-tcomps tr.bad td[data-v=tcmax] { color: var(--danger, #c92a2a); font-weight: 600; }
 .sim-pkparts { width: 100%; border-collapse: collapse; }

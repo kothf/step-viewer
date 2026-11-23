@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.700.0] - 2026-11-23
+
+### Added
+
+- Thermal results of an assembly: a "Where the heat goes" table splits each component's heat into what leaves its own surface to the air, by radiation and into fixed temperatures, and what it conducts to its neighbours (hover the cell for each neighbour); the rows add up to the heat each component makes, and a row click shows that component alone. The report and the heat balance CSV carry the same split.
+
 ## [1.699.0] - 2026-11-23
 
 ### Added
@@ -4613,7 +4619,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.699.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.700.0...HEAD
+[1.700.0]: https://github.com/kothf/step-viewer/compare/v1.699.0...v1.700.0
 [1.699.0]: https://github.com/kothf/step-viewer/compare/v1.698.0...v1.699.0
 [1.698.0]: https://github.com/kothf/step-viewer/compare/v1.697.0...v1.698.0
 [1.697.0]: https://github.com/kothf/step-viewer/compare/v1.696.0...v1.697.0
