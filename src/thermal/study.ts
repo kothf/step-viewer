@@ -170,7 +170,7 @@ export function guessMaterial(part: Pick<ThermalPart, "designator" | "part" | "m
 }
 
 /** One package part's heat in the study. */
-export interface PlanHeat { id: number; name: string; bodies: number[]; p: number; limit?: number; board?: number; sink?: number; path?: ThermalPart["path"]; elyt?: boolean }
+export interface PlanHeat { id: number; name: string; bodies: number[]; p: number; limit?: number; board?: number; sink?: number; path?: ThermalPart["path"]; elyt?: boolean; junction?: boolean; rjc?: number }
 export interface BoardPlan {
   /** Body index of the board, −1 = none found. */
   board: number;
@@ -230,11 +230,47 @@ export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelB
   for (const p of man.parts) {
     if (p.id === 0) continue;
     const list = (match.bodies.get(p.id) ?? []).filter(i => i !== board), w = p.p ?? 0;
-    heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}), ...(isElectrolytic(p) ? { elyt: true } : {}) });
+    heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}), ...(isElectrolytic(p) ? { elyt: true } : {}), ...(p.tKind === "junction" ? { junction: true } : {}), ...(p.rjc !== undefined && p.rjc >= 0 ? { rjc: p.rjc } : {}) });
     if (list.length) power += w;
   }
   return { board, thickness: board >= 0 ? sizes(bodies[board].box)[0] : 0, mats, names, heat, ambient: man.settings.ambient, emissivity: man.settings.emissivity, power,
     ...(["open", "vented", "closed"].includes(man.settings.enclosure ?? "") ? { enclosure: man.settings.enclosure as "open" | "vented" | "closed" } : {}),
     ...(() => { const down = boardDown(man.settings.orientation, bodies, board); return down ? { down } : {}; })(),
     ...(man.board ? { stack: { ...man.board } } : {}) };
+}
+
+/** What a part's reported temperature is of (FR-TBRD-021). */
+export type PartTempKind = "body" | "case" | "junction";
+export interface PartTempIn { name: string; p: number; off?: boolean; limit?: number; junction?: boolean; rjc?: number; comps: string[] }
+export interface PartTemp {
+  name: string;
+  /** °C: the hottest point of the part's bodies, plus p × Rjc for a junction. */
+  t: number;
+  /** °C: the hottest point of its bodies in the solve (its case for a junction part). */
+  body: number;
+  kind: PartTempKind;
+  /** A junction part with no Rjc: only its case temperature is known. */
+  caseOnly?: boolean;
+  limit?: number;
+  over?: boolean;
+}
+
+/**
+ * Each package part's temperature in a study (FR-TBRD-021): the maximum of its bodies; a part whose package temperature
+ * is a junction (or that has an Rjc typed) reports its case maximum plus p × Rjc, or the case alone, marked, without Rjc.
+ * `maxOf` gives the hottest temperature of a component (undefined: not in the result).
+ */
+export function partTemps(parts: PartTempIn[], maxOf: (comp: string) => number | undefined): PartTemp[] {
+  const out: PartTemp[] = [];
+  for (const x of parts) {
+    let body = -Infinity;
+    for (const c of x.comps) { const m = maxOf(c); if (m !== undefined && m > body) body = m; }
+    if (!Number.isFinite(body)) continue;
+    const p = x.off ? 0 : Math.max(0, x.p), rjc = x.rjc !== undefined && x.rjc >= 0 ? x.rjc : undefined;
+    const junction = !!x.junction || rjc !== undefined;
+    const t = junction && rjc !== undefined ? body + p * rjc : body;
+    const kind: PartTempKind = junction ? (rjc !== undefined ? "junction" : "case") : "body";
+    out.push({ name: x.name, t, body, kind, ...(junction && rjc === undefined ? { caseOnly: true } : {}), ...(x.limit !== undefined ? { limit: x.limit, over: t > x.limit } : {}) });
+  }
+  return out;
 }

@@ -17519,6 +17519,13 @@ try {
       elyt: window.__sv.asm.doc.studies.find(x => x.kind === "thermal").loads.find(l => l.type === "pkgheat").parts.filter(x => x.elyt).map(x => x.name) }));
     check(JSON.stringify(nh.elyt) === '["C12","C13"]' && nh.near?.[0]?.[0] === "C13" && nh.near[0][1] === "R20" && nh.near[0][2] < 10 && nh.near[0][3] && nh.near.every(n => n[2] <= 10) && nh.li.length === nh.near.length && /C13: .* mm from R20 \(3\.4 W\)/.test(nh.li.join("|")) && nh.note,
       `thermal 1.688: the board study warns about the electrolytic C13 standing 5 mm from R20 (C12 sits right at 10 mm from V3) (FR-TBRD-023) (${JSON.stringify(nh)})`);
+    // 1.693 (FR-TBRD-021): part temperatures: the package's junction part Q2 has no Rjc, so its case is reported, marked
+    const pt = await bp.evaluate(() => ({ parts: window.__sv.sim.state().thermal?.parts?.map(x => [x.name, x.kind, !!x.caseOnly, Math.round(x.t)]),
+      rows: [...document.querySelectorAll("#sim-tree .sim-ptemps tr[data-ptemp]")].map(r => [r.dataset.ptemp, r.querySelector('[data-v="ptkind"]').textContent]), note: !!document.querySelector('#sim-tree [data-v="ptnote"]'),
+      junction: window.__sv.asm.doc.studies.find(x => x.kind === "thermal").loads.find(l => l.type === "pkgheat").parts.filter(x => x.junction).map(x => x.name) }));
+    check(JSON.stringify(pt.junction) === '["Q2"]' && pt.parts?.length === 6 && pt.parts.find(x => x[0] === "Q2")?.[1] === "case" && pt.parts.filter(x => x[2]).length === 1 && pt.parts.filter(x => x[0] !== "Q2").every(x => x[1] === "body")
+      && pt.rows.length === 6 && pt.rows.find(r => r[0] === "Q2")?.[1] === "Case*" && pt.note,
+      `thermal 1.693: Part temperatures lists each package part's temperature; Q2, whose package temperature is a junction, has no Rjc, so its case is reported and marked (${JSON.stringify(pt)})`);
     // 1.657: heat paths: where each part's heat went (board, air, elsewhere), the package's split in the row's title
     // 1.658: natural convection with the package's enclosure and orientation
     const nc = await bp.evaluate(() => { const s = window.__sv.sim.state(), d = window.__sv.asm.doc, st = d.studies.find(x => x.kind === "thermal");
@@ -17535,10 +17542,13 @@ try {
     await bp.waitForSelector("#sim-pm .sim-pkparts tr[data-pk]");
     const tbl = await bp.evaluate(() => [...document.querySelectorAll("#sim-pm .sim-pkparts tr[data-pk]")].map(r => [r.children[1].textContent, r.querySelector('input[data-q="pkp"]').value, r.querySelector('input[data-k="pkon"]').checked]));
     await bp.click('#sim-pm .sim-pkparts tr[data-pk="1"] input[data-k="pkon"]');
+    await bp.fill('#sim-pm .sim-pkparts tr[data-pk="3"] input[data-q="pkrjc"]', "2.5");
+    await bp.press('#sim-pm .sim-pkparts tr[data-pk="3"] input[data-q="pkrjc"]', "Tab");
     await bp.click("#sim-pm .pm-ok");
     await bp.waitForTimeout(300);
-    const less = await bp.evaluate(() => ({ row: document.querySelector('#sim-tree .sim-row[data-id="l1"]').innerText.replace(/\s+/g, " ").trim(), stale: window.__sv.sim.state().stale }));
-    check(tbl.length === 6 && tbl[0][0] === "V3" && tbl[0][1] === "18.2" && tbl.every(r => r[2]) && /5 parts.*10\.97 W|5 parts.*11 W/.test(less.row) && less.stale,
+    const less = await bp.evaluate(() => ({ row: document.querySelector('#sim-tree .sim-row[data-id="l1"]').innerText.replace(/\s+/g, " ").trim(), stale: window.__sv.sim.state().stale,
+      rjc: window.__sv.asm.doc.studies.find(x => x.kind === "thermal").loads.find(l => l.type === "pkgheat").parts.find(x => x.name === "Q2")?.rjc }));
+    check(tbl.length === 6 && tbl[0][0] === "V3" && tbl[0][1] === "18.2" && tbl.every(r => r[2]) && /5 parts.*10\.97 W|5 parts.*11 W/.test(less.row) && less.stale && less.rjc === 2.5,
       `thermal 1.655: the Heat from package panel lists every part with its power; unticking the valve leaves 5 parts and the results go stale (${JSON.stringify({ tbl, less })})`);
     // 1.657: Keep the package's split: the board shares go into the board under each part as fixed powers
     await bp.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');

@@ -23,6 +23,8 @@ export interface ThermalPart {
   p?: number; pBoard?: number; pAir?: number; pSink?: number;
   /** °C: estimated temperature, what it is of (body, case, junction, bulb), its limit. */
   t?: number; tKind?: string; limit?: number;
+  /** K/W junction to case, when the package gives it (FR-TBRD-021). */
+  rjc?: number;
   /** limit − t; negative = over. */
   margin?: number;
   /** Electrolytics: estimated life (h); `lifeBy` "computed" when MöbiusCAD worked it out. */
@@ -98,7 +100,7 @@ function partOf(r: Record<string, unknown>): ThermalPart | null {
   const p: ThermalPart = {
     id, designator: str(r.designator) || bodies[0] || `#${id}`, bodies, part: str(r.part), path, mount: str(r.mount) || undefined, box,
     p: num(r.p_total_W), pBoard: num(r.p_board_W), pAir: num(r.p_air_W), pSink: num(r.p_sink_W),
-    t: num(r.t_body_C), tKind: str(r.t_kind) || undefined, limit: num(r.t_limit_C), margin: num(r.margin_C),
+    t: num(r.t_body_C), tKind: str(r.t_kind) || undefined, limit: num(r.t_limit_C), margin: num(r.margin_C), rjc: num(r.rjc_KW),
     life: num(r.life_h), ratedLife: num(r.life_rated_h), source: str(r.source) || undefined,
   };
   return finishPart(p);
