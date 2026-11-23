@@ -186,6 +186,8 @@ const SPOT_RESULT_NOTE = "Spot weld stress: the largest force of one spot over i
 const GLUE_NOTE = "Adhesive: the two components are joined through an elastic layer of this thickness and modulus. Set the gap tolerance to at least the layer's thickness when they are modelled apart.";
 const WELD_RESULT_NOTE = "Weld stress: the largest force per length over the throat. Compare it with the allowable stress of the weld metal.";
 const BOLT_COLOR = 0x7048e8;
+/** Colours of the thermal conditions on the model (FR-TLOAD-011, FR-TBC-013): heat red, held temperature blue, convection cyan, radiation amber. */
+const THERMAL_COLOR: Record<string, number> = { heat: 0xe03131, vheat: 0xe03131, pkgheat: 0xe03131, hflux: 0xe03131, temp: 0x1c7ed6, conv: 0x1098ad, rad: 0xf08c00, radx: 0xae3ec9, chassis: 0x495057, insul: 0x8d6e63 };
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 /** Blue, cyan, green, yellow, red. */
 const RAMP: [number, number, number][] = [[0.11, 0.3, 0.85], [0.1, 0.75, 0.85], [0.25, 0.75, 0.3], [0.95, 0.85, 0.2], [0.88, 0.2, 0.15]];
@@ -653,6 +655,7 @@ export class SimController {
       conns: this.connRows(), connList: (this.study()?.connectors ?? []).map(c => ({ id: c.id, a: c.faces.length, b: c.faces2.length, kind: c.kind, k: c.k, kr: c.kr ?? null })), massList: (this.study()?.masses ?? []).map(m => ({ id: m.id, faces: m.faces.length, mass: m.mass })), connSide: this.connSide,
       welds: this.weldRows(), weldList: (this.study()?.welds ?? []).map(w => ({ id: w.id, edges: w.edges.length, throat: w.throat, ...(w.on === "points" ? { points: w.points?.length ?? 0, dia: w.dia ?? DEFAULT_SPOT } : {}) })),
       boltMarks: this.marks.children.filter(o => o.userData.simBolt).length,
+      tags: [...(this.tagLayer?.children ?? [])].map(e => ({ id: (e as HTMLElement).dataset.tag ?? "", kind: (e as HTMLElement).dataset.kind ?? "", text: e.querySelector("span")?.textContent ?? "", shown: !(e as HTMLElement).hidden })), rays: this.marks.children.filter(o => o.userData.simRays).length, arrowsOn: this.marks.children.filter(o => o.userData.simArrow).length,
       bolts: this.boltRows().map(x => ({ id: x.id, name: x.name, cls: x.cls, tapped: x.tapped, preload: x.preload, axial: x.axial, shear: x.shear, moment: x.moment, eq: x.eq, sf: x.sf })),
       boltList: this.study() ? this.screws(this.study()!).map(c => { const st = this.study()!, f = this.freshBolts(st); return { id: c.id, name: c.name, off: !!st.bolts?.[c.id]?.off, found: !!f?.list.some(x => x.id === c.id), missed: f?.missed.find(x => x.id === c.id)?.why ?? null }; }) : [],
       relief: !!this.study()?.settings.relief, accel: last?.accel ? { a: last.accel.a, alpha: last.accel.alpha } : null,
@@ -2154,13 +2157,20 @@ export class SimController {
     }
     const part = this.host.model(), st = this.study();
     this.marks.removeFromParent();
-    if (!part || !st || cmTab() !== "simulation") { this.host.viewer.invalidate(); return; }
+    if (!part || !st || cmTab() !== "simulation") { this.showTags([], null); this.host.viewer.invalidate(); return; }
     part.frame.add(this.marks);
     const plotted = !!this.saved;
     const off = new Set(st.suppressed ?? []);
+    // value callouts of the thermal conditions; items with no faces (whole body, all open surfaces) sit at the model's centre, one under another
+    const tags: { id: string; html: string; at: THREE.Vector3 | null }[] = [];
+    const tag = (it: StudySupport | StudyLoad, at: THREE.Vector3 | null, hot: boolean) => {
+      const text = it.type === "insul" ? "" : this.thermalText(it, st).split(", ")[0];
+      tags.push({ id: it.id, at: at?.clone() ?? null, html: `<div class="sim-tag${hot ? " hot" : ""}" data-tag="${esc(it.id)}" data-kind="${it.type}" style="--tc:#${(THERMAL_COLOR[it.type] ?? 0).toString(16).padStart(6, "0")}" title="${esc(it.name ?? it.id)}"><b aria-hidden="true">${ICON[it.type] ?? "•"}</b>${text ? `<span translate="no">${esc(text)}</span>` : ""}</div>` });
+    };
     const draw = (it: StudySupport | StudyLoad | StudyRefine | StudyExtra, load: boolean, hot: boolean) => {
-      const color = it.type === "refine" ? REFINE_COLOR : it.type === "connector" ? CONNECTOR_COLOR : it.type === "mass" ? MASS_COLOR : it.type === "weld" ? WELD_COLOR : load ? LOAD_COLOR : SUPPORT_COLOR;
+      const color = THERMAL_COLOR[it.type] ?? (it.type === "refine" ? REFINE_COLOR : it.type === "connector" ? CONNECTOR_COLOR : it.type === "mass" ? MASS_COLOR : it.type === "weld" ? WELD_COLOR : load ? LOAD_COLOR : SUPPORT_COLOR);
       const g = this.faceGeo(part, this.faceIds(it.faces));
+      if (isThermalType(it.type)) tag(it as StudySupport | StudyLoad, g.tris.length ? g.centre : null, hot);
       if (g.tris.length) {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute("position", new THREE.Float32BufferAttribute(g.tris, 3));
@@ -2197,6 +2207,21 @@ export class SimController {
         picked = n > 0;
         if (n) at = sum.multiplyScalar(1 / n);
       }
+      if (it.type === "rad" && picked && g.normal) {
+        // dashed rays leaving the faces
+        const n = g.normal, u = new THREE.Vector3(n.y, n.z, n.x).cross(n).normalize().multiplyScalar(len * 0.25), v = n.clone().cross(u);
+        const pts: number[] = [];
+        for (const o of [new THREE.Vector3(), u, u.clone().negate(), v, v.clone().negate()]) {
+          const a = at.clone().add(o), b = a.clone().addScaledVector(n, len).addScaledVector(o, 0.6);
+          pts.push(a.x, a.y, a.z, b.x, b.y, b.z);
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+        const rays = new THREE.LineSegments(geo, new THREE.LineDashedMaterial({ color, dashSize: len * 0.08, gapSize: len * 0.06, depthTest: false, transparent: true }));
+        rays.computeLineDistances();
+        rays.renderOrder = 2940; rays.userData.simRays = it.id; rays.raycast = () => {};
+        this.marks.add(rays);
+      }
       if (!load) return;
       const comp = () => new THREE.Vector3(...(l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v) as [number, number, number]);
       if (l.type === "centrifugal") {
@@ -2226,6 +2251,7 @@ export class SimController {
         dir = comp();
         if (dir.lengthSq() === 0) dir = new THREE.Vector3(...(l.mom ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v) as [number, number, number]);
       }
+      else if (l.type === "hflux") dir = g.normal ? g.normal.clone().multiplyScalar(-1) : null;
       else if (l.type === "pressure" || (l.type === "force" && l.normal)) dir = g.normal ? g.normal.clone().multiplyScalar(l.flip ? 1 : -1) : null;
       else dir = comp();
       if (!dir || dir.lengthSq() === 0) return;
@@ -2271,7 +2297,50 @@ export class SimController {
     const two = ed ? this.twoSided(ed) : null;
     if (ed && two) draw({ ...ed.draft, faces: this.connSide === 2 ? two.faces : two.faces2 } as typeof ed.draft, false, false);
     if (ed) draw(ed.draft, ed.kind === "load", true);
+    this.showTags(tags, part);
     this.host.viewer.invalidate();
+  }
+
+  private tagLayer: HTMLElement | null = null;
+  private tagPts: (THREE.Vector3 | null)[] = [];
+  private tagCentre = new THREE.Vector3();
+
+  /** Puts the thermal conditions' callouts (FR-TLOAD-011, FR-TBC-013) in their layer over the view. */
+  private showTags(tags: { html: string; at: THREE.Vector3 | null }[], part: SimModel | null) {
+    if (!tags.length) { this.tagLayer?.replaceChildren(); this.tagPts = []; return; }
+    if (!this.tagLayer) {
+      const el = this.tagLayer = document.createElement("div");
+      el.id = "sim-tags";
+      $("#viewport").appendChild(el);
+      this.host.viewer.onRender(() => this.placeTags());
+    }
+    if (part) new THREE.Box3().setFromBufferAttribute(part.geometry.getAttribute("position") as THREE.BufferAttribute).getCenter(this.tagCentre);
+    this.tagLayer.innerHTML = tags.map(x => x.html).join("");
+    this.tagPts = tags.map(x => x.at);
+    this.placeTags();
+  }
+
+  private placeTags() {
+    const el = this.tagLayer;
+    if (!el || !el.childElementCount) return;
+    const v = this.host.viewer, c = v.renderer.domElement, s = new THREE.Vector3();
+    const shown = !!this.marks.parent;
+    let row = 0;
+    // callouts landing on one another (two conditions on one face) are stacked one under another
+    const put: [number, number][] = [];
+    this.tagPts.forEach((p, k) => {
+      const d = el.children[k] as HTMLElement | undefined;
+      if (!d) return;
+      s.copy(p ?? this.tagCentre);
+      this.marks.localToWorld(s).project(v.camera);
+      const x = c.offsetLeft + ((s.x + 1) / 2) * c.clientWidth;
+      let y = c.offsetTop + ((1 - s.y) / 2) * c.clientHeight + (p ? 0 : 24 * row++);
+      while (put.some(([u, w]) => Math.abs(u - x) < 60 && Math.abs(w - y) < 22)) y += 24;
+      put.push([x, y]);
+      d.style.left = `${x}px`;
+      d.style.top = `${y}px`;
+      d.hidden = !shown || s.z > 1 || s.z < -1;
+    });
   }
 
   /** Yield strength (MPa, 0 = none) of the material at a sample point: its body's when bodies have their own materials. */
