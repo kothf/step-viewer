@@ -420,8 +420,8 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 
 ### 13.2 Accuracy
 
-- **NFR-TH-020** (TH2, M) Against analytic solutions after convergence: slab with fixed temperatures and internal heat within 0.5 %; fin with convection (Bessel solution) within 2 %; cylinder with internal heat and convection within 1 %; heat balance within 0.5 %.
-- **NFR-TH-021** (TH3, M) Against an open-source FEA thermal solver (Elmer or CalculiX, run offline, not shipped) on three cases (a heatsink part, a board with five sources, a board in a chassis): temperatures within 3 % of the rise above ambient. The comparison is kept in `docs/thermal-validation.md`.
+- **NFR-TH-020** (TH2, M) Against analytic solutions after convergence: slab with fixed temperatures and internal heat within 0.5 %; fin with convection (Bessel solution) within 2 %; cylinder with internal heat and convection within 1 %; heat balance within 0.5 %. Met in 1.694.0: pin fin (cosh), annular fin (Bessel) and heated cylinder within 0.02 % of the rise, balances to 1e-6 (`tests/unit/thermal-analytic.test.ts`, `docs/thermal-validation.md`).
+- **NFR-TH-021** (TH3, M) Against an open-source FEA thermal solver (Elmer or CalculiX, run offline, not shipped) on three cases (a heatsink part, a board with five sources, a board in a chassis): temperatures within 3 % of the rise above ambient. The comparison is kept in `docs/thermal-validation.md`. Measured in 1.694.0 against CalculiX (`bench/thval.bench.ts`): heatsink within 0.14 %; the two boards 3.6 % and 13 % cool at the hottest part with the default settings (resolution along the part footprints, shrinking with degree and cells); local degree raising and cells sized by the board come next.
 - **NFR-TH-022** (TH1, M) Displayed package values equal the file's values (no smoothing): a probe at a mesh point returns its `Temperature_C` exactly (to the display's decimals).
 - **NFR-TH-023** (TH3, S) A MöbiusCAD board study set up from a package agrees with the package's own map within the package's stated accuracy on the example boards (a cross-check, not a pass/fail on the design app).
 
