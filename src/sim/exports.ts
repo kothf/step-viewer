@@ -9,6 +9,16 @@ export function hotCsv(rows: { at: number[]; vm: number; singular: boolean }[]):
   return out.join("\r\n") + "\r\n";
 }
 
+/** A thermal result's hottest points and the sharp corners where the heat flux depends on refinement, as CSV. */
+export function thermalHotCsv(temps: { at: number[]; vm: number }[], corners: { at: number[]; vm: number }[]): string {
+  const n = (x: number) => (Number.isFinite(x) ? String(Number(x.toPrecision(7))) : "");
+  const at = (x: number) => String(Number(x.toFixed(6)) || 0);
+  const out = ["Kind,#,X (mm),Y (mm),Z (mm),Temperature (C),Heat flux (W/m2)"];
+  temps.forEach((r, i) => out.push(["Hottest point", String(i + 1), at(r.at[0]), at(r.at[1]), at(r.at[2]), n(r.vm), ""].join(",")));
+  corners.forEach((r, i) => out.push(["Sharp corner", String(i + 1), at(r.at[0]), at(r.at[1]), at(r.at[2]), "", n(r.vm * 1e6)].join(",")));
+  return out.join("\r\n") + "\r\n";
+}
+
 /**
  * A binary STL of a triangle mesh moved by `scale` × `u` (the deformed shape; `u` null = as it is).
  * Triangles with a repeated vertex (left out of the plot) are skipped.

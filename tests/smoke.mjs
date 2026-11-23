@@ -17213,6 +17213,16 @@ try {
     const dT = t2b.thermal.min - t2.thermal.min, rowT = t2b.compare?.rows?.find(r => r.key === "tmin");
     check(cmpT.sel === "prev" && t2b.compare?.with === "prev" && rowT && Math.abs(rowT.diff - dT) < 1e-6 && dT > 0 && JSON.stringify(cmpT.rows.map(r => r[0])) === JSON.stringify(["tmax", "tmin", "heat"]) && /^\+[\d.]+ K$/.test(cmpT.rows[1][1]) && cmpT.rows[2][1] === "0 %" && cmpT.passes === 1,
       `thermal 1.704: a thermal result is compared with the one before the last change: the lowest temperature rose with the ambient, in K, the heat put in did not change (${JSON.stringify({ cmpT, dT, compare: t2b.compare })})`);
+    // FR-TRES-003 (1.711.0): the hottest points are listed (no sharp inside corner on a bar), a row is labelled on the
+    // temperature plot, and the list saves as CSV
+    const hot0 = await tp.evaluate(() => ({ rows: document.querySelectorAll("#sim-tree .sim-thot tbody tr").length, corners: document.querySelectorAll("#sim-tree .sim-fcorners tbody tr").length, csv: !!document.querySelector('#sim-tree [data-a="thotcsv"]') }));
+    if (hot0.rows > 1) await tp.click('#sim-tree .sim-thot tr[data-thot="1"]');
+    await tp.waitForTimeout(200);
+    const t2c = await sim(), hot1 = await tp.evaluate(() => ({ sel: document.querySelectorAll("#sim-tree .sim-thot tr.sel").length, peaks: [...document.querySelectorAll("#sim-probes .sim-peak")].map(e => e.dataset.peak) }));
+    const th = t2c.thermal?.hot;
+    check(th && hot0.rows === th.temps.length && hot0.rows >= 1 && hot0.csv && Math.abs(th.temps[0].t - t2c.thermal.max) < 0.01 && th.corners.length === hot0.corners && th.csv.startsWith("Kind,#,X (mm),Y (mm),Z (mm),Temperature (C),Heat flux (W/m2)")
+      && (hot0.rows < 2 || (th.sel === 1 && hot1.sel === 1 && hot1.peaks.includes("t1") && t2c.plot.kind === "temp")),
+      `thermal 1.711: the hottest points of a thermal result are listed, the first one is the hottest temperature, a picked one is labelled on the temperature plot, and they save as CSV (${JSON.stringify({ hot0, hot1, th, plot: t2c.plot })})`);
     // FR-TSOL-003 (1.695.0): passes 4 to 6 raise the degree only where the temperatures still move
     await tp.selectOption('#sim-tree [data-k="passes"]', "5");
     await settle();
