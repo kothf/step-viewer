@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - Thermal studies use more than one processor core for the first time: before a steady thermal solve starts, the cells of the grid are cut against the bodies by helper workers on the other cores (the device's threads less two, at most 8; none on a device with fewer than four threads). The grid is the same as before, so the results are too. On a 100 × 60 mm board with three parts this step went from 78 s to 27 s on four cores. `?simthreads=N` in the address sets the number of helpers (0 = none).
+- The cooling terms of a thermal study with radiation or natural convection (made again at every step of the solve) take about half the time: the surface points are gone through element by element and each block is summed once. Results are the same. With both changes the same board study went from 5 min 50 s to 4 min 10 s on four cores.
 
 ## [1.716.0] - 2026-11-23
 

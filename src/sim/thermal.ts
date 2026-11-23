@@ -656,10 +656,40 @@ function heldTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Arr
  * A film on boundary points: K += h w N_a N_b, f += h w T∞ N_a. `rad` > 0 makes it radiation of that emissivity,
  * linearised about the temperatures `x` (°C): q = εσ(T⁴ − Ts⁴) ≈ q(T₀) + 4εσT₀³ (T − T₀).
  */
+/**
+ * The points of a list in element order (kept per list): the film terms then sum each element's points into one
+ * block, the upper triangle only, and add it to the matrix both ways, which is half the work of point by point.
+ */
+const byElement = new WeakMap<Float64Array, Int32Array>();
+function elementOrder(L: Float64Array): Int32Array {
+  let o = byElement.get(L);
+  if (!o) { o = Int32Array.from({ length: L.length / 8 }, (_, i) => i).sort((a, b) => L[8 * a] - L[8 * b] || a - b); byElement.set(L, o); }
+  return o;
+}
+/** Σ s·v vᵀ over an element's points, upper triangle; `flush` adds it to the element's block, mirrored. */
+class BlockSum {
+  private e = -1; private nb = 0; private a = new Float64Array(0); private K: Float64Array | null = null;
+  at(e: number, nb: number, K: Float64Array) {
+    if (e === this.e) return;
+    this.flush();
+    this.e = e; this.nb = nb; this.K = K;
+    if (this.a.length < nb * nb) this.a = new Float64Array(nb * nb); else this.a.fill(0, 0, nb * nb);
+  }
+  add(v: Float64Array, s: number) {
+    const { a, nb } = this;
+    for (let i = 0; i < nb; i++) { const si = s * v[i], r = i * nb; for (let j = i; j < nb; j++) a[r + j] += si * v[j]; }
+  }
+  flush() {
+    const { a, nb, K } = this;
+    if (K) for (let i = 0; i < nb; i++) { const r = i * nb; K[r + i] += a[r + i]; for (let j = i + 1; j < nb; j++) { const t = a[r + j]; K[r + j] += t; K[j * nb + i] += t; } }
+    this.e = -1; this.K = null;
+  }
+}
 function filmTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Array, h: number | ArrayLike<number>, amb: number, rad: number, x: Float64Array | null) {
-  const { grid, nbs, off, bas } = c;
-  for (let o = 0; o < L.length; o += 8) {
-    const e = L[o], nb = nbs[e], E = grid.elems[e], w = L[o + 4], K = A?.block(e, e), fo = off[e], hp = typeof h === "number" ? h : h[o / 8];
+  const { grid, nbs, off, bas } = c, order = elementOrder(L), sum = new BlockSum();
+  for (let k = 0; k < order.length; k++) {
+    const o = 8 * order[k];
+    const e = L[o], nb = nbs[e], E = grid.elems[e], w = L[o + 4], fo = off[e], hp = typeof h === "number" ? h : h[o / 8];
     bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
     let hh = hp, rhs = hp * amb;
     if (rad > 0) {
@@ -669,37 +699,29 @@ function filmTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Arr
       hh = 4 * es * T0 ** 3;
       rhs = hh * t0 - es * (T0 ** 4 - Ts ** 4);
     }
-    for (let a = 0; a < nb; a++) {
-      const na = w * bas.v[a], r = a * nb;
-      f[fo + a] += na * rhs;
-      if (K) for (let b = 0; b < nb; b++) K[r + b] += hh * na * bas.v[b];
-    }
+    const wr = w * rhs;
+    for (let a = 0; a < nb; a++) f[fo + a] += wr * bas.v[a];
+    if (A) { sum.at(e, nb, A.block(e, e)); sum.add(bas.v, hh * w); }
   }
+  sum.flush();
 }
-
-/**
- * Natural convection on boundary points: q = h(T)(T − T∞) with h ∝ |T − T∞|^¼, linearised about the temperatures
- * in `x` (dq/dT = 1.25 h); none yet = a plain film taken 10 K hotter than the air.
- */
 function naturalTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, s: ThermalSink, lens: Float64Array, x: Float64Array | null) {
-  const { grid, nbs, off, bas } = c, nat = s.natural!, amb = s.ambient ?? 0, dn = nat.down;
-  for (let o = 0, i = 0; o < L.length; o += 8, i += 2) {
-    const e = L[o], nb = nbs[e], E = grid.elems[e], w = L[o + 4], K = A.block(e, e), fo = off[e];
+  const { grid, nbs, off, bas } = c, nat = s.natural!, amb = s.ambient ?? 0, dn = nat.down, order = elementOrder(L), sum = new BlockSum();
+  for (let k = 0; k < order.length; k++) {
+    const o = 8 * order[k], i = 2 * order[k];
+    const e = L[o], nb = nbs[e], E = grid.elems[e], w = L[o + 4], fo = off[e];
     bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
     let t0 = amb + 10;
     if (x) { t0 = 0; for (let a = 0; a < nb; a++) t0 += bas.v[a] * x[fo + a]; }
     const up = -(L[o + 5] * dn[0] + L[o + 6] * dn[1] + L[o + 7] * dn[2]);
     const h = nat.factor * naturalH(up, t0 - amb, lens[i], lens[i + 1]);
-    const hh = x ? 1.25 * h : h, rhs = x ? hh * t0 - h * (t0 - amb) : h * amb;
-    for (let a = 0; a < nb; a++) {
-      const na = w * bas.v[a], r = a * nb;
-      f[fo + a] += na * rhs;
-      for (let b = 0; b < nb; b++) K[r + b] += hh * na * bas.v[b];
-    }
+    const hh = x ? 1.25 * h : h, wr = w * (x ? hh * t0 - h * (t0 - amb) : h * amb);
+    for (let a = 0; a < nb; a++) f[fo + a] += wr * bas.v[a];
+    sum.at(e, nb, A.block(e, e));
+    sum.add(bas.v, hh * w);
   }
+  sum.flush();
 }
-
-/** The points of a natural convection sink, located face by face so each keeps its face's sizes (2 numbers per point). */
 function naturalPoints(c: Ctx, s: ThermalSink, q: number): { L: Float64Array; lens: Float64Array } {
   return groupedPoints(c, s, q, [s.natural!.lv, s.natural!.lh]);
 }
