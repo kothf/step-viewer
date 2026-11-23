@@ -53,6 +53,8 @@ export class SectionManager {
   capSource: ((part: Viewer["parts"][number]) => THREE.BufferGeometry | null) | null = null;
   /** Called whenever the caps were made or moved, with each cap and its plane (to paint results on them). */
   onCaps: ((caps: { mesh: THREE.Mesh; sp: SectionPlane }[]) => void) | null = null;
+  /** More listeners like `onCaps` (a board thermal map paints the caps too). */
+  readonly capHooks: ((caps: { mesh: THREE.Mesh; sp: SectionPlane }[]) => void)[] = [];
   private profileRoot = new THREE.Group();
   private pivot = new THREE.Object3D();
   private planeHelper: THREE.Mesh;
@@ -466,6 +468,7 @@ export class SectionManager {
       mesh.lookAt(o.clone().sub(sp.plane.normal));
     }
     this.onCaps?.(this.capMeshes);
+    for (const h of this.capHooks) h(this.capMeshes);
   }
 
   private queueProfiles() {
