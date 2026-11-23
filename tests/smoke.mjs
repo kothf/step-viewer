@@ -18708,7 +18708,8 @@ try {
   }
 
   // --- chassis wall 1.690 (FRS-thermal FR-TBC-009): a part's end on a chassis wall of 2 K/W; held at a temperature ---
-  if (inShard(5)) {
+  // In shard 3 since 1.700.0: shard 5 reached the 12 minute limit.
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const cp = await ctx.newPage();
     cp.on("pageerror", e => errors.push(e.message));
@@ -19183,7 +19184,8 @@ try {
   }
 
   // --- Structural analysis 1.637 (FR-CON-020/021): a toolbox screw with its nut is analysed as a bolt ---
-  if (inShard(5)) {
+  // In shard 3 since 1.700.0: shard 5 reached the 12 minute limit.
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
