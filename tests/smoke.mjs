@@ -17223,6 +17223,19 @@ try {
     check(th && hot0.rows === th.temps.length && hot0.rows >= 1 && hot0.csv && Math.abs(th.temps[0].t - t2c.thermal.max) < 0.01 && th.corners.length === hot0.corners && th.csv.startsWith("Kind,#,X (mm),Y (mm),Z (mm),Temperature (C),Heat flux (W/m2)")
       && (hot0.rows < 2 || (th.sel === 1 && hot1.sel === 1 && hot1.peaks.includes("t1") && t2c.plot.kind === "temp")),
       `thermal 1.711: the hottest points of a thermal result are listed, the first one is the hottest temperature, a picked one is labelled on the temperature plot, and they save as CSV (${JSON.stringify({ hot0, hot1, th, plot: t2c.plot })})`);
+    // FR-TRES-002 (1.712.0): the summary card over the view: hottest, coolest, heat balance, error; folds to one line
+    const card = async () => tp.evaluate(() => { const el = document.querySelector("#sim-summary"); return { shown: !!el && !el.hidden, head: el?.querySelector('[data-v="hottest"]')?.textContent ?? "", lines: [...(el?.querySelectorAll("li[data-v]") ?? [])].map(l => l.dataset.v), bal: el?.querySelector('[data-v="sbalance"]')?.textContent ?? "", cold: el?.querySelector('[data-v="scold"]')?.textContent ?? "" }; });
+    const sum0 = await card();
+    await tp.click('#sim-summary [data-v="shot"]');
+    await tp.waitForTimeout(200);
+    const t2d = await sim();
+    await tp.click('#sim-summary [data-a="fold"]');
+    const sum1 = await card();
+    await tp.click('#sim-summary [data-a="fold"]');
+    const sum2 = await card();
+    check(sum0.shown && sum0.head.includes(String(Math.round(t2c.thermal.max))) && sum0.lines.includes("scold") && sum0.lines.includes("sbalance") && sum0.lines.includes("serror") && /W/.test(sum0.bal)
+      && t2d.thermal.hot.sel === 0 && t2d.plot.on && sum1.shown && sum1.lines.length === 0 && sum2.lines.length === sum0.lines.length,
+      `thermal 1.712: a thermal result has a summary card over the view with the hottest and coolest temperatures, the heat balance and the error; the hottest line picks the hottest point, and the card folds to one line (${JSON.stringify({ sum0, sum1, sum2, sel: t2d.thermal.hot.sel })})`);
     // FR-TSOL-003 (1.695.0): passes 4 to 6 raise the degree only where the temperatures still move
     await tp.selectOption('#sim-tree [data-k="passes"]', "5");
     await settle();

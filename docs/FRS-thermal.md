@@ -320,7 +320,7 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 | FR-TLOAD-004 | TH3 | M | **Heat from package** | (all package parts) | One power per package part on its matched bodies, split by its heat path (FR-TBRD-003); edited as one row with a table of parts, each part can be left out or given another power. |
 | FR-TLOAD-005 | TH4 | M | **Power profile** | any heat load | Step, table of (time, power or factor), duty cycle (on time, period), expression of t; reuses the motion study profile parsers (`parsePoints`, `exprValue`). Step, duty and table built in 1.661.0; expression of t in 1.691.0. |
 
-- **FR-TLOAD-010** (TH2, M) Values accept expressions, units and global variables (`values.ts` pattern; W, mW, kW, BTU/h for power; W/m², W/cm² for flux).
+- **FR-TLOAD-010** (TH2, M) Values accept expressions, units and global variables (`values.ts` pattern; W, mW, kW, BTU/h for power; W/m², W/cm² for flux). BTU/h added in 1.712.0.
 - **FR-TLOAD-011** (TH2, M) Heat loads are drawn on the model: a flame glyph with "15 W" on bodies and components, small inward arrows on faces with a flux. Built in 1.692.0: a callout per heat load with its symbol and value on its faces (whole-body loads at the model's centre), an arrow into a face with a flux.
 
 ### 9.3 Boundary conditions
@@ -390,7 +390,7 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 ### 12.1 Results
 
 - **FR-TRES-001** (TH2, M) Plots: temperature (default), temperature rise above ambient, heat flux magnitude, heat flux vectors (arrows on a sampled set of surface points), error estimate. Built in 1.669.0: Temperature rise (K above the study's ambient) in the plot list, Heat flow arrows checkbox under the colour scale (temperature, heat flux and error plots were built in 1.651.0).
-- **FR-TRES-002** (TH2, M) The summary card (FR-TMAP-006) for studies: hottest point and body, coolest, heat balance, error estimate, and for boards the TH1 lines.
+- **FR-TRES-002** (TH2, M) The summary card (FR-TMAP-006) for studies: hottest point and body, coolest, heat balance, error estimate, and for boards the TH1 lines. Built in 1.712.0.
 - **FR-TRES-003** (TH2, M) Probes, paths (temperature along a line, CSV), section caps with interior temperatures, iso-clipping, hot-spot list (local maxima; temperatures have no singular points, so no singularity marks; heat flux at sharp corners is marked as structural stress is), legend probe label — all as structural results. Hottest points and flux corners built in 1.711.0.
 - **FR-TRES-004** (TH2, M) Heat balance table: every load and every way out with its W; the imbalance in %.
 - **FR-TRES-005** (TH3, M) Per-component table: max / mean temperature, heat produced, heat leaving by convection, radiation and conduction to each neighbour; clicking a row shows that component alone, as structural per-component results. Built in 1.700.0: the steady result's components carry `conv`/`rad`/`held`/`cond` (sinks' flows split by domain, contacts and face exchanges), shown as the Where the heat goes table beside By component, in the report and in the heat balance CSV.

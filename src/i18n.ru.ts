@@ -6426,4 +6426,9 @@ export const RU: Record<string, string> = {
   "The heat flux at {n} sharp corners keeps rising with accuracy: its value there depends on refinement.": "Тепловой поток в острых углах ({n}) растёт с точностью расчёта: его значение там зависит от уточнения.",
   "Temperatures are not affected. Round the corner to get a real value.": "На температуры это не влияет. Скруглите угол, чтобы получить настоящее значение.",
   "Save the hottest points and the sharp corners as a CSV file": "Сохранить самые горячие точки и острые углы в файл CSV",
+  "Study summary": "Сводка расчёта",
+  "Coolest": "Холоднее всего",
+  "At {t}": "В момент {t}",
+  "Estimated error {e} %": "Оценка погрешности {e} %",
+  "Heat in {w} W, out of balance {p} %": "Подведено {w} Вт, небаланс {p} %",
 };
