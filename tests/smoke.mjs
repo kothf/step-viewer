@@ -17228,7 +17228,7 @@ try {
     // FR-TLOAD-001 (1.705.0): Heat power per face: two picked faces, 2 W each = 4 W made
     await tp.click('#sim-tools [data-s="heat"]');
     await tp.waitForSelector("#sim-pm .pm-ok");
-    for (const f of ["f1:side:s1l1", "f1:side:s1l3"]) { p = await at(f); await tp.mouse.click(p.x, p.y); await tp.waitForTimeout(200); }
+    for (const f of ["f1:end", "f1:side:s1l2"]) { p = await at(f); await tp.mouse.click(p.x, p.y); await tp.waitForTimeout(200); }
     await tp.fill('#sim-pm [data-n="value"]', "2");
     await tp.press('#sim-pm [data-n="value"]', "Tab");
     const each0 = await tp.evaluate(() => ({ box: !!document.querySelector('#sim-pm [data-k="each"]'), help: [...document.querySelectorAll("#sim-pm .pm-help")].map(e => e.textContent).join(" ") }));
