@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.699.0] - 2026-11-23
+
+### Added
+
+- Warm-up results of an assembly: the chart over time draws each component's highest temperature beside the hottest point and the probes (the three hottest at first; a list under the chart picks which), time to reach a temperature is given for them too, and the CSV has a column for every component's highest temperature.
+- A speed choice (×0.25 to ×4) beside Play on the legend of a warm-up.
+
 ## [1.698.0] - 2026-11-23
 
 ### Added
@@ -4606,7 +4613,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.698.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.699.0...HEAD
+[1.699.0]: https://github.com/kothf/step-viewer/compare/v1.698.0...v1.699.0
 [1.698.0]: https://github.com/kothf/step-viewer/compare/v1.697.0...v1.698.0
 [1.697.0]: https://github.com/kothf/step-viewer/compare/v1.696.0...v1.697.0
 [1.696.0]: https://github.com/kothf/step-viewer/compare/v1.695.0...v1.696.0

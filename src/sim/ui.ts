@@ -46,7 +46,7 @@ import { copperFromGerber } from "../thermal/copperRaster";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, frameComps, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
-import { BOARD_RC, SERIES_COLORS, exprProblem, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
+import { BOARD_RC, SERIES_COLORS, componentSeries, exprProblem, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
 import { fluxArrows } from "./arrows";
 import { parseKTable, kTableText, ktFactors, type KTable } from "./ktable";
 import { DEFAULT_CHASSIS_RTH, DEFAULT_GAP, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
@@ -231,6 +231,8 @@ export class SimController {
   private playTimer = 0;
   /** Transient results: the temperature typed for "time to reach", °C. */
   private reach: number | null = null;
+  /** Transient results of an assembly: the components (solver domains) whose maximum is drawn over time; null = the three hottest at the end. View only. */
+  private tcompSel: { key: string; ds: number[] } | null = null;
   /** The conductivity table open for editing: "" = the part's, else a component id (view only). */
   private ktOpen: string | null = null;
   /** Thermal studies: whose conductivity by direction is being edited (FR-TMAT-003): "" = the part, else a component id. */
@@ -646,7 +648,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, arrows: this.arrows, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), parts: this.partTempRows(), near: this.nearHotRows(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), comps: this.compSeries().map(c => ({ name: c.name, v: Array.from(c.v) })), compsShown: [...this.compsShown(this.compSeries())].map(d => this.res?.comps?.[d]?.name ?? ""), speed: this.speed, reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), parts: this.partTempRows(), near: this.nearHotRows(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -2968,6 +2970,7 @@ export class SimController {
     return `<div class="sim-time"><button class="btn small" data-a="tplay" aria-pressed="${!!this.playTimer}" title="${esc(t(this.playTimer ? "Pause" : "Play the warm-up"))}">${this.playTimer ? "❚❚" : "▶"}</button>`
       + `<input type="range" data-k="time" min="0" max="${T.times.length - 1}" step="1" value="${k}" aria-label="${esc(t("Time"))}" />`
       + `<span data-v="ttime" translate="no">${esc(timeText(T.times[k]))}</span>`
+      + `<select data-k="speed" aria-label="${esc(t("Speed"))}" title="${esc(t("Speed"))}">${[0.25, 0.5, 1, 2, 4].map(x => `<option value="${x}"${x === this.speed ? " selected" : ""}>×${x}</option>`).join("")}</select>`
       + `<button class="btn small" data-a="gif" title="${esc(t("Save the warm-up as an animated GIF of the current view"))}">GIF</button></div>`;
   }
 
@@ -2982,12 +2985,27 @@ export class SimController {
     });
   }
 
+  /** Each component's highest temperature over the run (assemblies, FR-TRES-006), hottest at the end first; `d` = solver domain. */
+  private compSeries(): { d: number; name: string; v: Float32Array }[] {
+    const r = this.res, T = r?.tr?.transient;
+    if (!r?.comps || !T?.cstats?.length) return [];
+    return componentSeries(T.cstats, r.comps.map(c => c.name));
+  }
+
+  /** The components drawn on the chart over time. */
+  private compsShown(all: { d: number }[]): Set<number> {
+    const sel = this.tcompSel && this.tcompSel.key === this.res?.key ? this.tcompSel.ds : null;
+    return new Set(sel ?? all.slice(0, 3).map(c => c.d));
+  }
+
   /** Transient results in the Study tab: the run, a chart of the hottest point and the probes over time, time to reach. */
   private transientHtml(): string {
     const T = this.res?.tr?.transient;
     if (!T) return "";
     const end = T.times[T.times.length - 1], hot = T.max[T.max.length - 1], series = this.probeSeries();
-    const lines = [{ name: t("Hottest point"), v: Float32Array.from(T.max), color: "#e03131" }, ...series.map((s, i) => ({ ...s, color: SERIES_COLORS[i % SERIES_COLORS.length] }))];
+    const comps = this.compSeries(), shown = this.compsShown(comps), colorOf = (i: number) => SERIES_COLORS[i % SERIES_COLORS.length];
+    const lines = [{ name: t("Hottest point"), v: Float32Array.from(T.max), color: "#e03131" }, ...series.map((s, i) => ({ ...s, color: colorOf(i) })),
+      ...comps.flatMap((c, j) => (shown.has(c.d) ? [{ name: c.name, v: c.v, color: colorOf(series.length + j), comp: true }] : []))];
     let html = `<h5 class="sim-sub">${esc(t("Over time"))}</h5><dl class="sim-kv">`
       + `<dt>${esc(t("Start"))}</dt><dd data-v="tstart">${sig(T.t0)} °C</dd>`
       + `<dt>${esc(t("Hottest at the end"))}</dt><dd data-v="tend">${sig(hot)} °C ${esc(t("after {t}", { t: timeText(end) }))}</dd>`
@@ -2995,10 +3013,11 @@ export class SimController {
       + `<dt>${esc(t("Time steps"))}</dt><dd data-v="tsteps" title="${esc(t("Shortest {a}, longest {b}", { a: timeText(T.dt[0]), b: timeText(T.dt[1]) }))}">${T.steps}</dd>`
       + `<dt>${esc(t("Heat capacity"))}</dt><dd data-v="tcap">${sig(T.capacity)} J/K</dd></dl>`;
     html += timeChartSvg(T.times, lines, this.frame, timeText);
-    html += `<div class="sim-legline">${lines.map(l => `<span><i style="background:${l.color}"></i>${esc(l.name)}</span>`).join("")}</div>`;
+    html += `<div class="sim-legline">${lines.map(l => `<span${"comp" in l ? ` translate="no"` : ""}><i style="background:${l.color}"></i>${esc(l.name)}</span>`).join("")}</div>`;
+    if (comps.length) html += `<details class="sim-tcomps-pick"${this.tcompSel?.key === this.res?.key ? " open" : ""}><summary>${esc(t("Components on the chart ({n} of {m})", { n: comps.filter(c => shown.has(c.d)).length, m: comps.length }))}</summary><ul class="sim-tcomplist">${comps.map(c => `<li><label class="chk"><input type="checkbox" data-k="tcomp" data-d="${c.d}"${shown.has(c.d) ? " checked" : ""} /><span translate="no">${esc(c.name)}</span> <span class="sim-dim" data-v="tcompmax">${sig(c.v[c.v.length - 1])} °C</span></label></li>`).join("")}</ul></details>`;
     html += `<label class="pm-field sim-reach"><span>${esc(t("Time to reach"))}</span><input type="text" inputmode="decimal" data-k="reach" value="${this.reach ?? ""}" placeholder="°C" aria-label="${esc(t("Time to reach, °C"))}" /></label>`;
-    if (this.reach != null) html += `<ul class="sim-reachlist">${lines.map(l => { const at = timeToReach(T.times, l.v, this.reach!); return `<li data-v="treach">${esc(l.name)}: ${at == null ? esc(t("not reached")) : esc(timeText(at))}</li>`; }).join("")}</ul>`;
-    html += `<button class="btn small" data-a="tcsv" title="${esc(t("Save the temperatures over time (hottest point and probes) as a CSV file"))}">${esc(t("Export CSV"))}</button>`;
+    if (this.reach != null) html += `<ul class="sim-reachlist">${lines.map(l => { const at = timeToReach(T.times, l.v, this.reach!); return `<li data-v="treach"><span${"comp" in l ? ` translate="no"` : ""}>${esc(l.name)}</span>: ${at == null ? esc(t("not reached")) : esc(timeText(at))}</li>`; }).join("")}</ul>`;
+    html += `<button class="btn small" data-a="tcsv" title="${esc(t("Save the temperatures over time (hottest point, probes and each component's highest) as a CSV file"))}">${esc(t("Export CSV"))}</button>`;
     return html;
   }
 
@@ -3011,7 +3030,7 @@ export class SimController {
   private transientCsvText(): string {
     const T = this.res?.tr?.transient;
     if (!T) return "";
-    return withLang("en", () => transientCsv(T.times, [{ name: t("Hottest point"), v: T.max }, ...this.probeSeries()]));
+    return withLang("en", () => transientCsv(T.times, [{ name: t("Hottest point"), v: T.max }, ...this.probeSeries(), ...this.compSeries().map(c => ({ name: `${c.name} max`, v: c.v }))]));
   }
 
   private showPlot() {
@@ -4531,6 +4550,12 @@ export class SimController {
         if (k === "tend") x.end = v; else if (k === "tout") x.out = v; else if (el.value.trim() === "") delete x.t0; else x.t0 = v;
       });
     }
+    else if (el.dataset.k === "tcomp") {
+      const all = this.compSeries(), on = this.compsShown(all), d = Number(el.dataset.d);
+      if (el.checked) on.add(d); else on.delete(d);
+      this.tcompSel = { key: this.res?.key ?? "", ds: all.filter(c => on.has(c.d)).map(c => c.d) };
+      this.renderTree();
+    }
     else if (el.dataset.k === "reach") {
       const v = Number(el.value);
       this.reach = el.value.trim() && Number.isFinite(v) ? v : null;
@@ -4890,7 +4915,7 @@ export class SimController {
     else if (k === "isoside") this.iso.below = el.value === "below";
     else if (k === "isoval") { const v = num(el.value), fu = this.plotUnit()[1]; this.iso.value = el.value.trim() && v != null ? v / fu : null; }
     else if (k === "animate") this.animate = el.checked;
-    else if (k === "speed") this.speed = Number(el.value) || 1;
+    else if (k === "speed") { this.speed = Number(el.value) || 1; if (this.playTimer) { this.stopPlay(); this.startPlay(); return; } if (this.res?.tr?.transient) return; }
     else if (k === "mode") { this.modeSel = Number(el.value); this.renderTree(); }
     else if (k === "time") { this.seek(Number(el.value)); return; }
     else if (k === "scale") { const v = num(el.value); this.plot.scale = el.value.trim() && v != null && v > 0 ? v : 0; }
