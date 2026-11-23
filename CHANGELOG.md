@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.702.0] - 2026-11-23
+
+### Added
+
+- Board thermal studies: the Heat from package load's parts table takes each part's temperature limit and an electrolytic capacitor's rated life (hours at its limit). Part temperatures then marks the parts over their limit and gives each electrolytic's life by the 10 °C rule, marking those under 10,000 h; the report has the same column. Limits, rated lives and Rjc only change the verdicts, so the results stay up to date without solving again.
+
 ## [1.701.0] - 2026-11-23
 
 ### Added
@@ -4632,7 +4638,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.701.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.702.0...HEAD
+[1.702.0]: https://github.com/kothf/step-viewer/compare/v1.701.0...v1.702.0
 [1.701.0]: https://github.com/kothf/step-viewer/compare/v1.700.0...v1.701.0
 [1.700.0]: https://github.com/kothf/step-viewer/compare/v1.699.0...v1.700.0
 [1.699.0]: https://github.com/kothf/step-viewer/compare/v1.698.0...v1.699.0

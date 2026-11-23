@@ -17,7 +17,7 @@ import { zip } from "../model/zip";
 import { packageFiles, partBoxes, type ExportPart } from "../thermal/export";
 import type { ThermalMesh } from "../thermal/vtu";
 import { balanceCsv } from "../thermal/csv";
-import { nearHot } from "../thermal/package";
+import { DEFAULT_LIMITS, nearHot } from "../thermal/package";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
 import { chooseModal, toast } from "../ui";
@@ -51,6 +51,9 @@ import { BOARD_RC, SERIES_COLORS, componentSeries, exprProblem, parseProfile, pr
 import { fluxArrows } from "./arrows";
 import { parseKTable, kTableText, ktFactors, type KTable } from "./ktable";
 import { DEFAULT_CHASSIS_RTH, DEFAULT_GAP, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
+
+/** Hours to two significant figures (capacitor life). */
+const hours = (h: number) => String(Math.round(+h.toPrecision(2)));
 
 /** What a study needs of its document: a part's, or an assembly's (which has no material or bodies of its own). */
 export type SimDoc = Pick<PartDoc, "id" | "name"> & Partial<Pick<PartDoc, "studies" | "vars" | "material" | "bodies">>;
@@ -492,7 +495,9 @@ export class SimController {
   /** What the results depend on: the model, the material and the study's set-up. */
   private keyOf(_doc: SimDoc, st: Study) {
     const model = this.host.stateKey();
-    const parts: unknown[] = [...model.head, st.supports, st.loads, st.settings, st.suppressed ?? null];
+    // a package part's limit, rated life and Rjc only change what the results say, not the solve (FR-TBRD-022)
+    const loads = st.loads.map(l => (l.type === "pkgheat" && l.parts ? { ...l, parts: l.parts.map(({ limit: _l, life: _f, rjc: _r, ...x }) => x) } : l));
+    const parts: unknown[] = [...model.head, st.supports, loads, st.settings, st.suppressed ?? null];
     if (st.refine?.length) parts.push(st.refine);
     // thermal stress: the temperatures come from another study, so its set-up counts too
     const from = st.loads.find(l => l.type === "temperature" && l.from)?.from, src = from ? this.host.doc()?.studies?.find(x => x.id === from) : null;
@@ -1954,10 +1959,11 @@ export class SimController {
     const rows = this.partTempRows();
     if (!rows.length) return "";
     const kind = (x: PartTemp) => x.kind === "junction" ? t("Junction") : x.kind === "case" ? t("Case") : t("Body");
-    const lim = rows.some(x => x.limit !== undefined);
+    const lim = rows.some(x => x.limit !== undefined), life = rows.some(x => x.life !== undefined);
     return `<h5 class="sim-sub">${esc(t("Part temperatures"))}</h5>`
-      + `<table class="sim-comptable sim-ptemps"><thead><tr><th>${esc(t("Part"))}</th><th>°C</th><th title="${esc(t("What the temperature is of"))}">${esc(t("Kind"))}</th>${lim ? `<th title="${esc(t("Temperature limit from the package"))}">${esc(t("Limit"))}, °C</th>` : ""}</tr></thead><tbody>`
-      + rows.map(x => `<tr data-ptemp="${esc(x.name)}" class="${x.over ? "bad" : ""}"${x.kind === "junction" ? ` title="${esc(t("Case {c} °C + power × Rjc", { c: sig(x.body) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td data-v="pttemp">${sig(x.t)}</td><td data-v="ptkind"${x.caseOnly ? ` title="${esc(t("The package gives a junction temperature, but no Rjc is known: this is the case only."))}"` : ""}>${esc(kind(x))}${x.caseOnly ? "*" : ""}</td>${lim ? `<td data-v="ptlimit">${x.limit === undefined ? "" : sig(x.limit)}</td>` : ""}</tr>`).join("") + `</tbody></table>`
+      + `<table class="sim-comptable sim-ptemps"><thead><tr><th>${esc(t("Part"))}</th><th>°C</th><th title="${esc(t("What the temperature is of"))}">${esc(t("Kind"))}</th>${lim ? `<th title="${esc(t("Temperature limit from the package"))}">${esc(t("Limit"))}, °C</th>` : ""}${life ? `<th title="${esc(t("Electrolytic life by the 10 °C rule: the rated life doubles for every 10 °C under the limit"))}">${esc(t("Life"))}, h</th>` : ""}</tr></thead><tbody>`
+      + rows.map(x => `<tr data-ptemp="${esc(x.name)}" class="${x.over ? "bad" : x.life !== undefined && x.life < DEFAULT_LIMITS.life ? "warn" : ""}"${x.kind === "junction" ? ` title="${esc(t("Case {c} °C + power × Rjc", { c: sig(x.body) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td data-v="pttemp">${sig(x.t)}</td><td data-v="ptkind"${x.caseOnly ? ` title="${esc(t("The package gives a junction temperature, but no Rjc is known: this is the case only."))}"` : ""}>${esc(kind(x))}${x.caseOnly ? "*" : ""}</td>${lim ? `<td data-v="ptlimit">${x.limit === undefined ? "" : sig(x.limit)}</td>` : ""}${life ? `<td data-v="ptlife">${x.life === undefined ? "" : hours(x.life)}</td>` : ""}</tr>`).join("") + `</tbody></table>`
+      + (rows.some(x => !x.over && x.life !== undefined && x.life < DEFAULT_LIMITS.life) ? `<p class="sim-note" data-v="lifenote">${esc(t("Electrolytics expected to last under {h} h are marked.", { h: hours(DEFAULT_LIMITS.life) }))}</p>` : "")
       + (rows.some(x => x.caseOnly) ? `<p class="sim-note muted" data-v="ptnote">${esc(t("* Case temperature only: type the part's Rjc (junction to case, K/W) in the Parts table of the package heat load to get its junction temperature."))}</p>` : "");
   }
 
@@ -3778,7 +3784,8 @@ export class SimController {
     const pts = this.partTempRows(res);
     if (pts.length) {
       blocks.push({ kind: "h", text: t("Part temperatures") });
-      blocks.push({ kind: "table", widths: [3, 2, 2, 2], rows: [[t("Part"), "°C", t("Kind"), `${t("Limit")}, °C`], ...pts.map(x => [x.name, sig(x.t), (x.kind === "junction" ? t("Junction") : x.kind === "case" ? t("Case") : t("Body")) + (x.caseOnly ? "*" : ""), x.limit === undefined ? "–" : sig(x.limit)])] });
+      const life = pts.some(x => x.life !== undefined);
+      blocks.push({ kind: "table", widths: life ? [3, 2, 2, 2, 2] : [3, 2, 2, 2], rows: [[t("Part"), "°C", t("Kind"), `${t("Limit")}, °C`, ...(life ? [`${t("Life")}, h`] : [])], ...pts.map(x => [x.name, sig(x.t), (x.kind === "junction" ? t("Junction") : x.kind === "case" ? t("Case") : t("Body")) + (x.caseOnly ? "*" : ""), x.limit === undefined ? "–" : sig(x.limit), ...(life ? [x.life === undefined ? "–" : hours(x.life)] : [])])] });
       if (pts.some(x => x.caseOnly)) blocks.push({ kind: "p", text: t("* Case temperature only: type the part's Rjc (junction to case, K/W) in the Parts table of the package heat load to get its junction temperature.") });
     }
     if (res.comps && T.contacts?.length) {
@@ -4367,10 +4374,10 @@ export class SimController {
       else if (l.type === "heat") body += group(t("Heat"), chk("body", l.body, this.host.asm() ? t("Throughout the whole component") : t("Throughout the whole body")) + nf("value", t("Power"), l.value, "W")
         + `<p class="pm-help muted">${esc(l.body ? (this.host.asm() ? t("The total power, made evenly throughout the components the picked faces are on.") : t("The total power, made evenly throughout the part's volume.")) : t("The total power, spread evenly over the picked faces."))}</p>`) + this.profileGroup(l, group);
       else if (l.type === "pkgheat") {
-        const parts = l.parts ?? [];
-        body += group(t("Parts"), `<table class="sim-pkparts"><thead><tr><th></th><th>${esc(t("Part"))}</th><th>${esc(t("Power, W"))}</th><th title="${esc(t("Junction to case, K/W: the part's temperature is then its case plus power × Rjc"))}">Rjc, K/W</th></tr></thead><tbody>${parts.map((x, i) => {
+        const parts = l.parts ?? [], lifeCol = parts.some(x => x.elyt || x.life !== undefined);
+        body += group(t("Parts"), `<table class="sim-pkparts"><thead><tr><th></th><th>${esc(t("Part"))}</th><th>${esc(t("Power, W"))}</th><th title="${esc(t("Junction to case, K/W: the part's temperature is then its case plus power × Rjc"))}">Rjc, K/W</th><th title="${esc(t("Temperature limit, °C: the result marks the part when it runs hotter"))}">${esc(t("Limit"))}, °C</th>${lifeCol ? `<th title="${esc(t("Rated life of an electrolytic at its limit, h: the result gives its life by the 10 °C rule"))}">${esc(t("Life"))}, h</th>` : ""}</tr></thead><tbody>${parts.map((x, i) => {
           const low = !(x.p >= PACKAGE_MIN_POWER), lost = !x.comps.length;
-          return `<tr data-pk="${x.id}" class="${low || lost ? "muted" : ""}"${lost ? ` title="${esc(t("No body of the model was matched to this part."))}"` : low ? ` title="${esc(t("Under 10 mW: left out."))}"` : ""}><td><input type="checkbox" data-k="pkon" data-i="${i}" aria-label="${esc(x.name)}"${x.off ? "" : " checked"}${lost ? " disabled" : ""} /></td><td translate="no">${esc(x.name)}</td><td><input type="text" inputmode="decimal" data-q="pkp" data-i="${i}" value="${trim(x.p)}" spellcheck="false"${lost ? " disabled" : ""} /></td><td><input type="text" inputmode="decimal" data-q="pkrjc" data-i="${i}" value="${x.rjc === undefined ? "" : trim(x.rjc)}" placeholder="${x.junction ? esc(t("none")) : ""}" spellcheck="false" aria-label="${esc(t("{name}: Rjc", { name: x.name }))}"${lost ? " disabled" : ""} /></td></tr>`;
+          return `<tr data-pk="${x.id}" class="${low || lost ? "muted" : ""}"${lost ? ` title="${esc(t("No body of the model was matched to this part."))}"` : low ? ` title="${esc(t("Under 10 mW: left out."))}"` : ""}><td><input type="checkbox" data-k="pkon" data-i="${i}" aria-label="${esc(x.name)}"${x.off ? "" : " checked"}${lost ? " disabled" : ""} /></td><td translate="no">${esc(x.name)}</td><td><input type="text" inputmode="decimal" data-q="pkp" data-i="${i}" value="${trim(x.p)}" spellcheck="false"${lost ? " disabled" : ""} /></td><td><input type="text" inputmode="decimal" data-q="pkrjc" data-i="${i}" value="${x.rjc === undefined ? "" : trim(x.rjc)}" placeholder="${x.junction ? esc(t("none")) : ""}" spellcheck="false" aria-label="${esc(t("{name}: Rjc", { name: x.name }))}"${lost ? " disabled" : ""} /></td><td><input type="text" inputmode="decimal" data-q="pklim" data-i="${i}" value="${x.limit === undefined ? "" : trim(x.limit)}" spellcheck="false" aria-label="${esc(t("{name}: limit", { name: x.name }))}"${lost ? " disabled" : ""} /></td>${lifeCol ? `<td>${x.elyt || x.life !== undefined ? `<input type="text" inputmode="decimal" data-q="pklife" data-i="${i}" value="${x.life === undefined ? "" : trim(x.life)}" spellcheck="false" aria-label="${esc(t("{name}: rated life", { name: x.name }))}"${lost ? " disabled" : ""} />` : ""}</td>` : ""}</tr>`;
         }).join("")}</tbody></table>`
           + `<p class="pm-help muted">${esc(t("The power of each part from the board's thermal package, made throughout the part's bodies. Untick a part to leave it out, or type another power."))}</p>`
           + (parts.some(x => x.junction) ? `<p class="pm-help muted" data-v="rjchelp">${esc(t("The package gives junction temperatures for some parts: type their Rjc to report the junction, else the case is reported."))}</p>` : ""))
@@ -4868,6 +4875,12 @@ export class SimController {
         const x = (e.draft as StudyLoad).parts?.[Number(el.dataset.i)], empty = !el.value.trim(), bad = !empty && (v == null || v < 0);
         el.setAttribute("aria-invalid", String(bad));
         if (!bad && x) { if (empty) delete x.rjc; else x.rjc = v!; this.renderTree(); }
+        return;
+      }
+      if (q === "pklim" || q === "pklife") {
+        const x = (e.draft as StudyLoad).parts?.[Number(el.dataset.i)], empty = !el.value.trim(), bad = !empty && (v == null || (q === "pklife" ? !(v > 0) : v < -273));
+        el.setAttribute("aria-invalid", String(bad));
+        if (!bad && x) { const k = q === "pklim" ? "limit" : "life"; if (empty) delete x[k]; else x[k] = v!; this.renderTree(); }
         return;
       }
       if (q === "pkp") {

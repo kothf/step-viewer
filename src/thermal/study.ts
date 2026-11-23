@@ -3,7 +3,7 @@
 
 import type { StandIn } from "./standins";
 import type { ModelBody, PartMatch } from "./match";
-import { isElectrolytic, type ThermalManifest, type ThermalPart } from "./package";
+import { capacitorLife, isElectrolytic, type ThermalManifest, type ThermalPart } from "./package";
 
 /** The copper of a board, for its effective conductivity. */
 export interface BoardStack {
@@ -178,7 +178,7 @@ function bigCap(text: string) {
 }
 
 /** One package part's heat in the study. */
-export interface PlanHeat { id: number; name: string; bodies: number[]; p: number; limit?: number; board?: number; sink?: number; path?: ThermalPart["path"]; elyt?: boolean; junction?: boolean; rjc?: number }
+export interface PlanHeat { id: number; name: string; bodies: number[]; p: number; limit?: number; life?: number; board?: number; sink?: number; path?: ThermalPart["path"]; elyt?: boolean; junction?: boolean; rjc?: number }
 export interface BoardPlan {
   /** Body index of the board, −1 = none found. */
   board: number;
@@ -242,7 +242,7 @@ export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelB
     if (p.id === 0) continue;
     const si = stand.findIndex(x => x.id === p.id);
     const list = si >= 0 && !match.bodies.get(p.id)?.length ? [bodies.length + si] : (match.bodies.get(p.id) ?? []).filter(i => i !== board), w = p.p ?? 0;
-    heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}), ...(isElectrolytic(p) ? { elyt: true } : {}), ...(p.tKind === "junction" ? { junction: true } : {}), ...(p.rjc !== undefined && p.rjc >= 0 ? { rjc: p.rjc } : {}) });
+    heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.ratedLife !== undefined && p.ratedLife > 0 ? { life: p.ratedLife } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}), ...(isElectrolytic(p) ? { elyt: true } : {}), ...(p.tKind === "junction" ? { junction: true } : {}), ...(p.rjc !== undefined && p.rjc >= 0 ? { rjc: p.rjc } : {}) });
     if (list.length) power += w;
   }
   const partOf = new Map(man.parts.map(p => [p.id, p]));
@@ -256,7 +256,7 @@ export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelB
 
 /** What a part's reported temperature is of (FR-TBRD-021). */
 export type PartTempKind = "body" | "case" | "junction";
-export interface PartTempIn { name: string; p: number; off?: boolean; limit?: number; junction?: boolean; rjc?: number; comps: string[] }
+export interface PartTempIn { name: string; p: number; off?: boolean; limit?: number; life?: number; junction?: boolean; rjc?: number; comps: string[] }
 export interface PartTemp {
   name: string;
   /** °C: the hottest point of the part's bodies, plus p × Rjc for a junction. */
@@ -268,6 +268,8 @@ export interface PartTemp {
   caseOnly?: boolean;
   limit?: number;
   over?: boolean;
+  /** An electrolytic with a rated life at its limit: hours at `t` by the 10 °C rule (FR-TBRD-022). */
+  life?: number;
 }
 
 /**
@@ -285,7 +287,7 @@ export function partTemps(parts: PartTempIn[], maxOf: (comp: string) => number |
     const junction = !!x.junction || rjc !== undefined;
     const t = junction && rjc !== undefined ? body + p * rjc : body;
     const kind: PartTempKind = junction ? (rjc !== undefined ? "junction" : "case") : "body";
-    out.push({ name: x.name, t, body, kind, ...(junction && rjc === undefined ? { caseOnly: true } : {}), ...(x.limit !== undefined ? { limit: x.limit, over: t > x.limit } : {}) });
+    out.push({ name: x.name, t, body, kind, ...(junction && rjc === undefined ? { caseOnly: true } : {}), ...(x.limit !== undefined ? { limit: x.limit, over: t > x.limit } : {}), ...(x.life !== undefined && x.life > 0 && x.limit !== undefined ? { life: capacitorLife(x.life, x.limit, t) } : {}) });
   }
   return out;
 }

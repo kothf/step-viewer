@@ -6372,4 +6372,11 @@ export const RU: Record<string, string> = {
   "Taken by fixed temperatures on its faces": "Забирается заданными температурами на его гранях",
   "Conducted to the components it touches, net": "Передаётся теплопроводностью соприкасающимся компонентам (за вычетом встречного)",
   "A component's heat leaves by these paths; a negative value is heat it takes in. Hover the Neighbours cell for each one.": "Тепло компонента уходит этими путями; отрицательное значение — тепло, которое он получает. Наведите на ячейку «Соседи», чтобы увидеть каждого.",
+  "Life": "Ресурс",
+  "Temperature limit, °C: the result marks the part when it runs hotter": "Предельная температура, °C: в результате деталь отмечается, если она горячее",
+  "Rated life of an electrolytic at its limit, h: the result gives its life by the 10 °C rule": "Паспортный ресурс электролитического конденсатора при предельной температуре, ч: в результате ресурс считается по правилу 10 °C",
+  "{name}: limit": "{name}: предел",
+  "{name}: rated life": "{name}: паспортный ресурс",
+  "Electrolytic life by the 10 °C rule: the rated life doubles for every 10 °C under the limit": "Ресурс электролита по правилу 10 °C: паспортный ресурс удваивается на каждые 10 °C ниже предела",
+  "Electrolytics expected to last under {h} h are marked.": "Отмечены электролиты с ожидаемым ресурсом меньше {h} ч.",
 };
