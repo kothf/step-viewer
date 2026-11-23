@@ -11,6 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Heat from package** always keeps the package's split: each part's board share enters the board under the part, since parts are soldered to the board and never sit in the air. The **Keep the package's split** switch is gone, and a study saved with it off solves with the split kept.
 
+### Fixed
+
+- A board study's **Thermal package** gives each package part its whole power again, not only the share made in the part itself.
+
 ## [1.710.0] - 2026-11-23
 
 ### Added

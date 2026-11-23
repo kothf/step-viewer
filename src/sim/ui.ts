@@ -455,7 +455,8 @@ export class SimController {
       for (const x of pk?.parts ?? []) {
         const doms = x.comps.flatMap(c => byComp.get(c) ?? []).filter(d => idOf[d] < 0);
         const pt = ptemps.find(y => y.name === x.name), tj = pt && pt.kind !== "body" ? { t: pt.t, tKind: pt.kind } : {};
-        if (doms.length) add(x.id, doms, { path: x.path, limit: x.limit, ...tj }, x.name);
+        // a package part's power is its whole power, wherever the split put it (board, heatsink, chassis, the part)
+        if (doms.length) add(x.id, doms, { path: x.path, limit: x.limit, p: x.off ? 0 : x.p, ...tj }, x.name);
       }
       for (const [, doms] of byComp) { const left = doms.filter(d => idOf[d] < 0); if (left.length) add(next++, left, {}, bodyName(res.comps[left[0]].name)); }
       // a triangle belongs to the component whose mesh it came from (the sampled domain is ambiguous where two touch)
