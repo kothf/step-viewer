@@ -17223,7 +17223,7 @@ try {
     check(th && hot0.rows === th.temps.length && hot0.rows >= 1 && hot0.csv && Math.abs(th.temps[0].t - t2c.thermal.max) < 0.01 && th.corners.length === hot0.corners && th.csv.startsWith("Kind,#,X (mm),Y (mm),Z (mm),Temperature (C),Heat flux (W/m2)")
       && (hot0.rows < 2 || (th.sel === 1 && hot1.sel === 1 && hot1.peaks.includes("t1") && t2c.plot.kind === "temp")),
       `thermal 1.711: the hottest points of a thermal result are listed, the first one is the hottest temperature, a picked one is labelled on the temperature plot, and they save as CSV (${JSON.stringify({ hot0, hot1, th, plot: t2c.plot })})`);
-    // FR-TRES-002 (1.712.0): the summary card over the view: hottest, coolest, heat balance, error; folds to one line
+    // FR-TRES-002 (1.714.0): the summary card over the view: hottest, coolest, heat balance, error; folds to one line
     const card = async () => tp.evaluate(() => { const el = document.querySelector("#sim-summary"); return { shown: !!el && !el.hidden, head: el?.querySelector('[data-v="hottest"]')?.textContent ?? "", lines: [...(el?.querySelectorAll("li[data-v]") ?? [])].map(l => l.dataset.v), bal: el?.querySelector('[data-v="sbalance"]')?.textContent ?? "", cold: el?.querySelector('[data-v="scold"]')?.textContent ?? "" }; });
     const sum0 = await card();
     await tp.click('#sim-summary [data-v="shot"]');
@@ -17235,7 +17235,7 @@ try {
     const sum2 = await card();
     check(sum0.shown && sum0.head.includes(String(Math.round(t2c.thermal.max))) && sum0.lines.includes("scold") && sum0.lines.includes("sbalance") && sum0.lines.includes("serror") && /W/.test(sum0.bal)
       && t2d.thermal.hot.sel === 0 && t2d.plot.on && sum1.shown && sum1.lines.length === 0 && sum2.lines.length === sum0.lines.length,
-      `thermal 1.712: a thermal result has a summary card over the view with the hottest and coolest temperatures, the heat balance and the error; the hottest line picks the hottest point, and the card folds to one line (${JSON.stringify({ sum0, sum1, sum2, sel: t2d.thermal.hot.sel })})`);
+      `thermal 1.714: a thermal result has a summary card over the view with the hottest and coolest temperatures, the heat balance and the error; the hottest line picks the hottest point, and the card folds to one line (${JSON.stringify({ sum0, sum1, sum2, sel: t2d.thermal.hot.sel })})`);
     // FR-TSOL-003 (1.695.0): passes 4 to 6 raise the degree only where the temperatures still move
     await tp.selectOption('#sim-tree [data-k="passes"]', "5");
     await settle();
@@ -17815,8 +17815,8 @@ try {
     check(nc.enc === "closed" && nc.down === "−Z" && nc.natural === true && nc.set.enclosure === "closed" && JSON.stringify(nc.set.down) === "[0,0,-1]" && hn > 1 && hn < 15 && nc.flows[0] > 0 && nc.flows[1] === null && /natural convection/.test(nc.row ?? ""),
       `thermal 1.658: a board study cools by natural convection in the package's closed chassis with gravity along −Z, and shows the mean film coefficient it came to (${JSON.stringify(nc)})`);
     const hp1 = await bp.evaluate(() => ({ paths: window.__sv.sim.state().thermal?.paths, rows: [...document.querySelectorAll("#sim-tree .sim-paths tr[data-path]")].map(r => [r.dataset.path, r.querySelector('[data-v="pboard"]').textContent, r.querySelector('[data-v="pair"]').textContent, !!r.title]), note: document.querySelector('#sim-tree [data-v="pathnote"]')?.textContent }));
-    check(hp1.rows.length === 6 && hp1.paths.every(x => Math.abs(x.board + x.air + x.other - x.p) < 1e-9 && x.air > 0) && hp1.paths.filter(x => x.board > 0.1 * x.p).length >= 2 && hp1.rows.every(r => r[3]) && /conductances/.test(hp1.note ?? ""),
-      `thermal 1.657: the Heat paths table says, for each package part, the share of its heat conducted into the board (a cool part on the hot board takes heat in) and the share off its own surface, with the package's split in the row title (${JSON.stringify(hp1)})`);
+    check(hp1.rows.length === 6 && hp1.paths.every(x => Math.abs(x.board + x.air + x.chassis + x.sink + x.other - x.p) < 1e-9 && x.air > 0) && hp1.paths.filter(x => x.board > 0.1 * x.p).length >= 2 && hp1.rows.every(r => r[3]) && /kept/.test(hp1.note ?? ""),
+      `thermal 1.657: the Heat paths table says, for each package part, the share of its heat conducted into the board and the share off its own surface, with the package's split (always kept, 1.712) in the row title (${JSON.stringify(hp1)})`);
     // the heat table: a part left out makes no heat; a heatsink by its thermal resistance on the transistor
     await bp.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
     await bp.waitForSelector("#sim-pm .sim-pkparts tr[data-pk]");
@@ -17830,10 +17830,14 @@ try {
       rjc: window.__sv.asm.doc.studies.find(x => x.kind === "thermal").loads.find(l => l.type === "pkgheat").parts.find(x => x.name === "Q2")?.rjc }));
     check(tbl.length === 6 && tbl[0][0] === "V3" && tbl[0][1] === "18.2" && tbl.every(r => r[2]) && /5 parts.*10\.97 W|5 parts.*11 W/.test(less.row) && less.stale && less.rjc === 2.5,
       `thermal 1.655: the Heat from package panel lists every part with its power; unticking the valve leaves 5 parts and the results go stale (${JSON.stringify({ tbl, less })})`);
-    // 1.657: Keep the package's split: the board shares go into the board under each part as fixed powers
+    // 1.657 / 1.712: the package's split is always kept: the board shares go into the board under each part as fixed
+    // powers, even in a study saved with the split off (parts are soldered, never in the air); the panel has no switch for it
+    await bp.evaluate(() => window.__sv.asm.change(d => { d.studies.find(x => x.kind === "thermal").loads.find(x => x.type === "pkgheat").split = false; }));
+    await bp.waitForTimeout(300);
     await bp.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
-    await bp.waitForSelector('#sim-pm input[data-k="split"]');
-    await bp.click('#sim-pm input[data-k="split"]');
+    await bp.waitForSelector('#sim-pm [data-v="splithelp"]');
+    const sw = await bp.evaluate(() => ({ box: !!document.querySelector('#sim-pm input[data-k="split"]'), help: document.querySelector('#sim-pm [data-v="splithelp"]')?.textContent }));
+    check(!sw.box && /soldered/.test(sw.help ?? ""), `thermal 1.712: Heat from package has no switch for the package's split, only a note that it is always kept (${JSON.stringify(sw)})`);
     await bp.click("#sim-pm .pm-ok");
     await bp.click('#sim-tools [data-s="solve"]');
     await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 400000 });

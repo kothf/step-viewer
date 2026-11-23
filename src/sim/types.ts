@@ -3,7 +3,7 @@
 // (persistent face names), so a study follows the model through edits (FR-STU-020).
 
 import type { PowerProfile, TransientSettings } from "./transient";
-import type { BoardStack } from "../thermal/study";
+import type { BoardStack, HeatInto } from "../thermal/study";
 import type { CopperMap } from "../thermal/copper";
 import type { FaceRef, Num, V3 } from "../model/types";
 import type { MatRef } from "../tools/materials";
@@ -14,6 +14,9 @@ export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "
 /** `temperature` (structural): thermal expansion from a uniform temperature (`value` °C) or a thermal study's result (`from`). */
 export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote" | "heat" | "vheat" | "hflux" | "pkgheat" | "temperature";
 export const THERMAL_SUPPORTS: SupportType[] = ["temp", "conv", "rad", "radx", "chassis", "insul"];
+/** Heat from package (FR-TBRD-003): the package's split is always kept when the load has a board, whatever `split` says. */
+export const keepsSplit = (l: { board?: string }): boolean => !!l.board;
+
 export const THERMAL_LOADS: LoadType[] = ["heat", "vheat", "hflux", "pkgheat"];
 /** Whether a support or load type belongs to thermal studies. */
 export const isThermalType = (type: string) => (THERMAL_SUPPORTS as string[]).includes(type) || (THERMAL_LOADS as string[]).includes(type);
@@ -84,6 +87,9 @@ export interface PackageHeat {
   board?: number;
   sink?: number;
   path?: "board" | "air" | "heatsink" | "chassis";
+  /** Where the board share enters the board (FR-TBRD-003): pads as discs and the air gap under the body as rectangles,
+   * mm in the assembly frame across the board, with their watts (scaled to `board`); absent = under the whole part. */
+  into?: HeatInto[];
   /** An electrolytic capacitor (FR-TBRD-023: warned about when a part over 1 W stands next to it). */
   elyt?: boolean;
   /** The package's temperature of the part is a junction's (FR-TBRD-021); `rjc` K/W junction to case, typed or from the package. */
@@ -138,7 +144,9 @@ export interface StudyLoad {
   parts?: PackageHeat[];
   /** Heat from package: the component that is the board (its contact patches take the parts' board shares). */
   board?: string;
-  /** Heat from package: keep the package's split, its shares applied as fixed powers (FR-TBRD-003). */
+  /** Heat from package: the package's split, its shares applied as fixed powers (FR-TBRD-003). Always kept when there is a
+   * board (`keepsSplit`): parts are soldered to it and never sit in the air, so a saved `false` is ignored; still written as
+   * `true` for older versions. */
   split?: boolean;
   /** Transient thermal studies: how the power changes with time (FR-TLOAD-005); absent = constant. */
   profile?: PowerProfile;

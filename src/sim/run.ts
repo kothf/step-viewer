@@ -6,8 +6,8 @@ import { MeshBody, insideOf } from "./body";
 import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support, type TempField } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
-import { DEFAULT_AMBIENT, DEFAULT_REF, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
-import { contactPatch, facingPatch } from "../thermal/study";
+import { DEFAULT_AMBIENT, DEFAULT_REF, keepsSplit, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { contactPatch, facingPatch, intoPatch } from "../thermal/study";
 import { forcedH, kmapMean, ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
 import { viewFactor } from "./viewfactor";
 
@@ -679,10 +679,10 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
     const v = l.value?.v ?? 0;
     if (l.type === "pkgheat") {
       // a board's package: each part's power is made throughout the components its bodies became; with the
-      // package's split kept, its board share enters the board under the part and a chassis share leaves the model
+      // package's split (always kept with a board), its board share enters the board under the part and a chassis share leaves the model
       let any = false;
       const boardDom = l.board ? (regions ?? []).findIndex(k => compOf(k) === l.board) : -1;
-      const boardTris = l.split && boardDom >= 0 ? compTris(b, new Set([l.board!])) : null;
+      const boardTris = keepsSplit(l) && boardDom >= 0 ? compTris(b, new Set([l.board!])) : null;
       // heatsink candidates: components that are neither the board nor a part making heat
       const makers = new Set((l.parts ?? []).filter(x => x.p >= PACKAGE_MIN_POWER).flatMap(x => x.comps));
       const cands = [...new Set((regions ?? []).map(k => compOf(k)))].filter(c => c !== l.board && !makers.has(c));
@@ -705,9 +705,18 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
         if (!doms.length) continue;
         let own = part.p;
         if (boardTris) {
-          const share = Math.min(own, Math.max(0, part.board ?? 0));
-          const patch = share > 0 ? contactPatch(boardTris, compTris(b, comps)) : null;
-          if (patch) { out.sources.push({ tris: patch, power: share, dom: boardDom, id: l.id }); own -= share; }
+          const share = Math.min(own, Math.max(0, part.board ?? 0)), partTris = share > 0 ? compTris(b, comps) : null;
+          // through the pads and the air gap under the body when the package says where (`into`), each region's
+          // watts scaled to the share; what lands off the board goes in under the whole part as before
+          let rest = share;
+          const into = (part.into ?? []).filter(x => x.w > 0), sum = into.reduce((a, x) => a + x.w, 0);
+          if (partTris && sum > 0) for (const x of into) {
+            const patch = intoPatch(boardTris, partTris, x);
+            if (patch) { const w = (share * x.w) / sum; out.sources.push({ tris: patch, power: w, dom: boardDom, id: l.id }); rest -= w; }
+          }
+          const patch = partTris && rest > 1e-12 ? contactPatch(boardTris, partTris) : null;
+          if (patch) { out.sources.push({ tris: patch, power: rest, dom: boardDom, id: l.id }); rest = 0; }
+          own -= share - rest;
           if (part.path === "heatsink") {
             // the heatsink share enters the body the part sits on that makes no heat itself, where it touches the part
             const w = Math.min(own, Math.max(0, part.sink ?? 0));

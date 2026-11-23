@@ -5,12 +5,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.712.0] - 2026-11-23
+## [1.714.0] - 2026-11-23
 
 ### Added
 
 - A thermal study's results have a summary card in the lower left of the view: the hottest temperature and where it is, the coolest, parts over their temperature limits and the shortest electrolytic life on a board, the heat put in with how far it is out of balance, and the estimated error. A click on the hottest line shows the temperature plot with the hottest point picked; the other lines open the matching table in the Study tab. The card folds to one line and stays so.
 - Heat power can be typed in BTU/h.
+
+## [1.713.0] - 2026-11-23
+
+### Added
+
+- **Heat from package** can say where each part's board share enters the board: through its pads (discs) and the air gap under its body (rectangles), each with its watts, as a board export may write them. The share then goes into the board at those places instead of spread under the whole part; a place that misses the board puts its watts under the part as before.
+
+## [1.712.0] - 2026-11-23
+
+### Changed
+
+- **Heat from package** always keeps the package's split: each part's board share enters the board under the part, since parts are soldered to the board and never sit in the air. The **Keep the package's split** switch is gone, and a study saved with it off solves with the split kept.
+
+### Fixed
+
+- A board study's **Thermal package** gives each package part its whole power again, not only the share made in the part itself.
 
 ## [1.711.0] - 2026-11-23
 
@@ -4699,7 +4715,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.712.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.714.0...HEAD
+[1.714.0]: https://github.com/kothf/step-viewer/compare/v1.713.0...v1.714.0
+[1.713.0]: https://github.com/kothf/step-viewer/compare/v1.712.0...v1.713.0
 [1.712.0]: https://github.com/kothf/step-viewer/compare/v1.711.0...v1.712.0
 [1.711.0]: https://github.com/kothf/step-viewer/compare/v1.710.0...v1.711.0
 [1.710.0]: https://github.com/kothf/step-viewer/compare/v1.709.0...v1.710.0
