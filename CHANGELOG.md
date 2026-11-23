@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.714.0] - 2026-11-23
+
+### Added
+
+- A thermal study's results have a summary card in the lower left of the view: the hottest temperature and where it is, the coolest, parts over their temperature limits and the shortest electrolytic life on a board, the heat put in with how far it is out of balance, and the estimated error. A click on the hottest line shows the temperature plot with the hottest point picked; the other lines open the matching table in the Study tab. The card folds to one line and stays so.
+- Heat power can be typed in BTU/h.
+
 ## [1.713.0] - 2026-11-23
 
 ### Added
@@ -4708,7 +4715,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.713.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.714.0...HEAD
+[1.714.0]: https://github.com/kothf/step-viewer/compare/v1.713.0...v1.714.0
 [1.713.0]: https://github.com/kothf/step-viewer/compare/v1.712.0...v1.713.0
 [1.712.0]: https://github.com/kothf/step-viewer/compare/v1.711.0...v1.712.0
 [1.711.0]: https://github.com/kothf/step-viewer/compare/v1.710.0...v1.711.0

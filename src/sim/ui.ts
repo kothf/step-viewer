@@ -50,6 +50,7 @@ import { copperFromGerber } from "../thermal/copperRaster";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, frameComps, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
+import { thermalSummary, type ThermalSummary } from "./summary";
 import { BOARD_RC, SERIES_COLORS, componentSeries, exprProblem, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
 import { fluxArrows } from "./arrows";
 import { parseKTable, kTableText, ktFactors, type KTable } from "./ktable";
@@ -371,6 +372,7 @@ export class SimController {
     const pm = $("#sim-pm");
     pm.addEventListener("click", e => this.panelClick(e));
     pm.addEventListener("change", e => this.panelChange(e.target as HTMLInputElement));
+    $("#sim-summary").addEventListener("click", e => this.summaryClick(e));
     const lg = $("#sim-legend");
     lg.addEventListener("change", e => this.legendChange(e.target as HTMLInputElement));
     // the time slider moves the shown time as it is dragged
@@ -3062,6 +3064,7 @@ export class SimController {
 
   /** The legend's time row, updated in place while playing. */
   private renderLegendTime() {
+    this.renderSummary();
     const T = this.res?.tr?.transient, el = document.querySelector<HTMLElement>("#sim-legend .sim-time");
     if (!T || !el) return;
     const k = Math.max(0, this.frame), r = el.querySelector<HTMLInputElement>("input[data-k=time]"), v = el.querySelector("[data-v=ttime]"), b = el.querySelector("[data-a=tplay]");
@@ -4324,6 +4327,76 @@ export class SimController {
     return html + this.thermalHotHtml() + this.thermalPassesHtml(r, last);
   }
 
+  /** Whether the study summary card is folded to one line (kept in localStorage). */
+  private sumFolded = (() => { try { return localStorage.getItem("mc:simSummary") === "1"; } catch { return false; } })();
+
+  /** What the summary card over the view says for the shown thermal result (FR-TRES-002), or null. */
+  private summaryOf(): ThermalSummary | null {
+    const r = this.res && !this.stale() ? this.res : null, last = r?.passes.at(-1), T = last?.thermal;
+    if (!r || !last || !T || !this.saved || !this.host.doc()) return null;
+    const rows = T.comps, steady = !r.tr && !this.enveloped;
+    const pts = this.partTempRows(r), limits = this.compLimits();
+    let over = 0, limited = 0;
+    if (pts.length) { limited = pts.filter(x => x.limit !== undefined).length; over = pts.filter(x => x.over).length; }
+    else if (r.comps && rows) rows.forEach((x, d) => { const l = limits.get(compOf(r.comps![d].key)); if (l !== undefined) { limited++; if (x.max > l) over++; } });
+    return thermalSummary({
+      part: this.host.doc()?.name ?? "", min: T.min, max: T.max,
+      ...(steady ? { applied: T.applied, flows: T.flows.map(f => f.out), errors: last.errors } : {}),
+      comps: r.comps && rows ? rows.map((x, d) => ({ name: r.comps![d]?.name ?? "", min: x.min, max: x.max })) : undefined,
+      over, limited,
+      lives: pts.filter(x => x.life !== undefined).map(x => ({ name: x.name, h: x.life! })),
+    });
+  }
+
+  /** The summary card over the view (FR-TRES-002): hottest and coolest, parts over their limits, shortest life, heat balance, error. */
+  private renderSummary() {
+    const el = document.querySelector<HTMLElement>("#sim-summary");
+    if (!el) return;
+    const sm = this.summaryOf(), run = this.res?.tr?.transient;
+    el.hidden = !sm;
+    if (!sm) { el.innerHTML = ""; return; }
+    const f = this.sumFolded;
+    const head = `<button class="th-sum-h" data-a="fold" aria-expanded="${!f}" title="${esc(f ? t("Show the summary") : t("Fold the summary"))}"><span data-v="hottest">${esc(t("Hottest"))} <b><span translate="no">${esc(sm.hot.name)}</span> ${sig(sm.hot.t)} °C</b></span><i aria-hidden="true">${f ? "▸" : "▾"}</i></button>`;
+    let lines = "";
+    if (!f) {
+      lines += `<ul>`;
+      if (run) lines += `<li class="muted" data-v="stime">${esc(t("At {t}", { t: timeText(run.times[Math.max(0, this.frame)]) }))}</li>`;
+      lines += `<li data-go="hot" tabindex="0" data-v="shot">${esc(t("Hottest point"))} ${sig(sm.hot.t)} °C</li>`;
+      lines += `<li data-go="cold" tabindex="0" data-v="scold">${esc(t("Coolest"))} <span translate="no">${esc(sm.cold.name)}</span> ${sig(sm.cold.t)} °C</li>`;
+      if (sm.over !== null) lines += `<li data-go="over" tabindex="0" data-v="sover" class="${sm.over ? "bad" : ""}">${esc(sm.over ? t("{n} part over its limit|{n} parts over their limits", { n: sm.over }) : t("No part is over its limit."))}</li>`;
+      if (sm.life) lines += `<li data-go="over" tabindex="0" data-v="slife" class="${sm.life.h < DEFAULT_LIMITS.life ? "warn" : ""}">${esc(t("Shortest life: {name} {h} h", { name: sm.life.name, h: hours(sm.life.h) }))}</li>`;
+      if (sm.balance) lines += `<li data-go="balance" tabindex="0" data-v="sbalance" class="${sm.balance.off > 1 ? "warn" : ""}">${esc(t("Heat in {w} W, out of balance {p} %", { w: sig(sm.balance.put), p: pct(sm.balance.off) }))}</li>`;
+      if (sm.error) { const v = pct(sm.error.v), e = v.startsWith("<") ? v : sm.error.bound ? `< ${v}` : `≈ ${v}`; lines += `<li data-go="balance" tabindex="0" data-v="serror" class="muted">${esc(t("Estimated error {e} %", { e }))}</li>`; }
+      lines += `</ul>`;
+    }
+    el.innerHTML = head + lines;
+    el.classList.toggle("folded", f);
+  }
+
+  private summaryClick(e: Event) {
+    const tg = e.target as HTMLElement;
+    if (tg.closest("[data-a=fold]")) {
+      this.sumFolded = !this.sumFolded;
+      try { localStorage.setItem("mc:simSummary", this.sumFolded ? "1" : "0"); } catch { /* no storage */ }
+      this.renderSummary();
+      return;
+    }
+    const go = tg.closest<HTMLElement>("[data-go]")?.dataset.go;
+    if (!go) return;
+    this.host.showTab();
+    if (go === "hot" || go === "cold") {
+      // the plot in temperatures, the hottest point picked (its label shows), or the Min label for the coolest
+      if (go === "hot") this.thotSel = this.thermalHot()?.temps.length ? 0 : -1; else this.thotSel = -1;
+      const want: PlotKind = this.plot.kind === "rise" ? "rise" : "temp";
+      if (this.plot.kind !== want || !this.plot.on) { this.plot.kind = want; this.plot.on = true; this.showPlot(); }
+      else this.drawProbes();
+      this.renderAll();
+      return;
+    }
+    const sel = go === "over" ? ".sim-ptemps, .sim-tcomps, [data-v=tover]" : "[data-v=balance], [data-v=error]";
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`#sim-tree ${sel.split(", ").join(", #sim-tree ")}`)?.scrollIntoView({ block: "center" }));
+  }
+
   /** The hottest points and the sharp corners of the heat flux (FR-TRES-003). */
   private thermalHotHtml(): string {
     const th = this.thermalHot();
@@ -4579,6 +4652,7 @@ export class SimController {
   }
 
   private renderLegend() {
+    this.renderSummary();
     const el = $("#sim-legend");
     const r = this.res?.passes.at(-1);
     const show = !!r && !!this.saved && !!this.host.doc();
