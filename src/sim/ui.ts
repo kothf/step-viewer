@@ -21,6 +21,7 @@ import { DEFAULT_LIMITS, nearHot } from "../thermal/package";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
 import { chooseModal, toast } from "../ui";
+import { hint } from "../hints";
 import type { Viewer } from "../viewer/Viewer";
 import type { MatRef } from "../tools/materials";
 import type { AsmModel, SimModel } from "./model";
@@ -892,6 +893,7 @@ export class SimController {
     this.edit = null;
     this.host.change(kind === "modal" ? t("New modal study") : kind === "thermal" ? t("New thermal study") : t("New study"), d => { (d.studies ??= []).push(st); });
     this.changed();
+    hint("study");
   }
 
   /**

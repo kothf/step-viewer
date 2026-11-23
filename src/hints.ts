@@ -17,6 +17,9 @@ export const HINTS = {
   pcb3d: "Tip: in 3D, drag orbits and right-drag pans; measuring works on the side you look at. B turns the board over.",
   note: "Tip: drag a note's box to move it, double-click it to change the text. Notes appear in PNG snapshots and the PDF report.",
   tree: "Tip: type size>50 or vol<1000 in the filter to find large or small parts. Double-click a part to zoom to it.",
+  thermal: "Tip: hover a part for its temperature, double-click it to show it alone. The Thermal tab lists the problems and every part; Simulate makes a thermal study of the board.",
+  study: "Tip: pick a support, load or cooling item on the bar, click faces on the model, type the value and press ✓. Solve runs passes of rising accuracy; the Study tab holds the results.",
+  vaultex: "Tip: drag files onto a folder to move them, or drop files from your computer to add them. Right-click a file for check out, check in, history and the rest.",
 } as const;
 export type HintId = keyof typeof HINTS;
 

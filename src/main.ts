@@ -104,7 +104,7 @@ const viewer = new Viewer(vpEl);
 const thermal = new ThermalMaps({
   viewer,
   key: () => (state.fileKey.startsWith("sv:m:") && !$("#app").classList.contains("gerber") && !$("#app").classList.contains("model") && !$("#app").classList.contains("asm") ? state.fileKey : ""),
-  changed: () => { syncThermalTab(); syncCmTabs(); },
+  changed: () => { syncThermalTab(); syncCmTabs(); if (thermal.has()) hint("thermal"); updateHint(); },
   showTab: () => { if (!$("#t-thermal").hidden) showLeftTab("thermal"); },
   addMap: () => openPicker(),
   simulate: (pkg, match, bodies) => { void simulateBoard(pkg, match, bodies); },
@@ -1865,7 +1865,9 @@ function updateHint() {
   // tools the user picked on purpose (they count picks and end with Esc).
   if (state.tool === "select") {
     h.hidden = true;
-    st.innerHTML = !viewer.parts.length ? "" : state.selection && !state.livePair
+    st.innerHTML = !viewer.parts.length ? "" : thermal.active() && !state.selection
+      ? `<b>${t("Thermal map")}</b>: ${t("hover a part for its temperature; double-click it to show it alone")} · ${t("a click measures as usual")}`
+      : state.selection && !state.livePair
       ? `<b>${t("Smart measure")}</b>: ${t("click a second point, edge or face to measure between them")} · ${t("Esc to clear")}`
       : `<b>${t("Smart measure")}</b>: ${t("click a point, edge or face; a second click measures between them")}`;
     return;
@@ -2854,7 +2856,7 @@ vaultPanel.onChange = syncVaultButton;
 // The Vault explorer (FR-PDM-080): the vault as a file manager in a tab of its own at the bottom.
 const vaultExplorer = new VaultExplorer({
   panel: vaultPanel,
-  shown: () => docs?.render(),
+  shown: on => { docs?.render(); if (on) hint("vaultex"); },
   vaultMenu: btn => vaultMenu.toggle(btn),
 });
 $("#app").appendChild(vaultExplorer.el);
