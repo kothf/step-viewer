@@ -26,7 +26,8 @@ import { canCopy, copyClip, pasteClip, type Clip } from "./paste";
 import { activate, addConfig, applyConfigTable, configTable, nextConfigName, removeConfig, renameConfig } from "./configs";
 import { download } from "../tools/exporters";
 import { evaluate, ExprError, isPlain } from "./expr";
-import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
+import { journalDrop, journalList, journalSave, packPart, unpackPart, unpackPartFile, PART_EXT, type JournalEntry } from "./file";
+import { decodePreview, encodePreview } from "./preview";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { KERNEL_MEMORY, ModelKernel, type Rebuild } from "./kernelClient";
 import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, holeExits, headKind, holeCount, DIR2_ENDS, type Dir2End } from "./types";
@@ -394,7 +395,13 @@ export class ModelController {
   async partBytes() {
     if (!this.store) return null;
     if (this.mode.kind === "sketch") this.ok();
-    return packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+    return packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, this.previewBytes());
+  }
+
+  /** The display mesh to keep in the saved file: the body last shown whole, else the one the file came with. */
+  private previewBytes(): Uint8Array | null {
+    if (this.fullData) return encodePreview(this.fullData);
+    return this.store && !this.store.dirty ? this.filePreview : null;
   }
 
   /** Edit part in place (FR-ASM-007): the assembly the part came from, and how to go back to it with the edited part. */
@@ -627,6 +634,10 @@ export class ModelController {
   /** The last whole model shown, and whether the view now shows a rolled-back one (a sketch being edited): while the
    *  rebuild after it runs, the old model stays on screen greyed (exam #16). */
   private fullData: PartData | null = null;
+  /** The display mesh the opened file kept, until the first rebuild of this document replaces it (`preview.bin`). */
+  private filePreview: Uint8Array | null = null;
+  /** The file's display mesh is on screen and no rebuild has replaced it yet. */
+  previewShown = false;
   private shownRolled = false;
   private rebuildGen = 0;
   private staleTimer = 0;
@@ -757,10 +768,28 @@ export class ModelController {
 
   async openFile(file: File | { name: string; data: ArrayBuffer }, handle: FileSystemFileHandle | null = null) {
     const buf = file instanceof File ? await file.arrayBuffer() : file.data;
-    let doc: PartDoc;
-    try { doc = await unpackPart(buf); }
+    let doc: PartDoc, preview: Uint8Array | null;
+    try { ({ doc, preview } = await unpackPartFile(buf)); }
     catch (err) { toast(t("Could not open {name}: {err}", { name: file.name, err: t((err as Error).message) }), true); return; }
     this.load(doc, file.name, handle);
+    this.showPreview(preview);
+  }
+
+  /**
+   * Shows the display mesh the file kept while the kernel rebuilds the features: the body is on screen at once,
+   * the real one (with faces to pick and exact values) replaces it when the rebuild comes. Nothing when the
+   * rebuild already answered (the disk cache).
+   */
+  private showPreview(bytes: Uint8Array | null) {
+    this.filePreview = bytes;
+    if (!bytes || this.shownOnce || !this.store?.doc.features.length) return;
+    const data = decodePreview(bytes, this.doc.name);
+    if (!data) return;
+    this.shownOnce = true;
+    this.previewShown = true;
+    this.host.show(data, this.doc.name, true);
+    this.host.setDoc(this.docLabel());
+    this.drawDecor();
   }
 
   /** Document tabs (FR-DOC-003): the open part with its undo history, kept while another document is shown. */
@@ -802,6 +831,9 @@ export class ModelController {
     this.handle = handle;
     this.selected = null;
     this.shownOnce = false;
+    this.previewShown = false;
+    this.filePreview = null;
+    this.fullData = null;
     this.last = null;
     // A parked part keeps its own store (its undo history); a new document gets a fresh one, so a parked store is never reused.
     if (keep) this.store = keep;
@@ -988,6 +1020,7 @@ export class ModelController {
     this.syncCsys();
     const first = !this.shownOnce;
     this.shownOnce = true;
+    this.previewShown = false;
     this.host.show(r.data, this.doc.name, first);
     this.host.setDoc(this.docLabel());
     if (first && !r.data) this.host.viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
@@ -2588,7 +2621,8 @@ export class ModelController {
   async save(as = false) {
     if (!this.store) return;
     if (this.mode.kind === "sketch") this.ok();
-    let bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+    const preview = this.previewBytes();
+    let bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, preview);
     if (this.vault && !as) {
       // A vaulted part saves into the vault's working copy, and only while checked out here (FR-PDM-081).
       if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
@@ -2608,7 +2642,7 @@ export class ModelController {
       const base = file.replace(/\.[^.]+$/, "");
       if (!base || base === this.doc.name) return;
       this.store!.amend(d => { d.name = base; });
-      bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+      bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, preview);
       blob = new Blob([bytes], { type: "application/zip" });
     };
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
