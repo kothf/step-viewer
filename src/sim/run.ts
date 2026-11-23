@@ -590,7 +590,7 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
   // "all open surfaces": the whole surface without the faces a fixed temperature or another item of its kind is on
   const openIdx = (s: Study["supports"][number]) => {
     const taken = new Set<string>();
-    for (const o of st.supports) if (o !== s && !off.has(o.id) && !o.all && (o.type === "temp" || o.type === s.type)) for (const f of o.faces) taken.add(f.name);
+    for (const o of st.supports) if (o !== s && !off.has(o.id) && !o.all && (o.type === "temp" || o.type === "chassis" || o.type === s.type)) for (const f of o.faces) taken.add(f.name);
     const gone = b.names.map(n => taken.has(n)), keep: number[] = [];
     for (let i = 0; i < b.face.length; i++) if (!gone[b.face[i]]) keep.push(i);
     return keep;
@@ -602,6 +602,8 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
   };
   const facesOf = (it: { id: string; faces: { name: string }[] }) => { const idx = idxOf(it); return idx ? gather(idx) : null; };
   const down = st.settings.down ?? [0, 0, -1], factor = enclosureFactor(st.settings);
+  // chassis walls (FR-TBC-009): where a board package's chassis shares go when its split is kept
+  const walls: { tris: Float64Array; area: number }[] = [];
   for (const s of st.supports) {
     if (off.has(s.id) || !isThermalType(s.type)) continue;
     if (s.type === "radx") {
@@ -620,7 +622,15 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
     const tris = gather(idx);
     const free = open && regions ? { free: true } : {};
     if (s.type === "temp") out.sinks.push({ tris, temp: s.temp ?? amb });
-    else if (s.type === "conv") {
+    else if (s.type === "chassis") {
+      // a chassis wall: held at a temperature, or passing its heat to ambient through a resistance
+      const area = surfaceArea(tris);
+      if (s.rth !== undefined) {
+        if (!(s.rth > 0) || !(area > 0)) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
+        out.sinks.push({ tris, h: 1 / (s.rth * area), ambient: s.ambient ?? amb });
+      } else out.sinks.push({ tris, temp: s.temp ?? amb });
+      if (area > 0) walls.push({ tris, area });
+    } else if (s.type === "conv") {
       if (s.rth !== undefined && !open) {
         // a heatsink by its resistance: the film coefficient that gives 1 / Rth over the picked faces
         const area = surfaceArea(tris);
@@ -668,7 +678,12 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
           const share = Math.min(own, Math.max(0, part.board ?? 0));
           const patch = share > 0 ? contactPatch(boardTris, compTris(b, comps)) : null;
           if (patch) { out.sources.push({ tris: patch, power: share, dom: boardDom, id: l.id }); own -= share; }
-          if (part.path === "chassis") own -= Math.min(own, Math.max(0, part.sink ?? 0));
+          if (part.path === "chassis") {
+            // the chassis share leaves through the chassis walls, shared by area; with none it leaves the model
+            const share = Math.min(own, Math.max(0, part.sink ?? 0)), total = walls.reduce((a, w) => a + w.area, 0);
+            if (share > 0 && total > 0) for (const w of walls) out.sources.push({ tris: w.tris, power: (share * w.area) / total, id: l.id });
+            own -= share;
+          }
         }
         if (own > 0) out.sources.push({ power: own, doms, id: l.id });
         any = true;
