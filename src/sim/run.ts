@@ -712,16 +712,16 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
           const into = (part.into ?? []).filter(x => x.w > 0), sum = into.reduce((a, x) => a + x.w, 0);
           if (partTris && sum > 0) for (const x of into) {
             const patch = intoPatch(boardTris, partTris, x);
-            if (patch) { const w = (share * x.w) / sum; out.sources.push({ tris: patch, power: w, dom: boardDom, id: l.id }); rest -= w; }
+            if (patch) { const w = (share * x.w) / sum; out.sources.push({ tris: patch, power: w, dom: boardDom, id: l.id, fine: PAD_FINE }); rest -= w; }
           }
           const patch = partTris && rest > 1e-12 ? contactPatch(boardTris, partTris) : null;
-          if (patch) { out.sources.push({ tris: patch, power: rest, dom: boardDom, id: l.id }); rest = 0; }
+          if (patch) { out.sources.push({ tris: patch, power: rest, dom: boardDom, id: l.id, fine: PAD_FINE }); rest = 0; }
           own -= share - rest;
           if (part.path === "heatsink") {
             // the heatsink share enters the body the part sits on that makes no heat itself, where it touches the part
             const w = Math.min(own, Math.max(0, part.sink ?? 0));
             const hs = w > 0 ? sinkFor(comps) : null;
-            if (hs) { out.sources.push({ tris: hs.patch, power: w, dom: hs.dom, id: l.id }); own -= w; (out.heatsinks ??= {})[part.id] = { comp: hs.comp, w }; }
+            if (hs) { out.sources.push({ tris: hs.patch, power: w, dom: hs.dom, id: l.id, fine: PAD_FINE }); own -= w; (out.heatsinks ??= {})[part.id] = { comp: hs.comp, w }; }
           }
           if (part.path === "chassis") {
             // the chassis share leaves through the chassis walls, shared by area; with none it leaves the model
@@ -885,17 +885,23 @@ export function passError(known: number[]): number | null {
  * smaller than `THERMAL_MAX_CELLS` cells of material give.
  */
 export const THERMAL_MAX_CELLS = 400;
-export function thermalCellSize(body: SimBody, regions: ArrayLike<number>[]): number {
-  const h0 = cellSize(body), floor = cellSize(body, THERMAL_MAX_CELLS);
+/**
+ * With heat entering a board through a part's pads (`ThermalSource.fine`) the cells are sized by the thinnest body's
+ * thickness itself, up to this many cells: against CalculiX (docs/thermal-validation.md, case "pads") cells of half
+ * the size took the hottest parts from 2.6 % cool to within 0.4 %.
+ */
+export const THERMAL_PAD_CELLS = 1500;
+export function thermalCellSize(body: SimBody, regions: ArrayLike<number>[], pads = false): number {
+  const h0 = cellSize(body), floor = cellSize(body, pads ? THERMAL_PAD_CELLS : THERMAL_MAX_CELLS), m = pads ? 1 : 3, most = pads ? THERMAL_PAD_CELLS : THERMAL_MAX_CELLS;
   let t = Infinity;
   for (const tris of regions) {
     const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < tris.length; i++) { const a = i % 3; if (tris[i] < lo[a]) lo[a] = tris[i]; if (tris[i] > hi[a]) hi[a] = tris[i]; }
     t = Math.min(t, hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
   }
-  if (!(t > 0) || 3 * t >= h0) return h0;
+  if (!(t > 0) || m * t >= h0) return h0;
   const vol = Math.abs(meshVolume(body.tris));
-  return vol > 0 ? Math.max(floor, cellSize(body, Math.min(THERMAL_MAX_CELLS, vol / (3 * t) ** 3))) : h0;
+  return vol > 0 ? Math.max(floor, cellSize(body, Math.min(most, vol / (m * t) ** 3))) : h0;
 }
 
 /** Whole-body passes (degree 2, 3, 4), then local ones up to this many passes and this degree. */
@@ -1229,6 +1235,34 @@ export function reuseKey(inp: RunInput, h: number): string {
   ]);
 }
 
+/** Degrees ahead under a package part's pads, footprint or heatsink contact (`thermalBoost`). */
+export const PAD_FINE = 2;
+
+/**
+ * Board heat entering through small faces (FR-TBRD-003, the package's pads and footprints): the elements holding
+ * those faces start `fine` degrees ahead of the rest (as `boostOf` does for a structural study's refined faces), since
+ * the temperature peaks there over a few millimetres the whole-body passes resolve slowly. Null when no source asks.
+ */
+export function thermalBoost(inp: RunInput, h: number, inside: (x: number, y: number, z: number) => boolean, domains?: { inside: (x: number, y: number, z: number) => boolean }[]): { grid: Grid; level: Int8Array } | null {
+  const fine = inp.thermal!.setup.sources.filter(s => s.tris && (s.fine ?? 0) > 0).map(s => ({ tris: s.tris!, level: Math.min(MAX_REFINE, Math.round(s.fine!)) }));
+  if (!fine.length || inp.thermal!.transient) return null;
+  const grid = makeGrid(inp.body.lo, inp.body.hi, h, inside, { q: 3, depth: 3, fit: 5, domains: domains?.map(d => d.inside) });
+  const level = boostOf(grid, fine);
+  if (!level.some(v => v > 0)) return null;
+  // the peak spreads past the faces' own cells: every body's neighbouring cells (edges and corners too) one degree less
+  const near = Int8Array.from(level), maps = grid.maps.length;
+  for (const C of grid.cells) {
+    const L = level[C.el] - 1;
+    if (L < 1) continue;
+    const [i, j, k] = C.ijk;
+    for (let d = 0; d < maps; d++) for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) {
+      const n = grid.at(i + a, j + b, k + c, d);
+      if (n >= 0 && near[grid.cells[n].el] < L) near[grid.cells[n].el] = L;
+    }
+  }
+  return { grid, level: near };
+}
+
 export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: number, y: number, z: number) => boolean) => void): Generator<PassResult> {
   const T = inp.thermal!, set = T.setup, exchanges = exchangesOf(set, inp.body);
   if (set.problems.length) throw new Error(`${set.problems[0].code}: ${set.problems[0].id}`);
@@ -1240,16 +1274,24 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0 || (s.density ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
   const inside = insideOf(new MeshBody(inp.body.tris));
-  const h = inp.cells || !R ? cellSize(inp.body, inp.cells) : thermalCellSize(inp.body, R.map(r => r.tris));
+  const pads = set.sources.some(q => q.tris && (q.fine ?? 0) > 0);
+  const h = inp.cells || !R ? cellSize(inp.body, inp.cells) : thermalCellSize(inp.body, R.map(r => r.tris), pads);
   const passes = Math.max(1, Math.min(MAX_PASSES, Math.round(inp.passes)));
   let grid: Grid | undefined, prev: Float64Array | undefined, before: Float32Array | null = null;
   const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
   const reuse = reuseKey(inp, h);
   // FR-TSOL-003 local passes (as runStatic): each element's degree, and its share of the error when its degree was last raised
   let degrees: Int8Array | undefined, ind: Float64Array | undefined;
+  // heat entering through small faces (a part's pads on a board): the elements under them run ahead from the first pass
+  const boost = thermalBoost(inp, h, inside, domains);
+  if (boost) grid = boost.grid;
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now();
     let p = k + 2, raised: number | undefined, marked: number[] = [];
+    if (boost && k < GLOBAL_PASSES) {
+      degrees = new Int8Array(boost.level.length);
+      for (let e = 0; e < degrees.length; e++) { degrees[e] = Math.min(LOCAL_DEGREE, k + 2 + boost.level[e]); p = Math.max(p, degrees[e]); }
+    }
     if (k >= GLOBAL_PASSES && grid && ind) {
       degrees ??= new Int8Array(grid.elems.length).fill(GLOBAL_PASSES + 1);
       marked = markElements(ind, degrees);
@@ -1309,7 +1351,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
     const converged = change != null && change <= inp.energyTol;
     let need = 0, more = k + 1 < passes;
     if (!converged && more) {
-      if (k + 1 < GLOBAL_PASSES) need = thermalMemory(r.grid, p + 1);
+      if (k + 1 < GLOBAL_PASSES) need = boost ? thermalMemory(r.grid, p + 1, Int8Array.from(boost.level, b => Math.min(LOCAL_DEGREE, k + 3 + b))) : thermalMemory(r.grid, p + 1);
       else {
         const d = degrees ? Int8Array.from(degrees) : new Int8Array(ind.length).fill(GLOBAL_PASSES + 1), mk = markElements(ind, d);
         for (const e of mk) d[e]++;

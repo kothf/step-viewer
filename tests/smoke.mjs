@@ -17760,8 +17760,10 @@ try {
     await bp.waitForTimeout(500);
     const b1 = await bp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, applied: s.thermal?.applied, out: s.thermal?.out, max: s.thermal?.max, comps: s.thermal?.comps?.map(c => [c.name, Math.round(c.max)]),
       over: document.querySelector('#sim-tree [data-v="tover"]')?.textContent, bad: [...document.querySelectorAll("#sim-tree .sim-tcomps tr.bad td:first-child")].map(e => e.textContent), limits: [...document.querySelectorAll('#sim-tree [data-v="tclimit"]')].map(e => e.textContent),
-      wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }; });
+      wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth, pass: s.passes[0] ? { p: s.passes[0].p, cells: s.passes[0].cells, dofs: s.passes[0].dofs, ms: s.passes[0].ms } : null }; });
     const outSum = (b1.out ?? []).reduce((a, x) => a + x, 0);
+    // 1.715.0: the heat comes in over the parts' footprints, so the cells under them start two degrees higher
+    check(b1.pass?.p === 4, `thermal 1.715: a board study starts the cells under the parts' pads two degrees higher (${JSON.stringify(b1.pass)})`);
     check(!b1.error && Math.abs(b1.applied - 29.17) < 1e-6 && Math.abs(outSum - 29.17) < 0.05 && b1.out.every(x => x > 1) && b1.comps.length === 7 && b1.bad.length >= 1 && b1.bad.every(n => /^(R14|R20|V3|Q2)</.test(n)) && /over/.test(b1.over ?? "")
       && b1.limits.filter(Boolean).length === 6 && b1.wide <= 0,
       `thermal 1.655: the board study solves: the 29.17 W of the package leave by convection and radiation, every part has its temperature beside its limit and the ones over are marked (${JSON.stringify(b1)})`);

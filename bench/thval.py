@@ -16,7 +16,8 @@ occ = gmsh.model.occ
 groups = []
 for b in job["bodies"]:
     tags = [(3, occ.addBox(*bx)) for bx in b["boxes"]]
-    if len(tags) > 1:
+    # "split": the boxes stay apart (a pad inside the board), so their faces are surfaces of their own
+    if len(tags) > 1 and not b.get("split"):
         tags, _ = occ.fuse(tags[:1], tags[1:])
     groups.append(tags)
 allv = [t for g in groups for t in g]
@@ -60,6 +61,8 @@ surfs = []
 for _, s in gmsh.model.getEntities(2):
     up, _ = gmsh.model.getAdjacencies(2, s)
     bodies = sorted(set(owner[v] for v in up if v in owner))
+    # between two pieces of one body (a split body): inside it, not a surface of the case
+    if len([v for v in up if v in owner]) == 2 and len(bodies) == 1: continue
     et, _, en = gmsh.model.mesh.getElements(2, s)
     tri = None
     for t, n in zip(et, en):
@@ -139,6 +142,20 @@ with open(inp, "w") as f:
             p = xyz[tets[ebody == b][:, :4]]
             vol = np.abs(np.einsum("ij,ij->i", np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]), p[:, 3] - p[:, 0])).sum() / 6
             f.write(f"B{b}, BF, {bd['power'] / vol:.12g}\n")
+    # heat into a body through some of its faces (pads): the faces whose centre lies in the box on the plane z
+    fluxes = []
+    for fx in job.get("fluxes", []):
+        x0, y0, x1, y1 = fx["box"]
+        got = [s for s in surfs if fx["body"] in s["bodies"] and abs(s["c"][2] - fx["z"]) < 1e-6 and x0 - 1e-6 <= s["c"][0] <= x1 + 1e-6 and y0 - 1e-6 <= s["c"][1] <= y1 + 1e-6]
+        if not got: raise SystemExit(f"{name}: no surface for {fx}")
+        area = sum(s["area"] for s in got)
+        fluxes.append(got)
+        f.write("*DFLUX\n")
+        for s in got:
+            for t in s["tri"]:
+                hits = [h for h in facemap[frozenset(t.tolist())] if ebody[h[0]] == fx["body"]]
+                e, fc = hits[0]
+                f.write(f"{e + 1}, S{fc}, {fx['power'] / area:.12g}\n")
     f.write("*NODE PRINT, NSET=NALL\nNT\n*END STEP\n")
 env = dict(os.environ, OMP_NUM_THREADS=str(os.cpu_count() or 2))
 r = subprocess.run(["ccx", name], cwd=work, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -165,6 +182,7 @@ json.dump({
     "nodes": len(xyz), "elements": len(tets),
     "bodies": [np.concatenate(t).tolist() for t in bodyTris],
     "sinks": [[xyz[s["tri"]].ravel().tolist() for s in got] for got in sinks],
+    "fluxes": [[xyz[s["tri"] if s["bodies"][0] == fx["body"] else s["tri"][:, [0, 2, 1]]].ravel().tolist() for s in got] for fx, got in zip(job.get("fluxes", []), fluxes)],
     "pos": xyz[corner].ravel().tolist(), "body": nb[corner].tolist(), "T": T[corner].tolist(),
 }, open(job["out"], "w"))
 print(f"{name}: CalculiX {len(xyz)} nodes, {len(tets)} elements, {np.nanmin(T):.3f} .. {np.nanmax(T):.3f} °C")

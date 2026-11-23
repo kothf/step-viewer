@@ -84,6 +84,11 @@ export interface ThermalSource {
   dom?: number;
   /** The study item it comes from (bookkeeping: its power profile in a transient study). */
   id?: string;
+  /**
+   * With faces: how many degrees ahead of the others the elements under them start (a part's pads or footprint on
+   * a board, where the heat enters through a small area and the temperature peaks; `run.ts` `runThermal`).
+   */
+  fine?: number;
 }
 
 /** One body of several (an assembly's component): its own conductivity, W/(mm·K), and surface. */

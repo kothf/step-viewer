@@ -12,12 +12,20 @@ import { runThermal, type RunInput, type ThermalSetup } from "../src/sim/run";
 import type { ThermalSink } from "../src/sim/thermal";
 
 type Box = [number, number, number, number, number, number];
-interface Body { name: string; boxes: Box[]; k: number; power?: number }
+interface Body { name: string; boxes: Box[]; k: number; power?: number; split?: boolean }
+/** Heat into `body` through its faces on the plane z inside the box [x0, y0, x1, y1] (a part's pads on the board). */
+interface Flux { body: number; box: [number, number, number, number]; z: number; power: number }
 interface Sel { exterior?: boolean; body?: number; normal?: number[]; at?: [number, number] }
 interface Cond { kind: "conv" | "temp" | "insul"; h?: number; T?: number; sel: Sel }
-interface Case { id: string; what: string; bodies: Body[]; sinks: Cond[]; ambient: number; size: number }
+interface Case { id: string; what: string; bodies: Body[]; sinks: Cond[]; ambient: number; size: number; fluxes?: Flux[] }
 
 const fins: Box[] = Array.from({ length: 6 }, (_, i) => [2 + i * 10.8, 0, 9, 2, 40, 25]);
+// pads of the "pads" case: [x0, y0, x1, y1] on the board top (z 1.6), each one 50 µm deep so its face is a surface
+const PAD_DEPTH = 0.05;
+const U1_PADS: [number, number, number, number][] = [0, 1, 2, 3].flatMap(i => [[16 + 2.4 * i, 15.3, 17 + 2.4 * i, 16.8], [16 + 2.4 * i, 23.2, 17 + 2.4 * i, 24.7]] as [number, number, number, number][]);
+const Q1_PADS: [number, number, number, number][] = [[46, 21, 50, 25]];
+const R1_PADS: [number, number, number, number][] = [[20.2, 40.2, 21.4, 42.8], [24.6, 40.2, 25.8, 42.8]];
+const pads = (list: [number, number, number, number][], w: number): Flux[] => list.map(b => ({ body: 0, box: b, z: 1.6, power: w / list.length }));
 const CASES: Case[] = [
   {
     id: "heatsink", what: "Aluminium heatsink (60 × 40 mm base, six 25 mm fins) on a 15 W copper heater; every open face cooled at 10 W/(m²·K), the heater's underside insulated", ambient: 25, size: 1.6,
@@ -37,6 +45,17 @@ const CASES: Case[] = [
     sinks: [{ kind: "conv", h: 10, T: 25, sel: { exterior: true } }],
   },
   {
+    id: "pads", what: "Board 80 × 60 × 1.6 mm (0.8 W/(m·K)) with three parts whose board share enters through their pads (as a thermal package's `into` says): U1 2 W (1.4 W through 8 pads), Q1 1.5 W (1.2 W through its tab), R1 0.5 W (0.4 W through 2 pads); the rest is made in the parts; open faces at 10 W/(m²·K)", ambient: 25, size: 1.2,
+    bodies: [
+      { name: "board", boxes: [[0, 0, 0, 80, 60, 1.6], ...[...U1_PADS, ...Q1_PADS, ...R1_PADS].map(([x0, y0, x1, y1]): Box => [x0, y0, 1.6 - PAD_DEPTH, x1 - x0, y1 - y0, PAD_DEPTH])], k: 0.8, split: true },
+      { name: "U1", boxes: [[15, 15, 1.6, 10, 10, 1.5]], k: 20, power: 0.6 },
+      { name: "Q1", boxes: [[45, 20, 1.6, 6, 6, 2]], k: 50, power: 0.3 },
+      { name: "R1", boxes: [[20, 40, 1.6, 6, 3, 0.6]], k: 2, power: 0.1 },
+    ],
+    fluxes: [...pads(U1_PADS, 1.4), ...pads(Q1_PADS, 1.2), ...pads(R1_PADS, 0.4)],
+    sinks: [{ kind: "conv", h: 10, T: 25, sel: { exterior: true } }],
+  },
+  {
     id: "chassis", what: "The board on four brass standoffs over an aluminium chassis plate whose underside is held at 40 °C; three parts make 5 W; open faces cooled at 6 W/(m²·K)", ambient: 25, size: 1.6,
     bodies: [
       { name: "chassis", boxes: [[0, 0, 0, 140, 110, 3]], k: 200 },
@@ -50,7 +69,7 @@ const CASES: Case[] = [
   },
 ];
 
-interface Out { nodes: number; elements: number; bodies: number[][]; sinks: number[][][]; pos: number[]; body: number[]; T: number[] }
+interface Out { nodes: number; elements: number; bodies: number[][]; sinks: number[][][]; fluxes?: number[][][]; pos: number[]; body: number[]; T: number[] }
 
 const [work = "node_modules/.cache/thval", only] = process.argv.slice(2);
 // THVAL_SIZE=<factor> scales CalculiX's mesh size (to check that its answer has settled)
@@ -81,7 +100,11 @@ for (const c of CASES) {
     const tris = Float64Array.from(o.sinks[i].flat());
     sinks.push(s.kind === "temp" ? { tris, temp: s.T! } : { tris, h: s.h! * 1e-6, ambient: s.T! });
   });
-  const setup: ThermalSetup = { sinks, sinkIds: sinks.map((_s, i) => `s${i}`), problems: [], sources: c.bodies.flatMap((b, i) => (b.power ? [{ power: b.power, doms: [i] }] : [])) };
+  const setup: ThermalSetup = { sinks, sinkIds: sinks.map((_s, i) => `s${i}`), problems: [], sources: [
+    ...c.bodies.flatMap((b, i) => (b.power ? [{ power: b.power, doms: [i] }] : [])),
+    // pads: heat into the board through their faces, as Heat from package's `into` regions are
+    ...(c.fluxes ?? []).map((f, i) => ({ tris: Float64Array.from(o.fluxes![i].flat()), power: f.power, dom: f.body, ...(process.env.THVAL_FINE ? { fine: Number(process.env.THVAL_FINE) } : {}) })),
+  ] };
   const pos = Float32Array.from(o.pos);
   const inp: RunInput = {
     body: { tris: all, face: new Int32Array(all.length / 9), names: [""], lo, hi }, mat: { E: 1, nu: 0.3, rho: 0 }, regions,
