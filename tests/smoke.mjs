@@ -18735,7 +18735,7 @@ try {
         for (let n = w.nextNode(); n; n = w.nextNode()) {
           if (n.parentElement.closest('[translate="no"], script, style') || !n.parentElement.getClientRects().length) continue;
           const t = n.textContent.trim();
-          if (/[A-Za-z]{3,}/.test(t.replace(/°C|\bW\b|\bmm\b|[A-Z]+\d+/g, ""))) out.push(t.slice(0, 40));
+          if (/[A-Za-z]{3,}/.test(t.replace(/°C|\bW\b|\bmm\b|\bCSV\b|[A-Z]+\d+/g, ""))) out.push(t.slice(0, 40));
         }
       }
       return out;
