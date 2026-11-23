@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.718.0] - 2026-11-23
+
+### Changed
+
+- Parts, assemblies, STEP files and drawings opened before now open from the disk cache after the app updates too. The cache used to be thrown away with every new version (several a day); it is now kept until the modelling kernel itself changes, which none of the last 49 releases did.
+
 ## [1.717.0] - 2026-11-23
 
 ### Added
@@ -4739,6 +4745,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.717.0...HEAD
+[1.718.0]: https://github.com/kothf/step-viewer/compare/v1.717.0...v1.718.0
 [1.717.0]: https://github.com/kothf/step-viewer/compare/v1.716.0...v1.717.0
 [1.716.0]: https://github.com/kothf/step-viewer/compare/v1.715.0...v1.716.0
 [1.715.0]: https://github.com/kothf/step-viewer/compare/v1.714.0...v1.715.0
