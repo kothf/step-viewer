@@ -2,7 +2,7 @@
 // which body is the board, what each body is made of, and the heat every package part makes. Pure.
 
 import type { ModelBody, PartMatch } from "./match";
-import type { ThermalManifest, ThermalPart } from "./package";
+import { isElectrolytic, type ThermalManifest, type ThermalPart } from "./package";
 
 /** The copper of a board, for its effective conductivity. */
 export interface BoardStack {
@@ -170,7 +170,7 @@ export function guessMaterial(part: Pick<ThermalPart, "designator" | "part" | "m
 }
 
 /** One package part's heat in the study. */
-export interface PlanHeat { id: number; name: string; bodies: number[]; p: number; limit?: number; board?: number; sink?: number; path?: ThermalPart["path"] }
+export interface PlanHeat { id: number; name: string; bodies: number[]; p: number; limit?: number; board?: number; sink?: number; path?: ThermalPart["path"]; elyt?: boolean }
 export interface BoardPlan {
   /** Body index of the board, −1 = none found. */
   board: number;
@@ -230,7 +230,7 @@ export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelB
   for (const p of man.parts) {
     if (p.id === 0) continue;
     const list = (match.bodies.get(p.id) ?? []).filter(i => i !== board), w = p.p ?? 0;
-    heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}) });
+    heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}), ...(isElectrolytic(p) ? { elyt: true } : {}) });
     if (list.length) power += w;
   }
   return { board, thickness: board >= 0 ? sizes(bodies[board].box)[0] : 0, mats, names, heat, ambient: man.settings.ambient, emissivity: man.settings.emissivity, power,

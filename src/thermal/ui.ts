@@ -1000,6 +1000,10 @@ export class ThermalMaps {
     const name = this.nameOf(a, p.id);
     if (p.kind === "over") return t("{name}: {v} °C over its limit of {limit} °C", { name, v: deg(p.value), limit: deg(p.limit) });
     if (p.kind === "life") return t("{name}: estimated life {h} h", { name, h: hours(p.value) });
+    if (p.kind === "near") {
+      const s = a.stats.get(p.id), spread = s ? s.max - s.min : 0;
+      return t("{name}: {gap} mm from {hot} ({p} W), {k} K across it", { name, gap: deg(p.value), hot: this.nameOf(a, p.hot!), p: deg(p.p ?? 0), k: deg(spread) });
+    }
     return t("Board: {v} °C, over its limit of {limit} °C", { v: deg(p.value), limit: deg(p.limit) });
   }
 

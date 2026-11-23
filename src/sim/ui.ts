@@ -17,6 +17,7 @@ import { zip } from "../model/zip";
 import { packageFiles, partBoxes, type ExportPart } from "../thermal/export";
 import type { ThermalMesh } from "../thermal/vtu";
 import { balanceCsv } from "../thermal/csv";
+import { nearHot } from "../thermal/package";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
 import { chooseModal, toast } from "../ui";
@@ -636,7 +637,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, arrows: this.arrows, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), near: this.nearHotRows(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -1927,6 +1928,50 @@ export class SimController {
       + `<p class="sim-note muted" data-v="pathnote">${esc(split ? t("The package's split is kept: its board shares enter the board under each part as fixed powers.") : t("The heat goes where the conductances send it; hover a row for the package's split."))}</p>`;
   }
 
+  /** Box of each component on the plot mesh (min x, y, z, max x, y, z), by component id; an assembly only. */
+  private compBoxes(r: Results): Map<string, number[]> {
+    const out = new Map<string, number[]>(), am = this.host.model() as AsmModel | null;
+    if (!am?.parts) return out;
+    const vp = this.partsOfMesh(am, r.mesh), comp = am.parts.map((_p, k) => compOf(am.names[am.faceOff[k]] ?? "")), pos = r.mesh.pos;
+    for (let v = 0; v < vp.length; v++) {
+      if (vp[v] < 0) continue;
+      const id = comp[vp[v]];
+      let b = out.get(id);
+      if (!b) out.set(id, b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]);
+      for (let i = 0; i < 3; i++) { const x = pos[3 * v + i]; if (x < b[i]) b[i] = x; if (x > b[i + 3]) b[i + 3] = x; }
+    }
+    return out;
+  }
+
+  /**
+   * Electrolytics of a board study next to a package part over 1 W (FR-TBRD-023): the capacitor, the hot part, the gap
+   * between their boxes (mm) and the spread of the capacitor's surface temperature in the solve (K).
+   */
+  private nearHotRows(r: Results | null = this.res && !this.stale() ? this.res : null) {
+    const last = r?.passes.at(-1), rows = last?.thermal?.comps, st = this.study(), off = new Set(st?.suppressed ?? []);
+    const l = st?.loads.find(x => x.type === "pkgheat" && !off.has(x.id));
+    if (!r?.comps || !rows || !l?.parts?.some(x => x.elyt) || (r.env && r.passes === r.env)) return [];
+    const boxes = this.compBoxes(r), parts = l.parts.filter(x => !x.off || x.elyt);
+    const boxOf = (comps: string[]) => {
+      const bs = comps.map(c => boxes.get(c)).filter((b): b is number[] => !!b);
+      return bs.length ? [0, 1, 2].map(i => Math.min(...bs.map(b => b[i]))).concat([3, 4, 5].map(i => Math.max(...bs.map(b => b[i])))) : undefined;
+    };
+    const near = nearHot(parts.map(x => ({ id: x.id, box: boxOf(x.comps), p: x.off ? 0 : x.p, elyt: !!x.elyt })));
+    return near.map(n => {
+      const cap = parts.find(x => x.id === n.cap)!, hot = parts.find(x => x.id === n.hot)!, cs = new Set(cap.comps);
+      let lo = Infinity, hi = -Infinity;
+      r.comps!.forEach((c, d) => { if (cs.has(compOf(c.key)) && rows[d]) { lo = Math.min(lo, rows[d].min); hi = Math.max(hi, rows[d].max); } });
+      return { cap: cap.name, hot: hot.name, gap: n.gap, p: n.p, spread: hi > lo ? hi - lo : 0, max: hi };
+    });
+  }
+
+  private nearHtml(r: Results) {
+    const near = this.nearHotRows(r);
+    if (!near.length) return "";
+    return `<ul class="sim-near" data-v="tnear">${near.map(n => `<li class="sim-warn" data-near="${esc(n.cap)}">${esc(t("{name}: {gap} mm from {hot} ({p} W), {k} K across it", { name: n.cap, gap: sig(n.gap), hot: n.hot, p: sig(n.p), k: sig(n.spread) }))}</li>`).join("")}</ul>`
+      + `<p class="sim-note muted" data-v="nearnote">${esc(t("Electrolytic capacitors within 10 mm of a part over 1 W: heat from that part runs across them, so their hot side ages faster than the mean says."))}</p>`;
+  }
+
   private thermalCompsHtml(r: Results, last: PassResult): string {
     const rows = last.thermal?.comps;
     if (!r.comps || !rows || rows.length < 2) return "";
@@ -1934,6 +1979,7 @@ export class SimController {
     const lim = (d: number) => limits.get(compOf(r.comps![d].key)), over = rows.filter((x, d) => lim(d) !== undefined && x.max > lim(d)!).length;
     return `<h5 class="sim-sub">${esc(t("By component"))}</h5>`
       + (limits.size ? `<p class="${over ? "sim-warn" : "sim-note muted"}" data-v="tover">${esc(over ? t("{n} part is over its temperature limit.|{n} parts are over their temperature limits.", { n: over }) : t("Every part is within its temperature limit."))}</p>` : "")
+      + this.nearHtml(r)
       + `<table class="sim-comptable sim-tcomps"><thead><tr><th>${esc(t("Component"))}</th><th title="${esc(t("Highest temperature"))}">${esc(t("Max"))}, °C</th>${limits.size ? `<th title="${esc(t("Temperature limit from the package"))}">${esc(t("Limit"))}, °C</th>` : `<th title="${esc(t("Mean temperature of its surface"))}">${esc(t("Mean"))}, °C</th>`}${power ? `<th title="${esc(t("Heat made in the component"))}">${esc(t("Heat"))}, W</th>` : ""}</tr></thead><tbody>`
       + rows.map((x, d) => `<tr data-a="rcomp" data-rcomp="${d}" tabindex="0" class="${d === alone ? "sel" : ""}${lim(d) !== undefined && x.max > lim(d)! ? " bad" : ""}"><td translate="no" title="${esc(r.comps![d].name)}">${esc(r.comps![d].name)}</td><td data-v="tcmax">${sig(x.max)}</td>${limits.size ? `<td data-v="tclimit">${lim(d) === undefined ? "" : sig(lim(d)!)}</td>` : `<td>${sig(x.mean)}</td>`}${power ? `<td data-v="tcpower">${x.power ? sig(x.power) : ""}</td>` : ""}</tr>`).join("") + `</tbody></table>`
       + `<p class="sim-note muted" data-v="compnote">${alone >= 0 ? `${esc(t("Showing {name} alone, on its own colour scale.", { name: r.comps[alone].name }))} <button class="btn small" data-a="rcompall">${esc(t("Show all"))}</button>` : esc(t("Click a row to show that component alone."))}</p>`;

@@ -331,14 +331,16 @@ export function partStats(m: ThermalMesh): Map<number, PartStat> {
   return out;
 }
 
-export type ProblemKind = "over" | "life" | "board";
+export type ProblemKind = "over" | "life" | "board" | "near";
 export interface ThermalProblem {
   kind: ProblemKind;
   /** Part id (0 = the board). */
   id: number;
-  /** °C over the limit, hours of life, or the board's highest temperature. */
+  /** °C over the limit, hours of life, the board's highest temperature, or (near) mm between the capacitor and the hot part. */
   value: number;
   limit: number;
+  /** near: the part over `HOT_POWER` next to the capacitor `id`, and its power (W). */
+  hot?: number; p?: number;
   at?: [number, number, number];
 }
 export interface CheckLimits {
@@ -370,7 +372,44 @@ export function problems(pk: { manifest: ThermalManifest }, stats: Map<number, P
   for (const p of life) out.push({ kind: "life", id: p.id, value: p.life!, limit: lim.life, at: stats.get(p.id)?.at });
   const b = stats.get(0);
   if (b && b.max > lim.board) out.push({ kind: "board", id: 0, value: b.max, limit: lim.board, at: b.at });
+  const boxOf = (p: ThermalPart) => stats.get(p.id)?.box ?? p.box;
+  for (const n of nearHot(pk.manifest.parts.map(p => ({ id: p.id, box: boxOf(p), p: p.p ?? 0, elyt: isElectrolytic(p) }))))
+    out.push({ kind: "near", id: n.cap, value: n.gap, limit: NEAR_GAP, hot: n.hot, p: n.p, at: stats.get(n.cap)?.at });
   return out;
+}
+
+/** An electrolytic capacitor: one with a life figure, or named so. */
+export function isElectrolytic(p: Pick<ThermalPart, "life" | "ratedLife" | "part">) {
+  return p.life !== undefined || p.ratedLife !== undefined || /electrolytic|\belko\b|e-?cap/i.test(p.part ?? "");
+}
+/** A part dissipating more than this (W) heats what stands next to it (FR-TBRD-023). */
+export const HOT_POWER = 1;
+/** An electrolytic this close (mm, between the boxes) to a hot part sits in its temperature gradient (FR-TBRD-023). */
+export const NEAR_GAP = 10;
+type Box6 = readonly [number, number, number, number, number, number] | number[];
+/** Shortest distance between two boxes (0 when they touch or overlap), mm. */
+export function boxGap(a: Box6, b: Box6) {
+  let s = 0;
+  for (let i = 0; i < 3; i++) { const d = Math.max(0, a[i] - b[i + 3], b[i] - a[i + 3]); s += d * d; }
+  return Math.sqrt(s);
+}
+/**
+ * Electrolytics next to a part over `hot` W (FR-TBRD-023): each capacitor with the nearest such part within `gap` mm.
+ * Heat from the hot part runs across the capacitor, so one side of it ages faster than its own temperature says.
+ */
+export function nearHot(items: { id: number; box?: Box6; p: number; elyt: boolean }[], gap = NEAR_GAP, hot = HOT_POWER) {
+  const hots = items.filter(x => x.p > hot && x.box), out: { cap: number; hot: number; gap: number; p: number }[] = [];
+  for (const c of items) {
+    if (!c.elyt || !c.box) continue;
+    let best: { hot: number; gap: number; p: number } | null = null;
+    for (const h of hots) {
+      if (h.id === c.id) continue;
+      const g = boxGap(c.box, h.box!);
+      if (g <= gap && (!best || g < best.gap)) best = { hot: h.id, gap: g, p: h.p };
+    }
+    if (best) out.push({ cap: c.id, ...best });
+  }
+  return out.sort((a, b) => a.gap - b.gap || a.cap - b.cap);
 }
 
 /** Parts in the order the list shows them: the least margin first, parts without a limit after, hottest first. */

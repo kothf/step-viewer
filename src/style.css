@@ -1827,6 +1827,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-legend .ana-row select { max-width: 150px; }
 .sim-hot tbody tr.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .sim-warn { color: var(--warn, #e8590c); cursor: help; }
+.sim-near { margin: 4px 0; padding-left: 18px; }
 .sim-sing { color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .sim-run .spin { animation: none; } }
 .sim-links .sim-kv2 { display: flex; align-items: center; gap: 6px; margin: 6px 0; font-size: 12px; }

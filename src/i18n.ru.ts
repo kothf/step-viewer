@@ -1499,6 +1499,8 @@ export const RU: Record<string, string> = {
   "Details": "Подробности",
   "Events": "События",
   "Export CSV": "Экспорт CSV",
+  "{name}: {gap} mm from {hot} ({p} W), {k} K across it": "{name}: {gap} мм от {hot} ({p} Вт), перепад {k} K по корпусу",
+  "Electrolytic capacitors within 10 mm of a part over 1 W: heat from that part runs across them, so their hot side ages faster than the mean says.": "Электролитические конденсаторы ближе 10 мм к детали мощнее 1 Вт: тепло этой детали идёт через них, и горячая сторона стареет быстрее, чем говорит средняя температура.",
   "File": "Файл",
   "Get latest": "Получить последнюю",
   "History of {name}": "История {name}",

@@ -65,8 +65,8 @@ await pg.press('#th-side [data-k="life"]', "Tab");
 await pg.fill('#th-side [data-k="board"]', "105");
 await pg.press('#th-side [data-k="board"]', "Tab");
 await pg.waitForTimeout(200);
-check("TM-4", pr0.length === 2 && /R20/.test(pr0[0]) && /C13/.test(pr0[1]) && badge0 === "2" && pr1.length === 1 && pr2.length === 2 && /101/.test(pr2[1]) && badge2 === "2" && (await probs()).length === 2,
-  "the problems are the part over its limit and the short-lived capacitor; a lower life threshold drops the capacitor, a lower board limit adds the board", { pr0, pr1, pr2 }, await snap(pg, "problems"));
+check("TM-4", pr0.length === 4 && /R20/.test(pr0[0]) && /C13/.test(pr0[1]) && /C13.*R20/.test(pr0[2]) && /C12.*V3/.test(pr0[3]) && badge0 === "4" && pr1.length === 3 && pr2.length === 4 && /101/.test(pr2[1]) && badge2 === "4" && (await probs()).length === 4,
+  "the problems are the part over its limit, the short-lived capacitor and the two capacitors beside hot parts; a lower life threshold drops the capacitor, a lower board limit adds the board", { pr0, pr1, pr2 }, await snap(pg, "problems"));
 
 // TM-5: a probe reads the map's own temperature at the clicked point.
 await pg.click('#th-tools [data-th="flip"]');
@@ -132,7 +132,7 @@ check("TM-8", gone.state === null && gone.tab && !gone.cm.includes("thermal") &&
 await openFiles(pg, [`${FX}/amp-with-step-thermal.zip`]);
 await mapped();
 const s9 = await st(), doc9 = await text("#doc");
-check("TM-9", s9.drawn && s9.matched === 7 && !s9.own && /amp\.step/.test(doc9) && s9.range[1] === 182 && s9.problems.length === 2,
+check("TM-9", s9.drawn && s9.matched === 7 && !s9.own && /amp\.step/.test(doc9) && s9.range[1] === 182 && s9.problems.length === 4,
   "one ZIP with the STEP inside opens the board and its map", { doc9, matched: s9.matched, problems: s9.problems.length }, await snap(pg, "zip-with-step"));
 
 // TM-10: the package alone: its own surfaces are the model.
