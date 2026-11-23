@@ -30,8 +30,6 @@ export function gauss(n: number) {
 
 /** Inside test of the body; a mesh body adds exact line cuts and box hints (see body.ts). */
 export type Inside = ((x: number, y: number, z: number) => boolean) & {
-  /** The body's box when known: nothing outside it is inside. */
-  box?: { lo: ArrayLike<number>; hi: ArrayLike<number> };
   hits?(axis: number, p: ArrayLike<number>): number[];
   hint?(lo: ArrayLike<number>, hi: ArrayLike<number>): { axis: number; edge: boolean } | null;
 };
@@ -365,44 +363,33 @@ export function splitPoly(poly: number[][], axis: number, at: number): [number[]
   return [lo.length >= 3 ? lo : [], hi.length >= 3 ? hi : []];
 }
 
-/** Pieces of polygons cut along the planes lo + k·h of each axis. */
-function cutAlong(polys: number[][][], lo: number[], h: number): number[][][] {
-  for (let a = 0; a < 3; a++) {
-    const next: number[][][] = [];
-    for (const P of polys) {
-      let mn = Infinity, mx = -Infinity;
-      for (const p of P) { mn = Math.min(mn, p[a]); mx = Math.max(mx, p[a]); }
-      let rest = P;
-      const k0 = Math.floor((mn - lo[a]) / h) + 1, k1 = Math.ceil((mx - lo[a]) / h) - 1;
-      for (let k = k0; k <= k1 && rest.length; k++) {
-        const at = lo[a] + k * h;
-        if (at <= mn + 1e-12 * h || at >= mx - 1e-12 * h) continue;
-        const [below, above] = splitPoly(rest, a, at);
-        if (below.length) next.push(below);
-        rest = above;
-      }
-      if (rest.length) next.push(rest);
-    }
-    polys = next;
-  }
-  return polys;
-}
-
 /** Quadrature of triangles cut along the planes of a grid (origin lo, step h), so each piece lies in one
- * cell: `n`×`n` Duffy points per sub-triangle. Returns the points and each point's source triangle.
- * `fine`: pieces whose middle `fine.at` says lies in a refined cell are cut again along the planes of step `fine.h`. */
-export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: number, n: number, fine?: { h: number; at: (x: number, y: number, z: number) => boolean }): { pts: Points; tri: Int32Array } {
+ * cell: `n`×`n` Duffy points per sub-triangle. Returns the points and each point's source triangle. */
+export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: number, n: number): { pts: Points; tri: Int32Array } {
   const pts = new Points();
   const tri: number[] = [];
   const nt = tris.length / 9;
   for (let t = 0; t < nt; t++) {
     const o = 9 * t;
-    let polys = cutAlong([[[tris[o], tris[o + 1], tris[o + 2]], [tris[o + 3], tris[o + 4], tris[o + 5]], [tris[o + 6], tris[o + 7], tris[o + 8]]]], lo, h);
-    if (fine) polys = polys.flatMap(P => {
-      const m = [0, 0, 0];
-      for (const p of P) for (let a = 0; a < 3; a++) m[a] += p[a] / P.length;
-      return fine.at(m[0], m[1], m[2]) ? cutAlong([P], lo, fine.h) : [P];
-    });
+    let polys: number[][][] = [[[tris[o], tris[o + 1], tris[o + 2]], [tris[o + 3], tris[o + 4], tris[o + 5]], [tris[o + 6], tris[o + 7], tris[o + 8]]]];
+    for (let a = 0; a < 3; a++) {
+      const next: number[][][] = [];
+      for (const P of polys) {
+        let mn = Infinity, mx = -Infinity;
+        for (const p of P) { mn = Math.min(mn, p[a]); mx = Math.max(mx, p[a]); }
+        let rest = P;
+        const k0 = Math.floor((mn - lo[a]) / h) + 1, k1 = Math.ceil((mx - lo[a]) / h) - 1;
+        for (let k = k0; k <= k1 && rest.length; k++) {
+          const at = lo[a] + k * h;
+          if (at <= mn + 1e-12 * h || at >= mx - 1e-12 * h) continue;
+          const [below, above] = splitPoly(rest, a, at);
+          if (below.length) next.push(below);
+          rest = above;
+        }
+        if (rest.length) next.push(rest);
+      }
+      polys = next;
+    }
     for (const P of polys) for (let i = 1; i + 1 < P.length; i++) {
       const before = pts.n;
       triangleGauss(P[0], P[i], P[i + 1], n, pts);

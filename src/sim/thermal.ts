@@ -9,8 +9,8 @@
 import { Basis, basisSize } from "./basis";
 import { BlockMatrix, Envelope } from "./sparse";
 import { pcgSolver } from "./pcg";
-import { makeGrid, refit, memoryBytes, type FacePiece, type Grid, type GridRefine } from "./grid";
-import { facePoints, fitFacePoints, type Inside, type Points } from "./quad";
+import { makeGrid, refit, memoryBytes, type Grid } from "./grid";
+import { facePoints, fitFacePoints, gridTrianglePoints, type Inside, type Points } from "./quad";
 import { DIRECT_LIMIT, MEMORY_LIMIT, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
 import { exchangeResistance } from "./viewfactor";
 
@@ -242,36 +242,6 @@ export interface ThermalProblem {
    * the last one at the same degree reuses its grid, matrix and factorisation (only the load is made again).
    */
   reuse?: string;
-  /**
-   * FR-TSOL-004: smaller cells where heat enters through a small patch (a part's pads on a board): within each box
-   * the cells are split until they are no larger than its `h`, and the cells around them step up in size by halves.
-   */
-  refine?: RefineZone[];
-}
-
-/** A box the cells in and around are made no larger than `h` (mm). */
-export interface RefineZone { lo: number[]; hi: number[]; h: number }
-
-/** At most this many halvings of the plain cells (cells 8 times smaller). */
-export const MAX_HALVINGS = 3;
-
-/** The grid refinement for some zones on plain cells of size `H`: a cell is split while it is larger than a zone's
- * size and no further from it than its own size (so the sizes step down by halves towards the zone). */
-export function refineNear(zones: RefineZone[], H: number): GridRefine {
-  let levels = 0;
-  for (const z of zones) levels = Math.max(levels, Math.ceil(Math.log2(H / z.h) - 1e-9));
-  return {
-    levels: Math.max(0, Math.min(MAX_HALVINGS, levels)),
-    want: (lo, hi) => {
-      const size = hi[0] - lo[0];
-      return zones.some(z => {
-        if (!(size > 1.01 * z.h)) return false;
-        let d2 = 0;
-        for (let a = 0; a < 3; a++) d2 += Math.max(0, z.lo[a] - hi[a], lo[a] - z.hi[a]) ** 2;
-        return d2 < size * size;
-      });
-    },
-  };
 }
 
 export interface SinkFlow {
@@ -349,7 +319,7 @@ interface Ctx {
   bas: Basis;
   bas2: Basis;
   gam: Float64Array;
-  fitted: Map<number | string, Points>;
+  fitted: Map<number, Points>;
 }
 
 /** The body each triangle of a set lies on (−1 = none found), asked once per set and kept. */
@@ -370,7 +340,7 @@ function bodiesOf(c: Ctx, tris: ArrayLike<number>): Int8Array | null {
 
 /** Boundary points of some triangles with the element each lies in: e, x, y, z, w, nx, ny, nz per point. */
 function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1): Float64Array {
-  const g = c.grid, { pts, tri } = g.trianglePoints(tris, q), nrms = triNormals(tris), eps = 1e-7 * g.h;
+  const g = c.grid, { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q), nrms = triNormals(tris), eps = 1e-7 * g.h;
   // with several bodies each point is read in its triangle's body (asked once per triangle, not per point)
   const own = dom < 0 ? bodiesOf(c, tris) : null;
   const out = new Float64Array(8 * pts.n);
@@ -386,19 +356,18 @@ function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1): Float64A
   return out.subarray(0, 8 * n);
 }
 
-/** The points of the face between cell `ca` and the next one along `axis`, for degree `d` (the higher side's):
- * piece `k` of `pieces` (`Grid.across`; one piece covering the whole face unless the grid is refined). */
-function facePts(c: Ctx, ca: number, axis: number, d: number, pieces: FacePiece[], k: number): Points {
-  const g = c.grid, A0 = g.cells[ca], P = pieces[k], key = pieces.length === 1 && P.lo === A0.lo ? ca * 3 + axis : `${ca * 3 + axis}.${k}`, had = c.fitted.get(key);
+/** The points of the face between cell `ca` and the next one along `axis`, for degree `d` (the higher side's). */
+function facePts(c: Ctx, ca: number, axis: number, d = c.p): Points {
+  const g = c.grid, A0 = g.cells[ca], key = ca * 3 + axis, had = c.fitted.get(key);
   if (had) return had;
   let pts = g.faces.get(key);
   if (pts === undefined) {
-    pts = facePoints(axis, A0.hi[axis], P.lo, P.hi, 5, c.doms ? c.doms[A0.dom].inside : c.pb.inside, c.pb.depth ?? 3);
-    const a1 = (axis + 1) % 3, a2 = (axis + 2) % 3, area = (P.hi[a1] - P.lo[a1]) * (P.hi[a2] - P.lo[a2]);
+    pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, 5, c.doms ? c.doms[A0.dom].inside : c.pb.inside, c.pb.depth ?? 3);
+    const area = g.h * g.h;
     g.faces.set(key, Math.abs(pts.weight() - area) < 1e-12 * area ? null : pts);
     pts = g.faces.get(key);
   }
-  const out = pts ? fitFacePoints(pts, axis, A0.hi[axis], P.lo, P.hi, 2 * d + 1) : facePoints(axis, A0.hi[axis], P.lo, P.hi, d + 1, () => true, 0);
+  const out = pts ? fitFacePoints(pts, axis, A0.hi[axis], A0.lo, A0.hi, 2 * d + 1) : facePoints(axis, A0.hi[axis], A0.lo, A0.hi, d + 1, () => true, 0);
   c.fitted.set(key, out);
   return out;
 }
@@ -442,18 +411,17 @@ function measure(c: Ctx, A: BlockMatrix, held: Float64Array[]) {
     for (let a = 0; a < nb; a++) { const s = w * M[a], r = a * nb; for (let b = 0; b < nb; b++) T[r + b] += s * M[b]; }
   };
   for (let ci = 0; ci < grid.cells.length; ci++) {
-    const ea = grid.cells[ci].el;
+    const [i, j, kk] = grid.cells[ci].ijk, ea = grid.cells[ci].el;
     for (let axis = 0; axis < 3; axis++) {
-      const pieces = grid.across(ci, axis);
-      for (let pk = 0; pk < pieces.length; pk++) {
-      const eb = grid.cells[pieces[pk].o].el;
+      const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), kk + (axis === 2 ? 1 : 0), grid.cells[ci].dom);
+      if (o < 0) continue;
+      const eb = grid.cells[o].el;
       if (ea === eb || !(cut[ea] || cut[eb])) continue;
-      const pts = facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb]), pieces, pk), n = [axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0];
+      const pts = facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb])), n = [axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0];
       for (let q = 0; q < pts.n; q++) {
         const o4 = 4 * q;
         if (cut[ea]) at(ea, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], n[0], n[1], n[2]);
         if (cut[eb]) at(eb, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], n[0], n[1], n[2]);
-      }
       }
     }
   }
@@ -502,7 +470,7 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
       if (!apart) near.push(d);
     }
     if (!near.length) continue;
-    const T = doms[a].tris, { pts, tri } = grid.trianglePoints(T, tq), nrms = triNormals(T);
+    const T = doms[a].tris, { pts, tri } = gridTrianglePoints(T, grid.lo, grid.h, tq), nrms = triNormals(T);
     for (let q = 0; q < pts.n; q++) {
       const o = 4 * q, t = tri[q], w = pts.a[o + 3], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
       const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
@@ -644,14 +612,14 @@ function faceTerms(c: Ctx, A: BlockMatrix) {
   const { grid, nb, nbs, bas, bas2, gam } = c;
   const MA = new Float64Array(nb), MB = new Float64Array(nb);
   for (let ci = 0; ci < grid.cells.length; ci++) {
-    const ea = grid.cells[ci].el;
+    const [i, j, kk] = grid.cells[ci].ijk, ea = grid.cells[ci].el;
     for (let axis = 0; axis < 3; axis++) {
-      const pieces = grid.across(ci, axis);
-      for (let pk = 0; pk < pieces.length; pk++) {
-      const eb = grid.cells[pieces[pk].o].el;
+      const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), kk + (axis === 2 ? 1 : 0), grid.cells[ci].dom);
+      if (o < 0) continue;
+      const eb = grid.cells[o].el;
       if (ea === eb) continue;
       const k = c.k3[3 * ea + axis];
-      const EA = grid.elems[ea], EB = grid.elems[eb], pts = facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb]), pieces, pk), gamma = Math.max(gam[ea], gam[eb]);
+      const EA = grid.elems[ea], EB = grid.elems[eb], pts = facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb])), gamma = Math.max(gam[ea], gam[eb]);
       const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb), ma = nbs[ea], mb = nbs[eb];
       for (let q = 0; q < pts.n; q++) {
         const o4 = 4 * q, w = pts.a[o4 + 3], x = pts.a[o4], y = pts.a[o4 + 1], z = pts.a[o4 + 2];
@@ -663,7 +631,6 @@ function faceTerms(c: Ctx, A: BlockMatrix) {
         pair(ma, mb, Kab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
         pair(mb, ma, Kba, bas2.v, MB, -1, bas.v, MA, 1, w, gamma);
         pair(mb, mb, Kbb, bas2.v, MB, -1, bas2.v, MB, -1, w, gamma);
-      }
       }
     }
   }
@@ -942,7 +909,7 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   const deg0 = grid && pb.degrees && pb.degrees.length === grid.elems.length ? pb.degrees : null;
   const degOf = (e: number) => (deg0 ? Math.min(p, Math.max(1, deg0[e])) : p);
   if (grid) refit(grid, p + 1, 2 * p + 1, deg0 ? cl => degOf(cl.el) : undefined);
-  else grid = makeGrid(pb.lo, pb.hi, pb.h, pb.inside, { q: p + 1, depth: pb.depth ?? 3, fit: 2 * p + 1, domains: doms?.map(d => d.inside), ...(pb.refine?.length ? { refine: refineNear(pb.refine, pb.h) } : {}) });
+  else grid = makeGrid(pb.lo, pb.hi, pb.h, pb.inside, { q: p + 1, depth: pb.depth ?? 3, fit: 2 * p + 1, domains: doms?.map(d => d.inside) });
   const nb = basisSize(p), nel = grid.elems.length;
   const nbs = Int32Array.from({ length: nel }, (_, e) => basisSize(degOf(e))), off = new Int32Array(nel + 1);
   for (let e = 0; e < nel; e++) off[e + 1] = off[e] + nbs[e];
@@ -965,7 +932,7 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   for (let e = 0; e < nel; e++) {
     let fr = 0;
     for (const ci of grid.elems[e].cells) fr = Math.max(fr, grid.cells[ci].frac);
-    c.gam[e] = ((pb.beta ?? 3) * ke[e]) / (2 * grid.elems[e].s) * (degOf(e) + 1) ** 2 / Math.min(1, Math.max(0.2, fr));
+    c.gam[e] = ((pb.beta ?? 3) * ke[e]) / grid.h * (degOf(e) + 1) ** 2 / Math.min(1, Math.max(0.2, fr));
   }
   const tq = Math.max(2, p + 1);
   const A = new BlockMatrix(nel, nbs), f = new Float64Array(A.size);

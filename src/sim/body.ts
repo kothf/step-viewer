@@ -175,6 +175,5 @@ export function insideOf(b: Body): import("./quad").Inside {
   const f = ((x: number, y: number, z: number) => b.inside(x, y, z)) as import("./quad").Inside;
   if (b.hits) f.hits = (a, p) => b.hits!(a, p);
   if (b.hint) f.hint = (l, h) => b.hint!(l, h);
-  if (b instanceof MeshBody) f.box = { lo: b.lo, hi: b.hi };
   return f;
 }

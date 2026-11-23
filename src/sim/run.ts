@@ -8,7 +8,7 @@ import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { DEFAULT_AMBIENT, DEFAULT_REF, keepsSplit, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch, facingPatch, intoPatch } from "../thermal/study";
-import { forcedH, kmapMean, ktFactor, solveThermal, MAX_HALVINGS, type RefineZone, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
+import { forcedH, kmapMean, ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
 import { viewFactor } from "./viewfactor";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
@@ -816,8 +816,6 @@ export interface RunInput {
   pos: Float32Array;
   nrm: Float32Array;
   /** Cells aimed for (default 150). */
-  /** Thermal: false keeps equal cells where heat enters through small patches (FR-TSOL-004 off). */
-  refine?: boolean;
   cells?: number;
   /** A thermal study: conductivity W/(mm·K) and its set-up. `mat`, `problem` and the structural parts are not used. */
   /**
@@ -1226,10 +1224,10 @@ function hashOf(a: ArrayLike<number> | undefined, h = 2166136261): number {
  * size and every sink's faces and kind (fixed temperature, or film and its coefficient), but not the temperatures,
  * ambients or powers, which only change the load.
  */
-export function reuseKey(inp: RunInput, h: number, zones: RefineZone[] = []): string {
+export function reuseKey(inp: RunInput, h: number): string {
   const T = inp.thermal!;
   return JSON.stringify([
-    hashOf(inp.body.tris), inp.body.lo, inp.body.hi, h, zones, inp.memory ?? null, T.k, T.ks ?? null, T.k3s ?? null, T.k3 ?? null, T.kt ?? null, T.kts ?? null, T.gap ?? null, T.links ?? null,
+    hashOf(inp.body.tris), inp.body.lo, inp.body.hi, h, inp.memory ?? null, T.k, T.ks ?? null, T.k3s ?? null, T.k3 ?? null, T.kt ?? null, T.kts ?? null, T.gap ?? null, T.links ?? null,
     (T.kmaps ?? []).map(m => (m ? [m.axis, m.ua, m.va, m.u0, m.v0, m.cell, m.nu, m.nv, hashOf(m.along), hashOf(m.through)] : null)),
     (inp.regions ?? []).map(r => hashOf(r.tris)),
     T.setup.sinks.map(s => [hashOf(s.tris), s.temp !== undefined ? "t" : "f", s.temp !== undefined ? 0 : s.h ?? 0, s.emissivity ?? 0, !!s.free, s.natural ? 1 : 0, s.forced ? hashOf(s.forced.h) : 0]),
@@ -1265,37 +1263,6 @@ export function thermalBoost(inp: RunInput, h: number, inside: (x: number, y: nu
   return { grid, level: near };
 }
 
-/**
- * FR-TSOL-004: where a thermal grid of cells of size `h` is made finer: around every heat source on faces whose patch
- * is small against the cells (a part's pads on a board, a small heated face). Each patch's box asks for cells a
- * quarter of its middle extent (a disc's diameter, a strip's width), so the peak where the heat goes in is resolved.
- */
-export const REFINE_SHARE = 4;
-export function heatZones(sources: ThermalSource[], h: number): RefineZone[] {
-  const out: RefineZone[] = [];
-  for (const s of sources) {
-    if (!s.tris || !s.tris.length || !((s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0)) continue;
-    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-    for (let i = 0; i < s.tris.length; i++) { const a = i % 3; if (s.tris[i] < lo[a]) lo[a] = s.tris[i]; if (s.tris[i] > hi[a]) hi[a] = s.tris[i]; }
-    const ext = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]].sort((a, b) => a - b);
-    const want = Math.max(ext[1] / REFINE_SHARE, h / 2 ** MAX_HALVINGS);
-    if (want < h / 1.5) out.push({ lo, hi, h: want });
-  }
-  return out;
-}
-
-/**
- * The highest degree of each element of a grid made smaller by heat entries (FR-TSOL-004): cells of the plain size
- * go on to the pass's degree, smaller ones stop at 3.
- */
-export function refinedCaps(grid: Grid): Int8Array {
-  const top = 1 << grid.levels;
-  return Int8Array.from(grid.elems, el => {
-    const level = Math.round(Math.log2(top / (grid.cells[el.cells[0]].span ?? 1)));
-    return level <= 0 ? 127 : 3;
-  });
-}
-
 export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: number, y: number, z: number) => boolean) => void): Generator<PassResult> {
   const T = inp.thermal!, set = T.setup, exchanges = exchangesOf(set, inp.body);
   if (set.problems.length) throw new Error(`${set.problems[0].code}: ${set.problems[0].id}`);
@@ -1309,16 +1276,14 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const inside = insideOf(new MeshBody(inp.body.tris));
   const pads = set.sources.some(q => q.tris && (q.fine ?? 0) > 0);
   const h = inp.cells || !R ? cellSize(inp.body, inp.cells) : thermalCellSize(inp.body, R.map(r => r.tris), pads);
-  const zones = inp.refine === false ? [] : heatZones(set.sources, h);
   const passes = Math.max(1, Math.min(MAX_PASSES, Math.round(inp.passes)));
   let grid: Grid | undefined, prev: Float64Array | undefined, before: Float32Array | null = null;
   const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
-  const reuse = reuseKey(inp, h, zones);
+  const reuse = reuseKey(inp, h);
   // FR-TSOL-003 local passes (as runStatic): each element's degree, and its share of the error when its degree was last raised
-  let degrees: Int8Array | undefined, ind: Float64Array | undefined, caps: Int8Array | null = null;
-  // heat entering through small faces (a part's pads on a board): smaller cells around them (FR-TSOL-004); where the
-  // faces are not small against the cells, the elements under them run ahead in degree from the first pass instead
-  const boost = zones.length ? null : thermalBoost(inp, h, inside, domains);
+  let degrees: Int8Array | undefined, ind: Float64Array | undefined;
+  // heat entering through small faces (a part's pads on a board): the elements under them run ahead from the first pass
+  const boost = thermalBoost(inp, h, inside, domains);
   if (boost) grid = boost.grid;
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now();
@@ -1327,8 +1292,6 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       degrees = new Int8Array(boost.level.length);
       for (let e = 0; e < degrees.length; e++) { degrees[e] = Math.min(LOCAL_DEGREE, k + 2 + boost.level[e]); p = Math.max(p, degrees[e]); }
     }
-    // the small cells by a heat entry already resolve it: their degree stops lower, which keeps the passes quick
-    if (k > 0 && k < GLOBAL_PASSES && grid && caps) { degrees = caps.map((c: number) => Math.min(c, p)) as Int8Array; }
     if (k >= GLOBAL_PASSES && grid && ind) {
       degrees ??= new Int8Array(grid.elems.length).fill(GLOBAL_PASSES + 1);
       marked = markElements(ind, degrees);
@@ -1338,9 +1301,8 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       p = 0;
       for (let e = 0; e < degrees.length; e++) p = Math.max(p, degrees[e]);
     }
-    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), grid, prev, ...(degrees ? { degrees } : {}), sinks: set.sinks, sources: set.sources, ...(exchanges ? { exchanges } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}), ...(zones.length ? { refine: zones } : {}), reuse });
+    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), grid, prev, ...(degrees ? { degrees } : {}), sinks: set.sinks, sources: set.sources, ...(exchanges ? { exchanges } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}), reuse });
     grid = r.grid; prev = r.x;
-    if (k === 0 && zones.length && grid.levels > 0) caps = refinedCaps(grid);
     if (!ind || !degrees || k < GLOBAL_PASSES) ind = Float64Array.from(r.eta);
     else for (const e of marked) ind[e] = r.eta[e];
     if (r.prevError != null) known.push(r.prevError);
@@ -1389,7 +1351,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
     const converged = change != null && change <= inp.energyTol;
     let need = 0, more = k + 1 < passes;
     if (!converged && more) {
-      if (k + 1 < GLOBAL_PASSES) need = boost ? thermalMemory(r.grid, p + 1, Int8Array.from(boost.level, b => Math.min(LOCAL_DEGREE, k + 3 + b))) : caps ? thermalMemory(r.grid, p + 1, caps.map((c: number) => Math.min(c, p + 1)) as Int8Array) : thermalMemory(r.grid, p + 1);
+      if (k + 1 < GLOBAL_PASSES) need = boost ? thermalMemory(r.grid, p + 1, Int8Array.from(boost.level, b => Math.min(LOCAL_DEGREE, k + 3 + b))) : thermalMemory(r.grid, p + 1);
       else {
         const d = degrees ? Int8Array.from(degrees) : new Int8Array(ind.length).fill(GLOBAL_PASSES + 1), mk = markElements(ind, d);
         for (const e of mk) d[e]++;
