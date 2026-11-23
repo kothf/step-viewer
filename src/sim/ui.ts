@@ -109,6 +109,14 @@ const BOLT_NOTE = "Tension, shear and bending of each bolt as a beam. The safety
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 /** Solve on change: how long after the last change the solve starts, ms. */
 const AUTO_DELAY = 700;
+
+/**
+ * New steady thermal studies solve on change by default (FR-TSOL-020). Not under webdriver unless `?simauto`, so the
+ * smoke test's thermal blocks solve only when they click Solve.
+ */
+function thermalAutoDefault(): boolean {
+  return !(navigator.webdriver && !new URLSearchParams(location.search).has("simauto"));
+}
 /** The memory budget typed in the address (`?simmem=<MB>`, for tests), bytes; 0 = the default. */
 const memLimit = () => { const v = Number(new URLSearchParams(location.search).get("simmem")); return v > 0 ? v * 2 ** 20 : 0; };
 const pct = (v: number) => (Math.abs(v) < 0.01 ? (v === 0 ? "0" : "< 0.01") : sig(v));
@@ -712,7 +720,14 @@ export class SimController {
     if (this.res && !this.stale()) return;
     // nothing to solve yet: no support (unless the body is free on purpose), or no load
     const off = new Set(st.suppressed ?? []), on = <T extends { id: string }>(l: T[]) => l.filter(x => !off.has(x.id));
-    if (st.kind === "thermal") { if (!on(st.supports).length || !this.matOf(doc)?.k) return; }
+    if (st.kind === "thermal") {
+      // a warm-up is solved on request only; a steady study needs a way out for the heat, a heat source (or two
+      // temperatures) and, in a part, a conductivity
+      if (st.settings.transient) return;
+      const sup = on(st.supports).filter(s => s.type !== "insul");
+      if (!sup.length || !on(st.loads).some(l => l.type !== "temperature") && sup.filter(s => s.type === "temp").length < 2) return;
+      if (!this.host.asm() && !this.matOf(doc)?.k) return;
+    }
     else {
     if (st.kind !== "modal" && !st.settings.relief && !on(st.supports).length) return;
     if (st.kind !== "modal" && !on(st.loads).length && !on(st.supports).some(s => s.type === "disp")) return;
@@ -889,6 +904,7 @@ export class SimController {
     const doc = this.host.doc();
     if (!doc) return;
     const st = newStudy(doc.studies ?? [], kind);
+    if (kind === "thermal" && thermalAutoDefault()) st.auto = true;
     this.setActive(st.id);
     this.edit = null;
     this.host.change(kind === "modal" ? t("New modal study") : kind === "thermal" ? t("New thermal study") : t("New study"), d => { (d.studies ??= []).push(st); });
@@ -904,6 +920,7 @@ export class SimController {
     const doc = this.host.doc();
     if (!doc) return null;
     const st = newStudy(doc.studies ?? [], "thermal");
+    if (thermalAutoDefault()) st.auto = true;
     if (spec.enclosure) st.settings.enclosure = spec.enclosure;
     // the package's ambient wins over the enclosure preset's
     st.settings.ambient = spec.ambient !== undefined && Number.isFinite(spec.ambient) ? spec.ambient : ENCLOSURES.find(x => x.id === spec.enclosure)?.ambient ?? DEFAULT_AMBIENT;
@@ -1389,7 +1406,8 @@ export class SimController {
     const part = this.host.model();
     if (!part) { toast(asm ? t("The assembly has no components to analyse yet.") : t("The part has no body yet."), "warn"); return; }
     this.running = true; this.error = null; this.errorIn = ""; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.compSel = -1; this.modeSel = -1;
-    this.plot.kind = "temp";
+    // the thermal plot picked last stays (a solve on change must not switch Rise or Heat flux back)
+    if (!THERMAL_PLOTS.includes(this.plot.kind)) this.plot.kind = "temp";
     this.clearPlot();
     this.progress = t("Reading the geometry…");
     this.renderAll();
@@ -3927,7 +3945,9 @@ export class SimController {
       + (thermal ? (m && matOk ? `<p class="sim-note muted" data-v="kcond">${esc(t("Thermal conductivity"))} ${st.k3?.[""] ? this.k3Text(st.k3[""]) : st.kt?.[""]?.length ? this.ktRange(st.kt[""]) : `${sig(m.k!)} W/(m·K)`}</p>${this.k3Html(st, "", m.k)}${this.ktHtml(st, "")}` : `<p class="sim-prob">${esc(t("The analysis needs a material with a thermal conductivity."))}</p>`)
         : m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`)
       + (ownMats.length ? `<p class="sim-note muted sim-bodymats">${esc(t("Bodies with their own material:"))} <span translate="no">${esc(ownMats.join(", "))}</span></p>` : "") + `</div>`;
-    const auto = `<label class="chk sim-auto" title="${esc(t("After every change to the model or to the study, the study is solved again by itself"))}"><input type="checkbox" data-k="auto"${st.auto ? " checked" : ""} />${esc(t("Solve on change"))}</label>`;
+    // a warm-up takes long: it is solved on request only (FR-TSOL-020)
+    const warm = thermal && !!st.settings.transient;
+    const auto = `<label class="chk sim-auto" title="${esc(warm ? t("A warm-up is solved only when you press Solve") : t("After every change to the model or to the study, the study is solved again by itself"))}"><input type="checkbox" data-k="auto"${st.auto && !warm ? " checked" : ""}${warm ? " disabled" : ""} />${esc(t("Solve on change"))}</label>`;
     // load cases (static) or power cases (steady thermal): sets of the loads solved in one go
     const casesHtml = () => {
       if (st.kind === "modal" || (thermal && st.settings.transient) || !(st.loads.length > 1 || st.cases?.length)) return "";

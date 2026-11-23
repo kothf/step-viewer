@@ -17240,6 +17240,83 @@ try {
     await ctx.close();
   }
 
+  // --- Thermal solve on change 1.703 (FR-TSOL-020): new steady thermal studies solve by themselves after each change ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.goto(`${origin}/index.html?debug&simauto`);
+    await tp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await tp.goto(`${origin}/index.html?debug&simauto`);
+    await tp.waitForFunction(() => window.__sv);
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await tp.waitForTimeout(150); await tp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 }); };
+    await tp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 200), P(4, -10, 200), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50, cp: 470 };
+    }));
+    await settle();
+    const at = name => tp.evaluate(n => {
+      const v = window.__sv.viewer, part = v.parts[0], names = window.__sv.model.last().faceNames, f = part.data.faces[names.indexOf(n)];
+      const s = v.toWorld(part, f.center).clone().project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, name);
+    const sim = () => tp.evaluate(() => window.__sv.sim.state());
+    const box = () => tp.evaluate(() => { const b = document.querySelector('#sim-tree [data-k="auto"]'); return { on: !!b?.checked, off: !!b?.disabled, auto: !!window.__sv.model.store.doc.studies?.[0]?.auto }; });
+    await tp.click("#cm-t-simulation");
+    await tp.waitForTimeout(300);
+    await tp.click('#sim-tools [data-s="mode-thermal"]');
+    await tp.waitForTimeout(150);
+    await tp.click('#sim-tools [data-s="heat"]');
+    await tp.waitForSelector("#sim-pm .pm-ok");
+    await tp.check('#sim-pm [data-k="body"]');
+    await tp.fill('#sim-pm [data-n="value"]', "8");
+    await tp.press('#sim-pm [data-n="value"]', "Tab");
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    await tp.waitForTimeout(1200);
+    const a0 = await sim(), x0 = await box();
+    await tp.click('#sim-tools [data-s="temp"]');
+    const p = await at("f1:end");
+    await tp.mouse.click(p.x, p.y);
+    await tp.waitForTimeout(200);
+    await tp.fill('#sim-pm [data-q="temp"]', "30");
+    await tp.press('#sim-pm [data-q="temp"]', "Tab");
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    await tp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.autoRuns > 0 && !s.running && (s.done || s.error); }, null, { timeout: 240000 });
+    const a1 = await sim();
+    // Rise above ambient is kept while the heat doubles and the study solves again by itself
+    await tp.selectOption('#sim-legend [data-k="kind"]', "rise");
+    await tp.waitForTimeout(200);
+    await tp.click('#sim-tree .sim-heat button.sim-name[data-a="edit"]');
+    await tp.waitForSelector("#sim-pm .pm-ok");
+    await tp.fill('#sim-pm [data-n="value"]', "16");
+    await tp.press('#sim-pm [data-n="value"]', "Tab");
+    await tp.click("#sim-pm .pm-ok");
+    await settle();
+    await tp.waitForFunction(n => { const s = window.__sv.sim.state(); return s.autoRuns > n && !s.running && (s.done || s.error); }, a1.autoRuns, { timeout: 240000 });
+    const a2 = await sim();
+    // a warm-up is solved on request only
+    await tp.click('#sim-tools [data-s="transient"]');
+    await settle();
+    await tp.waitForTimeout(1500);
+    const a3 = await sim(), x3 = await box();
+    await tp.click("#lang-btn");
+    const ru = await tp.evaluate(() => document.querySelector("#sim-tree .sim-auto")?.title ?? "");
+    await tp.click("#lang-btn");
+    const rise = 8 * 0.02 / (2 * 50 * 4e-3);
+    check(a0.autoRuns === 0 && x0.on && !x0.off && x0.auto && a1.autoRuns === 1 && !a1.error && Math.abs((a1.thermal.max - 30) / rise - 1) < 0.02
+      && a2.autoRuns === 2 && !a2.error && a2.plot.kind === "rise" && Math.abs((a2.thermal.max - 30) / (2 * rise) - 1) < 0.02
+      && a3.autoRuns === 2 && a3.stale && x3.off && !x3.on && x3.auto && /Прогрев/.test(ru),
+      `thermal 1.703: a new thermal study solves on change: not before the heat has a way out, then by itself after each change, keeping the plot picked; a warm-up waits for Solve (${JSON.stringify({ runs: [a0.autoRuns, a1.autoRuns, a2.autoRuns, a3.autoRuns], x0, x3, max: [a1.thermal?.max, a2.thermal?.max], kind: a2.plot.kind, error: [a1.error, a2.error], stale: a3.stale, ru })})`);
+    await ctx.close();
+  }
+
   // --- Transient thermal 1.661 (FRS-thermal TH4): warm-up over time with a heater switched on later ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

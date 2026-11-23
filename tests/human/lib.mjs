@@ -5,16 +5,16 @@ export const OUT = process.env.HT_OUT || "/mnt/project-files/gap-tests";
 export const BASE = process.env.HT_URL || "http://localhost:8123";
 export const results = [];
 let shot = 0;
-export async function open(name) {
+export async function open(name, query = "") {
   const browser = await chromium.launch({ args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"] });
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const pg = await ctx.newPage();
   pg.errors = [];
   pg.on("pageerror", e => pg.errors.push(e.message));
   pg.on("console", m => { if (m.type() === "error") pg.errors.push(m.text()); });
-  await pg.goto(`${BASE}/index.html?debug`);
+  await pg.goto(`${BASE}/index.html?debug${query}`);
   await pg.evaluate(() => localStorage.setItem("sv:tips", "off"));
-  await pg.goto(`${BASE}/index.html?debug`);
+  await pg.goto(`${BASE}/index.html?debug${query}`);
   await pg.waitForFunction(() => window.__sv);
   pg.name = name;
   return { browser, pg };
