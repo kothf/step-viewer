@@ -710,7 +710,12 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
       const comps = new Set(l.faces.map(f => compOf(f.name))), doms: number[] = [];
       regions.forEach((k, i) => { if (comps.has(compOf(k))) doms.push(i); });
       if (!doms.length) { out.problems.push({ id: l.id, code: "E-SIM-REF" }); continue; }
-      out.sources.push({ power: v, doms, id: l.id });
+      if (l.each) for (const c of comps) {
+        // per item: every component makes the whole value
+        const own = doms.filter(i => compOf(regions[i]) === c);
+        if (own.length) out.sources.push({ power: v, doms: own, id: l.id });
+      }
+      else out.sources.push({ power: v, doms, id: l.id });
       continue;
     }
     if (l.type === "heat" && l.body) { out.sources.push({ power: v, id: l.id }); continue; }
@@ -723,6 +728,17 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
       regions.forEach((k, i) => { if (comps.has(compOf(k))) doms.push(i); });
       if (!doms.length) { out.problems.push({ id: l.id, code: "E-SIM-REF" }); continue; }
       out.sources.push({ density, doms, id: l.id });
+      continue;
+    }
+    if (l.type === "heat" && l.each && l.faces.length > 1) {
+      // per item: every picked face takes the whole value
+      const idx = idxOf(l);
+      if (!idx) continue;
+      const face = faceOf(b);
+      for (const f of new Set(l.faces.map(x => x.name))) {
+        const i = b.names.indexOf(f), mine = idx.filter(t => face[t] === i);
+        if (mine.length) out.sources.push({ tris: gather(mine), power: v, id: l.id });
+      }
       continue;
     }
     const tris = facesOf(l);
