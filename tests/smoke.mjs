@@ -1289,7 +1289,7 @@ try {
       `about: credits list from the build (${about.n} packages, ${about.rows} rows), main libraries, licence texts, logo and version (${JSON.stringify({ main: about.main, version: about.version })})`);
     check(leftAbout.length === 0, `i18n: no English left in About${leftAbout.length ? ": " + leftAbout.slice(0, 6).join(" | ") : ""}`);
     await pg.keyboard.press("Escape");
-    check(help.title === "Справка" && help.tabs.length === 7 && help.tabs.includes("Моделирование") && help.tabs.includes("Клавиши") && help.kbd > 10 && keysShown, `i18n: Help in Russian with sections and shortcuts (${JSON.stringify(help)})`);
+    check(help.title === "Справка" && help.tabs.length === 8 && help.tabs.includes("Моделирование") && help.tabs.includes("Расчёт") && help.tabs.includes("Клавиши") && help.kbd > 10 && keysShown, `i18n: Help in Russian with sections and shortcuts (${JSON.stringify(help)})`);
     check(leftHelp.length === 0, `i18n: no English left in Help${leftHelp.length ? ": " + leftHelp.slice(0, 6).join(" | ") : ""}`);
     // axe in Russian too.
     await pg.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });

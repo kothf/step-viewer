@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.700.0] - 2026-11-23
+
+### Added
+
+- Help has a **Simulation** page: structural analysis (with thermal stress and the marked highest and lowest values in reports), thermal studies of parts and assemblies (heat sources, every kind of cooling, warm-ups over time, power cases, boards conducting by their copper, contacts) and board thermal maps (opening a package, the Thermal tab, isolating a part, clipping, board layers, comparing, Simulate). In English and Russian.
+- Help covers what came since its last update: the left panel's icon tabs, the status bar's selection sizes, the Export dialog's mesh quality, sketch colours, construction and conflict marks, editing sketch entities in place, model edges and round outlines in sketches, hole positions from a sketch, the selection list and preselection, push/pull, face and feature colours, Hide/Show items, tangent edges, measuring inside a command, feature comments, Settings ▸ Keyboard, the mate bar, Isolate and explode lines, the drawing format painter, dimension alignment and right-click menus, the vault explorer and vault log ins, and new shortcuts (Ctrl+C / Ctrl+V, M in a command, Ctrl+,).
+- First-use tips for a thermal map, a new simulation study and the vault explorer.
+- With a thermal map shown, the status bar says how to read it (hover a part for its temperature, double-click it to show it alone).
+
+### Fixed
+
+- Help: the 3D model page also showed the Modelling page under it, since both used one tab id.
+
 ## [1.699.0] - 2026-11-23
 
 ### Added
@@ -4613,7 +4626,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.699.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.700.0...HEAD
+[1.700.0]: https://github.com/kothf/step-viewer/compare/v1.699.0...v1.700.0
 [1.699.0]: https://github.com/kothf/step-viewer/compare/v1.698.0...v1.699.0
 [1.698.0]: https://github.com/kothf/step-viewer/compare/v1.697.0...v1.698.0
 [1.697.0]: https://github.com/kothf/step-viewer/compare/v1.696.0...v1.697.0
