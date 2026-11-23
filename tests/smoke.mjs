@@ -18411,6 +18411,41 @@ try {
     await ctx.close();
   }
 
+  // --- isotherm clip 1.685 (FRS-thermal FR-TMAP-010): only surfaces hotter (or cooler) than a temperature, the rest see-through ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const cp = await ctx.newPage();
+    cp.on("pageerror", e => errors.push(e.message));
+    cp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal");
+    await cp.goto(`${origin}/index.html?debug&nokernel`);
+    await cp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await cp.goto(`${origin}/index.html?debug&nokernel`);
+    await cp.waitForFunction(() => window.__sv);
+    await cp.setInputFiles("#file-input", [join(thx, "amp.step"), join(thx, "amp-thermal.zip")]);
+    await cp.waitForFunction(() => window.__sv.thermal.state()?.drawn, null, { timeout: 90000 });
+    await cp.waitForTimeout(500);
+    const c0 = await cp.evaluate(() => { const s = window.__sv.thermal.state(); return { tris: s.tris, range: s.range }; });
+    await cp.click('#th-legend input[data-k="clip"]');
+    const mid = Math.round((c0.range[0] + c0.range[1]) / 2);
+    const c1 = await cp.evaluate(() => { const s = window.__sv.thermal.state(); return { clip: s.clip, tris: s.tris, faded: s.faded, val: document.querySelector('#th-legend input[data-k="clipval"]')?.value, lines: s.picture.lines }; });
+    // hotter than a temperature near the top: few triangles left; then cooler than it: the rest
+    const hi = Math.round(c0.range[1] - (c0.range[1] - c0.range[0]) * 0.1);
+    await cp.fill('#th-legend input[data-k="clipval"]', String(hi));
+    await cp.press('#th-legend input[data-k="clipval"]', "Enter");
+    await cp.waitForTimeout(200);
+    const c2 = await cp.evaluate(() => { const s = window.__sv.thermal.state(); return { clip: s.clip, tris: s.tris, faded: s.faded }; });
+    await cp.selectOption('#th-legend select[data-k="clipside"]', "below");
+    const c3 = await cp.evaluate(() => { const s = window.__sv.thermal.state(); return { clip: s.clip, tris: s.tris, faded: s.faded }; });
+    await cp.click('#th-legend input[data-k="clip"]');
+    const c4 = await cp.evaluate(() => { const s = window.__sv.thermal.state(); return { clip: s.clip, tris: s.tris, faded: s.faded }; });
+    check(c1.clip?.above === true && c1.clip.t === mid && Number(c1.val) === mid && c1.tris > 0 && c1.faded > 0 && c1.tris + c1.faded === c0.tris && c1.lines.some(l => /hotter than/.test(l))
+      && c2.clip.t === hi && c2.tris > 0 && c2.tris < c1.tris && c3.clip.above === false && c3.tris > c2.faded * 0.5 && c3.tris + c3.faded === c0.tris
+      && c4.clip === null && c4.tris === c0.tris && c4.faded === 0,
+      `isotherm clip 1.685: Clip at a temperature shows only the hotter (or cooler) surfaces, the rest see-through, and turns off again (${JSON.stringify({ c0, c1, c2, c3, c4 })})`);
+    await ctx.close();
+  }
+
   // --- thermal package 1.668 (FRS-thermal FR-TREP-010): a board study's result saved as a thermal package and opened again ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });

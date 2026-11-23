@@ -64,6 +64,8 @@ interface Attached {
   cmp?: { pkg: ThermalPackage; stats: Map<number, PartStat>; tb: Float32Array; delta: Float32Array; changes: { rows: PartChange[]; onlyA: string[]; onlyB: string[] }; view: "a" | "b" | "d" };
   /** The board's Gerber layers under the map (FR-TMAP-012): moved by (du, dv) mm, `shown` = drawn. */
   pcb?: { layers: PcbLayers; du: number; dv: number; shown: boolean };
+  /** Isotherm clip (FR-TMAP-010): only surfaces hotter (`above`) or cooler than `t` °C are drawn, the rest ghosted. */
+  clip?: { above: boolean; t: number };
 }
 
 interface Prefs { palette: PaletteName; labels: boolean; rise: boolean; life: number; board: number; folded: boolean; pcbMix: number }
@@ -327,11 +329,23 @@ export class ThermalMaps {
   uncompare() { const a = this.cur(); if (!a?.cmp) return; delete a.cmp; a.range = null; this.colour(); this.renderAll(); }
 
   /** Which map shows: A, B or the change (B − A). */
-  setView(view: "a" | "b" | "d") { const a = this.cur(); if (!a?.cmp) return; a.cmp.view = view; this.colour(); this.renderAll(); }
+  setView(view: "a" | "b" | "d") { const a = this.cur(); if (!a?.cmp) return; a.cmp.view = view; if (a.clip) this.show(); else this.colour(); this.renderAll(); }
 
   /** The temperatures drawn now, one per point of map A. */
   private tempOf(a: Attached): Float32Array { return !a.cmp || a.cmp.view === "a" ? a.pkg.mesh.temp : a.cmp.view === "b" ? a.cmp.tb : a.cmp.delta; }
   private delta(a: Attached) { return a.cmp?.view === "d"; }
+  /** The isotherm clip in force: none on a ΔT view. */
+  private clipOf(a: Attached) { return a.clip && !this.delta(a) ? a.clip : null; }
+
+  /** Turns the isotherm clip on (at `t` °C, or the middle of the range) or off (null) (FR-TMAP-010). */
+  setClip(c: { above?: boolean; t?: number } | null) {
+    const a = this.cur();
+    if (!a) return;
+    if (!c) delete a.clip;
+    else { const [lo, hi] = this.rangeOf(a); a.clip = { above: c.above ?? a.clip?.above ?? true, t: c.t ?? a.clip?.t ?? Math.round((lo + hi) / 2) }; }
+    this.show();
+    this.renderAll();
+  }
 
   /** A value read off the map as shown: a temperature, or a change in K. */
   private here(a: Attached, v: number) {
@@ -443,7 +457,14 @@ export class ThermalMaps {
     // an isolated part is drawn alone (and picked alone); the rest goes into a see-through mesh
     const iso = a.iso !== null && a.stats.has(a.iso) && !off.has(a.iso) ? a.iso : null;
     const keep: number[] = [], rest: number[] = [];
-    for (let k = 0; k < m.part.length; k++) { const id = m.part[k]; if (off.has(id)) continue; (iso === null || id === iso ? keep : rest).push(k); }
+    // an isotherm clip ghosts the triangles wholly on the other side of its temperature (not on a ΔT view)
+    const cl = this.clipOf(a), T = this.tempOf(a), tr = m.tri;
+    const pass = (k: number) => {
+      if (!cl) return true;
+      const t0 = T[tr[k * 3]], t1 = T[tr[k * 3 + 1]], t2 = T[tr[k * 3 + 2]];
+      return cl.above ? Math.max(t0, t1, t2) >= cl.t : Math.min(t0, t1, t2) <= cl.t;
+    };
+    for (let k = 0; k < m.part.length; k++) { const id = m.part[k]; if (off.has(id)) continue; ((iso === null || id === iso) && pass(k) ? keep : rest).push(k); }
     const indexOf = (ks: number[]) => { const ix = new Uint32Array(ks.length * 3); ks.forEach((k, j) => { ix[j * 3] = m.tri[k * 3]; ix[j * 3 + 1] = m.tri[k * 3 + 1]; ix[j * 3 + 2] = m.tri[k * 3 + 2]; }); return ix; };
     const drawn = Uint32Array.from(keep), index = keep.length === m.part.length ? m.tri : indexOf(keep);
     const geo = new THREE.BufferGeometry();
@@ -1028,10 +1049,19 @@ export class ThermalMaps {
       + `<label class="ana-row"><span>${esc(t("Range"))}</span><select data-k="range"><option value="auto"${a!.range ? "" : " selected"}>${esc(t("Automatic"))}</option><option value="fixed"${a!.range ? " selected" : ""}>${esc(t("Fixed range"))}</option></select></label>`
       + (a!.range ? `<div class="ana-row"><input type="text" inputmode="decimal" data-k="rmin" value="${deg(lo)}" aria-label="${esc(t("Lowest temperature of the scale, °C"))}" /><span>…</span><input type="text" inputmode="decimal" data-k="rmax" value="${deg(hi)}" aria-label="${esc(t("Highest temperature of the scale, °C"))}" /></div>` : "")
       + this.pcbHtml(a!)
+      + (dl ? "" : this.clipHtml(a!, rise ? off : 0))
       + `<label class="chk"><input type="checkbox" data-k="labels"${this.prefs.labels ? " checked" : ""} />${esc(t("Hot spot labels"))}</label>`
       + (amb !== undefined ? `<label class="chk"><input type="checkbox" data-k="rise"${this.prefs.rise ? " checked" : ""} />${esc(t("Rise above ambient"))}</label>` : "")
       + `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the map to read the temperature at a point"))}">${esc(t("Probe"))}</button>`
       + (a!.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button><button class="btn small" data-a="probecsv">${esc(t("Export CSV"))}</button>` : "") + `</div>`;
+  }
+
+  /** The legend's isotherm clip rows (FR-TMAP-010): typed in the scale's units (°C, or K above ambient). */
+  private clipHtml(a: Attached, off: number) {
+    const c = a.clip, title = t("Show only the surfaces hotter or cooler than a temperature, the rest see-through");
+    return `<label class="chk" title="${esc(title)}"><input type="checkbox" data-k="clip"${c ? " checked" : ""} />${esc(t("Clip at a temperature"))}</label>`
+      + (c ? `<div class="ana-row th-clip"><select data-k="clipside" aria-label="${esc(t("Which side of the temperature is shown"))}"><option value="above"${c.above ? " selected" : ""}>${esc(t("Hotter than"))}</option><option value="below"${c.above ? "" : " selected"}>${esc(t("Cooler than"))}</option></select>`
+        + `<input type="text" inputmode="decimal" data-k="clipval" value="${deg(c.t - off)}" aria-label="${esc(off ? t("Clip temperature, K above ambient") : t("Clip temperature, °C"))}" /><span>${off ? "K" : "°C"}</span></div>` : "");
   }
 
   /** The legend's board layers rows (FR-TMAP-012). */
@@ -1065,6 +1095,13 @@ export class ThermalMaps {
     if (!a || !k) return;
     if (k === "show") { this.setView(el.value as "a" | "b" | "d"); return; }
     if (k === "pcbmix") return;
+    if (k === "clip") { this.setClip(el.checked ? {} : null); return; }
+    if (k === "clipside") { this.setClip({ above: el.value === "above" }); return; }
+    if (k === "clipval") {
+      const v = num(el.value), amb = this.ambient(a), off = this.prefs.rise && amb !== undefined ? amb : 0;
+      if (v !== null) this.setClip({ t: v + off }); else this.renderAll();
+      return;
+    }
     if ((k === "pcbdx" || k === "pcbdy") && a.pcb) { const v = num(el.value); if (v !== null) this.setPcbOffset(k === "pcbdx" ? v : a.pcb.du, k === "pcbdy" ? v : a.pcb.dv); return; }
     if (k === "palette") { this.prefs.palette = el.value as PaletteName; this.savePrefs(); }
     else if (k === "labels") { this.prefs.labels = el.checked; this.savePrefs(); }
@@ -1130,6 +1167,8 @@ export class ThermalMaps {
     if (cmp) lines.push(cmp.view === "a" ? `A: ${nm(a.pkg)}` : cmp.view === "b" ? `B: ${nm(cmp.pkg)}` : `${t("Change (B − A)")}: ${nm(a.pkg)} → ${nm(cmp.pkg)}`);
     else lines.push(nm(a.pkg));
     if (a.iso !== null) lines.push(t("Showing {name} only", { name: this.nameOf(a, a.iso) }));
+    const cl = this.clipOf(a);
+    if (cl) lines.push(t(cl.above ? "Surfaces hotter than {t} °C" : "Surfaces cooler than {t} °C", { t: deg(cl.t) }));
     lines.push(`${t("Hottest")} ${this.nameOf(a, hot.id)} ${this.shown(a, hot.t)} · ${over ? t("{n} part over its limit|{n} parts over their limits", { n: over }) : t("No part is over its limit.")}`);
     if (mf.accuracy !== undefined) lines.push(t("Estimate ±{v} °C", { v: deg(mf.accuracy) }));
     if (amb !== undefined) lines.push(t("Ambient {v} °C", { v: deg(amb) }));
@@ -1196,7 +1235,7 @@ export class ThermalMaps {
       name: a.pkg.name, on: a.on, own: a.own, sourcesOnly: !!a.pkg.sourcesOnly, drawn: !!this.overlay, tris: this.overlay ? this.overlay.geometry.getIndex()!.count / 3 : 0,
       range: this.rangeOf(a), parts: a.pkg.manifest.parts.length, matched: a.match.bodies.size, missing: a.match.missing, changed: a.match.changed, off: a.match.off, fitted: a.fitted,
       hidden: this.saved.length, problems: this.problemsOf(a).map(p => ({ kind: p.kind, id: p.id, value: p.value })), hottest: sm.hottest, peak: sm.peak, power: sm.power,
-      sel: a.sel, iso: a.iso, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
+      sel: a.sel, iso: a.iso, clip: a.clip ? { ...a.clip } : null, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
       pcb: a.pcb ? { name: a.pcb.layers.name, shown: a.pcb.shown, mix: this.prefs.pcbMix, du: a.pcb.du, dv: a.pcb.dv, labels: a.pcb.layers.labels, w: a.pcb.layers.w, h: a.pcb.layers.h, box: a.pcb.layers.box, board: this.pcbBoard, textured: !!this.atlasTex } : null,
       compare: a.cmp ? { name: a.cmp.pkg.name, view: a.cmp.view, rows: a.cmp.changes.rows.map(r => ({ name: r.name, a: r.a, b: r.b, d: r.d })), onlyA: a.cmp.changes.onlyA, onlyB: a.cmp.changes.onlyB } : null,
     };
