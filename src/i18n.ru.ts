@@ -5701,6 +5701,7 @@ export const RU: Record<string, string> = {
   "All the loads act together. Add cases to solve different sets of the loads in one go.": "Все нагрузки действуют вместе. Добавьте случаи, чтобы за один расчёт получить разные наборы нагрузок.",
   "Inertia relief": "Инерционная разгрузка",
   "Solve on change": "Пересчитывать при изменении",
+  "A warm-up is solved only when you press Solve": "Прогрев рассчитывается только по кнопке «Рассчитать»",
   "After every change to the model or to the study, the study is solved again by itself": "После каждого изменения модели или исследования расчёт запускается сам",
   "Memory: about {n} MB": "Память: около {n} МБ",
   "The part is held by nothing: its supports are left out and the loads are balanced by its own inertia, as for a part in free flight or afloat.": "Деталь ничем не удерживается: её закрепления не учитываются, а нагрузки уравновешиваются её собственной инерцией, как у детали в свободном полёте или на плаву.",

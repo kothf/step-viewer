@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.703.0] - 2026-11-23
+
+### Changed
+
+- Thermal studies solve on change by default: a new thermal study (and one made by Simulate in MöbiusCAD) has **Solve on change** ticked, so once it has a heat source and a way for the heat to leave it solves by itself about a second after each change to the heat, cooling, ambient, material or model. Warm-up studies are solved only when you press Solve (the box is greyed for them). The plot picked in the legend (Rise above ambient, Heat flux) stays after every solve instead of going back to Temperature.
+
 ## [1.702.0] - 2026-11-23
 
 ### Added
@@ -4638,7 +4644,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.702.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.703.0...HEAD
+[1.703.0]: https://github.com/kothf/step-viewer/compare/v1.702.0...v1.703.0
 [1.702.0]: https://github.com/kothf/step-viewer/compare/v1.701.0...v1.702.0
 [1.701.0]: https://github.com/kothf/step-viewer/compare/v1.700.0...v1.701.0
 [1.700.0]: https://github.com/kothf/step-viewer/compare/v1.699.0...v1.700.0
