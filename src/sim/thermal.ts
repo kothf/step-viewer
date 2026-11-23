@@ -247,6 +247,11 @@ export interface SinkFlow {
   mean: number;
   /** Natural convection and forced air: the mean film coefficient it came to, W/(mm²·K). */
   h?: number;
+  /**
+   * With several domains (FR-TRES-005): what it takes from each domain, W, three per domain: convection (films,
+   * natural and forced air), radiation to the surroundings, a fixed temperature.
+   */
+  doms?: Float64Array;
 }
 
 export interface ThermalSample {
@@ -764,8 +769,10 @@ function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?:
   const { grid, nbs, off, bas, k3, gam } = c, nat = s.natural, amb = s.ambient ?? 0;
   const forced = s.forced && s.temp === undefined && lens ? lens : null;
   let out = 0, area = 0, sum = 0, hs = 0;
+  const by = c.doms ? new Float64Array(3 * c.doms.length) : null;
   for (let o = 0; o < L.length; o += 8) {
-    const e = L[o], E = grid.elems[e], w = L[o + 4];
+    const e = L[o], E = grid.elems[e], w = L[o + 4], was = out;
+    let rad = 0;
     bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
     let t = 0, dn = 0;
     for (let a = 0; a < nbs[e]; a++) {
@@ -775,7 +782,7 @@ function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?:
     }
     area += w; sum += w * t;
     if (s.temp !== undefined) out += w * (-dn + 2 * gam[e] * (t - s.temp));
-    if (s.temp === undefined && s.emissivity) out += w * s.emissivity * SIGMA * ((t + KELVIN) ** 4 - ((s.ambient ?? 0) + KELVIN) ** 4);
+    if (s.temp === undefined && s.emissivity) { rad = w * s.emissivity * SIGMA * ((t + KELVIN) ** 4 - ((s.ambient ?? 0) + KELVIN) ** 4); out += rad; }
     if (s.temp === undefined && nat && lens) {
       const o2 = o / 4, up = -(L[o + 5] * nat.down[0] + L[o + 6] * nat.down[1] + L[o + 7] * nat.down[2]);
       const h = nat.factor * naturalH(up, t - amb, lens[o2], lens[o2 + 1]);
@@ -783,8 +790,9 @@ function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?:
       out += w * h * (t - amb);
     } else if (forced) { const h = forced[o / 8]; hs += w * h; out += w * h * (t - amb); }
     else if (s.temp === undefined) out += w * (s.h ?? 0) * (t - amb);
+    if (by) { const d = 3 * c.dom[e]; if (s.temp !== undefined) by[d + 2] += out - was; else { by[d + 1] += rad; by[d] += out - was - rad; } }
   }
-  return { out, area, mean: area > 0 ? sum / area : 0, ...(nat || forced ? { h: area > 0 ? hs / area : 0 } : {}) };
+  return { out, area, mean: area > 0 ? sum / area : 0, ...(nat || forced ? { h: area > 0 ? hs / area : 0 } : {}), ...(by ? { doms: by } : {}) };
 }
 
 export const thermalMemory = (grid: Grid, p: number, degrees?: ArrayLike<number> | null) => memoryBytes(grid, e => basisSize(degrees ? Math.min(p, Math.max(1, degrees[e])) : p));
