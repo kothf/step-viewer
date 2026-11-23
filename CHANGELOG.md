@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.718.0] - 2026-11-23
+
+### Changed
+
+- Building the equations of a structural or modal study uses all processor cores too: fitting the points of the cells the body cuts (thermal studies share this part), each element's stiffness and the terms of the faces between elements. A bracket with five passes took 50 s on one thread and takes 24 s on four; the numbers are the same bit for bit whatever the number of threads.
+
 ## [1.717.0] - 2026-11-23
 
 ### Added
@@ -4738,7 +4744,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.717.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.718.0...HEAD
+[1.718.0]: https://github.com/kothf/step-viewer/compare/v1.717.0...v1.718.0
 [1.717.0]: https://github.com/kothf/step-viewer/compare/v1.716.0...v1.717.0
 [1.716.0]: https://github.com/kothf/step-viewer/compare/v1.715.0...v1.716.0
 [1.715.0]: https://github.com/kothf/step-viewer/compare/v1.714.0...v1.715.0

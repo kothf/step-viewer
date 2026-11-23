@@ -12,6 +12,7 @@ import { BlockCholesky, cholPlan, type CholPlan } from "./blockchol";
 import { pcgSolver, cholesky } from "./pcg";
 import { subspace } from "./eigen";
 import { progress } from "./progress";
+import { kernel, parallelFor, sharedF64, sharedI32, worthSharing, type ParJob } from "./threads";
 
 export interface Material {
   /** Young's modulus, MPa. */
@@ -519,6 +520,125 @@ function volumeCell(K: Float64Array, P: { a: ArrayLike<number>; n: number }, bas
   }
 }
 
+/** Every element's stiffness from its cells' quadrature points: on all threads when there are several and the work is worth it. */
+function volumeTerms(A: BlockMatrix, grid: Grid, nbs: Int32Array, bas: Basis, lameOf: (e: number) => { lam: number; mu: number }) {
+  const nel = grid.elems.length;
+  let work = 0, npt = 0;
+  for (let e = 0; e < nel; e++) for (const ci of grid.elems[e].cells) { const n = grid.cells[ci].pts.n; npt += n; work += n * nbs[e] * nbs[e] * 5; }
+  if (!worthSharing(work)) {
+    for (let e = 0; e < nel; e++) {
+      progress("assemble", e, 2 * nel);
+      const E = grid.elems[e], K = A.block(e, e), nb = nbs[e], L = lameOf(e);
+      for (const ci of E.cells) volumeCell(K, grid.cells[ci].pts, bas, E.c, E.s, nb, L.lam, L.mu);
+      mirrorBlocks(K, nb);
+    }
+    return;
+  }
+  // the points, the elements and the blocks they fill, on shared memory: one task per element
+  const pts = sharedF64(4 * npt), at = sharedF64(VOL_TASK * nel + 1), nb = sharedI32(nel);
+  let n = 0, size = 0;
+  for (let e = 0; e < nel; e++) {
+    const E = grid.elems[e], o = VOL_TASK * e, L = lameOf(e);
+    at[o] = n;
+    for (const ci of E.cells) { const P = grid.cells[ci].pts; pts.set(P.a.subarray(0, 4 * P.n), 4 * n); n += P.n; }
+    at[o + 1] = n; at[o + 2] = size; at[o + 3] = E.c[0]; at[o + 4] = E.c[1]; at[o + 5] = E.c[2]; at[o + 6] = E.s; at[o + 7] = L.lam; at[o + 8] = L.mu;
+    nb[e] = nbs[e];
+    size += 9 * nbs[e] * nbs[e];
+  }
+  const out = sharedF64(size);
+  parallelFor({ kind: "volume", n: nel, p: bas.p, pts, at, nb, out } satisfies Omit<VolumeJob, "ctl">, d => progress("assemble", d, 2 * nel));
+  for (let e = 0; e < nel; e++) { const o = at[VOL_TASK * e + 2]; A.adopt(e, out.subarray(o, o + 9 * nbs[e] * nbs[e])); }
+}
+/**
+ * The terms of the faces between cells of different elements. On one thread each face goes through `one`. On
+ * several, the faces are worked through in batches: every thread sums faces' blocks into its own part of a shared
+ * scratch, and this thread adds them to the matrix in the faces' order, so the sums are the same either way.
+ */
+function faceTerms(A: BlockMatrix, grid: Grid, nbs: Int32Array, gam: Float64Array, p: number, lameOf: (e: number) => { lam: number; mu: number },
+  facePts: (ca: number, ea: number, eb: number, axis: number) => { a: ArrayLike<number>; n: number }, one: (ca: number, cb: number, axis: number) => void) {
+  const faces: number[] = [];
+  let work = 0;
+  for (let c = 0; c < grid.cells.length; c++) {
+    const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom, ea = grid.cells[c].el;
+    const nx = [grid.at(i + 1, j, k, d), grid.at(i, j + 1, k, d), grid.at(i, j, k + 1, d)];
+    for (let axis = 0; axis < 3; axis++) {
+      const cb = nx[axis];
+      if (cb < 0 || grid.cells[cb].el === ea) continue;
+      faces.push(c, cb, axis);
+      work += (p + 1) ** 2 * (nbs[ea] + nbs[grid.cells[cb].el]) ** 2 * 6;
+    }
+  }
+  const nf = faces.length / 3, nel = grid.elems.length;
+  if (!worthSharing(work)) {
+    for (let f = 0; f < nf; f++) { if (!(f & 15)) progress("assemble", nel + (f * nel) / nf, 2 * nel); one(faces[3 * f], faces[3 * f + 1], faces[3 * f + 2]); }
+    return;
+  }
+  const nb = basisSize(p), slot = 3 * 9 * nb * nb;
+  const B = Math.max(1, Math.min(nf, 512, Math.floor(FACE_SCRATCH / (8 * slot))));
+  const out = sharedF64(B * slot), task = sharedF64(FACE_TASK * B);
+  let pts = sharedF64(4 * B * (2 * p + 1) ** 2);
+  for (let f0 = 0; f0 < nf; f0 += B) {
+    const n = Math.min(B, nf - f0);
+    let np = 0;
+    for (let t = 0; t < n; t++) {
+      const ca = faces[3 * (f0 + t)], cb = faces[3 * (f0 + t) + 1], axis = faces[3 * (f0 + t) + 2];
+      const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb], L = lameOf(ea);
+      const P = facePts(ca, ea, eb, axis);
+      if (4 * (np + P.n) > pts.length) { const more = sharedF64(Math.max(2 * pts.length, 4 * (np + P.n))); more.set(pts.subarray(0, 4 * np)); pts = more; }
+      pts.set((P.a as Float64Array).subarray(0, 4 * P.n), 4 * np);
+      task.set([np, P.n, axis, EA.c[0], EA.c[1], EA.c[2], EA.s, EB.c[0], EB.c[1], EB.c[2], EB.s, nbs[ea], nbs[eb], L.lam, L.mu, Math.max(gam[ea], gam[eb])], FACE_TASK * t);
+      np += P.n;
+    }
+    parallelFor({ kind: "faces", n, p, slot, pts, task, out } satisfies Omit<FaceJob, "ctl">);
+    progress("assemble", nel + ((f0 + n) * nel) / nf, 2 * nel);
+    for (let t = 0; t < n; t++) {
+      const ea = grid.cells[faces[3 * (f0 + t)]].el, eb = grid.cells[faces[3 * (f0 + t) + 1]].el, na = nbs[ea], nc = nbs[eb], ma = 3 * na, mc = 3 * nc;
+      const o = slot * t, q = slot / 3;
+      const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
+      addSym(Kaa, out.subarray(o, o + ma * ma), na); addSym(Kbb, out.subarray(o + 2 * q, o + 2 * q + mc * mc), nc);
+      const Sab = out.subarray(o + q, o + q + ma * mc);
+      for (let i = 0; i < ma; i++) for (let j = 0; j < mc; j++) { const v = Sab[i * mc + j]; Kab[i * mc + j] += v; Kba[j * ma + i] += v; }
+    }
+  }
+}
+/** Bytes of scratch a batch of faces may take, and the numbers per face of a shared face loop: first point, points,
+ * axis, the two elements' centres and half sizes, their function counts, λ, μ, penalty. */
+const FACE_SCRATCH = 96e6, FACE_TASK = 16;
+interface FaceJob extends ParJob { p: number; slot: number; pts: Float64Array; task: Float64Array; out: Float64Array }
+kernel<FaceJob, { j: FaceJob; bas: Basis; bas2: Basis; MA: Float64Array; MB: Float64Array }>("faces", {
+  init: j => { const bas = new Basis(j.p); return { j, bas, bas2: new Basis(j.p), MA: new Float64Array(9 * bas.n), MB: new Float64Array(9 * bas.n) }; },
+  run({ j, bas, bas2, MA, MB }, t) {
+    const k = j.task, o = FACE_TASK * t, a = j.pts, nb = bas.n, na = k[o + 11], nc = k[o + 12], lam = k[o + 13], mu = k[o + 14], gamma = k[o + 15];
+    const ma = 3 * na, mc = 3 * nc, q = j.slot / 3, so = j.slot * t;
+    const Saa = j.out.subarray(so, so + ma * ma), Sab = j.out.subarray(so + q, so + q + ma * mc), Sbb = j.out.subarray(so + 2 * q, so + 2 * q + mc * mc);
+    Saa.fill(0); Sab.fill(0); Sbb.fill(0);
+    const nrm = [0, 0, 0], ca = [k[o + 3], k[o + 4], k[o + 5]], cb = [k[o + 7], k[o + 8], k[o + 9]], sa = k[o + 6], sb = k[o + 10];
+    nrm[k[o + 2]] = 1;
+    for (let i = k[o], end = k[o] + k[o + 1]; i < end; i++) {
+      const x = a[4 * i], y = a[4 * i + 1], z = a[4 * i + 2], w = a[4 * i + 3];
+      bas.eval(x, y, z, ca, sa);
+      bas2.eval(x, y, z, cb, sb);
+      for (let b = 0; b < nb; b++) { traction(bas.g, 3 * b, nrm, lam, mu, MA, 9 * b); traction(bas2.g, 3 * b, nrm, lam, mu, MB, 9 * b); }
+      facePair(Saa, bas.v, MA, 1, na, bas.v, MA, 1, na, w, gamma, true);
+      facePair(Sab, bas.v, MA, 1, na, bas2.v, MB, -1, nc, w, gamma, false);
+      facePair(Sbb, bas2.v, MB, -1, nc, bas2.v, MB, -1, nc, w, gamma, true);
+    }
+  },
+});
+
+/** Numbers per element of a shared volume loop: first point, end point, block offset, centre, half size, λ, μ. */
+const VOL_TASK = 9;
+interface VolumeJob extends ParJob { p: number; pts: Float64Array; at: Float64Array; nb: Int32Array; out: Float64Array }
+kernel<VolumeJob, { j: VolumeJob; bas: Basis }>("volume", {
+  init: j => ({ j, bas: new Basis(j.p) }),
+  run({ j, bas }, e) {
+    const a = j.at, o = VOL_TASK * e, nb = j.nb[e], m2 = 9 * nb * nb;
+    const K = j.out.subarray(a[o + 2], a[o + 2] + m2);
+    volumeCell(K, { a: j.pts.subarray(4 * a[o], 4 * a[o + 1]), n: a[o + 1] - a[o] }, bas, [a[o + 3], a[o + 4], a[o + 5]], a[o + 6], nb, a[o + 7], a[o + 8]);
+    mirrorBlocks(K, nb);
+  },
+});
+
 /** The mass of one cell's quadrature points into its element's mass matrix M and sums S; returns the cell's mass. */
 function massCell(M: Float64Array, S: Float64Array, Q: { a: ArrayLike<number>; n: number }, bas: Basis, c: number[], sz: number, ne: number, rho: number): number {
   const v = bas.v;
@@ -627,15 +747,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const el = (c: number) => grid.elems[grid.cells[c].el];
 
   // volume terms
-  for (let e = 0; e < nel; e++) {
-    progress("assemble", e, 2 * nel);
-    const E = grid.elems[e];
-    const K = A.block(e, e);
-    const nb = nbs[e];
-    setMat(e);
-    for (const ci of E.cells) volumeCell(K, grid.cells[ci].pts, bas, E.c, E.s, nb, lam, mu);
-    mirrorBlocks(K, nb);
-  }
+  volumeTerms(A, grid, nbs, bas, e => lames[domE[e]]);
 
   // interior faces between cells of different elements
   const MA = new Float64Array(9 * nb), MB = new Float64Array(9 * nb);
@@ -724,13 +836,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       return MA;
     }, e => A.block(e, e), surf);
   }
-  for (let c = 0; c < grid.cells.length; c++) {
-    const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom;
-    const nx = grid.at(i + 1, j, k, d), ny = grid.at(i, j + 1, k, d), nz = grid.at(i, j, k + 1, d);
-    if (nx >= 0) face(c, nx, 0);
-    if (ny >= 0) face(c, ny, 1);
-    if (nz >= 0) face(c, nz, 2);
-  }
+  faceTerms(A, grid, nbs, gam, p, e => lames[domE[e]], facePts, face);
 
   // boundary quadrature located in cells
   const tq = Math.max(2, p + 1);
