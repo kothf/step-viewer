@@ -14,6 +14,9 @@ export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "
 /** `temperature` (structural): thermal expansion from a uniform temperature (`value` °C) or a thermal study's result (`from`). */
 export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote" | "heat" | "vheat" | "hflux" | "pkgheat" | "temperature";
 export const THERMAL_SUPPORTS: SupportType[] = ["temp", "conv", "rad", "radx", "chassis", "insul"];
+/** Heat from package (FR-TBRD-003): the package's split is always kept when the load has a board, whatever `split` says. */
+export const keepsSplit = (l: { board?: string }): boolean => !!l.board;
+
 export const THERMAL_LOADS: LoadType[] = ["heat", "vheat", "hflux", "pkgheat"];
 /** Whether a support or load type belongs to thermal studies. */
 export const isThermalType = (type: string) => (THERMAL_SUPPORTS as string[]).includes(type) || (THERMAL_LOADS as string[]).includes(type);
@@ -138,7 +141,9 @@ export interface StudyLoad {
   parts?: PackageHeat[];
   /** Heat from package: the component that is the board (its contact patches take the parts' board shares). */
   board?: string;
-  /** Heat from package: keep the package's split, its shares applied as fixed powers (FR-TBRD-003). */
+  /** Heat from package: the package's split, its shares applied as fixed powers (FR-TBRD-003). Always kept when there is a
+   * board (`keepsSplit`): parts are soldered to it and never sit in the air, so a saved `false` is ignored; still written as
+   * `true` for older versions. */
   split?: boolean;
   /** Transient thermal studies: how the power changes with time (FR-TLOAD-005); absent = constant. */
   profile?: PowerProfile;

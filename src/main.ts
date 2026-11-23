@@ -137,8 +137,8 @@ async function simulateBoard(pkg: ThermalPackage, match: PartMatch, bodies: Mode
   const made = got.length - extra.length, ids = (i: number) => (i >= bodies.length ? got[made + i - bodies.length] : got[i]);
   const heat = plan.heat.map(h => ({ id: h.id, name: h.name, comps: h.bodies.map(ids).filter((x): x is string => !!x), p: h.p, ...(h.limit !== undefined ? { limit: h.limit } : {}), ...(h.life !== undefined ? { life: h.life } : {}), ...(h.board !== undefined ? { board: h.board } : {}), ...(h.sink !== undefined ? { sink: h.sink } : {}), ...(h.path ? { path: h.path } : {}), ...(h.elyt ? { elyt: true } : {}), ...(h.junction ? { junction: true } : {}), ...(h.rjc !== undefined ? { rjc: h.rjc } : {}) }));
   const boardId = plan.board >= 0 ? ids(plan.board) : null;
-  // a stand-in has no leads: the package's board share of its heat goes into the board under it
-  sim.boardStudy({ map: { pkg, name: pkg.manifest.design || src.name.replace(/\.(step|stp)$/i, ""), shift: match.shift }, ambient: plan.ambient, emissivity: plan.emissivity, enclosure: plan.enclosure, down: plan.down, heat, ...(stand.length ? { split: true } : {}), ...(boardId ? { board: { comp: boardId, t: plan.thickness, ...(plan.stack ? { stack: plan.stack } : {}) } } : {}) });
+  // the package's board share of each part's heat goes into the board under it (always: parts are soldered, never in the air)
+  sim.boardStudy({ map: { pkg, name: pkg.manifest.design || src.name.replace(/\.(step|stp)$/i, ""), shift: match.shift }, ambient: plan.ambient, emissivity: plan.emissivity, enclosure: plan.enclosure, down: plan.down, heat, ...(boardId ? { board: { comp: boardId, t: plan.thickness, ...(plan.stack ? { stack: plan.stack } : {}) } } : {}) });
   // the board's Gerber set, when one came with the STEP, gives the board its copper (FR-TBRD-020)
   if (gerbers && boardId) await sim.readGerber(boardId, gerbers);
   selectCmTab("simulation");

@@ -53,7 +53,7 @@ import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES,
 import { BOARD_RC, SERIES_COLORS, componentSeries, exprProblem, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
 import { fluxArrows } from "./arrows";
 import { parseKTable, kTableText, ktFactors, type KTable } from "./ktable";
-import { DEFAULT_CHASSIS_RTH, DEFAULT_GAP, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
+import { keepsSplit, DEFAULT_CHASSIS_RTH, DEFAULT_GAP, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 /** Hours to two significant figures (capacitor life). */
 const hours = (h: number) => String(Math.round(+h.toPrecision(2)));
@@ -459,7 +459,8 @@ export class SimController {
       for (const x of pk?.parts ?? []) {
         const doms = x.comps.flatMap(c => byComp.get(c) ?? []).filter(d => idOf[d] < 0);
         const pt = ptemps.find(y => y.name === x.name), tj = pt && pt.kind !== "body" ? { t: pt.t, tKind: pt.kind } : {};
-        if (doms.length) add(x.id, doms, { path: x.path, limit: x.limit, ...tj }, x.name);
+        // a package part's power is its whole power, wherever the split put it (board, heatsink, chassis, the part)
+        if (doms.length) add(x.id, doms, { path: x.path, limit: x.limit, p: x.off ? 0 : x.p, ...tj }, x.name);
       }
       for (const [, doms] of byComp) { const left = doms.filter(d => idOf[d] < 0); if (left.length) add(next++, left, {}, bodyName(res.comps[left[0]].name)); }
       // a triangle belongs to the component whose mesh it came from (the sampled domain is ambiguous where two touch)
@@ -946,7 +947,7 @@ export class SimController {
     st.settings.ambient = spec.ambient !== undefined && Number.isFinite(spec.ambient) ? spec.ambient : ENCLOSURES.find(x => x.id === spec.enclosure)?.ambient ?? DEFAULT_AMBIENT;
     if (spec.down) st.settings.down = spec.down;
     if (spec.board?.comp) st.comps = { [spec.board.comp]: { board: { ...DEFAULT_STACK, ...(spec.board.stack ?? {}), ...(spec.board.t > 0 ? { t: Math.round(spec.board.t * 1000) / 1000 } : {}) } } };
-    st.loads.push({ id: "l1", name: itemName(st, "pkgheat"), type: "pkgheat", faces: [], parts: spec.heat, ...(spec.board?.comp ? { board: spec.board.comp, ...(spec.split ? { split: true } : {}) } : {}) });
+    st.loads.push({ id: "l1", name: itemName(st, "pkgheat"), type: "pkgheat", faces: [], parts: spec.heat, ...(spec.board?.comp ? { board: spec.board.comp, split: true } : {}) });
     st.supports.push({ id: "s1", name: itemName(st, "conv"), type: "conv", faces: [], all: true, natural: true, h: FILM_PRESETS[0][1] });
     const emis = spec.emissivity !== undefined && spec.emissivity > 0 && spec.emissivity <= 1 ? spec.emissivity : 0.9;
     st.supports.push({ id: "s2", name: itemName(st, "rad"), type: "rad", faces: [], all: true, emis });
@@ -2028,12 +2029,12 @@ export class SimController {
       let own = 0, air = 0, toBoard = 0;
       for (const d of doms) { own += rows[d]?.power ?? 0; air += rows[d]?.out ?? 0; }
       for (const c of contacts) { if (doms.has(c.a) && c.b === board) toBoard += c.heat; else if (doms.has(c.b) && c.a === board) toBoard -= c.heat; }
-      const chassis = l.split && x.path === "chassis" ? Math.min(x.p, Math.max(0, x.sink ?? 0)) : 0;
+      const chassis = keepsSplit(l) && x.path === "chassis" ? Math.min(x.p, Math.max(0, x.sink ?? 0)) : 0;
       // into a heatsink: the share put there, less what came back from it into the part (net, through their contact)
-      const hs = l.split ? r.heatsinks?.[x.id] : undefined, hd = hs ? r.comps.findIndex(c => compOf(c.key) === hs.comp) : -1;
+      const hs = keepsSplit(l) ? r.heatsinks?.[x.id] : undefined, hd = hs ? r.comps.findIndex(c => compOf(c.key) === hs.comp) : -1;
       let sink = hs ? Math.min(x.p, hs.w) : 0;
       if (hd >= 0) for (const c of contacts) { if (doms.has(c.a) && c.b === hd) sink += c.heat; else if (doms.has(c.b) && c.a === hd) sink -= c.heat; }
-      const direct = l.split ? Math.max(0, x.p - own - chassis - (hs ? Math.min(x.p, hs.w) : 0)) : 0;
+      const direct = keepsSplit(l) ? Math.max(0, x.p - own - chassis - (hs ? Math.min(x.p, hs.w) : 0)) : 0;
       const b = toBoard + direct, pkg = x.board !== undefined || x.sink !== undefined ? { board: x.board ?? 0, sink: x.sink ?? 0, air: Math.max(0, x.p - (x.board ?? 0) - (x.sink ?? 0)) } : null;
       out.push({ name: x.name, p: x.p, board: b, air, chassis, sink, sinkPut: hs ? Math.min(x.p, hs.w) : 0, other: x.p - b - air - chassis - sink, pkg });
     }
@@ -2044,13 +2045,13 @@ export class SimController {
     const rows = this.heatPaths();
     if (!rows.length) return "";
     const share = (v: number, p: number) => `${Math.round((100 * v) / p)}`;
-    const st = this.study(), split = !!st?.loads.find(x => x.type === "pkgheat" && x.split), off = new Set(st?.suppressed ?? []);
+    const st = this.study(), off = new Set(st?.suppressed ?? []);
     const chassis = rows.reduce((a, x) => a + x.chassis, 0), walls = (st?.supports ?? []).some(x => x.type === "chassis" && !off.has(x.id) && x.faces.length);
     const cCol = chassis > 0, hCol = rows.some(x => x.sinkPut > 0);
     return `<h5 class="sim-sub">${esc(t("Heat paths"))}</h5>`
       + `<table class="sim-comptable sim-paths"><thead><tr><th>${esc(t("Part"))}</th><th title="${esc(t("Heat made in the part"))}">W</th><th title="${esc(t("Conducted into the board"))}">${esc(t("Board"))}<br />%</th><th title="${esc(t("Off the part's own surface: convection, radiation, or a heatsink resistance on it"))}">${esc(t("Surface"))}<br />%</th>${hCol ? `<th title="${esc(t("Into the heatsink: the package's heatsink share, put into it where the part touches it, less what flows back into the part"))}">${esc(t("Heatsink"))}<br />%</th>` : ""}${cCol ? `<th title="${esc(t("The package's chassis share, put on the chassis walls"))}">${esc(t("Chassis"))}<br />%</th>` : ""}<th title="${esc(t("Into a heatsink, other parts or the chassis"))}">${esc(t("Other"))}<br />%</th></tr></thead><tbody>`
       + rows.map(x => `<tr data-path="${esc(x.name)}"${x.pkg ? ` title="${esc(t("The package's split: board {b} %, air {a} %, heatsink or chassis {s} %", { b: share(x.pkg.board, x.p), a: share(x.pkg.air, x.p), s: share(x.pkg.sink, x.p) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td>${sig(x.p)}</td><td data-v="pboard"${x.board < 0 ? ` title="${esc(t("It takes heat in from the board"))}"` : ""}>${share(x.board, x.p).replace("-", "−")}</td><td data-v="pair">${share(x.air, x.p)}</td>${hCol ? `<td data-v="psink">${share(Math.max(0, x.sink), x.p)}</td>` : ""}${cCol ? `<td data-v="pchassis">${share(x.chassis, x.p)}</td>` : ""}<td data-v="pother">${share(Math.max(0, x.other), x.p)}</td></tr>`).join("") + `</tbody></table>`
-      + `<p class="sim-note muted" data-v="pathnote">${esc(split ? t("The package's split is kept: its board shares enter the board under each part as fixed powers.") : t("The heat goes where the conductances send it; hover a row for the package's split."))}</p>`
+      + `<p class="sim-note muted" data-v="pathnote">${esc(t("The package's split is kept: its board shares enter the board under each part as fixed powers."))}</p>`
       + (hCol ? `<p class="sim-note muted" data-v="sinknote">${esc(t("The heatsink shares, {w} W, enter the heatsinks where the parts touch them.", { w: sig(rows.reduce((a, x) => a + x.sinkPut, 0)) }))}</p>` : "")
       + (cCol ? `<p class="sim-note${walls ? " muted" : ""}" data-v="chassisnote">${esc(walls ? t("The chassis shares, {w} W, enter the model on the chassis walls.", { w: sig(chassis) }) : t("The chassis shares, {w} W, leave the model: add a Chassis wall on the faces the parts are fixed to, to see how warm it gets.", { w: sig(chassis) }))}</p>` : "");
   }
@@ -4552,8 +4553,7 @@ export class SimController {
         }).join("")}</tbody></table>`
           + `<p class="pm-help muted">${esc(t("The power of each part from the board's thermal package, made throughout the part's bodies. Untick a part to leave it out, or type another power."))}</p>`
           + (parts.some(x => x.junction) ? `<p class="pm-help muted" data-v="rjchelp">${esc(t("The package gives junction temperatures for some parts: type their Rjc to report the junction, else the case is reported."))}</p>` : ""))
-          + (l.board ? group(t("Heat paths"), chk("split", l.split, t("Keep the package's split"))
-            + `<p class="pm-help muted">${esc(l.split ? t("Each part's board share enters the board under the part as a fixed power, and a chassis share leaves the model; the rest is made in the part.") : t("Off: all the heat is made in the parts and goes where the conductances send it."))}</p>`) : "")
+          + (l.board ? group(t("Heat paths"), `<p class="pm-help muted" data-v="splithelp">${esc(t("Parts are soldered to the board, never in the air: each part's board share from the package always enters the board under the part as a fixed power, and a chassis share leaves the model; the rest is made in the part."))}</p>`) : "")
           + this.profileGroup(l, group);
       }
       else if (l.type === "vheat") body += group(t("Volume heat"), nf("value", t("Heat per volume"), l.value, "W/m³")
@@ -5008,7 +5008,6 @@ export class SimController {
     else if (k === "body") { const l = e.draft as StudyLoad; l.body = el.checked || undefined; if (l.body && !this.host.asm()) l.faces = []; }
     else if (k === "each") { const l = e.draft as StudyLoad; l.each = el.checked || undefined; }
     else if (k === "all") { const sp = e.draft as StudySupport; sp.all = el.checked || undefined; if (sp.all) { sp.faces = []; delete sp.rth; } }
-    else if (k === "split") { const l = e.draft as StudyLoad; l.split = el.checked || undefined; }
     else if (k === "pkon") { const x = (e.draft as StudyLoad).parts?.[Number(el.dataset.i)]; if (x) x.off = el.checked ? undefined : true; }
     else if (k === "profile") {
       const l = e.draft as StudyLoad;

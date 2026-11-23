@@ -77,11 +77,11 @@ test("a heatsink part's share enters the heatsink it touches; none found, it sta
   // what leaves the three components adds up to the heat put in, most of it off the heatsink
   assert.ok(Math.abs(c[0].out! + c[1].out! + c[2].out! - 3) < 0.03, `out ${c.map(x => x.out)}`);
   assert.ok(c[2].out! > 1, `heatsink ${c[2].out}`);
-  // the package's split not kept: the whole power is made in the part
+  // a study saved with the split off keeps it all the same (1.712): parts are soldered, never in the air
   st.loads[0].split = false;
-  const plain = thermalSetup(st, body, keys);
-  assert.equal(plain.heatsinks, undefined);
-  assert.deepEqual(plain.sources, [{ power: 3, doms: [1], id: "l1" }]);
+  const saved = thermalSetup(st, body, keys);
+  assert.deepEqual(saved.heatsinks, set.heatsinks);
+  assert.equal(saved.sources.length, set.sources.length);
   // no heatsink in the model: its share stays in the part
   st.loads[0].split = true;
   const two = { tris: Float64Array.from([...P.tris, ...Q.tris]), face: Int32Array.from([...P.face, ...Q.face.map(f => f + 6)]), names: [...P.names, ...Q.names], lo: [0, 0, 0], hi: [60, 40, 11.6] };

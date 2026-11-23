@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.712.0] - 2026-11-23
+
+### Changed
+
+- **Heat from package** always keeps the package's split: each part's board share enters the board under the part, since parts are soldered to the board and never sit in the air. The **Keep the package's split** switch is gone, and a study saved with it off solves with the split kept.
+
+### Fixed
+
+- A board study's **Thermal package** gives each package part its whole power again, not only the share made in the part itself.
+
 ## [1.711.0] - 2026-11-23
 
 ### Added
@@ -4692,7 +4702,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.711.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.712.0...HEAD
+[1.712.0]: https://github.com/kothf/step-viewer/compare/v1.711.0...v1.712.0
 [1.711.0]: https://github.com/kothf/step-viewer/compare/v1.710.0...v1.711.0
 [1.710.0]: https://github.com/kothf/step-viewer/compare/v1.709.0...v1.710.0
 [1.709.0]: https://github.com/kothf/step-viewer/compare/v1.708.0...v1.709.0
