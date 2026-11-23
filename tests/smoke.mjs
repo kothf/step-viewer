@@ -17208,6 +17208,11 @@ try {
     const t2b = await sim(), again = await tp.evaluate(() => document.querySelector('#sim-tree [data-v="reused"]')?.textContent ?? "");
     check(!before && !t2b.error && /same grid and matrix/.test(again) && Math.abs(t2b.thermal.out[0] + t2b.thermal.out[1] - 8) < 0.01 && t2b.thermal.min > t2.thermal.min,
       `thermal 1.674: with only the ambient changed the study is solved again on the same matrix, says so, and the heat still balances (${JSON.stringify({ before, again, error: t2b.error, thermal: t2b.thermal })})`);
+    // FR-TRES-030 (1.704.0): the result is compared with the one before the last change, temperatures in K
+    const cmpT = await tp.evaluate(() => ({ sel: document.querySelector('#sim-tree [data-k="cmp"]')?.value ?? "", rows: [...document.querySelectorAll("#sim-tree .sim-cmptable tbody tr")].map(r => [r.dataset.cmp, r.querySelector('[data-v="cmpchange"]')?.textContent ?? ""]), passes: document.querySelectorAll("#sim-tree .sim-passes").length }));
+    const dT = t2b.thermal.max - t2.thermal.max, rowT = t2b.compare?.rows?.find(r => r.key === "tmax");
+    check(cmpT.sel === "prev" && t2b.compare?.with === "prev" && rowT && Math.abs(rowT.diff - dT) < 1e-6 && dT > 0 && JSON.stringify(cmpT.rows.map(r => r[0])) === JSON.stringify(["tmax", "tmin", "heat"]) && /^\+[\d.]+ K$/.test(cmpT.rows[0][1]) && cmpT.rows[2][1] === "0 %" && cmpT.passes === 1,
+      `thermal 1.704: a thermal result is compared with the one before the last change: the highest temperature rose by the ambient's change, in K, the heat put in did not change (${JSON.stringify({ cmpT, dT, compare: t2b.compare })})`);
     // FR-TSOL-003 (1.695.0): passes 4 to 6 raise the degree only where the temperatures still move
     await tp.selectOption('#sim-tree [data-k="passes"]', "5");
     await settle();
