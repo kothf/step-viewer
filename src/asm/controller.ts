@@ -26,6 +26,8 @@ import { refreshExprs } from "../model/params";
 import { ctxEdgeRefs, ctxRefs, findCtxEdge, moveEdgeGeo, syncCtx, type CtxComp, type CtxEdgeSeen, type PartContext } from "../model/context";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
+import { fileIn, fsaDir, hasRefs, resolveRefs, writeRefs, type RefBase, type ResolveResult } from "./refs";
+import { asmFolder, folderAccess, foldersOk, pickFolder, rememberAsmFolder } from "./folders";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
 import { pickMaterial } from "../materialPicker";
 import { isLongPress } from "../longPress";
@@ -62,7 +64,7 @@ export interface AsmHost {
   /** Parts open in other document tabs, for Insert component. */
   openParts?(): { doc: PartDoc; fileName: string }[];
   /** Opens a part in the modeller (edit part in place); `back` is called with the edited part. */
-  editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void, ctx?: PartContext): void;
+  editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void, ctx?: PartContext, handle?: FileSystemFileHandle): void;
   /** The part open in the modeller, if any (Make assembly from part). */
   openPart?(): { doc: PartDoc; fileName: string } | null;
   /** The Smart measure tool in use ("select" = the default); box selection only runs with it. */
@@ -93,7 +95,7 @@ const MATE_FAILS = "This mate cannot be solved with the others: the assembly wou
 /** The components Ctrl+C copied, with their part entries (a clipboard across assemblies). */
 let compClip: { comps: Component[]; parts: Record<string, AsmDoc["parts"][string]> } | null = null;
 
-export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null; vault: VaultTie | null }
+export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null; vault: VaultTie | null; folder: FileSystemDirectoryHandle | null; refBase: RefBase }
 
 /** Opacity of the components left out by Make others transparent. */
 const ISO_FADE = 0.12;
@@ -105,6 +107,11 @@ export class AsmController {
   private savedAt = "";
   private fileName = "";
   private handle: FileSystemFileHandle | null = null;
+  /** The folder the assembly is saved in: its part and sub-assembly files are read from and written to it. */
+  private folder: FileSystemDirectoryHandle | null = null;
+  /** Each referenced file's document as last read or written (refs.ts `RefBase`). */
+  private refBase: RefBase = new Map();
+  private refsBusy = false;
   private kernel: ModelKernel;
   /** The components shown, in viewer part order. */
   private shownIds: string[] = [];
@@ -189,6 +196,8 @@ export class AsmController {
     host.viewer.scene.add(this.explodeLines);
     this.bindTabHide();
     // Box selection of components (FR-SEL-008).
+    // A part file saved in another program or tab comes in when the window gets the focus back.
+    window.addEventListener("focus", () => { if (this.doc && this.folder) void this.refreshRefs(); });
     window.addEventListener("pointerdown", e => this.boxDown(e), true);
     window.addEventListener("pointermove", e => this.boxMove(e), true);
     window.addEventListener("pointerup", e => this.boxUp(e), true);
@@ -376,7 +385,8 @@ export class AsmController {
   async openFile(file: File | { name: string; data: ArrayBuffer }, handle: FileSystemFileHandle | null = null) {
     const buf = file instanceof File ? await file.arrayBuffer() : file.data;
     try { this.load(await unpackAsm(buf), file.name, handle); }
-    catch (err) { toast(t("Could not open {name}: {err}", { name: file.name, err: t((err as Error).message) }), true); }
+    catch (err) { toast(t("Could not open {name}: {err}", { name: file.name, err: t((err as Error).message) }), true); return; }
+    await this.attachFolder();
   }
 
   /** Document tabs (FR-DOC-003): the open assembly with its undo history, kept while another document is shown. */
@@ -384,20 +394,22 @@ export class AsmController {
     if (!this.doc) return null;
     this.closeTools();
     this.hideCrumbs();
-    const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected, vault: this.vault };
+    const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected, vault: this.vault, folder: this.folder, refBase: this.refBase };
     this.close();
     return tab;
   }
 
   /** Shows a parked assembly again. */
   resume(tab: AsmTab) {
-    this.load(tab.doc, tab.fileName, tab.handle);
+    this.load(tab.doc, tab.fileName, tab.handle, tab.folder, tab.refBase);
     this.undoStack = tab.undo;
     this.redoStack = tab.redo;
     this.savedAt = tab.savedAt;
     this.selected = tab.sel;
     this.vault = tab.vault;
     this.renderAll();
+    // parts saved in their own tabs meanwhile come in
+    if (this.folder) void this.refreshRefs();
   }
 
   /**
@@ -416,8 +428,12 @@ export class AsmController {
     this.renderAll();
   }
 
-  private load(doc: AsmDoc, fileName: string, handle: FileSystemFileHandle | null) {
+  private load(doc: AsmDoc, fileName: string, handle: FileSystemFileHandle | null, folder: FileSystemDirectoryHandle | null = null, refBase: RefBase = new Map()) {
     this.host.leaveOthers();
+    this.folder = folder;
+    this.refBase = refBase;
+    this.missingLinks.clear();
+    document.getElementById("asm-refs")?.remove();
     this.motion?.close();
     this.doc = doc;
     this.savedAt = JSON.stringify(doc);
@@ -461,6 +477,7 @@ export class AsmController {
     this.isolated = null;
     this.isoHid.clear();
     document.getElementById("asm-iso")?.remove();
+    document.getElementById("asm-refs")?.remove();
     for (const o of [...this.ghostGroup.children]) this.dropGhost(o.userData.ghost);
     this.ghostGroup.visible = false;
     this.picked = [];
@@ -2626,19 +2643,29 @@ export class AsmController {
     const c = this.comp(id), doc = this.doc, entry = c && doc?.parts[c.part];
     if (!c || !doc || !entry || !this.host.editPart) return;
     if (entry.asm) { toast(t("Open the sub-assembly's own file to edit it."), true); return; }
-    const parked = { doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, savedAt: this.savedAt, key: c.part, sel: id };
+    const parked = { doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, savedAt: this.savedAt, key: c.part, sel: id, folder: this.folder, refBase: this.refBase, missing: this.missingLinks };
     const file = entry.file?.toLowerCase().endsWith(PART_EXT) ? entry.file : `${entry.name}${PART_EXT}`;
-    this.host.editPart(JSON.parse(JSON.stringify(entry.doc)) as PartDoc, file, this.label().replace(/ •$/, ""), pd => {
+    void this.partHandle(c.part).then(ph => this.host.editPart!(JSON.parse(JSON.stringify(entry.doc)) as PartDoc, file, this.label().replace(/ •$/, ""), pd => {
       // The faces as they were, so mates can follow a face the edit renamed (exam #84).
       const faces = new Map(this.geo);
-      this.load(parked.doc, parked.fileName, parked.handle);
+      this.load(parked.doc, parked.fileName, parked.handle, parked.folder, parked.refBase);
+      this.missingLinks = parked.missing;
       for (const [k, g] of faces) this.geo.set(k, g);
       this.undoStack = parked.undo;
       this.savedAt = parked.savedAt;
       this.selected = parked.sel;
       if (JSON.stringify(pd) !== JSON.stringify(parked.doc.parts[parked.key]?.doc)) this.change(d => { if (d.parts[parked.key]) d.parts[parked.key].doc = pd; });
       else this.renderAll();
-    }, inContext ? this.contextOf(c.id) : undefined);
+      // a part saved into its file while open there: the reference follows (hash), nothing else changes
+      if (this.folder) void this.refreshRefs();
+    }, inContext ? this.contextOf(c.id) : undefined, ph ?? undefined));
+  }
+
+  /** The file a referenced part is in (Open part saves into it), when the assembly's folder is open. */
+  private async partHandle(key: string): Promise<FileSystemFileHandle | null> {
+    const link = this.doc?.parts[key]?.link;
+    if (!link || !this.folder || await folderAccess(this.folder, false) !== "granted") return null;
+    return fileIn(this.folder, link.path);
   }
 
   /**
@@ -3132,6 +3159,139 @@ export class AsmController {
     this.renderAll();
   }
 
+  // ---------- part files beside the assembly (references) ----------
+
+  /** The assembly just opened references part files: read them from its folder, or ask for the folder. */
+  private async attachFolder() {
+    const doc = this.doc;
+    if (!doc || !hasRefs(doc) || !foldersOk()) { if (doc && hasRefs(doc)) this.renderRefsBar(); return; }
+    const h = await asmFolder(doc.id);
+    if (this.doc !== doc) return;
+    if (h && await folderAccess(h, true) === "granted") {
+      this.folder = h;
+      await this.refreshRefs(true);
+      return;
+    }
+    this.folder = null;
+    this.renderRefsBar(h);
+  }
+
+  /** Reads the referenced files again and takes in the ones that changed (on open quietly, else as an undo step). */
+  async refreshRefs(opening = false): Promise<ResolveResult | null> {
+    const doc = this.doc, folder = this.folder;
+    if (!doc || !folder || this.refsBusy || !hasRefs(doc)) return null;
+    if (await folderAccess(folder, false) !== "granted") return null;
+    this.refsBusy = true;
+    let r: ResolveResult;
+    try { r = await resolveRefs(doc, fsaDir(folder), this.refBase); }
+    catch { return null; }
+    finally { this.refsBusy = false; }
+    if (this.doc !== doc) return null;
+    this.takeParts(r, opening);
+    return r;
+  }
+
+  /** Puts the parts read from files into the assembly and says what happened. */
+  private takeParts(r: ResolveResult, opening: boolean) {
+    if (!this.doc) return;
+    const clean = !this.dirty;
+    this.missingLinks = new Set(r.missing);
+    if (r.updated.length && !(opening && clean)) this.change(d => { d.parts = r.doc.parts; });
+    else {
+      // hashes moved on, or the assembly was just opened: no undo step, and an unsaved assembly stays unsaved
+      const changed = JSON.stringify(r.doc.parts) !== JSON.stringify(this.doc.parts);
+      this.doc.parts = r.doc.parts;
+      if (clean) this.savedAt = JSON.stringify(this.doc);
+      if (changed && r.updated.length) this.rebuild();
+      this.renderAll();
+    }
+    if (r.updated.length) toast(t("Updated from their files: {names}", { names: r.updated.join(", ") }), "success");
+    if (r.conflicts.length) toast(t("Changed both here and in their files: {names}. Saving the assembly writes this version.", { names: r.conflicts.join(", ") }), "warn");
+    this.renderRefsBar();
+  }
+
+  /** The bar over the view: the folder to read the part files from, or the part files that are missing. */
+  private renderRefsBar(known?: FileSystemDirectoryHandle | null) {
+    document.getElementById("asm-refs")?.remove();
+    const doc = this.doc;
+    if (!doc || !hasRefs(doc)) return;
+    const gone = [...this.missingLinks].filter(k => doc.parts[k]);
+    let text = "", act = "";
+    if (!this.folder) {
+      text = known ? t("This assembly reads its parts from the folder {name}.", { name: known.name }) : t("This assembly's parts are files beside it. Choose its folder to read the latest.");
+      act = known ? t("Read the part files") : t("Choose folder…");
+    } else if (gone.length) {
+      text = t("Part files not found: {names}. The assembly shows the last copy.", { names: gone.map(k => doc.parts[k].file || doc.parts[k].name).join(", ") });
+      act = t("Choose folder…");
+    } else return;
+    const bar = document.createElement("div");
+    bar.id = "asm-refs";
+    bar.className = "asm-iso asm-refs";
+    bar.setAttribute("role", "status");
+    bar.innerHTML = `<span>${esc(text)}</span><button type="button" class="btn small primary" data-refs="go">${esc(act)}</button><button type="button" class="btn small" data-refs="x" aria-label="${esc(t("Close"))}">✕</button>`;
+    bar.querySelector<HTMLButtonElement>('[data-refs="x"]')!.addEventListener("click", () => bar.remove());
+    bar.querySelector<HTMLButtonElement>('[data-refs="go"]')!.addEventListener("click", () => void this.chooseFolder(known && !this.folder ? known : null));
+    document.getElementById("viewport")?.append(bar);
+  }
+
+  /** Read the part files from a folder: the remembered one (asked for access) or one picked now. */
+  async chooseFolder(known: FileSystemDirectoryHandle | null = null) {
+    if (!this.doc) return;
+    if (!foldersOk()) { this.updateLinks(); return; }
+    const h = known ?? await pickFolder(this.folder);
+    if (!h || !this.doc) return;
+    if (await folderAccess(h, true) !== "granted") { toast(t("MöbiusCAD may not use that folder."), true); return; }
+    if (!this.folder || !(await (this.folder as FileSystemDirectoryHandle & { isSameEntry(o: FileSystemHandle): Promise<boolean> }).isSameEntry(h))) this.refBase = new Map();
+    this.folder = h;
+    void rememberAsmFolder(this.doc.id, h);
+    const r = await this.refreshRefs();
+    if (r && !r.updated.length && !r.missing.length) toast(t("The part files are up to date."), "success");
+  }
+
+  /** Save into the assembly's folder: the assembly file and every part and sub-assembly file it references. */
+  private async saveToFolder(as: boolean): Promise<boolean> {
+    if (!this.doc) return false;
+    let name = this.fileName.toLowerCase().endsWith(ASM_EXT) ? this.fileName : `${this.doc.name}${ASM_EXT}`;
+    if (as) { const n = await askFileName(name, ASM_EXT); if (!n) return false; name = n; }
+    let folder = as ? null : this.folder;
+    if (!folder) {
+      folder = await pickFolder(this.folder);
+      if (!folder) return false;
+    }
+    if (await folderAccess(folder, true) !== "granted") { toast(t("MöbiusCAD may not use that folder."), true); return false; }
+    if (as && this.vault) this.setVault(null);
+    if (folder !== this.folder) this.refBase = new Map();
+    const doc = this.doc, app = `MöbiusCAD ${this.host.appVersion}`, dir = fsaDir(folder);
+    $("#asm-busy").hidden = false;
+    this.refsBusy = true;
+    let bytes: Uint8Array, written: string[];
+    try {
+      // files changed meanwhile come in first; then what changed here goes out
+      const pre = await resolveRefs(doc, dir, this.refBase);
+      if (pre.updated.length) toast(t("Updated from their files: {names}", { names: pre.updated.join(", ") }), "success");
+      if (pre.conflicts.length) toast(t("Changed both here and in their files: {names}. This assembly's version was saved.", { names: pre.conflicts.join(", ") }), "warn");
+      const w = await writeRefs(pre.doc, dir, this.refBase, app, "", name);
+      bytes = await packAsm(w.doc, app);
+      await dir.write(name, bytes);
+      written = w.written;
+      if (this.doc !== doc) return false;
+      if (pre.updated.length) this.change(d => { d.parts = w.doc.parts; });
+      else this.doc.parts = w.doc.parts;
+    } catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return false; }
+    finally { $("#asm-busy").hidden = true; this.refsBusy = false; }
+    this.folder = folder;
+    this.fileName = name;
+    this.handle = await fileIn(folder, name);
+    this.missingLinks.clear();
+    void rememberAsmFolder(this.doc.id, folder);
+    this.savedAt = JSON.stringify(this.doc);
+    this.renderAll();
+    this.renderRefsBar();
+    this.host.saved?.(name, bytes);
+    toast(written.length ? t("Saved {name} and {n} part files in {folder}", { name, n: written.length, folder: folder.name }) : t("Saved {name}", { name }), "success");
+    return true;
+  }
+
   async save(as = false) {
     if (!this.doc) return;
     const bytes = await packAsm(this.doc, `MöbiusCAD ${this.host.appVersion}`);
@@ -3145,6 +3305,8 @@ export class AsmController {
       toast(t("Saved {name}", { name: this.title }), "success");
       return;
     }
+    // Chrome and Edge save into a folder: the assembly beside its part files, which it references.
+    if (foldersOk()) { await this.saveToFolder(as); return; }
     if (as && this.vault) this.setVault(null);
     const blob = new Blob([bytes as BlobPart], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${ASM_EXT}`;

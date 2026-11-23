@@ -272,7 +272,9 @@ export class FileMenu {
         };
         for (const x of picked) {
           for (const f of await x.files()) add(f);
-          if (parts && x.parts) for (const f of await x.parts()) add(f, "parts/");
+          // an assembly's parts go beside it, where its references point
+          // (a part file of that name already packed is the same part, open in its own tab: renaming it would break the reference)
+          if (parts && x.parts) for (const f of await x.parts()) { if (x.kind !== "asm") add(f, "parts/"); else if (!used.has(f.name.toLowerCase())) add(f); }
         }
         this.host.download(new Blob([await zip(out) as BlobPart], { type: "application/zip" }), name);
         dlg.close();
