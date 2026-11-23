@@ -229,6 +229,8 @@ export class SimController {
   private reach: number | null = null;
   /** The conductivity table open for editing: "" = the part's, else a component id (view only). */
   private ktOpen: string | null = null;
+  /** Thermal studies: whose conductivity by direction is being edited (FR-TMAT-003): "" = the part, else a component id. */
+  private k3Open: string | null = null;
   private modeFor: string | null = null;
   /** Hot spots of the results, found once per pass. */
   private hot: { res: Results; n: number; list: HotSpot[] } | null = null;
@@ -485,9 +487,10 @@ export class SimController {
     if (st.refine?.length) parts.push(st.refine);
     // thermal stress: the temperatures come from another study, so its set-up counts too
     const from = st.loads.find(l => l.type === "temperature" && l.from)?.from, src = from ? this.host.doc()?.studies?.find(x => x.id === from) : null;
-    if (src) parts.push(["temp-from", src.supports, src.loads, src.settings, src.mats ?? null, src.suppressed ?? null, ...(src.links?.length || src.comps ? [src.links ?? null, src.comps ?? null] : []), ...(src.kt && Object.keys(src.kt).length ? [["kt", src.kt]] : [])]);
+    if (src) parts.push(["temp-from", src.supports, src.loads, src.settings, src.mats ?? null, src.suppressed ?? null, ...(src.links?.length || src.comps ? [src.links ?? null, src.comps ?? null] : []), ...(src.kt && Object.keys(src.kt).length ? [["kt", src.kt]] : []), ...(src.k3 && Object.keys(src.k3).length ? [["k3", src.k3]] : [])]);
     if (st.mats && Object.keys(st.mats).length) parts.push(Object.entries(st.mats).sort(([a], [b]) => (a < b ? -1 : 1)));
     if (st.kind === "thermal" && st.kt && Object.keys(st.kt).length) parts.push(["kt", Object.entries(st.kt).sort(([a], [b]) => (a < b ? -1 : 1))]);
+    if (st.kind === "thermal" && st.k3 && Object.keys(st.k3).length) parts.push(["k3", Object.entries(st.k3).sort(([a], [b]) => (a < b ? -1 : 1))]);
     if (st.welds?.length) parts.push(st.welds.map(w => (w.on === "points" ? [w.id, w.edges, w.points ?? [], w.dia ?? DEFAULT_SPOT] : [w.id, w.edges])));
     if (st.connectors?.length) parts.push(st.connectors.map(c => [c.id, c.faces.map(f => f.name), c.faces2.map(f => f.name), c.kind, c.k, c.kr ?? null]));
     if (st.masses?.length) parts.push(st.masses.map(m => [m.id, m.faces.map(f => f.name), m.mass]));
@@ -1301,16 +1304,16 @@ export class SimController {
       let tp: ReturnType<SimController["thermalParts"]>;
       try { tp = this.thermalParts(th, got, this.boltedPairs(this.freshBolts(th)?.list)); } catch { throw new Error("E-TH-NOFIELD"); }
       if (tp.setup.problems.length) throw new Error("E-TH-NOFIELD");
-      const { bodies, bks, kOf, nameOf, kts, kmaps } = tp;
+      const { bodies, k3s, kOf, nameOf, kts, kmaps } = tp;
       return { ...base, thermal: { ...tr, body: tp.geo, mat: { name: nameOf(0), E: 0, nu: 0, rho: 0 }, regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: nameOf(i), E: 0, nu: 0, rho: 0 } })),
-        thermal: { k: kOf(0) * 1e-3, setup: tp.setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s: bks.map(q => (q?.k3 ? q.k3.map(v => v * 1e-3) : null)), gap: th.settings.gap ?? DEFAULT_GAP, links: tp.links, ...(kts ? { kts } : {}), ...(kmaps ? { kmaps } : {}) } } };
+        thermal: { k: kOf(0) * 1e-3, setup: tp.setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s, gap: th.settings.gap ?? DEFAULT_GAP, links: tp.links, ...(kts ? { kts } : {}), ...(kmaps ? { kmaps } : {}) } } };
     }
     const q = th.mats?.[""] ?? doc.material;
     if (!q?.k) throw new Error("E-TH-NOFIELD");
     const setup = thermalSetup(th, geo);
     if (setup.problems.length) throw new Error("E-TH-NOFIELD");
-    const kt = th.kt?.[""]?.length ? ktFactors(th.kt[""], q.k) : undefined;
-    return { ...base, thermal: { ...tr, body: geo, mat: { name: q.name, E: 0, nu: 0, rho: 0 }, thermal: { k: q.k * 1e-3, setup, ...(kt ? { kt } : {}) } } };
+    const kt = th.kt?.[""]?.length ? ktFactors(th.kt[""], q.k) : undefined, k3 = th.k3?.[""];
+    return { ...base, thermal: { ...tr, body: geo, mat: { name: q.name, E: 0, nu: 0, rho: 0 }, thermal: { k: q.k * 1e-3, setup, ...(kt ? { kt } : {}), ...(k3 ? { k3: k3.map(v => v * 1e-3) } : {}) } } };
   }
 
 
@@ -1337,8 +1340,10 @@ export class SimController {
     const mats = bodies.map(b => { const q = st.comps?.[compOf(b.key)]?.material ?? b.mat ?? null; return q && !q.k && steel.has(compOf(b.key)) ? { ...q, k: 54, cp: q.cp ?? 461 } : q; });
     // a board conducts by its copper: along it far better than through it
     const bks = bodies.map(b => { const bd = st.comps?.[compOf(b.key)]?.board; return bd ? boardK(b.tris, bd, bd.t) : null; });
-    mats.forEach((q, i) => { if (!bks[i] && !q?.k) throw new Error(`E-TH-COMPMAT: ${bodies[i].name ?? bodies[i].key}`); });
-    const kOf = (i: number) => bks[i]?.along ?? mats[i]!.k!, nameOf = (i: number) => (bks[i] ? BOARD_MATERIAL : mats[i]!.name);
+    // conductivity by direction typed for the study (FR-TMAT-003), W/(m·K) along X, Y, Z; a board keeps its copper's
+    const own3 = bodies.map((b, i) => (bks[i] ? null : st.k3?.[compOf(b.key)] ?? null));
+    mats.forEach((q, i) => { if (!bks[i] && !q?.k && !own3[i]) throw new Error(`E-TH-COMPMAT: ${bodies[i].name ?? bodies[i].key}`); });
+    const kOf = (i: number) => bks[i]?.along ?? mats[i]?.k ?? Math.max(...own3[i]!), nameOf = (i: number) => (bks[i] ? BOARD_MATERIAL : mats[i]?.name ?? "");
     const at = new Map(bodies.map((b, i) => [b.key, i]));
     const links = (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) && (l.type === "none" || l.type === "resist" || l.type === "pad" || l.type === "bolted" || l.type === "air")
       ? [l.type === "none" ? { a: at.get(l.a)!, b: at.get(l.b)!, type: "none" as const }
@@ -1356,7 +1361,8 @@ export class SimController {
     const kts = bodies.map((b, i) => { const rows = st.kt?.[compOf(b.key)]; return rows?.length && !bks[i] ? ktFactors(rows, kOf(i)) : null; });
     // a board with its Gerber set: the conductivity follows its copper cell by cell (FR-TBRD-020)
     const kmaps = bodies.map((b, i) => { const bd = st.comps?.[compOf(b.key)]?.board; return bd?.map && bks[i] ? boardMap(b.tris, bd, bks[i]!.t) : null; });
-    return { off, geo, bodies, mats, bks, kOf, nameOf, links, setup, kts: kts.some(Boolean) ? kts : undefined, kmaps: kmaps.some(Boolean) ? kmaps : undefined };
+    const k3s = bodies.map((_b, i) => { const q = bks[i]?.k3 ?? own3[i]; return q ? q.map(v => v * 1e-3) : null; });
+    return { off, geo, bodies, mats, bks, k3s, kOf, nameOf, links, setup, kts: kts.some(Boolean) ? kts : undefined, kmaps: kmaps.some(Boolean) ? kmaps : undefined };
   }
 
   /** A thermal study's solve (FRS-thermal TH2): the part's temperatures from its heat sources and cooling. */
@@ -1378,8 +1384,8 @@ export class SimController {
       const got = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
       if (!asm && got.solids !== 1) throw new Error("E-SIM-BODIES");
       const bolted = asm ? this.boltedPairs(await this.boltsOf(st, got.regions ?? [])) : undefined;
-      const { off, geo, bodies, mats, bks, kOf, nameOf, links, setup, kts, kmaps } = this.thermalParts(st, got, bolted);
-      const kt = !asm && st.kt?.[""]?.length ? ktFactors(st.kt[""], m!.k!) : undefined;
+      const { off, geo, bodies, mats, bks, k3s, kOf, nameOf, links, setup, kts, kmaps } = this.thermalParts(st, got, bolted);
+      const kt = !asm && st.kt?.[""]?.length ? ktFactors(st.kt[""], m!.k!) : undefined, k3 = !asm ? st.k3?.[""] : undefined;
       if (asm) {
         this.comps = bodies.map(b => ({ key: b.key, name: b.name ?? b.key }));
         if (!this.freshFound(st)) void this.findFrom(bodies, st.settings.gap ?? DEFAULT_GAP, this.foundKey(st)).then(() => { this.renderAll(); this.drawMarks(); }).catch(() => {});
@@ -1435,7 +1441,7 @@ export class SimController {
         body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] }, passes: total, energyTol: st.settings.energyTol, pos: mesh.pos, nrm: mesh.nrm, ...(memLimit() ? { memory: memLimit() } : {}),
         mat: { name: asm ? nameOf(0) : m!.name, E: 0, nu: 0, rho: 0 },
         ...(asm ? { regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: nameOf(i), E: 0, nu: 0, rho: 0 } })) } : {}),
-        thermal: asm ? { k: kOf(0) * 1e-3, setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s: bks.map(q => (q?.k3 ? q.k3.map(v => v * 1e-3) : null)), gap: st.settings.gap ?? DEFAULT_GAP, links, ...(kts ? { kts } : {}), ...(kmaps ? { kmaps } : {}), ...(transient ? { transient } : {}) } : { k: m!.k! * 1e-3, setup, ...(kt ? { kt } : {}), ...(transient ? { transient } : {}) },
+        thermal: asm ? { k: kOf(0) * 1e-3, setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s, gap: st.settings.gap ?? DEFAULT_GAP, links, ...(kts ? { kts } : {}), ...(kmaps ? { kmaps } : {}), ...(transient ? { transient } : {}) } : { k: m!.k! * 1e-3, setup, ...(kt ? { kt } : {}), ...(k3 ? { k3: k3.map(v => v * 1e-3) } : {}), ...(transient ? { transient } : {}) },
       }, p => {
         mine.push(p);
         res.ms = performance.now() - t0;
@@ -1488,6 +1494,34 @@ export class SimController {
       + (rows?.length ? `<button class="btn small" data-a="ktclear" data-b="${esc(key)}"${dis}>${esc(t("Constant conductivity"))}</button>` : "") + `</div>`;
   }
 
+  /** "X 400 · Y 400 · Z 5 W/(m·K)" for a conductivity by direction. */
+  private k3Text(k: number[]) {
+    return `X ${sig(k[0])} · Y ${sig(k[1])} · Z ${sig(k[2])} W/(m·K)`;
+  }
+
+  /** Conductivity by direction of the part ("") or a component (FR-TMAT-003): the toggle for the part, and the editor while open. */
+  private k3Html(st: Study, key: string, k?: number | null) {
+    const v = st.k3?.[key], open = this.k3Open === key, dis = this.running ? " disabled" : "";
+    const toggle = key === "" ? `<button class="btn small sim-k3btn${v ? " on" : ""}" data-a="k3" data-b="" aria-pressed="${open ? "true" : "false"}"${dis}>${esc(v ? t("Conductivity by direction") : t("Conductivity differs by direction…"))}</button>` : "";
+    if (!open) return toggle;
+    const f = (a: number, n: string) => `<label>${n} <input type="text" inputmode="decimal" data-k="k3${"xyz"[a]}" data-b="${esc(key)}" value="${v ? sig(v[a]) : k ? sig(k) : ""}"${dis} /></label>`;
+    return toggle + `<div class="sim-k3" data-k3="${esc(key)}"><span class="sim-k3in"><span>${esc(t("Conductivity along the model's axes, W/(m·K)"))}</span>${f(0, "X")}${f(1, "Y")}${f(2, "Z")}</span>`
+      + `<p class="sim-note muted">${esc(t("For a laminate, a graphite pad or a heat spreader: it conducts far better along its layers than through them. Type the values along the model's X, Y and Z axes; they replace the material's conductivity."))}</p>`
+      + (v ? `<button class="btn small" data-a="k3clear" data-b="${esc(key)}"${dis}>${esc(t("Same in every direction"))}</button>` : "") + `</div>`;
+  }
+
+  private setK3(key: string, k: [number, number, number] | null) {
+    const st = this.study();
+    if (!st) return;
+    this.host.change(k ? t("Conductivity by direction") : t("Same in every direction"), d => {
+      const s = d.studies?.find(x => x.id === st.id);
+      if (!s) return;
+      const k3 = { ...(s.k3 ?? {}) };
+      if (k) k3[key] = k; else delete k3[key];
+      if (Object.keys(k3).length) s.k3 = k3; else delete s.k3;
+    });
+  }
+
   private setKt(key: string, rows: KTable | null) {
     const st = this.study();
     if (!st) return;
@@ -1519,9 +1553,10 @@ export class SimController {
             + this.boardMapHtml(c.id, bd, off) + `</li>`;
         }
         return `<li data-comp="${esc(c.id)}" class="th ${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
-          + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Thermal conductivity"))}">${st.kt?.[c.id]?.length ? this.ktRange(st.kt[c.id]) : k ? `${sig(k)} W/(m·K)` : ""}</span>${brd}`
+          + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Thermal conductivity"))}">${st.k3?.[c.id] ? this.k3Text(st.k3[c.id]) : st.kt?.[c.id]?.length ? this.ktRange(st.kt[c.id]) : k ? `${sig(k)} W/(m·K)` : ""}</span>${brd}`
+          + `<button class="btn small sim-crigid${st.k3?.[c.id] ? " on" : ""}" data-a="k3" data-b="${esc(c.id)}" aria-pressed="${this.k3Open === c.id ? "true" : "false"}" title="${esc(t("Conductivity by direction"))}"${dis || (o?.off ? " disabled" : "")}><span translate="no">XYZ</span></button>`
           + `<button class="btn small sim-crigid${st.kt?.[c.id]?.length ? " on" : ""}" data-a="ktab" data-b="${esc(c.id)}" aria-pressed="${this.ktOpen === c.id ? "true" : "false"}" title="${esc(t("Conductivity that changes with temperature"))}"${dis || (o?.off ? " disabled" : "")}><span translate="no">k(T)</span></button>`
-          + `<button class="btn small${own ? " own" : ""}${name && k ? "" : " sim-warn"}" data-a="compmat" data-c="${esc(c.id)}" title="${esc(!name ? t("Pick a material") : !k ? t("This material has no thermal conductivity") : own ? t("Material picked for this study") : t("The part's material"))}"${dis}>${name ? `<span translate="no">${esc(name)}</span>` : esc(t("No material"))}</button>${this.ktOpen === c.id ? this.ktHtml(st, c.id) : ""}</li>`;
+          + `<button class="btn small${own ? " own" : ""}${name && k ? "" : " sim-warn"}" data-a="compmat" data-c="${esc(c.id)}" title="${esc(!name ? t("Pick a material") : !k ? t("This material has no thermal conductivity") : own ? t("Material picked for this study") : t("The part's material"))}"${dis}>${name ? `<span translate="no">${esc(name)}</span>` : esc(t("No material"))}</button>${this.k3Open === c.id ? this.k3Html(st, c.id, k) : ""}${this.ktOpen === c.id ? this.ktHtml(st, c.id) : ""}</li>`;
       }).join("") + `</ul></div>`;
     return `<div class="sim-sec sim-comps"><h4>${esc(t("Components"))}</h4>`
       + `<p class="sim-note muted">${esc(t("A component is analysed with its part's material unless another is picked here. Untick a component to leave it out of the study. A rigid component moves as a body: it does not deform, and its mass still counts."))}</p>`
@@ -3707,7 +3742,7 @@ export class SimController {
       + (st.welds?.length ? `<div class="sim-sec sim-welds"><h4>${esc(t("Welds"))}</h4><p class="sim-note muted">${esc(t(WELD_NOTE))}</p><ul class="sim-list">${st.welds.map(w => row(w, false)).join("")}</ul></div>` : "")
       + this.linksHtml(st);
     else html += `<div class="sim-sec sim-mat"><h4>${esc(t("Material"))}</h4><button class="pm-box${matOk ? "" : " sim-warn"}" data-a="mat">${doc.material ? `<span translate="no">${esc(doc.material.name)}</span>` : esc(t("No material"))}</button>` + studyMat
-      + (thermal ? (m && matOk ? `<p class="sim-note muted" data-v="kcond">${esc(t("Thermal conductivity"))} ${st.kt?.[""]?.length ? this.ktRange(st.kt[""]) : `${sig(m.k!)} W/(m·K)`}</p>${this.ktHtml(st, "")}` : `<p class="sim-prob">${esc(t("The analysis needs a material with a thermal conductivity."))}</p>`)
+      + (thermal ? (m && matOk ? `<p class="sim-note muted" data-v="kcond">${esc(t("Thermal conductivity"))} ${st.k3?.[""] ? this.k3Text(st.k3[""]) : st.kt?.[""]?.length ? this.ktRange(st.kt[""]) : `${sig(m.k!)} W/(m·K)`}</p>${this.k3Html(st, "", m.k)}${this.ktHtml(st, "")}` : `<p class="sim-prob">${esc(t("The analysis needs a material with a thermal conductivity."))}</p>`)
         : m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`)
       + (ownMats.length ? `<p class="sim-note muted sim-bodymats">${esc(t("Bodies with their own material:"))} <span translate="no">${esc(ownMats.join(", "))}</span></p>` : "") + `</div>`;
     const auto = `<label class="chk sim-auto" title="${esc(t("After every change to the model or to the study, the study is solved again by itself"))}"><input type="checkbox" data-k="auto"${st.auto ? " checked" : ""} />${esc(t("Solve on change"))}</label>`;
@@ -4266,6 +4301,8 @@ export class SimController {
     else if (a === "bgerberclear") void this.readGerber(b.dataset.c ?? "", null);
     else if (a === "ktab") { const k = b.dataset.b ?? ""; this.ktOpen = this.ktOpen === k ? null : k; this.renderTree(); if (this.ktOpen != null) ($("#sim-tree").querySelector(`textarea[data-k="ktab"]`) as HTMLTextAreaElement | null)?.focus(); }
     else if (a === "ktclear") this.setKt(b.dataset.b ?? "", null);
+    else if (a === "k3") { const k = b.dataset.b ?? ""; this.k3Open = this.k3Open === k ? null : k; this.renderTree(); if (this.k3Open != null) ($("#sim-tree").querySelector(`input[data-k="k3x"]`) as HTMLInputElement | null)?.focus(); }
+    else if (a === "k3clear") this.setK3(b.dataset.b ?? "", null);
     else if (a === "link") {
       if ((e.target as HTMLElement).closest("select")) return;
       const k = b.dataset.link ?? "";
@@ -4367,6 +4404,14 @@ export class SimController {
       const v = Number(el.value);
       this.reach = el.value.trim() && Number.isFinite(v) ? v : null;
       this.renderTree();
+    }
+    else if (el.dataset.k === "k3x" || el.dataset.k === "k3y" || el.dataset.k === "k3z") {
+      const key = el.dataset.b ?? "", box = el.closest(".sim-k3");
+      const vals = ["x", "y", "z"].map(a => (box?.querySelector(`input[data-k="k3${a}"]`) as HTMLInputElement | null)?.value.trim() ?? "");
+      if (vals.every(v => !v)) { this.setK3(key, null); return; }
+      const k = vals.map(Number);
+      if (!k.every(v => Number.isFinite(v) && v > 0)) { toast(t("Type a conductivity above 0 W/(m·K) along each axis."), "warn"); return; }
+      this.setK3(key, k as [number, number, number]);
     }
     else if (el.dataset.k === "ktab") {
       const key = el.dataset.b ?? "", text = el.value.trim();

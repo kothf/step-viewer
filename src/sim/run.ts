@@ -752,6 +752,8 @@ export interface RunInput {
    */
   temp?: { alpha: number; /** Per region (assemblies, bodies of their own material): α, 1/K; 0 for a rigid one. */ alphas?: number[]; thermal?: RunInput };
   thermal?: { k: number; setup: ThermalSetup; ks?: number[]; /** Per region: conductivity along X, Y, Z when they differ (a board), else null. */ k3s?: (number[] | null)[]; gap?: number; links?: ThermalLink[];
+    /** A part's conductivity along X, Y, Z when it differs by direction (FR-TMAT-003), W/(mm·K). */
+    k3?: number[];
     /** Per region: a board's conductivity varying over it, from its copper (FR-TBRD-020), else null. */
     kmaps?: (KMap | null)[];
     /** Conductivity changing with temperature (FR-TMAT-004): [°C, factor on k, …] for the part (`kt`) or per region (`kts`, null = constant). */
@@ -936,7 +938,7 @@ export function tempField(inp: RunInput): TempField {
     // ∇T = −flux / k, with the body's own conductivity (by direction for a board, at the temperature when it changes)
     if (g) for (let i = 0; i < n; i++) {
       const d = r.dom?.[i] ?? 0, km = TT.kmaps?.[d], kt = TT.kts ? TT.kts[d] : TT.kt, m = kt ? ktFactor(kt, t[i]) : 1, k = TT.ks?.[d] ?? TT.k;
-      const k3 = km ? (([al, th]) => [0, 1, 2].map(a => (a === km.axis ? th : al)))(kmapMean(km, [pts[3 * i], pts[3 * i + 1], pts[3 * i + 2]], 0)) : TT.k3s?.[d];
+      const k3 = km ? (([al, th]) => [0, 1, 2].map(a => (a === km.axis ? th : al)))(kmapMean(km, [pts[3 * i], pts[3 * i + 1], pts[3 * i + 2]], 0)) : TT.k3s?.[d] ?? TT.k3;
       for (let a = 0; a < 3; a++) g[3 * i + a] = -r.u[3 * i + a] / ((k3 ? k3[a] : k) * m);
     }
     return { t, g };
@@ -1123,7 +1125,7 @@ function hashOf(a: ArrayLike<number> | undefined, h = 2166136261): number {
 export function reuseKey(inp: RunInput, h: number): string {
   const T = inp.thermal!;
   return JSON.stringify([
-    hashOf(inp.body.tris), inp.body.lo, inp.body.hi, h, inp.memory ?? null, T.k, T.ks ?? null, T.k3s ?? null, T.kt ?? null, T.kts ?? null, T.gap ?? null, T.links ?? null,
+    hashOf(inp.body.tris), inp.body.lo, inp.body.hi, h, inp.memory ?? null, T.k, T.ks ?? null, T.k3s ?? null, T.k3 ?? null, T.kt ?? null, T.kts ?? null, T.gap ?? null, T.links ?? null,
     (T.kmaps ?? []).map(m => (m ? [m.axis, m.ua, m.va, m.u0, m.v0, m.cell, m.nu, m.nv, hashOf(m.along), hashOf(m.through)] : null)),
     (inp.regions ?? []).map(r => hashOf(r.tris)),
     T.setup.sinks.map(s => [hashOf(s.tris), s.temp !== undefined ? "t" : "f", s.temp !== undefined ? 0 : s.h ?? 0, s.emissivity ?? 0, !!s.free, s.natural ? 1 : 0, s.forced ? hashOf(s.forced.h) : 0]),
@@ -1149,7 +1151,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const reuse = reuseKey(inp, h);
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now(), p = k + 2;
-    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), grid, prev, sinks: set.sinks, sources: set.sources, ...(exchanges ? { exchanges } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}), reuse });
+    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), grid, prev, sinks: set.sinks, sources: set.sources, ...(exchanges ? { exchanges } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}), reuse });
     grid = r.grid; prev = r.x;
     if (r.prevError != null) known.push(r.prevError);
     const sampler: Sampler = (pos, nrm, hits) => { const s = r.sample(pos, nrm, hits); return { u: s.flux, vm: s.temp, err: s.err, ...(s.hit ? { hit: s.hit } : {}), ...(s.dom ? { dom: s.dom } : {}) }; };
@@ -1236,7 +1238,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const comps: number[][] = [];
   let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint8Array | undefined, flows: SinkFlow[] = [];
   const r = transientThermal(
-    { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), sinks: set.sinks, sources: set.sources, ...(set.exchanges?.length ? { exchanges: exchangesOf(set, inp.body) } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
+    { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), sinks: set.sinks, sources: set.sources, ...(set.exchanges?.length ? { exchanges: exchangesOf(set, inp.body) } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
     {
       rc: R ? Tr.rcs! : [Tr.rc], t0: Tr.t0, times, ...(Number.isFinite(maxStep) ? { maxStep } : {}), breaks: prof.flatMap(profileBreaks),
       factor: (i, t) => profileFactor(prof[i], t),

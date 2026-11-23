@@ -287,6 +287,12 @@ export interface Study {
    * an assembly's component id. Without one the material's k holds at every temperature.
    */
   kt?: Record<string, [number, number][]>;
+  /**
+   * Thermal studies: conductivity by direction (FR-TMAT-003), W/(m·K) along the model's X, Y and Z axes, by "" (the
+   * part) or an assembly's component id (a laminate, a graphite pad). It replaces the material's k; a k(T) table then
+   * scales all three by its ratio to the material's k. A board component keeps its copper's conductivity.
+   */
+  k3?: Record<string, [number, number, number]>;
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
   /** Static studies: load cases (FR-LOAD-022), each solved on its own with the same supports. None = one case with every load. */

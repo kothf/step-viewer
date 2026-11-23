@@ -206,6 +206,8 @@ export interface ThermalProblem {
   p: number;
   /** Conductivity, W/(mm·K) (not used with `domains`). */
   k: number;
+  /** Conductivity along the world X, Y and Z axes when they differ (FR-TMAT-003; not used with `domains`), W/(mm·K). */
+  k3?: number[];
   /** Its change with temperature (not used with `domains`): [°C, factor, …] as `ThermalDomain.kt`. */
   kt?: number[];
   /** Several bodies, joined where they touch (within `gap` mm) as `links` say. */
@@ -837,7 +839,7 @@ interface Solver { solve(f: Float64Array, x0: Float64Array | null): Float64Array
 function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) => Float64Array) | null): Built {
   const p = pb.p;
   const doms = pb.domains && pb.domains.length > 1 ? pb.domains : null;
-  if (doms ? doms.some(d => !(d.k > 0) || (d.k3 && !(d.k3.length === 3 && d.k3.every(v => v > 0)))) : !(pb.k > 0)) throw new Error("E-TH-NOK");
+  if (doms ? doms.some(d => !(d.k > 0) || (d.k3 && !(d.k3.length === 3 && d.k3.every(v => v > 0)))) : !(pb.k > 0) || (pb.k3 && !(pb.k3.length === 3 && pb.k3.every(v => v > 0)))) throw new Error("E-TH-NOK");
   if (!pb.sinks.length) throw new Error("E-TH-NOSINK");
   let grid = pb.grid;
   if (grid) refit(grid, p + 1, 2 * p + 1);
@@ -854,7 +856,7 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
     if (d?.kmap) {
       const E = grid.elems[e], [al, th] = kmapMean(d.kmap, E.c, E.s);
       for (let a = 0; a < 3; a++) k3[3 * e + a] = (a === d.kmap.axis ? th : al) * m;
-    } else for (let a = 0; a < 3; a++) k3[3 * e + a] = (d?.k3 ? d.k3[a] : k) * m;
+    } else for (let a = 0; a < 3; a++) k3[3 * e + a] = (d ? (d.k3 ? d.k3[a] : k) : pb.k3 ? pb.k3[a] : k) * m;
     // the penalty goes by the best-conducting direction
     ke[e] = Math.max(k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]);
   }

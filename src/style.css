@@ -1853,6 +1853,11 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 #sim-tree .sim-kt .pm-field { grid-template-columns: 1fr; gap: 3px; }
 .sim-complist .sim-kt .btn { max-width: none; }
 .sim-kt textarea { width: 100%; box-sizing: border-box; font-family: var(--mono, monospace); font-size: 12px; }
+.sim-k3 { grid-column: 1 / -1; margin: 4px 0; }
+.sim-k3in { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.sim-k3in > span { flex-basis: 100%; }
+.sim-k3in input { width: 5.5em; }
+.sim-complist .sim-k3 .btn { max-width: none; }
 .sim-ktbtn { margin-top: 4px; }
 .sim-ktbtn.on { border-color: var(--accent); }
 .sim-boardset { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 0 0 2px 20px; font-size: 11px; }
