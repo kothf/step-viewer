@@ -81,12 +81,15 @@ function partPath(p: { file?: unknown; link?: { path?: unknown } } | null | unde
 /** An assembly's embedded part documents, packed as part files named by where they came from (FR-PDM-003). */
 export async function embeddedParts(bytes: Uint8Array): Promise<{ file: string; doc: Record<string, unknown> }[]> {
   const m = await entries(bytes);
-  const doc = m && readJson(m, "document.json") as { parts?: Record<string, { file?: unknown; doc?: unknown; asm?: unknown }> } | null;
+  const doc = m && readJson(m, "document.json") as { parts?: Record<string, { file?: unknown; doc?: unknown; asm?: unknown; link?: { path?: unknown } }> } | null;
   if (!doc?.parts) return [];
   const out: { file: string; doc: Record<string, unknown> }[] = [];
   for (const p of Object.values(doc.parts)) {
-    if (typeof p?.file !== "string" || !/\.mcadprt$/i.test(p.file) || p.asm || !p.doc || typeof p.doc !== "object") continue;
-    if (!out.some(x => x.file === p.file)) out.push({ file: p.file, doc: p.doc as Record<string, unknown> });
+    // a part file beside the assembly goes in at the path its reference names
+    const file = partPath(p);
+    if (!file || !/\.mcadprt$/i.test(file) || p.asm || !p.doc || typeof p.doc !== "object") continue;
+    if (String((p.doc as { id?: unknown }).id ?? "").startsWith("fastener:") && !p.link) continue;
+    if (!out.some(x => x.file === file)) out.push({ file, doc: p.doc as Record<string, unknown> });
   }
   return out;
 }
