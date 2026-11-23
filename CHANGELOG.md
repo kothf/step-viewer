@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.697.0] - 2026-11-23
+
+### Added
+
+- Report of a board thermal map (Thermal bar ▸ Report, PDF or web page): where the temperatures come from (the package and the app that wrote it), the settings, a summary, pictures of the view as shown and of the board from above and from below with the colour scale and hot-spot labels, the problems, every part with its power, temperature, limit, margin and capacitor life, the heat budget, the probes, the comparison with a second map, and the accuracy.
+
+### Fixed
+
+- A click with the thermal map's Probe tool also measured the face under it with Smart measure, whose label then showed in pictures: probe clicks now only probe.
+
 ## [1.696.0] - 2026-11-23
 
 ### Added
@@ -4590,7 +4600,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.696.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.697.0...HEAD
+[1.697.0]: https://github.com/kothf/step-viewer/compare/v1.696.0...v1.697.0
 [1.696.0]: https://github.com/kothf/step-viewer/compare/v1.695.0...v1.696.0
 [1.695.0]: https://github.com/kothf/step-viewer/compare/v1.694.0...v1.695.0
 [1.694.0]: https://github.com/kothf/step-viewer/compare/v1.693.0...v1.694.0

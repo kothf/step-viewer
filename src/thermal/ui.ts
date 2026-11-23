@@ -4,8 +4,8 @@
 // With "Colour the model's faces" (FR-TMAP-002) the bodies' own triangles take the nearest package point's colour instead.
 import * as THREE from "three";
 import { cmTab, onCmTab } from "../commandBar";
-import { onLangChange, t } from "../i18n";
-import { download } from "../tools/exporters";
+import { lang, onLangChange, t } from "../i18n";
+import { download, pdfWriter } from "../tools/exporters";
 import { chooseModal, toast } from "../ui";
 import { deltaRange, mapOnto, partChanges, type PartChange } from "./compare";
 import type { Viewer } from "../viewer/Viewer";
@@ -20,6 +20,9 @@ import { pcbFit, pcbUvs, WHITE_PX } from "./pcbTexture";
 import { pcbAtlas, pcbFromGerber, type PcbLayers } from "./pcbRaster";
 import { meanEdges, nearestPoints, NEAREST_CELL, pointsByPart } from "./nearest";
 import { partsCsv } from "./csv";
+import { mapReport, type MapReportData } from "./report";
+import { reportHtml, reportPdf, type SimReport } from "../sim/report";
+import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "../sim/plotmesh";
 
 export interface ThermalHost {
@@ -36,6 +39,8 @@ export interface ThermalHost {
   simulate(pkg: ThermalPackage, match: PartMatch, bodies: ModelBody[]): void;
   /** Saves the view as a PNG (File ▸ Export PNG), which draws the map's legend in through `decorate`. */
   savePicture(): void;
+  /** The view as a picture at screen size with the page's background (null = nothing to draw). */
+  snapshot?(): HTMLCanvasElement | null;
   /** A Gerber set went under the map: kept as the board's for a study and Pack and Go (FR-TBRD-020). */
   gerber?(files: { name: string; data: ArrayBuffer }[]): void;
   /** Opens the board's Gerber set in the PCB view with this map's board-face temperatures under it (FR-TMAP-040). */
@@ -124,6 +129,7 @@ const ICON: Record<string, string> = {
   pcbview: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1.2"/><path d="M2 9.5c2-2 4 1 6-1s4-3 6-1"/><path d="M5 5.5h2"/></svg>`,
   gerber: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1.2"/><path d="M5 5.5h3l2 2v3"/><circle cx="5" cy="5.5" r=".9" fill="currentColor" stroke="none"/><circle cx="10" cy="10.5" r=".9" fill="currentColor" stroke="none"/></svg>`,
   png: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="M2.5 12l4-4 3 3 2-2 2.5 2.5"/></svg>`,
+  report: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 1.8h5.5L12.5 5v9.2H4z"/><path d="M9.5 1.8V5h3M6 8h4.5M6 10.5h4.5M6 13h2.5"/></svg>`,
   csv: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13.5h10"/></svg>`,
 };
 
@@ -267,6 +273,8 @@ export class ThermalMaps {
   has() { return !!this.cur(); }
   /** The map is attached and drawn. */
   active() { const a = this.cur(); return !!a && a.on && !!this.overlay; }
+  /** Probe clicks belong to the map: Smart measure leaves them alone. */
+  probingNow() { return this.probing && this.active(); }
   /** Number of problems, for the tab's badge. */
   problemCount() { const a = this.cur(); return a ? this.problemsOf(a).length : 0; }
 
@@ -928,7 +936,7 @@ export class ThermalMaps {
       + (a.pcb && this.host.pcbView ? btn("pcbview", t("PCB view"), t("Open the board's Gerber set in the PCB view with the board-face temperatures under its layers")) : ""))
       + sep + group(t("Parts"), btn("parts", t("Parts"), t("The parts of the map with their power, temperature and margin")))
       + sep + group(t("Study"), btn("simulate", t("Simulate"), a.own ? t("Open the board's STEP to measure it or simulate it.") : t("Simulate in MöbiusCAD: an assembly of the board's parts with a thermal study from this package, where you can add a heatsink or change the cooling"), { dis: a.own }))
-      + sep + group(t("Package"), btn("png", t("Save picture"), t("Save the view as a PNG with the colour scale, the hottest part and the accuracy drawn in"), { dis: !a.on }) + btn("add", t("Another map"), t("Open another thermal package for this model: put it in place of this one, or compare the two")) + btn("remove", t("Remove map"), t("Take the thermal map off this model")));
+      + sep + group(t("Package"), btn("png", t("Save picture"), t("Save the view as a PNG with the colour scale, the hottest part and the accuracy drawn in"), { dis: !a.on }) + btn("report", t("Report"), t("A PDF or web page of the map: where it comes from, the summary, pictures from above and below, problems, parts and heat budget"), { dis: !a.on }) + btn("add", t("Another map"), t("Open another thermal package for this model: put it in place of this one, or compare the two")) + btn("remove", t("Remove map"), t("Take the thermal map off this model")));
   }
 
   private barClick(e: Event) {
@@ -943,6 +951,7 @@ export class ThermalMaps {
     else if (k === "gerber") { if (!a.pcb) this.pickGerber(); else { a.pcb.shown = !a.pcb.shown; this.show(); this.renderAll(); } }
     else if (k === "pcbview") this.host.pcbView?.(a.pkg, a.pcb?.du ?? 0, a.pcb?.dv ?? 0);
     else if (k === "png") this.host.savePicture();
+    else if (k === "report") void this.report();
     else if (k === "parts") this.host.showTab();
     else if (k === "simulate") this.host.simulate(a.pkg, a.match, this.bodies());
     else if (k === "add") this.host.addMap();
@@ -1272,6 +1281,87 @@ export class ThermalMaps {
     this.host.showTab();
   }
 
+  // ---------- report (FR-TREP-001) ----------
+
+  private lastReport: { kind: string; blocks: number; images: number; captions: string[] } | null = null;
+
+  /** The view as a decorated picture, or null without a snapshot. */
+  private shot(caption: string, side?: 1 | -1) {
+    const c = this.host.snapshot?.();
+    if (!c) return null;
+    this.decorate(c, side);
+    return { src: c.toDataURL("image/png"), w: c.width, h: c.height, caption };
+  }
+
+  /** What the report says, with pictures of the view as shown and, for a board, from above and from below. */
+  reportOf(a = this.cur()): SimReport | null {
+    if (!a || a.pkg.sourcesOnly || !this.active()) return null;
+    const mf = a.pkg.manifest, s = mf.settings, sm = summary(a.pkg, a.stats), probs = this.problemsOf(a);
+    const total = mf.parts.length + (a.stats.has(0) ? 1 : 0);
+    const pictures: MapReportData["pictures"] = [];
+    const v = this.host.viewer, view = v.getView();
+    const now = this.shot(t("The view as shown"));
+    if (now) pictures.push(now);
+    if (a.stats.has(0) && now) {
+      for (const side of [1, -1] as const) {
+        v.viewFrom(new THREE.Vector3(0, 0, side), false);
+        const p = this.shot(side > 0 ? t("From above") : t("From below"), side);
+        if (p) pictures.push(p);
+      }
+      v.setView(view, false);
+      v.invalidate();
+    }
+    const rows: [string, string][] = [];
+    if (sm.hottest) rows.push([t("Hottest part"), `${this.nameOf(a, sm.hottest.id)} ${deg(sm.hottest.t)} °C`]);
+    rows.push([t("Hottest point"), `${this.nameOf(a, sm.peak.id)} ${deg(sm.peak.t)} °C`]);
+    rows.push([t("Parts over their limit"), String(sm.over)]);
+    if (sm.life) rows.push([t("Shortest capacitor life"), `${this.nameOf(a, sm.life.id)} ${hours(sm.life.h)} h`]);
+    if (sm.board !== undefined) rows.push([t("Hottest board point"), `${deg(sm.board)} °C`]);
+    const set = [s.ambient !== undefined ? t("ambient {v} °C", { v: deg(s.ambient) }) : "", s.enclosure ? setting(s.enclosure) : "", s.orientation ? setting(s.orientation) : "", s.operatingPoint ? t("operating point {v}", { v: s.operatingPoint }) : "", s.grid ? t("grid {v} mm", { v: String(s.grid) }) : ""].filter(Boolean).join(" · ");
+    const parts = this.sorted(a).map(p => {
+      const mg = partMargin(p, a.stats);
+      return { name: p.designator, value: p.part ?? "", p: watts(p.p), t: deg(partTemp(p, a.stats)), limit: deg(p.limit), margin: deg(mg), life: p.life !== undefined ? hours(p.life) : "", over: mg !== undefined && mg < 0 };
+    });
+    const budget: [string, string][] = [[t("Total power"), watts(sm.power)], ...(["board", "air", "heatsink", "chassis"] as const).filter(k => sm.split[k] > 0).map(k => [t("To the {path}", { path: t(PATH_LABEL[k]) }), watts(sm.split[k])] as [string, string])];
+    const nm = (x: ThermalPackage) => x.manifest.design || x.name;
+    const d = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${deg(Math.abs(x))}`;
+    const data: MapReportData = {
+      design: nm(a.pkg),
+      source: [mf.app, mf.created ? mf.created.slice(0, 10) : ""].filter(Boolean).join(", "),
+      settings: set, accuracy: mf.accuracy !== undefined ? `±${deg(mf.accuracy)} °C` : "", own: a.own,
+      matched: [total - a.match.missing.length, total], summary: rows, pictures,
+      problems: probs.map(p => this.problemText(a, p)), parts, budget,
+      probes: a.probes.map(p => [p.p[0].toFixed(1), p.p[1].toFixed(1), p.p[2].toFixed(1), this.nameOf(a, p.part), deg(p.t)]),
+      compare: a.cmp ? { a: nm(a.pkg), b: nm(a.cmp.pkg), rows: a.cmp.changes.rows.map(r => [r.ia === 0 ? t("Board") : r.name, deg(r.a), deg(r.b), d(r.d)]) } : null,
+      stamp: `MöbiusCAD ${__APP_VERSION__}, ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
+    };
+    return mapReport(data, t);
+  }
+
+  /** Report of the map: asks for the format, then saves the file. `as` skips the question. */
+  async report(as?: "pdf" | "html") {
+    const a = this.cur();
+    if (!a || !this.active()) return;
+    const kind = as ?? await chooseModal(t("Report"), t("Where the temperatures come from, the summary, pictures from above and below, the problems, the parts and the heat budget."), [{ key: "pdf", label: "PDF" }, { key: "html", label: t("Web page (HTML)") }]);
+    if (!kind) return;
+    const rep = this.reportOf(a);
+    if (!rep) return;
+    const stem = `${a.pkg.name}-thermal`.replace(/[\\/:*?"<>|]+/g, "_");
+    try {
+      if (kind === "html") download(new Blob([reportHtml(rep, lang())], { type: "text/html" }), `${stem}-report.html`);
+      else {
+        const [jsPDF, bytes] = await Promise.all([pdfWriter(), fetch(fontUrl).then(r => r.arrayBuffer())]);
+        const u8 = new Uint8Array(bytes);
+        let bin = "";
+        for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+        download(reportPdf(jsPDF, rep, btoa(bin)), `${stem}-report.pdf`);
+      }
+      this.lastReport = { kind, blocks: rep.blocks.length, images: rep.blocks.filter(b => b.kind === "image").length, captions: rep.blocks.flatMap(b => (b.kind === "image" ? [b.caption] : [])) };
+    } catch (e) {
+      toast(t("Could not save: {err}", { err: (e as Error).message }), true);
+    }
+  }
+
   // ---------- picture (FR-TMAP-042) ----------
 
   /** What a saved picture says beside the colours: the scale's title and ends, and the lines under it. */
@@ -1298,15 +1388,18 @@ export class ThermalMaps {
   }
 
   /** Draws the hot-spot labels, probes and the colour scale with its lines into a snapshot of the view. */
-  decorate(c: HTMLCanvasElement) {
+  decorate(c: HTMLCanvasElement, side?: 1 | -1) {
     const a = this.cur(), ov = this.overlay, txt = this.pictureText();
     if (!a || !ov || !txt) return;
     const v = this.host.viewer, g = c.getContext("2d")!, k = c.width / Math.max(1, v.size.x), sh = this.shiftOf(a), q = new THREE.Vector3();
+    // seen from one face of the board, labels of parts on the other face would show through it
+    const bb = a.stats.get(0)?.box, mid = bb ? (bb[2] + bb[5]) / 2 : null;
     const font = (px: number, bold = false) => `${bold ? "600 " : ""}${px * k}px "DejaVu Sans", system-ui, sans-serif`;
     g.save();
     g.textBaseline = "middle";
     // labels where they are on screen
     for (const pin of this.pins) {
+      if (side && mid !== null && (pin.p[2] - mid) * side < 0) continue;
       q.set(pin.p[0] + sh[0], pin.p[1] + sh[1], pin.p[2] + sh[2]);
       ov.localToWorld(q).project(v.camera);
       if (q.z > 1 || q.z < -1) continue;
@@ -1357,7 +1450,7 @@ export class ThermalMaps {
       name: a.pkg.name, partsCsv: this.partsCsvText(a), on: a.on, own: a.own, sourcesOnly: !!a.pkg.sourcesOnly, drawn: !!this.overlay, tris: this.overlay ? this.overlay.geometry.getIndex()!.count / 3 : 0,
       range: this.rangeOf(a), parts: a.pkg.manifest.parts.length, matched: a.match.bodies.size, missing: a.match.missing, changed: a.match.changed, off: a.match.off, fitted: a.fitted,
       hidden: this.saved.length, problems: this.problemsOf(a).map(p => ({ kind: p.kind, id: p.id, value: p.value })), hottest: sm.hottest, peak: sm.peak, power: sm.power,
-      sel: a.sel, iso: a.iso, faces: this.prefs.faces, faceMeshes: this.faceMeshes.length, faceTris: this.faceMeshes.reduce((s, f) => s + f.mesh.geometry.getIndex()!.count / 3, 0), faceFaded: this.faceMeshes.reduce((s, f) => s + (f.fade ? f.fade.geometry.getIndex()!.count / 3 : 0), 0), clip: a.clip ? { ...a.clip } : null, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
+      sel: a.sel, iso: a.iso, faces: this.prefs.faces, faceMeshes: this.faceMeshes.length, faceTris: this.faceMeshes.reduce((s, f) => s + f.mesh.geometry.getIndex()!.count / 3, 0), faceFaded: this.faceMeshes.reduce((s, f) => s + (f.fade ? f.fade.geometry.getIndex()!.count / 3 : 0), 0), clip: a.clip ? { ...a.clip } : null, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), report: this.lastReport, probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
       pcb: a.pcb ? { name: a.pcb.layers.name, shown: a.pcb.shown, mix: this.prefs.pcbMix, du: a.pcb.du, dv: a.pcb.dv, labels: a.pcb.layers.labels, w: a.pcb.layers.w, h: a.pcb.layers.h, box: a.pcb.layers.box, board: this.pcbBoard, textured: !!this.atlasTex } : null,
       compare: a.cmp ? { name: a.cmp.pkg.name, view: a.cmp.view, rows: a.cmp.changes.rows.map(r => ({ name: r.name, a: r.a, b: r.b, d: r.d })), onlyA: a.cmp.changes.onlyA, onlyB: a.cmp.changes.onlyB } : null,
     };
