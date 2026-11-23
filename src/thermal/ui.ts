@@ -1,6 +1,7 @@
 // Board thermal maps (FRS-thermal section 7, phase TH1): a thermal package shown on the model it belongs to.
 // The package's own surfaces are drawn in colour in place of the matched bodies, which stay in the scene for
 // picking, measuring and sections. One map per model file (by its file key), kept while the tab is parked.
+// With "Colour the model's faces" (FR-TMAP-002) the bodies' own triangles take the nearest package point's colour instead.
 import * as THREE from "three";
 import { cmTab, onCmTab } from "../commandBar";
 import { onLangChange, t } from "../i18n";
@@ -17,6 +18,8 @@ import { looksLikeBoard } from "./study";
 import { gerberName } from "./copper";
 import { pcbFit, pcbUvs, WHITE_PX } from "./pcbTexture";
 import { pcbAtlas, pcbFromGerber, type PcbLayers } from "./pcbRaster";
+import { meanEdges, nearestPoints, NEAREST_CELL, pointsByPart } from "./nearest";
+import { meshArea, plotTarget, refineMesh, type PlotMesh } from "../sim/plotmesh";
 
 export interface ThermalHost {
   viewer: Viewer;
@@ -68,7 +71,7 @@ interface Attached {
   clip?: { above: boolean; t: number };
 }
 
-interface Prefs { palette: PaletteName; labels: boolean; rise: boolean; life: number; board: number; folded: boolean; pcbMix: number }
+interface Prefs { palette: PaletteName; labels: boolean; rise: boolean; life: number; board: number; folded: boolean; pcbMix: number; faces: boolean }
 const PREFS_KEY = "mc:thermalMap";
 /** Model files that were shown the "looks like a board" hint (FR-TPKG-005): once per file. */
 const HINT_KEY = "mc:thermalHint";
@@ -78,14 +81,16 @@ function hintedFiles(): string[] {
 }
 /** Opacity of the other parts while one is isolated. */
 const ISO_FADE = 0.18;
-const DEFAULT_PREFS: Prefs = { palette: "heat", labels: true, rise: false, life: DEFAULT_LIMITS.life, board: DEFAULT_LIMITS.board, folded: false, pcbMix: 0.6 };
+/** Most triangles one body's coloured faces are split into (FR-TMAP-002). */
+const FACE_TRIS = 60000;
+const DEFAULT_PREFS: Prefs = { palette: "heat", labels: true, rise: false, life: DEFAULT_LIMITS.life, board: DEFAULT_LIMITS.board, folded: false, pcbMix: 0.6, faces: false };
 function loadPrefs(): Prefs {
   try {
     const j = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as Partial<Prefs>;
     return {
       palette: PALETTE_NAMES.includes(j.palette as PaletteName) ? j.palette! : "heat", labels: j.labels !== false, rise: j.rise === true,
       life: Number.isFinite(j.life) && j.life! > 0 ? j.life! : DEFAULT_LIMITS.life, board: Number.isFinite(j.board) ? j.board! : DEFAULT_LIMITS.board, folded: j.folded === true,
-      pcbMix: Number.isFinite(j.pcbMix) ? Math.max(0, Math.min(1, j.pcbMix!)) : 0.6,
+      pcbMix: Number.isFinite(j.pcbMix) ? Math.max(0, Math.min(1, j.pcbMix!)) : 0.6, faces: j.faces === true,
     };
   } catch { return { ...DEFAULT_PREFS }; }
 }
@@ -182,6 +187,9 @@ export class ThermalMaps {
   private fade: THREE.Mesh | null = null;
   private mats: THREE.Material[] = [];
   private saved: { mesh: THREE.Mesh; mat: THREE.Material }[] = [];
+  /** The model's own faces coloured from the map (FR-TMAP-002): per body, the nearest package point of each vertex. */
+  private faceMeshes: { mesh: THREE.Mesh; fade: THREE.Mesh | null; near: Int32Array }[] = [];
+  private nearCache = new WeakMap<Attached, Map<string, { mesh: PlotMesh; near: Int32Array }>>();
   /** Package triangle of each drawn triangle. */
   private drawn: Uint32Array | null = null;
   private visKey = "";
@@ -421,6 +429,8 @@ export class ThermalMaps {
     for (const s of this.saved) s.mesh.material = s.mat;
     this.saved = [];
     if (this.fade) { this.fade.removeFromParent(); this.fade.geometry.dispose(); this.fade = null; }
+    for (const f of this.faceMeshes) { f.mesh.removeFromParent(); f.mesh.geometry.dispose(); if (f.fade) { f.fade.removeFromParent(); f.fade.geometry.dispose(); } }
+    this.faceMeshes = [];
     if (this.overlay) { this.overlay.removeFromParent(); (this.overlay.geometry as THREE.BufferGeometry & { disposeBoundsTree?: () => void }).disposeBoundsTree?.(); this.overlay.geometry.dispose(); this.overlay = null; }
     for (const m of this.mats) m.dispose();
     this.mats = [];
@@ -489,7 +499,10 @@ export class ThermalMaps {
     this.overlay.userData.thermalMap = true;
     this.overlay.raycast = () => {};
     v.modelRoot.add(this.overlay);
-    if (rest.length) {
+    // the model's own faces in colour (FR-TMAP-002): the package surface stays, unseen, for hover and probes
+    const faces = this.facesOn(a) && this.colourFaces(a, off, iso, cl, under);
+    if (faces) this.overlay.visible = false;
+    if (rest.length && !faces) {
       const fg = new THREE.BufferGeometry();
       fg.setIndex(new THREE.BufferAttribute(indexOf(rest), 1));
       fg.setAttribute("position", geo.getAttribute("position"));
@@ -513,6 +526,8 @@ export class ThermalMaps {
       v.onRender(() => {
         const c = this.cur();
         if (c && c.on && this.overlay && this.visibility(c) !== this.visKey) { this.show(); this.renderLabels(); return; }
+        // a section replaces the viewer's clipping array: the map's materials follow it
+        for (const m of this.mats) if (m.clippingPlanes !== v.clipPlanes) { m.clippingPlanes = v.clipPlanes; m.needsUpdate = true; v.invalidate(); }
         this.place();
       });
     }
@@ -526,7 +541,95 @@ export class ThermalMaps {
     const at = ov.geometry.getAttribute("color") as THREE.BufferAttribute, arr = at.array as Float32Array;
     for (let i = 0; i < temp.length; i++) paletteColor(pal, (temp[i] - lo) / span, arr, i * 3);
     at.needsUpdate = true;
+    for (const f of this.faceMeshes) {
+      const ca = f.mesh.geometry.getAttribute("color") as THREE.BufferAttribute, c = ca.array as Float32Array;
+      for (let j = 0; j < f.near.length; j++) { const i = f.near[j]; if (i >= 0) c.set(arr.subarray(i * 3, i * 3 + 3), j * 3); else c.fill(0.6, j * 3, j * 3 + 3); }
+      ca.needsUpdate = true;
+    }
     this.host.viewer.invalidate();
+  }
+
+  // ---------- the model's own faces (FR-TMAP-002) ----------
+
+  /** Faces mode is on and the map fits the model (a misfit map hides no body, so there is nothing to colour). */
+  private facesOn(a: Attached) { return this.prefs.faces && (!misfit(a.match) || a.fitted); }
+
+  /**
+   * Draws each matched body's own triangles in colour: every vertex takes the temperature of the nearest package
+   * point of its part (cached per body, geometry, placement and shift). Isolation and the isotherm clip ghost
+   * triangles the way the package surface would. False when no body could be coloured.
+   */
+  private colourFaces(a: Attached, off: Set<number>, iso: number | null, cl: { above: boolean; t: number } | null, under: THREE.Material): boolean {
+    const v = this.host.viewer, m = a.pkg.mesh, sh = this.shiftOf(a), T = this.tempOf(a);
+    let cache = this.nearCache.get(a);
+    if (!cache) this.nearCache.set(a, cache = new Map());
+    let byPart: Map<number, Uint32Array> | null = null, edges: Map<number, number> | null = null;
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.15, roughness: 0.55, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    const fm = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.8, side: THREE.DoubleSide, transparent: true, opacity: ISO_FADE, depthWrite: false });
+    mat.clippingPlanes = fm.clippingPlanes = v.clipPlanes;
+    this.mats.push(mat, fm);
+    for (const [id, list] of a.match.bodies) {
+      if (off.has(id)) continue;
+      for (const bi of list) {
+        const p = v.parts[bi];
+        if (!p || p.mesh.material !== under) continue;
+        const g = p.mesh.geometry, P0 = g.getAttribute("position"), ix0 = g.getIndex();
+        if (!P0 || !ix0) continue;
+        const M = v.placing(p).clone().multiply(p.mesh.matrix);
+        const key = `${bi}|${g.uuid}|${M.elements.map(x => x.toFixed(4)).join(",")}|${sh.join(",")}`;
+        let got = cache.get(key);
+        if (!got) {
+          byPart ??= pointsByPart(m.tri, m.part);
+          edges ??= meanEdges(m.pos, m.tri, m.part);
+          // a coarse model face (a board top is two triangles) is split down to about the package's own spacing
+          const e = edges.get(id) ?? NEAREST_CELL, n0 = g.getAttribute("normal");
+          const mesh = refineMesh(P0.array, n0 ? n0.array : null, ix0.array, plotTarget(meshArea(P0.array, ix0.array), Math.max(NEAREST_CELL, e), FACE_TRIS));
+          const nv = mesh.pos.length / 3, q = new Float32Array(nv * 3), w = new THREE.Vector3();
+          for (let j = 0; j < nv; j++) { w.fromArray(mesh.pos, j * 3).applyMatrix4(M); q[j * 3] = w.x - sh[0]; q[j * 3 + 1] = w.y - sh[1]; q[j * 3 + 2] = w.z - sh[2]; }
+          got = { mesh, near: nearestPoints(m.pos, byPart.get(id) ?? new Uint32Array(0), q, e) };
+          cache.set(key, got);
+        }
+        const near = got.near, P = new THREE.BufferAttribute(got.mesh.pos, 3), N = new THREE.BufferAttribute(got.mesh.nrm, 3);
+        const tv = (j: number) => { const i = near![j]; return i >= 0 ? T[i] : NaN; };
+        const idx = got.mesh.index, keep: number[] = [], rest: number[] = [];
+        for (let k = 0; k < idx.length / 3; k++) {
+          let ok = iso === null || id === iso;
+          if (ok && cl) {
+            const t0 = tv(idx[k * 3]), t1 = tv(idx[k * 3 + 1]), t2 = tv(idx[k * 3 + 2]);
+            ok = cl.above ? Math.max(t0, t1, t2) >= cl.t : Math.min(t0, t1, t2) <= cl.t;
+          }
+          (ok ? keep : rest).push(idx[k * 3], idx[k * 3 + 1], idx[k * 3 + 2]);
+        }
+        const color = new THREE.BufferAttribute(new Float32Array(P.count * 3), 3);
+        const make = (tris: number[], material: THREE.Material) => {
+          const fg = new THREE.BufferGeometry();
+          fg.setIndex(new THREE.BufferAttribute(Uint32Array.from(tris), 1));
+          fg.setAttribute("position", P);
+          fg.setAttribute("normal", N);
+          fg.setAttribute("color", color);
+          const mesh = new THREE.Mesh(fg, material);
+          mesh.matrix.copy(p.mesh.matrix); mesh.matrixAutoUpdate = false;
+          mesh.raycast = () => {};
+          mesh.renderOrder = p.mesh.renderOrder;
+          p.mesh.parent?.add(mesh);
+          return mesh;
+        };
+        const mesh = make(keep, mat);
+        mesh.userData.thermalFaces = true;
+        let fade: THREE.Mesh | null = null;
+        if (rest.length) { fade = make(rest, fm); fade.userData.thermalFade = true; fade.renderOrder = p.mesh.renderOrder + 1; }
+        this.faceMeshes.push({ mesh, fade, near });
+      }
+    }
+    return this.faceMeshes.length > 0;
+  }
+
+  /** Turns faces mode on or off (FR-TMAP-002), kept in the map preferences. */
+  setFaces(on: boolean) {
+    this.prefs.faces = on;
+    this.savePrefs();
+    this.show();
+    this.renderAll();
   }
 
   // ---------- board layers under the map (FR-TMAP-012) ----------
@@ -1051,6 +1154,8 @@ export class ThermalMaps {
       + this.pcbHtml(a!)
       + (dl ? "" : this.clipHtml(a!, rise ? off : 0))
       + `<label class="chk"><input type="checkbox" data-k="labels"${this.prefs.labels ? " checked" : ""} />${esc(t("Hot spot labels"))}</label>`
+      + `<label class="chk" title="${esc(t("Colour the model's own faces from the nearest point of the map, so a finer model or a section still shows it"))}"><input type="checkbox" data-k="faces"${this.prefs.faces ? " checked" : ""} />${esc(t("Colour the model's faces"))}</label>`
+      + (this.prefs.faces && a!.pcb?.shown ? `<p class="ana-note" data-v="facespcb">${esc(t("Board layers show on the map's own surfaces only."))}</p>` : "")
       + (amb !== undefined ? `<label class="chk"><input type="checkbox" data-k="rise"${this.prefs.rise ? " checked" : ""} />${esc(t("Rise above ambient"))}</label>` : "")
       + `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the map to read the temperature at a point"))}">${esc(t("Probe"))}</button>`
       + (a!.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button><button class="btn small" data-a="probecsv">${esc(t("Export CSV"))}</button>` : "") + `</div>`;
@@ -1095,6 +1200,7 @@ export class ThermalMaps {
     if (!a || !k) return;
     if (k === "show") { this.setView(el.value as "a" | "b" | "d"); return; }
     if (k === "pcbmix") return;
+    if (k === "faces") { this.setFaces(el.checked); return; }
     if (k === "clip") { this.setClip(el.checked ? {} : null); return; }
     if (k === "clipside") { this.setClip({ above: el.value === "above" }); return; }
     if (k === "clipval") {
@@ -1235,7 +1341,7 @@ export class ThermalMaps {
       name: a.pkg.name, on: a.on, own: a.own, sourcesOnly: !!a.pkg.sourcesOnly, drawn: !!this.overlay, tris: this.overlay ? this.overlay.geometry.getIndex()!.count / 3 : 0,
       range: this.rangeOf(a), parts: a.pkg.manifest.parts.length, matched: a.match.bodies.size, missing: a.match.missing, changed: a.match.changed, off: a.match.off, fitted: a.fitted,
       hidden: this.saved.length, problems: this.problemsOf(a).map(p => ({ kind: p.kind, id: p.id, value: p.value })), hottest: sm.hottest, peak: sm.peak, power: sm.power,
-      sel: a.sel, iso: a.iso, clip: a.clip ? { ...a.clip } : null, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
+      sel: a.sel, iso: a.iso, faces: this.prefs.faces, faceMeshes: this.faceMeshes.length, faceTris: this.faceMeshes.reduce((s, f) => s + f.mesh.geometry.getIndex()!.count / 3, 0), faceFaded: this.faceMeshes.reduce((s, f) => s + (f.fade ? f.fade.geometry.getIndex()!.count / 3 : 0), 0), clip: a.clip ? { ...a.clip } : null, faded: this.fade ? this.fade.geometry.getIndex()!.count / 3 : 0, picture: this.pictureText(), probes: a.probes.map(p => ({ p: p.p, t: p.t, part: p.part })), probing: this.probing, palette: this.prefs.palette, labels: this.pins.length,
       pcb: a.pcb ? { name: a.pcb.layers.name, shown: a.pcb.shown, mix: this.prefs.pcbMix, du: a.pcb.du, dv: a.pcb.dv, labels: a.pcb.layers.labels, w: a.pcb.layers.w, h: a.pcb.layers.h, box: a.pcb.layers.box, board: this.pcbBoard, textured: !!this.atlasTex } : null,
       compare: a.cmp ? { name: a.cmp.pkg.name, view: a.cmp.view, rows: a.cmp.changes.rows.map(r => ({ name: r.name, a: r.a, b: r.b, d: r.d })), onlyA: a.cmp.changes.onlyA, onlyB: a.cmp.changes.onlyB } : null,
     };
