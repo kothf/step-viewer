@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.686.0] - 2026-11-23
+
+### Added
+
+- Thermal maps on the model's own faces. **Colour the model's faces** in the map's legend colours the STEP's own surfaces from the nearest point of the thermal package on the same part, in place of the package's surfaces. Coarse model faces (a board top drawn as two triangles) are split down to about the package's spacing first, so the gradients stay. Hover, probes, isolating a part and the isotherm clip work as before, and a section plane cuts the coloured faces like the model.
+
+### Fixed
+
+- A section plane added while a thermal map was shown did not cut the map until the map was redrawn.
+
 ## [1.685.0] - 2026-11-23
 
 ### Added
@@ -4502,7 +4512,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.685.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.686.0...HEAD
+[1.686.0]: https://github.com/kothf/step-viewer/compare/v1.685.0...v1.686.0
 [1.685.0]: https://github.com/kothf/step-viewer/compare/v1.684.0...v1.685.0
 [1.684.0]: https://github.com/kothf/step-viewer/compare/v1.683.0...v1.684.0
 [1.683.0]: https://github.com/kothf/step-viewer/compare/v1.682.0...v1.683.0

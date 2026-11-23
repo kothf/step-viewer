@@ -18443,6 +18443,23 @@ try {
       && c2.clip.t === hi && c2.tris > 0 && c2.tris < c1.tris && c3.clip.above === false && c3.tris > c2.faded * 0.5 && c3.tris + c3.faded === c0.tris
       && c4.clip === null && c4.tris === c0.tris && c4.faded === 0,
       `isotherm clip 1.685: Clip at a temperature shows only the hotter (or cooler) surfaces, the rest see-through, and turns off again (${JSON.stringify({ c0, c1, c2, c3, c4 })})`);
+    // --- model faces 1.686 (FR-TMAP-002): the STEP's own triangles coloured from the nearest package point ---
+    await cp.click('#th-legend input[data-k="faces"]');
+    await cp.waitForTimeout(300);
+    const f1 = await cp.evaluate(() => { const s = window.__sv.thermal.state(); const ov = window.__sv.viewer.modelRoot.children.find(o => o.userData.thermalMap);
+      const fm = []; window.__sv.viewer.modelRoot.traverse(o => { if (o.userData.thermalFaces) fm.push(o); });
+      let lo = 9, hi = -9; for (const m of fm) { const col = m.geometry.getAttribute("color").array; for (let i = 0; i < col.length; i += 3) { lo = Math.min(lo, col[i] + col[i + 1]); hi = Math.max(hi, col[i] + col[i + 1]); } }
+      return { faces: s.faces, meshes: s.faceMeshes, tris: s.faceTris, faded: s.faceFaded, ovShown: ov?.visible, spread: hi - lo, drawn: s.drawn }; });
+    await cp.click('#th-legend input[data-k="clip"]');
+    await cp.waitForTimeout(200);
+    const f2 = await cp.evaluate(() => { const s = window.__sv.thermal.state(); return { tris: s.faceTris, faded: s.faceFaded }; });
+    await cp.click('#th-legend input[data-k="clip"]');
+    await cp.click('#th-legend input[data-k="faces"]');
+    await cp.waitForTimeout(200);
+    const f3 = await cp.evaluate(() => { const s = window.__sv.thermal.state(); const ov = window.__sv.viewer.modelRoot.children.find(o => o.userData.thermalMap); return { faces: s.faces, meshes: s.faceMeshes, ovShown: ov?.visible }; });
+    check(f1.faces && f1.meshes > 0 && f1.tris > 0 && f1.faded === 0 && f1.ovShown === false && f1.spread > 0.05 && f1.drawn
+      && f2.faded > 0 && f2.tris + f2.faded === f1.tris && !f3.faces && f3.meshes === 0 && f3.ovShown === true,
+      `model faces 1.686: Colour the model's faces draws the STEP's own triangles from the map, clips them too, and turns off (${JSON.stringify({ f1, f2, f3 })})`);
     await ctx.close();
   }
 
