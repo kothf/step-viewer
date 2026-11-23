@@ -161,6 +161,10 @@ export class GerberView {
   /** 3D board view: picking and measuring stay in board mm, on the face the camera looks at. */
   is3d = false;
   b3: Board3D | null = null;
+  /** Thermal overlay (FRS-thermal FR-TMAP-040): one picture per side over `box` (board mm), drawn under the layers at `alpha`; the layers' opacity is multiplied by `layers`. */
+  thermal: { top: CanvasImageSource; bottom: CanvasImageSource; box: [number, number, number, number]; alpha: number; layers: number } | null = null;
+  /** Called with the board point under the pointer on every hover. */
+  onHover: ((p: P2) => void) | null = null;
 
   private main: HTMLCanvasElement;
   private over: HTMLCanvasElement;
@@ -191,6 +195,8 @@ export class GerberView {
 
   /** Subscribe to state changes (layers, measurements, tool, units). */
   onChange(fn: () => void) { this.listeners.push(fn); }
+  /** Puts the thermal overlay on (or off with null) and draws the view again. */
+  setThermal(o: GerberView["thermal"]) { this.thermal = o; this.compView = null; if (!this.is3d) this.render(); }
   private changed() { for (const f of this.listeners) f(); }
 
   // ---------- loading ----------
@@ -416,6 +422,17 @@ export class GerberView {
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.globalAlpha = 1;
     c.fillStyle = BG; c.fillRect(0, 0, this.main.width, this.main.height);
+    if (this.thermal) {
+      // the face the view shows: the bottom picture in the mirrored bottom view
+      const th = this.thermal, b = th.box;
+      c.save();
+      this.applyView(c);
+      c.transform(1, 0, 0, -1, 0, b[1] + b[3]);
+      c.globalAlpha = th.alpha;
+      c.imageSmoothingEnabled = true;
+      c.drawImage(this.view.mirror ? th.bottom : th.top, b[0], b[1], b[2] - b[0], b[3] - b[1]);
+      c.restore();
+    }
     const sc = this.scratch.getContext("2d")!;
     const [vx0, vy1] = this.toBoard(0, 0), [vx1, vy0] = this.toBoard(this.w, this.h);
     const vb = [Math.min(vx0, vx1), Math.min(vy0, vy1), Math.max(vx0, vx1), Math.max(vy0, vy1)];
@@ -435,7 +452,8 @@ export class GerberView {
         if (p.eo) sc.fill(p.eo, "evenodd");
         if (p.hair) sc.stroke(p.hair);
       }
-      c.globalAlpha = lv.opacity;
+      // over the thermal overlay the layers go at half their opacity, so the temperatures read through them
+      c.globalAlpha = lv.opacity * (this.thermal ? this.thermal.layers : 1);
       c.drawImage(this.scratch, 0, 0);
       c.globalAlpha = 1;
     }
@@ -1079,6 +1097,7 @@ export class GerberView {
   /** Hover at a screen position: snap, highlight, tooltip, status bar. */
   moveTo(sx: number, sy: number) {
     this.cursor = [sx, sy];
+    this.onHover?.(this.toBoard(sx, sy));
     this.snap = this.snapAt(sx, sy);
     this.hover = this.snap.feat ?? null;
     if (this.tool === "distance" || this.tool === "polyline" || this.tool === "area") this.hover = null;

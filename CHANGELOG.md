@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.684.0] - 2026-11-23
+
+### Added
+
+- Thermal overlay in the PCB view. With a board's Gerber set open in the PCB view, **File ▸ Add thermal map…** (or dropping the thermal package on the window) draws the package's board-face temperatures under the layers, which go at half their opacity over it, with a colour scale and the temperature under the pointer. **Bottom view** shows the bottom face. The new **Thermal** button on the PCB view bar hides and shows it. From a board's thermal map whose Gerber layers are under it, **PCB view** on the Thermal bar opens the set in the PCB view with the temperatures on.
+
 ## [1.683.0] - 2026-11-22
 
 ### Added
@@ -4490,7 +4496,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.683.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.684.0...HEAD
+[1.684.0]: https://github.com/kothf/step-viewer/compare/v1.683.0...v1.684.0
 [1.683.0]: https://github.com/kothf/step-viewer/compare/v1.682.0...v1.683.0
 [1.682.0]: https://github.com/kothf/step-viewer/compare/v1.681.0...v1.682.0
 [1.681.0]: https://github.com/kothf/step-viewer/compare/v1.680.0...v1.681.0

@@ -17652,6 +17652,36 @@ try {
     await ctx.close();
   }
 
+  // --- PCB thermal 1.684 (FRS-thermal FR-TMAP-040): the package's board-face temperatures under the PCB view's layers ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const pt = await ctx.newPage();
+    pt.on("pageerror", e => errors.push(e.message));
+    pt.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    const thx = resolve("tests/fixtures/thermal"), gdir = join(thx, "amp-gerber");
+    await pt.goto(`${origin}/index.html?debug&nokernel`);
+    await pt.waitForFunction(() => window.__sv);
+    await pt.setInputFiles("#file-input", ["amp-F_Cu.gbr", "amp-B_Cu.gbr", "amp-Edge_Cuts.gbr", "amp-PTH.drl"].map(f => join(gdir, f)));
+    await pt.waitForFunction(() => document.querySelector("#app").classList.contains("gerber") && window.__sv.gerber.layers.length >= 3, null, { timeout: 60000 });
+    const p0 = await pt.evaluate(() => ({ hidden: document.querySelector("[data-gview=thermal]").hidden, ...window.__sv.pcbThermal.state() }));
+    // a thermal package opened over the PCB view goes under its layers
+    await pt.setInputFiles("#file-input", [join(thx, "amp-thermal.zip")]);
+    await pt.waitForFunction(() => window.__sv.pcbThermal.state().on, null, { timeout: 60000 });
+    const p1 = await pt.evaluate(() => {
+      const s = window.__sv.pcbThermal.state(), b = s.box, g = window.__sv.gerber;
+      return { ...s, pcbMode: document.querySelector("#app").classList.contains("gerber"), drawn: !!g.thermal, mid: window.__sv.pcbThermal.valueAt((b[0] + b[2]) / 2, (b[1] + b[3]) / 2), legend: document.querySelector("#g-th-legend").textContent, pressed: document.querySelector("[data-gview=thermal]").getAttribute("aria-pressed") };
+    });
+    check(p0.hidden && !p0.has && p1.pcbMode && p1.on && p1.drawn && p1.pressed === "true" && p1.cells.top > 1000 && p1.cells.bottom > 1000 && p1.mid > p1.min && p1.mid <= p1.max && /Board top/.test(p1.legend),
+      `PCB thermal 1.684: a thermal package opened over the PCB view draws its board-face temperatures under the layers, with a colour scale (${JSON.stringify({ p0: p0.hidden, ...p1 })})`);
+    // Bottom view: the bottom face; the Thermal button turns it off
+    await pt.click("[data-gview=flip]");
+    const p2 = await pt.evaluate(() => document.querySelector("#g-th-legend").textContent);
+    await pt.click("[data-gview=thermal]");
+    const p3 = await pt.evaluate(() => ({ ...window.__sv.pcbThermal.state(), drawn: !!window.__sv.gerber.thermal }));
+    check(/Board bottom/.test(p2) && !p3.on && !p3.legend && !p3.drawn, `PCB thermal 1.684: Bottom view shows the bottom face, the Thermal button hides the overlay (${JSON.stringify({ p2, on: p3.on })})`);
+    await ctx.close();
+  }
+
   // --- board gerber 1.683 (FRS-thermal FR-TBRD-020): a board's Gerber set opened with its STEP, dropped on the board, in Pack and Go ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });

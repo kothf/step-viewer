@@ -1958,3 +1958,18 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-bmap { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 0 4px 20px; font-size: 11px; }
 .sim-bmap img { width: 96px; max-height: 72px; object-fit: contain; image-rendering: pixelated; border: 1px solid var(--border, #ccc); border-radius: 3px; }
 .sim-bmap [data-v="bmapinfo"] { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+
+/* Thermal overlay in the PCB view (FR-TMAP-040) */
+#g-view button[hidden] { display: none; }
+.g-th-legend {
+  position: absolute; left: 12px; bottom: 12px; z-index: 5; width: 220px; max-width: calc(100% - 24px);
+  background: rgba(16, 20, 27, 0.92); color: #d8dee9; border: 1px solid #2a313d; border-radius: 8px; padding: 6px 8px; font-size: 12px;
+}
+.g-th-legend[hidden] { display: none; }
+.g-th-head { display: flex; align-items: center; gap: 6px; }
+.g-th-head strong { flex: none; }
+.g-th-head .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #a3acb9; }
+.g-th-head .icon { color: #d8dee9; background: transparent; border-color: transparent; }
+.g-th-bar { height: 10px; border-radius: 3px; margin: 6px 0 2px; opacity: .85; }
+.g-th-ends { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.g-th-at { margin-top: 4px; color: #fff; font-weight: 600; font-variant-numeric: tabular-nums; }

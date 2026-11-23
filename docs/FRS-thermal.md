@@ -278,7 +278,7 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 
 ### 7.7 Other views
 
-- **FR-TMAP-040** (TH1, C) PCB view: when the board's Gerber set and a package are both open, View ▾ Thermal overlay draws the package's board-face temperatures under the 2D layers at 50 % opacity, with the legend, for the face the view shows.
+- **FR-TMAP-040** (TH1, C) PCB view: when the board's Gerber set and a package are both open, View ▾ Thermal overlay draws the package's board-face temperatures under the 2D layers at 50 % opacity, with the legend, for the face the view shows. Built in 1.684.0: a package opened over the PCB view, or **PCB view** on the Thermal bar of a map with its Gerber layers; the PCB bar's **Thermal** button turns it on and off.
 - **FR-TMAP-041** (TH1, M) Section planes cut the map: caps show the package's surface temperatures where they meet the cut outline only (a package has no interior values) with a note in the legend; a MöbiusCAD study paints the caps with interior values (FR-TRES-030).
 - **FR-TMAP-042** (TH1, M) Save PNG in Thermal mode draws the legend, the summary line and the accuracy into the picture.
 

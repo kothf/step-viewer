@@ -34,6 +34,8 @@ export interface ThermalHost {
   savePicture(): void;
   /** A Gerber set went under the map: kept as the board's for a study and Pack and Go (FR-TBRD-020). */
   gerber?(files: { name: string; data: ArrayBuffer }[]): void;
+  /** Opens the board's Gerber set in the PCB view with this map's board-face temperatures under it (FR-TMAP-040). */
+  pcbView?(pkg: ThermalPackage, du: number, dv: number): void;
 }
 
 type V3 = [number, number, number];
@@ -111,6 +113,7 @@ const ICON: Record<string, string> = {
   add: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>`,
   remove: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`,
   isolate: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="6" height="6" rx="1" fill="currentColor" stroke="none"/><path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3" opacity=".6"/></svg>`,
+  pcbview: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1.2"/><path d="M2 9.5c2-2 4 1 6-1s4-3 6-1"/><path d="M5 5.5h2"/></svg>`,
   gerber: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1.2"/><path d="M5 5.5h3l2 2v3"/><circle cx="5" cy="5.5" r=".9" fill="currentColor" stroke="none"/><circle cx="10" cy="10.5" r=".9" fill="currentColor" stroke="none"/></svg>`,
   png: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="M2.5 12l4-4 3 3 2-2 2.5 2.5"/></svg>`,
   csv: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13.5h10"/></svg>`,
@@ -257,6 +260,8 @@ export class ThermalMaps {
   problemCount() { const a = this.cur(); return a ? this.problemsOf(a).length : 0; }
 
   private limits(): CheckLimits { return { life: this.prefs.life, board: this.prefs.board }; }
+  /** The colour scale in use. */
+  palette(): PaletteName { return this.prefs.palette; }
   private savePrefs() { try { localStorage.setItem(PREFS_KEY, JSON.stringify(this.prefs)); } catch { /* private mode */ } }
   private problemsOf(a: Attached): ThermalProblem[] { return problems(a.pkg, a.stats, this.limits()); }
   private partOf(a: Attached, id: number): ThermalPart | undefined { return a.pkg.manifest.parts.find(p => p.id === id); }
@@ -794,7 +799,8 @@ export class ThermalMaps {
       + btn("labels", t("Hot spots"), t("Labels on the hottest point and on every part over its limit"), { on: this.prefs.labels, dis: !a.on })
       + btn("probe", t("Probe"), t("Click the map to read the temperature at a point"), { on: this.probing, dis: !a.on })
       + btn("isolate", t("Isolate"), t("Show the selected part alone, the others see-through (double-click a part)"), { on: a.iso !== null, dis: !a.on || (a.sel === null && a.iso === null) })
-      + btn("gerber", t("Board layers"), a.pcb ? t("Show or hide the board's copper and silkscreen under the temperatures") : t("Open the board's Gerber set to see its copper and silkscreen under the temperatures"), { on: !!a.pcb?.shown, dis: !a.on }))
+      + btn("gerber", t("Board layers"), a.pcb ? t("Show or hide the board's copper and silkscreen under the temperatures") : t("Open the board's Gerber set to see its copper and silkscreen under the temperatures"), { on: !!a.pcb?.shown, dis: !a.on })
+      + (a.pcb && this.host.pcbView ? btn("pcbview", t("PCB view"), t("Open the board's Gerber set in the PCB view with the board-face temperatures under its layers")) : ""))
       + sep + group(t("Parts"), btn("parts", t("Parts"), t("The parts of the map with their power, temperature and margin")))
       + sep + group(t("Study"), btn("simulate", t("Simulate"), a.own ? t("Open the board's STEP to measure it or simulate it.") : t("Simulate in MöbiusCAD: an assembly of the board's parts with a thermal study from this package, where you can add a heatsink or change the cooling"), { dis: a.own }))
       + sep + group(t("Package"), btn("png", t("Save picture"), t("Save the view as a PNG with the colour scale, the hottest part and the accuracy drawn in"), { dis: !a.on }) + btn("add", t("Another map"), t("Open another thermal package for this model: put it in place of this one, or compare the two")) + btn("remove", t("Remove map"), t("Take the thermal map off this model")));
@@ -810,6 +816,7 @@ export class ThermalMaps {
     else if (k === "probe") { this.probing = !this.probing; this.renderAll(); }
     else if (k === "isolate") this.isolate(a.iso !== null ? null : a.sel);
     else if (k === "gerber") { if (!a.pcb) this.pickGerber(); else { a.pcb.shown = !a.pcb.shown; this.show(); this.renderAll(); } }
+    else if (k === "pcbview") this.host.pcbView?.(a.pkg, a.pcb?.du ?? 0, a.pcb?.dv ?? 0);
     else if (k === "png") this.host.savePicture();
     else if (k === "parts") this.host.showTab();
     else if (k === "simulate") this.host.simulate(a.pkg, a.match, this.bodies());
