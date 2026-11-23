@@ -16,6 +16,7 @@ import { download, pdfWriter } from "../tools/exporters";
 import { zip } from "../model/zip";
 import { packageFiles, partBoxes, type ExportPart } from "../thermal/export";
 import type { ThermalMesh } from "../thermal/vtu";
+import { balanceCsv } from "../thermal/csv";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
 import { chooseModal, toast } from "../ui";
@@ -635,7 +636,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, arrows: this.arrows, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -3901,8 +3902,27 @@ export class SimController {
     });
     if (T.flows.length > 1) html += `<dt>${esc(t("Heat taken away in total"))}</dt><dd data-v="heatout">${sig(out)} W</dd>`;
     if (off != null) html += `<dt title="${esc(t("How far the heat taken away is from the heat put in, as a share of it"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${off > 1 ? ' class="sim-low"' : ""}>${pct(off).replace("<", "&lt;")} %</dd>`;
-    html += `</dl>` + this.exchangeHtml(r, last) + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
+    html += `</dl><div class="sim-probebar"><button class="btn small" data-a="balcsv" title="${esc(t("Save the heat balance (heat put in, taken away by each item, contacts and components) as a CSV file"))}">${esc(t("Export heat balance CSV"))}</button></div>` + this.exchangeHtml(r, last) + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
     return html + this.thermalPassesHtml(r, last);
+  }
+
+  /** A steady thermal result's heat balance as CSV (FR-TREP-011), English like the other exports; null without one. */
+  balanceCsvText(): string | null {
+    const r = this.res, last = r?.passes.at(-1), T = last?.thermal;
+    if (!r || !T || r.tr || this.enveloped) return null;
+    const comp = (i: number) => r.comps?.[i]?.name ?? `#${i + 1}`;
+    return withLang("en", () => balanceCsv({
+      applied: T.applied,
+      flows: T.flows.map((f, i) => ({ name: this.nameOf(r.ids[i] ?? ""), out: f.out, area: f.area, mean: f.mean, h: f.h })),
+      exchanges: (T.exchanges ?? []).map((x, i) => ({ name: this.nameOf(r.xids?.[i] ?? ""), heat: x.heat, ta: x.ta, tb: x.tb })),
+      contacts: (T.contacts ?? []).map(c => ({ a: comp(c.a), b: comp(c.b), heat: c.heat, area: c.area, ta: c.ta, tb: c.tb })),
+      comps: (r.comps ? T.comps ?? [] : []).map((c, i) => ({ name: comp(i), power: c.power, min: c.min, max: c.max, mean: c.mean })),
+    }));
+  }
+  private exportBalance() {
+    const text = this.balanceCsvText(), doc = this.host.doc(), st = this.study();
+    if (!text || !doc || !st) return;
+    download(new Blob([text], { type: "text/csv" }), `${`${doc.name}-${st.name}`.replace(/[\\/:*?"<>|]+/g, "_")}-heat-balance.csv`);
   }
 
   /** Radiation between face sets: what each passes, from which mean temperature to which, and the view factor found. */
@@ -4155,6 +4175,7 @@ export class SimController {
     const a = b.dataset.a!, id = b.closest<HTMLElement>("[data-id]")?.dataset.id;
     const st = this.study();
     if (a === "tcsv") { this.exportTransient(); return; }
+    if (a === "balcsv") { this.exportBalance(); return; }
     if (a === "new") this.command("new");
     else if (a === "newmodal") this.command("newmodal");
     else if (a === "newthermal") this.command("newthermal");
