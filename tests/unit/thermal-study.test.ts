@@ -36,11 +36,14 @@ test("materials guessed from what a part is (FR-TBRD-011): every guess is a libr
   assert.equal(g("V3", "EL84"), GUESS.glass);
   assert.equal(g("C12", "47u 450V electrolytic"), GUESS.can);
   assert.equal(g("C3", "100n"), GUESS.plastic);
+  assert.equal(g("C13", "100u 63V"), GUESS.can, "an electrolytic written as value and voltage");
+  assert.equal(g("C4", "1u 0805"), GUESS.plastic, "no voltage: not a can");
   assert.equal(g("Q2", "IRF820", "", { path: "heatsink" }), GUESS.metal);
   assert.equal(g("T1", "output transformer"), GUESS.iron);
   assert.equal(guessMaterial(null, "Heatsink SK104"), GUESS.sink);
   assert.equal(guessMaterial(null, "screw"), GUESS.plastic);
-  for (const name of Object.values(GUESS)) assert.ok((findMaterial(name)?.k ?? 0) > 0, name);
+  // every guess can also warm up: a density and a specific heat
+  for (const name of Object.values(GUESS)) { const m = findMaterial(name); assert.ok((m?.k ?? 0) > 0 && (m?.cp ?? 0) > 0 && (m?.density ?? 0) > 0, name); }
 });
 
 test("the plan of a board study: board, names, materials and the heat of every part", () => {

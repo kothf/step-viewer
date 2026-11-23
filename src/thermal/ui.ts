@@ -9,7 +9,7 @@ import { download } from "../tools/exporters";
 import { chooseModal, toast } from "../ui";
 import { deltaRange, mapOnto, partChanges, type PartChange } from "./compare";
 import type { Viewer } from "../viewer/Viewer";
-import { matchParts, misfit, paletteColor, paletteCss, PALETTE_NAMES, triWeights, type ModelBody, type PaletteName, type PartMatch } from "./match";
+import { boardOnly, matchParts, misfit, paletteColor, paletteCss, PALETTE_NAMES, triWeights, type ModelBody, type PaletteName, type PartMatch } from "./match";
 import { byMargin, DEFAULT_LIMITS, partMargin, partStats, partTemp, problems, summary, type CheckLimits, type PartStat, type ThermalPackage, type ThermalPart, type ThermalProblem } from "./package";
 import type { ThermalReply } from "./thermal.worker";
 import ThermalWorker from "./thermal.worker?worker";
@@ -296,7 +296,7 @@ export class ThermalMaps {
     if (ask && had && !had.own && !own && !had.pkg.sourcesOnly && !pkg.sourcesOnly) { void this.second(pkg); return true; }
     const stats = partStats(pkg.mesh);
     const match = matchParts(pkg.manifest.parts, stats, this.bodies());
-    const a: Attached = { pkg, stats, match, fitted: false, own, on: true, probes: [], sel: null, iso: null, range: null, sort: { col: "margin", up: true }, filter: "", top: true };
+    const a: Attached = { pkg, stats, match, fitted: boardOnly(match), own, on: true, probes: [], sel: null, iso: null, range: null, sort: { col: "margin", up: true }, filter: "", top: true };
     if (pkg.picture) a.picture = URL.createObjectURL(new Blob([pkg.picture as BlobPart], { type: "image/png" }));
     const old = this.maps.get(key);
     if (old?.picture) URL.revokeObjectURL(old.picture);

@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.696.0] - 2026-11-23
+
+### Added
+
+- A thermal study of the bare board STEP that MöbiusCAD writes from a Gerber set: with the board's thermal package, every part the STEP has no body for now stands in as a block (a cylinder for valves and electrolytics) of its package box, standing where the package puts it. Simulate then gives every part's heat, temperature and junction temperature, and the package's board share of each part's heat goes into the board under it.
+
+### Fixed
+
+- A thermal package on a bare board STEP from the PCB view matched nothing, so Simulate made a study with no heat: the board is now found by its outline (the exported board is centred on its mid-plane), and the map goes onto it without a misfit warning.
+- A warm-up of a board study failed with "no specific heat" for parts taken as plastic: moulded part bodies are now taken as glass-filled nylon, which has one. A capacitor written as "47u 450V" is taken as an aluminium can.
+- A warm-up of an assembly or board study listed no component or part temperatures, in the Study tab or the report: they are now given at the shown time.
+- A loose Gerber set is named after what its files share ("amp" for amp-F_Cu.gbr, amp-B_Cu.gbr…), so its board STEP is amp-board.step, not amp-B_Cu-board.step.
+
 ## [1.695.0] - 2026-11-23
 
 ### Added
@@ -4577,7 +4590,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.695.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.696.0...HEAD
+[1.696.0]: https://github.com/kothf/step-viewer/compare/v1.695.0...v1.696.0
 [1.695.0]: https://github.com/kothf/step-viewer/compare/v1.694.0...v1.695.0
 [1.694.0]: https://github.com/kothf/step-viewer/compare/v1.693.0...v1.694.0
 [1.693.0]: https://github.com/kothf/step-viewer/compare/v1.692.0...v1.693.0

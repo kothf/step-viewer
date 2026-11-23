@@ -10,7 +10,7 @@ export interface PartMatch {
   /** Model bodies of each package part id (0 = the board). */
   bodies: Map<number, number[]>;
   /** How each part was found. */
-  by: Map<number, "name" | "box">;
+  by: Map<number, "name" | "box" | "plate">;
   /** Package parts no body was found for. */
   missing: number[];
   /** Parts found by name whose box differs from the package's by more than `CHANGED` mm (after the common offset). */
@@ -95,6 +95,22 @@ export function matchParts(parts: ThermalPart[], stats: Map<number, PartStat>, b
     out.bodies.set(id, [best]);
     out.by.set(id, "box");
   }
+  // the board by its outline (a board STEP written by MöbiusCAD itself from Gerbers lies centred on z = 0 and is named
+  // after the Gerber set): a free flat body whose footprint is the package board's and whose thickness is its own
+  if (!out.bodies.has(0) && stats.has(0) && !out.bodies.size) {
+    const pb = partBox(null, 0, stats);
+    if (pb) {
+      let best = -1, bd = BOX_TOL;
+      bodies.forEach((b, i) => {
+        if (used.has(i)) return;
+        const t = b.box[5] - b.box[2];
+        if (!(t > 0 && t <= 6)) return;
+        const d = boxDiff([b.box[0], b.box[1], 0, b.box[3], b.box[4], t], [pb[0], pb[1], 0, pb[3], pb[4], pb[5] - pb[2]]);
+        if (d <= bd) { bd = d; best = i; }
+      });
+      if (best >= 0) { used.add(best); out.bodies.set(0, [best]); out.by.set(0, "plate"); }
+    }
+  }
   for (const id of ids) if (!out.bodies.has(id)) out.missing.push(id);
   const d = offsetOf();
   if (d) {
@@ -117,6 +133,9 @@ export function matchParts(parts: ThermalPart[], stats: Map<number, PartStat>, b
 
 /** True when the map lies off the model by more than the tolerance (FR-TPKG-021). */
 export const misfit = (m: PartMatch) => m.bodies.size > 0 && m.off > FIT_TOL;
+
+/** Only the board was found, by its outline: the package goes onto it by `shift` without asking. */
+export const boardOnly = (m: PartMatch) => m.bodies.size === 1 && m.by.get(0) === "plate";
 
 /** Temperature at a point of a triangle from its corner values (barycentric weights of the nearest point). */
 export function triWeights(p: [number, number, number], a: [number, number, number], b: [number, number, number], c: [number, number, number]): [number, number, number] {

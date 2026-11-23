@@ -489,6 +489,8 @@ export interface PassResult {
    */
   transient?: {
     times: number[]; frames: Float32Array[]; min: number[]; max: number[]; put: number[]; out: number[]; comps?: number[][];
+    /** Per output time, each domain's lowest, highest and mean temperature over the plot points (assemblies). */
+    cstats?: { min: number; max: number; mean: number }[][];
     steps: number; rejected: number; dt: [number, number]; capacity: number; t0: number; steady: number | null;
   };
 }
@@ -1269,6 +1271,11 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
  * (they choose the degree and show where the temperatures head), then the run in time at that degree from the start
  * temperature. The last pass carries every output time's temperatures at the sample points; its `vm` is the last one.
  */
+/** A transient output time's per-domain temperatures as the steady result's component rows (power = the steady one's, at full power). */
+export function frameComps(stats: { min: number; max: number; mean: number }[], powers: number[]) {
+  return stats.map((c, d) => ({ ...c, power: powers[d] ?? 0 }));
+}
+
 export function* runTransient(inp: RunInput): Generator<PassResult> {
   const T = inp.thermal!, Tr = T.transient!, set = T.setup;
   if (set.problems.length) throw new Error(`${set.problems[0].code}: ${set.problems[0].id}`);
@@ -1280,10 +1287,10 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const heat = set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0 || (s.density ?? 0) !== 0);
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!heat && temps.size < 2 && temps.has(Tr.t0)) throw new Error("E-TH-NOHEAT");
-  let p = 2, pass = 0, steady: number | null = null;
+  let p = 2, pass = 0, steady: number | null = null, powers: number[] = [];
   if (heat) {
     for (const r of runThermal({ ...inp, cells: inp.cells ?? 150, passes: Math.min(2, Math.max(1, Math.round(inp.passes))) })) {
-      pass = r.pass; p = r.p; steady = r.thermal?.max ?? null;
+      pass = r.pass; p = r.p; steady = r.thermal?.max ?? null; powers = (r.thermal?.comps ?? []).map(c => c.power);
       yield { ...r, done: false, converged: false };
     }
   }
@@ -1295,7 +1302,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const prof = set.sources.map(s => (s.id ? Tr.profiles[s.id] : undefined));
   const maxStep = Math.min(...prof.map(x => profileStep(x, Tr.end)));
   const frames: Float32Array[] = [], min: number[] = [], max: number[] = [], put: number[] = [], out: number[] = [];
-  const comps: number[][] = [];
+  const comps: number[][] = [], cstats: { min: number; max: number; mean: number }[][] = [];
   let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint8Array | undefined, flows: SinkFlow[] = [];
   const r = transientThermal(
     { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), sinks: set.sinks, sources: set.sources, ...(set.exchanges?.length ? { exchanges: exchangesOf(set, inp.body) } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
@@ -1309,9 +1316,10 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
         if (!s.temp.length) { lo = 0; hi = 0; }
         frames[k] = s.temp; min[k] = lo; max[k] = hi; put[k] = applied; out[k] = fl.reduce((a, f) => a + f.out, 0);
         if (domains && s.dom) {
-          const m = domains.map(() => -Infinity);
-          for (let i = 0; i < s.temp.length; i++) if (s.temp[i] > m[s.dom[i]]) m[s.dom[i]] = s.temp[i];
+          const m = domains.map(() => -Infinity), lo = domains.map(() => Infinity), sum = domains.map(() => 0), n = domains.map(() => 0);
+          for (let i = 0; i < s.temp.length; i++) { const d = s.dom[i], v = s.temp[i]; if (v > m[d]) m[d] = v; if (v < lo[d]) lo[d] = v; sum[d] += v; n[d]++; }
           comps[k] = m.map(v => (v === -Infinity ? 0 : v));
+          cstats[k] = m.map((v, d) => (n[d] ? { min: lo[d], max: v, mean: sum[d] / n[d] } : { min: 0, max: 0, mean: 0 }));
           dom = s.dom;
         }
         if (k === times.length - 1) { flux = s.flux; flows = fl; }
@@ -1326,7 +1334,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
     pass: pass + 1, p, dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, energy: 0, change: null, ms: Date.now() - t0, reactions: [], applied: none,
     u: flux, vm: Float32Array.from(last), err: new Float32Array(last.length), errors: [], maxU, maxVm: max[max.length - 1], converged: true, done: true,
     ...(dom ? { dom } : {}),
-    thermal: { min: min[min.length - 1], max: max[max.length - 1], applied: put[put.length - 1], flows, solves: r.solves },
-    transient: { times, frames, min, max, put, out, ...(domains ? { comps } : {}), steps: r.steps, rejected: r.rejected, dt: r.dt, capacity: r.capacity, t0: Tr.t0, steady },
+    thermal: { min: min[min.length - 1], max: max[max.length - 1], applied: put[put.length - 1], flows, solves: r.solves, ...(domains && cstats.length ? { comps: frameComps(cstats[cstats.length - 1], powers) } : {}) },
+    transient: { times, frames, min, max, put, out, ...(domains ? { comps, cstats } : {}), steps: r.steps, rejected: r.rejected, dt: r.dt, capacity: r.capacity, t0: Tr.t0, steady },
   };
 }

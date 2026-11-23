@@ -339,7 +339,7 @@ export class AsmController {
    * An assembly from a model file (FR-TSTU-004): one component per body of the file, each fixed where the file has it,
    * the import kept exact. Returns the component ids in the file's body order (null for a body with no faces).
    */
-  async fromModel(buffer: ArrayBuffer, fileName: string, mats: (MatRef | null)[] = [], names: string[] = []): Promise<(string | null)[] | null> {
+  async fromModel(buffer: ArrayBuffer, fileName: string, mats: (MatRef | null)[] = [], names: string[] = [], extra: { name: string; doc: PartDoc; tf: Tf; mat?: MatRef | null; color?: V3 }[] = []): Promise<(string | null)[] | null> {
     let bodies: ImportedBody[];
     try { bodies = await this.kernel.importBodies(buffer, fileName); }
     catch (err) { toast(t("The file could not be read: {msg}", { msg: (err as Error).message }), true); return null; }
@@ -359,6 +359,16 @@ export class AsmController {
       doc.components.push({ id, name: `${base}<${n}>`, part: key, tf: IDENTITY, fixed: true, ...(b.color ? { color: b.color } : {}) });
       ids.push(id);
     });
+    // more parts made here (stand-ins for bodies the file lacks), placed by their transforms; ids follow the file's
+    for (const x of extra) {
+      const pd = x.doc;
+      if (x.mat) pd.material = x.mat;
+      const key = uid("p_"), id = uid("c_"), n = (seen.get(x.name) ?? 0) + 1;
+      seen.set(x.name, n);
+      doc.parts[key] = { name: x.name, file: `${x.name}.mcadprt`, doc: pd };
+      doc.components.push({ id, name: `${x.name}<${n}>`, part: key, tf: x.tf, fixed: true, ...(x.color ? { color: x.color } : {}) });
+      ids.push(id);
+    }
     this.load(doc, "", null);
     return ids;
   }
