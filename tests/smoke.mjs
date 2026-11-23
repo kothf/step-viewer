@@ -18105,7 +18105,7 @@ try {
   }
 
   // --- bolted joints 1.673 (FRS-thermal FR-TCON-003): plates a toolbox bolt clamps pass heat by a bolted joint's conductance ---
-  if (inShard(1)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
@@ -18235,7 +18235,7 @@ try {
   }
 
   // --- thermal stress 1.663 (FRS-thermal TH5, FR-LOAD-011): a Temperature load, uniform or from a thermal study ---
-  if (inShard(6)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const sp = await ctx.newPage();
     sp.on("pageerror", e => errors.push(e.message));
@@ -18666,7 +18666,7 @@ try {
   }
 
   // --- conductivity by temperature 1.665 (FRS-thermal FR-TMAT-004): a k(T) table, the solve repeated until k settles ---
-  if (inShard(6)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const kp = await ctx.newPage();
     kp.on("pageerror", e => errors.push(e.message));
@@ -18865,7 +18865,7 @@ try {
   }
 
   // --- thermal conditions on the model 1.692 (FRS-thermal FR-TLOAD-011, FR-TBC-013): a callout with its glyph and value per condition ---
-  if (inShard(6)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const gp = await ctx.newPage();
     gp.on("pageerror", e => errors.push(e.message));
@@ -18970,7 +18970,7 @@ try {
   }
 
   // --- thermal isolate and picture 1.660 (FRS-thermal FR-TMAP-020/042): one part alone; a PNG with the colour scale drawn in ---
-  if (inShard(6)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const ip = await ctx.newPage();
     ip.on("pageerror", e => errors.push(e.message));
