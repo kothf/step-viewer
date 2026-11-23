@@ -7,12 +7,14 @@
 // large solve function is not optimised by the browser's compiler, see `measurePenalty` in static.ts).
 
 import { Basis, basisSize } from "./basis";
-import { BlockMatrix, Envelope } from "./sparse";
+import { BlockMatrix } from "./sparse";
+import { BlockCholesky } from "./blockchol";
 import { pcgSolver } from "./pcg";
 import { makeGrid, refit, memoryBytes, type Grid } from "./grid";
 import { facePoints, fitFacePoints, gridTrianglePoints, type Inside, type Points } from "./quad";
 import { DIRECT_LIMIT, MEMORY_LIMIT, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
 import { exchangeResistance } from "./viewfactor";
+import { progress } from "./progress";
 
 /** Stefan–Boltzmann constant, W/(mm²·K⁴). */
 export const SIGMA = 5.670374419e-14;
@@ -744,7 +746,8 @@ function copyMatrix(A: BlockMatrix): BlockMatrix {
 function factorSystem(c: Ctx, A: BlockMatrix): Solver {
   const pb = c.pb, useCg = pb.solver === "pcg" || (pb.solver !== "direct" && A.size > DIRECT_LIMIT);
   if (useCg) { const P = pcgSolver(A, { coarse: basisSize(1), tol: pb.tol ?? 1e-9 }); return { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
-  const E = new Envelope(A);
+  const E = new BlockCholesky(A);
+  progress("solve", 0, 1);
   return { solve: f => E.solve(f) };
 }
 
@@ -1347,7 +1350,7 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
     const pbx = c.pb, useCg = pbx.solver === "pcg" || (pbx.solver !== "direct" && B.size > DIRECT_LIMIT);
     let s0: Solver;
     if (useCg) { const P = pcgSolver(B, { coarse: basisSize(1), tol: pbx.tol ?? 1e-9 }); s0 = { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
-    else { const E = new Envelope(B); s0 = { solve: f => E.solve(f) }; }
+    else { const E = new BlockCholesky(B); s0 = { solve: f => E.solve(f) }; }
     const s = withLowRank(s0, linLr);
     // a new linearisation makes the older matrices useless
     for (const key2 of [...cache.keys()]) if (!key2.endsWith(`|${linGen}`)) cache.delete(key2);
@@ -1373,6 +1376,7 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
   let br = 0;
   let t = 0, k = Math.max(kMin, Math.min(kMax, 4)), dtLast = 0, steps = 0, rejected = 0, quiet = 0, dtLo = Infinity, dtHi = 0;
   while (out < run.times.length) {
+    progress("time", t, end);
     if (run.stop?.()) throw new Error("E-SIM-STOPPED");
     let dt = dtMax / 2 ** k, clip = "";
     while (br < breaks.length && breaks[br] <= t + 1e-9 * end) br++;

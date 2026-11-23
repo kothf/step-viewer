@@ -47,6 +47,7 @@ import { MEMORY_LIMIT } from "./static";
 import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardK, partTemps, plateAxis, type BoardStack, type PartTemp } from "../thermal/study";
 import { boardMap, gerberName, mapPicture, stackK, type CopperMap } from "../thermal/copper";
 import { copperFromGerber } from "../thermal/copperRaster";
+import { overall, type SimProgress, type SimStage } from "./progress";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, frameComps, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
@@ -112,6 +113,11 @@ interface Results { /** Board studies: package parts whose heatsink share went i
 const BOLT_NOTE = "Tension, shear and bending of each bolt as a beam. The safety factor compares their combined stress on the thread's stress area with the proof stress of the property class.";
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 /** Solve on change: how long after the last change the solve starts, ms. */
+/** The solver's stages as the status bar names them. */
+const STAGE_TEXT: Record<SimStage, string> = {
+  geometry: "reading the geometry", cells: "cutting the cells", assemble: "building the equations", factor: "factorising the matrix",
+  solve: "solving", modes: "finding the modes", time: "stepping in time", results: "reading the results",
+};
 const AUTO_DELAY = 700;
 
 /**
@@ -236,6 +242,10 @@ export class SimController {
   private res: Results | null = null;
   private running = false;
   private progress = "";
+  /** The solver's last report of the running solve (the status bar's progress line), and when the solve began. */
+  private prog: SimProgress | null = null;
+  private progT0 = 0;
+  private progTimer = 0;
   private error: string | null = null;
   /** Item id → problem text, from the last Solve. */
   private problems = new Map<string, string>();
@@ -679,7 +689,7 @@ export class SimController {
   state() {
     const last = this.res?.passes.at(-1);
     return {
-      refine: (this.study()?.refine ?? []).map(r => [r.faces.length, r.level]), study: this.study()?.id ?? null, editing: this.edit ? this.edit.draft.id : null, running: this.running, error: this.error, stale: this.stale(),
+      threads: this.client.threads, isolated: typeof crossOriginIsolated !== "undefined" && crossOriginIsolated, refine: (this.study()?.refine ?? []).map(r => [r.faces.length, r.level]), study: this.study()?.id ?? null, editing: this.edit ? this.edit.draft.id : null, running: this.running, error: this.error, stale: this.stale(),
       passes: this.res?.passes.map(p => ({ p: p.p, raised: p.raised ?? null, cells: p.cells, dofs: p.dofs, energy: p.energy, change: p.change, ms: p.ms, memory: p.memory ?? null })) ?? [], errors: last?.errors ?? [], capped: last?.capped ?? null, auto: !!this.study()?.auto, autoRuns: this.autoRuns,
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
@@ -1157,6 +1167,56 @@ export class SimController {
 
   // ---------- solve ----------
 
+  /** Starts the status bar's progress line of a solve (FR-SOL-023); it goes away by itself when the solve ends. */
+  private startStatus() {
+    this.prog = null; this.progT0 = performance.now();
+    clearInterval(this.progTimer);
+    this.progTimer = window.setInterval(() => this.renderStatus(), 500);
+    this.renderStatus();
+  }
+
+  private onProgress(p: SimProgress) { this.prog = p; this.renderStatus(); }
+
+  /** What the solve is doing now, in words. */
+  private statusText(): string {
+    const p = this.prog;
+    if (!p) return this.progress;
+    const stage = t(STAGE_TEXT[p.stage]);
+    const pre = this.errorIn ? `${this.errorIn}: ` : "";
+    return pre + (p.of ? t("Pass {n} of {m}: {stage}", { n: p.pass, m: Math.max(p.of, p.pass), stage }) : stage);
+  }
+
+  /** The status bar's line: stage, bar, per cent, time so far and Stop. Only its own nodes are touched. */
+  private renderStatus() {
+    const el = document.getElementById("st-sim");
+    if (!el) return;
+    if (!this.running) {
+      clearInterval(this.progTimer); this.progTimer = 0; this.prog = null;
+      if (!el.hidden) { el.hidden = true; el.replaceChildren(); }
+      return;
+    }
+    if (!el.firstChild) {
+      el.innerHTML = `<i class="spin" aria-hidden="true"></i><span class="st-sim-t"></span><span class="st-sim-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></span><span class="st-sim-p mono"></span><span class="st-sim-s mono muted"></span><button type="button" class="st-sim-x" data-a="simstop"></button>`;
+      const b = el.querySelector("button")!;
+      b.textContent = t("Stop");
+      b.addEventListener("click", () => this.client.cancel());
+    }
+    el.hidden = false;
+    const text = this.statusText(), f = this.prog ? overall(this.prog) : 0, pc = Math.round(100 * f);
+    const s = Math.floor((performance.now() - this.progT0) / 1000);
+    (el.querySelector(".st-sim-t") as HTMLElement).textContent = text;
+    const bar = el.querySelector(".st-sim-bar") as HTMLElement;
+    bar.setAttribute("aria-valuenow", String(pc));
+    bar.setAttribute("aria-label", text);
+    bar.classList.toggle("wait", !this.prog);
+    (bar.firstElementChild as HTMLElement).style.width = `${this.prog ? Math.max(2, pc) : 100}%`;
+    (el.querySelector(".st-sim-p") as HTMLElement).textContent = this.prog ? `${pc} %` : "";
+    (el.querySelector(".st-sim-s") as HTMLElement).textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    // the Study tab's own line says the same
+    const run = document.querySelector("#sim-tree .sim-run-t");
+    if (run) run.textContent = text;
+  }
+
   async solve() {
     const doc = this.host.doc(), st = this.study();
     if (!doc || !st || this.running) return;
@@ -1176,6 +1236,7 @@ export class SimController {
     if (modal) this.plot.deformed = true;
     this.clearPlot();
     this.progress = t("Reading the geometry…");
+    this.startStatus();
     this.renderAll();
     const key = this.keyOf(doc, st), t0 = performance.now();
     let whole = true, made: Results | null = null;
@@ -1301,7 +1362,7 @@ export class SimController {
         this.showPlot();
         this.renderAll();
         this.drawMarks();
-      }, ci > 0);
+      }, ci > 0, p => this.onProgress(p));
       if (!mine.length) throw new Error(SIM_STOPPED);
       if (run.c) res.cases![ci].job = this.client.solution; else res.job = this.client.solution;
       }
@@ -1434,6 +1495,7 @@ export class SimController {
     if (!THERMAL_PLOTS.includes(this.plot.kind)) this.plot.kind = "temp";
     this.clearPlot();
     this.progress = t("Reading the geometry…");
+    this.startStatus();
     this.renderAll();
     const key = this.keyOf(doc, st), t0 = performance.now();
     let done = false;
@@ -1512,7 +1574,7 @@ export class SimController {
         this.showPlot();
         this.renderAll();
         this.drawMarks();
-      }, ci > 0);
+      }, ci > 0, p => this.onProgress(p));
       if (!mine.length) throw new Error(SIM_STOPPED);
       if (run.c) res.cases![ci].job = this.client.solution; else res.job = this.client.solution;
       }
@@ -2655,6 +2717,7 @@ export class SimController {
     this.syncProbes();
     this.drawProbes();
     this.renderLegend();
+    this.renderStatus();
   }
 
   /** Finds the study's probes on the plot mesh of the results. */
@@ -4212,7 +4275,7 @@ export class SimController {
   private resultsHtml(): string {
     const r = this.res, last = r?.passes.at(-1);
     let html = "";
-    if (this.running) html += `<p class="sim-run"><i class="spin" aria-hidden="true"></i>${esc(this.progress)} <button class="btn small" data-a="stop">${esc(t("Stop"))}</button></p>`;
+    if (this.running) html += `<p class="sim-run"><i class="spin" aria-hidden="true"></i><span class="sim-run-t">${esc(this.statusText())}</span> <button class="btn small" data-a="stop">${esc(t("Stop"))}</button></p>`;
     if (this.error && !this.running) html += `<p class="sim-prob">${this.errorIn ? `<span translate="no">${esc(this.errorIn)}</span>: ` : ""}${esc(this.errorText(this.error))}</p>`;
     if (!r || !last) return html || `<p class="sim-note muted">${esc(t("Not solved yet."))}</p><button class="btn small" data-a="solve">${esc(t("Solve"))}</button>`;
     if (this.stale()) html += `<p class="sim-prob">${esc(t("Out of date: the model or the study changed."))} <button class="btn small" data-a="solve">${esc(t("Solve"))}</button></p>`;

@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.717.0] - 2026-11-23
+
+### Added
+
+- While a study is solved the status bar shows what the solver is doing: the pass, the step (reading the geometry, cutting the cells, building the equations, factorising the matrix, solving, reading the results), a bar with per cent, the time so far and a Stop button. The model still turns and the rest of the app still answers while it runs.
+- Analysis uses all processor cores for the heaviest step, the factorisation of the equations. This needs shared memory between threads, which the app turns on for itself from the second visit (the page then reloads from its own offline copy with the needed headers); on the first visit, and on machines with fewer than four cores, the solve runs on one thread with the same numbers.
+
+### Changed
+
+- Structural, modal and thermal studies solve faster on one core too: the direct solver now orders the equations to keep the factor small and works on dense blocks. A bracket with six passes went from 154 s to 86 s on one thread and 69 s on four in Chrome; the results agree with the previous solver to about eight digits.
+
 ## [1.716.0] - 2026-11-23
 
 ### Changed
@@ -4727,7 +4738,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.716.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.717.0...HEAD
+[1.717.0]: https://github.com/kothf/step-viewer/compare/v1.716.0...v1.717.0
 [1.716.0]: https://github.com/kothf/step-viewer/compare/v1.715.0...v1.716.0
 [1.715.0]: https://github.com/kothf/step-viewer/compare/v1.714.0...v1.715.0
 [1.714.0]: https://github.com/kothf/step-viewer/compare/v1.713.0...v1.714.0

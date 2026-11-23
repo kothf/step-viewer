@@ -24,6 +24,17 @@ const FILES = ${JSON.stringify(files)};
 const at = u => new URL(u, self.registration.scope).href;
 const own = new Set(FILES.map(at));
 
+// Cross-origin isolation: with these two headers on the page and its scripts the browser allows shared memory,
+// which the analysis solvers use to run on all CPU cores. Everything the app loads is its own, so nothing is cut off.
+const isolated = r => {
+  if (!r || r.status === 0 || r.type === "opaque" || r.type === "opaqueredirect") return r;
+  const h = new Headers(r.headers);
+  h.set("Cross-Origin-Opener-Policy", "same-origin");
+  h.set("Cross-Origin-Embedder-Policy", "require-corp");
+  h.set("Cross-Origin-Resource-Policy", "same-origin");
+  return new Response(r.status === 204 || r.status === 304 ? null : r.body, { status: r.status, statusText: r.statusText, headers: h });
+};
+
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES.map(u => new Request(at(u), { cache: "reload" })))).then(() => self.skipWaiting()));
 });
@@ -44,8 +55,8 @@ self.addEventListener("fetch", e => {
     // The page: network first (new versions show at once), the cached one offline.
     e.respondWith(fetch(req).then(r => {
       if (r.ok) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(at("index.html"), copy)); }
-      return r;
-    }).catch(() => caches.match(at("index.html"))));
+      return isolated(r);
+    }).catch(() => caches.match(at("index.html")).then(isolated)));
     return;
   }
   // App files and the OpenCASCADE builds: cache first. Anything else (opened models) goes to the network.
@@ -53,7 +64,7 @@ self.addEventListener("fetch", e => {
   e.respondWith(caches.match(key).then(hit => hit || fetch(req).then(r => {
     if (r.ok && r.status === 200) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(key, copy)); }
     return r;
-  })));
+  })).then(isolated));
 });
 `;
 

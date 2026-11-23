@@ -7767,7 +7767,10 @@ try {
     await ctx.setOffline(true);
     let offVer = "";
     try { await pg.reload({ timeout: 20000 }); await pg.waitForFunction(() => /^v\d+\.\d+\.\d+/.test(document.querySelector("#app-version")?.textContent ?? ""), null, { timeout: 20000 }); offVer = await pg.evaluate(() => document.querySelector("#app-version").textContent); } catch (e) { offVer = String(e).slice(0, 80); }
+    // served by the worker, the page is cross-origin isolated: shared memory for the analysis threads, and workers still start
+    const iso = await pg.evaluate(async () => ({ on: crossOriginIsolated, sab: typeof SharedArrayBuffer !== "undefined" })).catch(() => ({}));
     await ctx.setOffline(false);
+    check(iso.on && iso.sab, `1.717: the page the service worker serves is cross-origin isolated (${JSON.stringify(iso)})`);
     check(/^\?v=\d+\.\d+\.\d+$/.test(swState.script) && swState.caches === 1 && swState.index && swState.occt && !swState.full && swState.n > 10 && swState.ctl && /^v\d/.test(offVer), `1.47: service worker precaches the app and it starts offline (${JSON.stringify(swState)}, ${offVer})`);
     await ctx.close();
   }
@@ -16318,9 +16321,18 @@ try {
     // Two passes; a uniform load on a cantilever: tip deflection F L³ / (8 E I) = 0.357 mm, root stress M c / I = 75 MPa.
     await mp.selectOption('#sim-tree [data-k="passes"]', "2");
     await settle();
+    // 1.717: the status bar says what the solve is doing (stage, bar, time, Stop) and the line goes when it ends
+    await mp.evaluate(() => {
+      const el = document.querySelector("#st-sim"), seen = window.__simLine = { texts: [], bar: false, stop: false, now: [] };
+      const note = () => { if (el.hidden) return; const t = el.querySelector(".st-sim-t")?.textContent ?? ""; if (t && seen.texts.at(-1) !== t) seen.texts.push(t); const b = el.querySelector('.st-sim-bar[role="progressbar"]'); seen.bar ||= !!b; if (b?.hasAttribute("aria-valuenow")) seen.now.push(Number(b.getAttribute("aria-valuenow"))); seen.stop ||= !!el.querySelector('button[data-a="simstop"]'); };
+      new MutationObserver(note).observe(el, { attributes: true, childList: true, subtree: true, characterData: true });
+    });
     await mp.click('#sim-tools [data-s="solve"]');
     await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
     await mp.waitForTimeout(200);
+    const line = await mp.evaluate(() => ({ ...window.__simLine, hidden: document.querySelector("#st-sim").hidden, empty: !document.querySelector("#st-sim").firstChild }));
+    check(line.texts.length >= 2 && line.texts.some(t => /Pass 2 of 2/.test(t)) && line.bar && line.stop && line.now.every((v, i) => v >= 0 && v <= 100 && (i === 0 || v >= line.now[i - 1])) && line.hidden && line.empty,
+      `sim 1.717: while a study is solved the status bar names the pass and the step with a bar that only moves forward and a Stop button; the line goes when the solve ends (${JSON.stringify({ texts: line.texts.slice(0, 8), n: line.now.length, last: line.now.at(-1), bar: line.bar, stop: line.stop, hidden: line.hidden })})`);
     const r1 = await sim();
     const shown = await mp.evaluate(() => ({ legend: !document.querySelector("#sim-legend").hidden, max: document.querySelector('#sim-legend [data-v="max"]')?.textContent, rows: document.querySelectorAll("#sim-tree .sim-passes tbody tr").length, kv: document.querySelector("#sim-tree .sim-kv")?.textContent ?? "" }));
     const reaction = r1.reactions[0]?.force ?? [];

@@ -3,10 +3,13 @@
 import SimWorker from "./sim.worker?worker";
 import type { PassResult, RunInput, SampleResult } from "./run";
 import type { SimReply } from "./sim.worker";
+import type { SimProgress } from "./progress";
 import type { Connection } from "./connect";
 import type { FastenerBody, findBolts } from "./bolts";
 
 export const SIM_STOPPED = "E-SIM-STOPPED";
+/** Threads a solve uses on a machine with `cores` logical cores: all but one from four up, so the page stays quick. */
+export const threadsFor = (cores: number) => (cores >= 4 ? cores - 1 : Math.max(1, cores));
 
 export class SimClient {
   private worker: Worker | null = null;
@@ -16,6 +19,16 @@ export class SimClient {
   private held = 0;
   private all = new Set<number>();
   private asks = new Map<number, (r: SampleResult | null) => void>();
+
+  /** How the last finished solve was shared between threads (debug, tests). */
+  threads: { jobs: number; parallelSteps: number; joined: number; helpers: number } | null = null;
+
+  /** The solver's worker, told how many threads it may use: all the cores, or `?simthreads=<n>` (1 = one thread). */
+  private start(): Worker {
+    const w = new SimWorker(), asked = Number(new URLSearchParams(location.search).get("simthreads"));
+    w.postMessage({ id: 0, type: "threads", n: asked > 0 ? asked : threadsFor(navigator.hardwareConcurrency || 1) });
+    return w;
+  }
 
   get busy() { return !!this.job; }
   /** A number naming the solution `sample` would read; 0 when there is none. */
@@ -47,11 +60,11 @@ export class SimClient {
   holds(of: number) { return !this.job && this.all.has(of); }
 
   /** Runs the passes; `onPass` gets each as it finishes. Resolves with them all; rejects with an E-SIM code. */
-  solve(input: RunInput, onPass: (p: PassResult) => void, more = false): Promise<PassResult[]> {
+  solve(input: RunInput, onPass: (p: PassResult) => void, more = false, onProgress?: (p: SimProgress) => void): Promise<PassResult[]> {
     this.cancel();
     this.held = 0;
     if (!more) this.all.clear();
-    const w = (this.worker ??= new SimWorker());
+    const w = (this.worker ??= this.start());
     const id = ++this.seq;
     return new Promise<PassResult[]>((resolve, reject) => {
       const passes: PassResult[] = [];
@@ -62,8 +75,9 @@ export class SimClient {
         if ("found" in d || "bolts" in d) return;
         if ("sample" in d) { const f = this.asks.get(d.id); this.asks.delete(d.id); f?.(d.sample); return; }
         if (d.id !== id) return;
+        if ("progress" in d) { onProgress?.(d.progress); return; }
         if ("pass" in d) { passes.push(d.pass); onPass(d.pass); }
-        else if ("done" in d) { end(); if (!input.modal && passes.length) { this.held = id; this.all.add(id); } resolve(passes); }
+        else if ("done" in d) { end(); this.threads = d.threads; if (!input.modal && passes.length) { this.held = id; this.all.add(id); } resolve(passes); }
         else { end(); reject(new Error(d.error)); }
       };
       // a crashed worker (out of memory) is replaced at the next solve
