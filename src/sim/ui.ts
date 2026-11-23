@@ -33,11 +33,11 @@ import { SIM_STOPPED, SimClient } from "./client";
 import type { Connection } from "./connect";
 import { boltCheck } from "./bolts";
 import { DEFAULT_CLASS, PROPERTY_CLASSES, proofStress } from "../asm/fasteners";
-import { hotCsv, loadBalance, stlBytes } from "./exports";
+import { hotCsv, loadBalance, stlBytes, thermalHotCsv } from "./exports";
 import { aloneIndex, isoIndex, componentRows, moveWithParts, vertexParts, withoutParts, type CompRow } from "./comps";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
 import { locate, probeCsv, valueAt, type Located } from "./probes";
-import { hotSpots, type HotSpot } from "./hotspots";
+import { hotSpots, thermalHotSpots, type HotSpot, type ThermalHot } from "./hotspots";
 import type { SectionManager } from "../viewer/Section";
 import { nearExcitation, parseExcitation } from "./excite";
 import { compareRows, noteSummary, parseSummaries, type CompareRow, type Summary, type SummaryStore } from "./compare";
@@ -259,6 +259,10 @@ export class SimController {
   private hot: { res: Results; n: number; list: HotSpot[] } | null = null;
   /** The hot spot picked in the list (its label is drawn on the model). */
   private hotSel = -1;
+  /** A thermal result's hottest points and sharp corners of the heat flux (FR-TRES-003), found once per pass. */
+  private thot: { passes: PassResult[]; n: number; list: ThermalHot } | null = null;
+  /** The hottest point picked in the list. */
+  private thotSel = -1;
   /** Results of an assembly: the component (solver domain) shown alone, -1 = all of them. View only. */
   private compSel = -1;
   /** Plot-mesh vertices in view when one component is shown alone (1 = shown). */
@@ -643,7 +647,7 @@ export class SimController {
     if (!r?.cases || this.running) return;
     this.caseSel = i;
     this.applyCase();
-    this.hot = null; this.hotSel = -1; this.probeKey = "";
+    this.hot = null; this.hotSel = -1; this.thot = null; this.thotSel = -1; this.probeKey = "";
     if (this.plot.on) this.showPlot();
     this.syncProbes();
     this.syncPath();
@@ -679,7 +683,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, arrows: this.arrows, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), mapCmp: (() => { const m = this.mapCompare(); return m ? { name: m.name, rows: m.c.rows, onlyMap: m.c.onlyMap, onlyStudy: m.c.onlyStudy, hot: m.c.hot, mean: m.c.mean, most: m.c.most, shift: this.maps.get(this.study()?.id ?? "")?.shift ?? null, missing: Array.from(m.c.delta).filter(v => !Number.isFinite(v)).length } : null; })(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), comps: this.compSeries().map(c => ({ name: c.name, v: Array.from(c.v) })), compsShown: [...this.compsShown(this.compSeries())].map(d => this.res?.comps?.[d]?.name ?? ""), speed: this.speed, reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), parts: this.partTempRows(), near: this.nearHotRows(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), mapCmp: (() => { const m = this.mapCompare(); return m ? { name: m.name, rows: m.c.rows, onlyMap: m.c.onlyMap, onlyStudy: m.c.onlyStudy, hot: m.c.hot, mean: m.c.mean, most: m.c.most, shift: this.maps.get(this.study()?.id ?? "")?.shift ?? null, missing: Array.from(m.c.delta).filter(v => !Number.isFinite(v)).length } : null; })(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), comps: this.compSeries().map(c => ({ name: c.name, v: Array.from(c.v) })), compsShown: [...this.compsShown(this.compSeries())].map(d => this.res?.comps?.[d]?.name ?? ""), speed: this.speed, reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), parts: this.partTempRows(), near: this.nearHotRows(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, hot: (() => { const th = this.thermalHot(); return th ? { temps: th.temps.map(h => ({ t: h.vm, at: h.at })), corners: th.corners.map(h => ({ q: h.vm, at: h.at, growth: h.growth })), sel: this.thotSel, csv: thermalHotCsv(th.temps, th.corners) } : null; })(), exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -1164,7 +1168,7 @@ export class SimController {
     }
     const part = this.host.model();
     if (!part) { toast(asm ? t("The assembly has no components to analyse yet.") : t("The part has no body yet."), "warn"); return; }
-    this.running = true; this.error = null; this.errorIn = ""; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.compSel = -1; this.modeSel = -1;
+    this.running = true; this.error = null; this.errorIn = ""; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.thot = null; this.thotSel = -1; this.compSel = -1; this.modeSel = -1;
     const modal = st.kind === "modal";
     // a mode is a shape: it is drawn deformed, whatever the last static plot was set to
     if (modal) this.plot.deformed = true;
@@ -1423,7 +1427,7 @@ export class SimController {
     if (!asm && !m?.k) { toast(t("Pick a material with a thermal conductivity first."), "warn"); void this.pickMat(); return; }
     const part = this.host.model();
     if (!part) { toast(asm ? t("The assembly has no components to analyse yet.") : t("The part has no body yet."), "warn"); return; }
-    this.running = true; this.error = null; this.errorIn = ""; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.compSel = -1; this.modeSel = -1;
+    this.running = true; this.error = null; this.errorIn = ""; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.thot = null; this.thotSel = -1; this.compSel = -1; this.modeSel = -1;
     // the thermal plot picked last stays (a solve on change must not switch Rise or Heat flux back)
     if (!THERMAL_PLOTS.includes(this.plot.kind)) this.plot.kind = "temp";
     this.clearPlot();
@@ -2766,6 +2770,14 @@ export class SimController {
     return this.hot.list;
   }
 
+  /** A steady thermal result's hottest points and sharp corners of the heat flux; null for other results. */
+  private thermalHot(): ThermalHot | null {
+    const r = this.res, last = r?.passes.at(-1);
+    if (!r || !last?.thermal || r.tr || this.enveloped || this.stale()) return null;
+    if (this.thot?.passes !== r.passes || this.thot.n !== r.passes.length) this.thot = { passes: r.passes, n: r.passes.length, list: thermalHotSpots(r.mesh.pos, r.mesh.index, r.passes, this.host.viewer.modelSize / 12) };
+    return this.thot.list;
+  }
+
   /** Labels of the highest and lowest values, and of the hot spots on a stress plot. */
   private peakLabels(): { v: number; html: string }[] {
     const a = this.vals;
@@ -2777,13 +2789,27 @@ export class SimController {
     let lo = -1, hi = -1;
     for (let i = 0; i < a.length; i++) { if ((mk && !mk[i]) || !Number.isFinite(a[i])) continue; if (lo < 0 || a[i] < a[lo]) lo = i; if (hi < 0 || a[i] > a[hi]) hi = i; }
     if (lo < 0) return [];
-    const label = (cls: string, key: string, text: string, v: number, warn = false) => out.push({ v, html: `<div class="sim-probe sim-peak ${cls}${warn ? " warn" : ""}" data-peak="${key}"${warn ? ` title="${sing}"` : ""}><i></i><span>${warn ? "⚠ " : ""}${text}</span></div>` });
+    const label = (cls: string, key: string, text: string, v: number, warn = false, tip = sing) => out.push({ v, html: `<div class="sim-probe sim-peak ${cls}${warn ? " warn" : ""}" data-peak="${key}"${warn ? ` title="${tip}"` : ""}><i></i><span>${warn ? "⚠ " : ""}${text}</span></div>` });
+    const th = this.plot.kind === "temp" || this.plot.kind === "rise" || this.plot.kind === "flux" ? this.thermalHot() : null;
     if (this.plot.kind === "vm") {
       const hs = this.hotList(), top = hs.findIndex(h => !h.singular);
       hs.forEach((h, i) => { if (mk && !mk[h.v]) return; if (h.singular || i === top || i === this.hotSel) label("hot", `h${i}`, `<b>${i + 1}</b> <span translate="no">${val(h.vm)}</span>`, h.v, h.singular); });
       if (!hs.length || (mk && !hs.some(h => mk[h.v]))) label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[hi])}</span>`, hi);
     } else if (this.plot.kind === "sf") label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
-    else {
+    else if (th && this.plot.kind === "flux") {
+      // sharp corners first; the highest flux away from them is the real one (FR-TRES-003)
+      const tip = esc(t("Heat flux at a sharp corner: value depends on refinement"));
+      th.corners.forEach((h, i) => { if (!mk || mk[h.v]) label("hot", `f${i}`, `<span translate="no">${val(a[h.v])}</span>`, h.v, true, tip); });
+      const away = (i: number) => !th.sharp[i];
+      let top = -1;
+      for (let i = 0; i < a.length; i++) if ((!mk || mk[i]) && Number.isFinite(a[i]) && away(i) && (top < 0 || a[i] > a[top])) top = i;
+      if (top >= 0) label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[top])}</span>`, top);
+    } else if (th) {
+      label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[hi])}</span>`, hi);
+      const h = th.temps[this.thotSel];
+      if (h && this.thotSel > 0 && (!mk || mk[h.v])) label("hot", `t${this.thotSel}`, `<b>${this.thotSel + 1}</b> <span translate="no">${val(a[h.v])}</span>`, h.v);
+      label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
+    } else {
       label("max", "max", `${esc(t("Max"))} <span translate="no">${val(a[hi])}</span>`, hi);
       if (a[lo] < 0 || this.plot.kind === "temp" || this.plot.kind === "rise" || this.plot.kind === "dmap") label("min", "min", `${esc(t("Min"))} <span translate="no">${val(a[lo])}</span>`, lo);
     }
@@ -3856,6 +3882,14 @@ export class SimController {
     for (const k of ["temp", "flux"] as PlotKind[]) this.pushImage(blocks, this.capture(k));
     this.plot = was;
     this.showPlot();
+    const th = this.thermalHot();
+    if (th?.temps.length || th?.corners.length) {
+      const uf = UNITS[units.current].f, xyz = (a: number[]) => a.map(x => String(Number((x * uf).toFixed(3)))).join(", ");
+      blocks.push({ kind: "h", text: t("Hottest points") });
+      blocks.push({ kind: "table", widths: [1, 3, 4, 5], rows: [["#", `${t("Temperature")}, °C`, `X, Y, Z, ${units.current}`, t("Note")],
+        ...th.temps.map((h, i) => [String(i + 1), sig(h.vm), xyz(h.at), ""]),
+        ...th.corners.map((h, i) => [`⚠ ${i + 1}`, `${sig(h.vm * 1e6)} W/m²`, xyz(h.at), t("Heat flux at a sharp corner: value depends on refinement")])] });
+    }
     this.compareBlocks(blocks);
     blocks.push({ kind: "h", text: t("Convergence") });
     blocks.push({ kind: "table", widths: [1, 2, 2, 2, 2], rows: [[t("Pass"), t("Unknowns"), t("Temperature change"), t("Est. error"), t("Time")],
@@ -4287,7 +4321,24 @@ export class SimController {
     if (T.flows.length > 1) html += `<dt>${esc(t("Heat taken away in total"))}</dt><dd data-v="heatout">${sig(out)} W</dd>`;
     if (off != null) html += `<dt title="${esc(t("How far the heat taken away is from the heat put in, as a share of it"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${off > 1 ? ' class="sim-low"' : ""}>${pct(off).replace("<", "&lt;")} %</dd>`;
     html += `</dl>${this.compareHtml()}${this.mapHtml()}<div class="sim-probebar"><button class="btn small" data-a="balcsv" title="${esc(t("Save the heat balance (heat put in, taken away by each item, contacts and components) as a CSV file"))}">${esc(t("Export heat balance CSV"))}</button></div>` + this.exchangeHtml(r, last) + this.thermalCompsHtml(r, last) + this.heatPathsHtml();
-    return html + this.thermalPassesHtml(r, last);
+    return html + this.thermalHotHtml() + this.thermalPassesHtml(r, last);
+  }
+
+  /** The hottest points and the sharp corners of the heat flux (FR-TRES-003). */
+  private thermalHotHtml(): string {
+    const th = this.thermalHot();
+    if (!th || (!th.temps.length && !th.corners.length)) return "";
+    const uf = UNITS[units.current].f, xyz = (a: number[]) => a.map(x => String(Number((x * uf).toFixed(3)))).join(", ");
+    let html = "";
+    if (th.temps.length) html += `<h5 class="sim-sub">${esc(t("Hottest points"))}</h5><table class="sim-hot sim-thot"><thead><tr><th>#</th><th>${esc(t("Temperature"))}, °C</th><th>X, Y, Z, ${esc(units.current)}</th></tr></thead><tbody>`
+      + th.temps.map((h, i) => `<tr data-a="thot" data-thot="${i}" tabindex="0"${i === this.thotSel ? ' class="sel"' : ""}><td>${i + 1}</td><td>${sig(h.vm)} °C</td><td>${xyz(h.at)}</td></tr>`).join("") + `</tbody></table>`;
+    if (th.corners.length) {
+      const n = th.corners.length;
+      html += `<p class="sim-note sim-sing" data-v="fluxsing">⚠ ${esc(n === 1 ? t("The heat flux at a sharp corner keeps rising with accuracy: its value there depends on refinement.") : t("The heat flux at {n} sharp corners keeps rising with accuracy: its value there depends on refinement.", { n }))} ${esc(t("Temperatures are not affected. Round the corner to get a real value."))}</p>`
+        + `<table class="sim-hot sim-fcorners"><thead><tr><th>#</th><th>${esc(t("Heat flux"))}, W/m²</th><th>X, Y, Z, ${esc(units.current)}</th></tr></thead><tbody>`
+        + th.corners.map((h, i) => `<tr data-a="fcorner" data-fc="${i}" tabindex="0" class="sing"><td>${i + 1}</td><td>${sig(h.vm * 1e6)}</td><td>${xyz(h.at)}</td></tr>`).join("") + `</tbody></table>`;
+    }
+    return html + `<button class="btn small" data-a="thotcsv" title="${esc(t("Save the hottest points and the sharp corners as a CSV file"))}">${esc(t("Export CSV"))}</button>`;
   }
 
   /** A steady thermal result's heat balance as CSV (FR-TREP-011), English like the other exports; null without one. */
@@ -4634,6 +4685,17 @@ export class SimController {
       if (this.plot.kind !== "vm" || !this.plot.on) { this.plot.kind = "vm"; this.plot.on = true; this.showPlot(); }
       else this.drawProbes();
       this.renderAll();
+    }
+    else if (a === "thot" || a === "fcorner") {
+      const want: PlotKind = a === "fcorner" ? "flux" : this.plot.kind === "rise" ? "rise" : "temp";
+      if (a === "thot") { const i = Number(b.dataset.thot); this.thotSel = this.thotSel === i ? -1 : i; }
+      if (this.plot.kind !== want || !this.plot.on) { this.plot.kind = want; this.plot.on = true; this.showPlot(); }
+      else this.drawProbes();
+      this.renderAll();
+    }
+    else if (a === "thotcsv") {
+      const th = this.thermalHot();
+      if (th) download(new Blob([thermalHotCsv(th.temps, th.corners)], { type: "text/csv" }), `${this.fileBase()}-hottest-points.csv`);
     }
     else if (a === "stop") this.client.cancel();
     else if (a === "edit" && id) this.editItem(id);

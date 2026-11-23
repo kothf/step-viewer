@@ -227,7 +227,7 @@ test("heat paths of a board study: where a part's heat goes, and the package's s
   assert.ok(Math.abs(ca[0].out! + ca[1].out! - 2) < 0.02, `out ${ca[0].out} + ${ca[1].out}`);
   // the part conducts some of its heat into the board, the board loses it to the air
   assert.ok(ca[0].out! > 0.1 && ca[1].out! < 2, `board ${ca[0].out}, part ${ca[1].out}`);
-  // with a board the split is always kept, even saved off (1.711): 1.2 W enters the board under the part, 0.5 W goes
+  // with a board the split is always kept, even saved off (1.712): 1.2 W enters the board under the part, 0.5 W goes
   // to the chassis, 0.3 W is made in the part
   st.loads[0].board = "pcb";
   st.loads[0].split = false;

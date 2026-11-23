@@ -77,7 +77,7 @@ test("a heatsink part's share enters the heatsink it touches; none found, it sta
   // what leaves the three components adds up to the heat put in, most of it off the heatsink
   assert.ok(Math.abs(c[0].out! + c[1].out! + c[2].out! - 3) < 0.03, `out ${c.map(x => x.out)}`);
   assert.ok(c[2].out! > 1, `heatsink ${c[2].out}`);
-  // a study saved with the split off keeps it all the same (1.711): parts are soldered, never in the air
+  // a study saved with the split off keeps it all the same (1.712): parts are soldered, never in the air
   st.loads[0].split = false;
   const saved = thermalSetup(st, body, keys);
   assert.deepEqual(saved.heatsinks, set.heatsinks);

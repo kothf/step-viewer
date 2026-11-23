@@ -17213,6 +17213,16 @@ try {
     const dT = t2b.thermal.min - t2.thermal.min, rowT = t2b.compare?.rows?.find(r => r.key === "tmin");
     check(cmpT.sel === "prev" && t2b.compare?.with === "prev" && rowT && Math.abs(rowT.diff - dT) < 1e-6 && dT > 0 && JSON.stringify(cmpT.rows.map(r => r[0])) === JSON.stringify(["tmax", "tmin", "heat"]) && /^\+[\d.]+ K$/.test(cmpT.rows[1][1]) && cmpT.rows[2][1] === "0 %" && cmpT.passes === 1,
       `thermal 1.704: a thermal result is compared with the one before the last change: the lowest temperature rose with the ambient, in K, the heat put in did not change (${JSON.stringify({ cmpT, dT, compare: t2b.compare })})`);
+    // FR-TRES-003 (1.711.0): the hottest points are listed (no sharp inside corner on a bar), a row is labelled on the
+    // temperature plot, and the list saves as CSV
+    const hot0 = await tp.evaluate(() => ({ rows: document.querySelectorAll("#sim-tree .sim-thot tbody tr").length, corners: document.querySelectorAll("#sim-tree .sim-fcorners tbody tr").length, csv: !!document.querySelector('#sim-tree [data-a="thotcsv"]') }));
+    if (hot0.rows > 1) await tp.click('#sim-tree .sim-thot tr[data-thot="1"]');
+    await tp.waitForTimeout(200);
+    const t2c = await sim(), hot1 = await tp.evaluate(() => ({ sel: document.querySelectorAll("#sim-tree .sim-thot tr.sel").length, peaks: [...document.querySelectorAll("#sim-probes .sim-peak")].map(e => e.dataset.peak) }));
+    const th = t2c.thermal?.hot;
+    check(th && hot0.rows === th.temps.length && hot0.rows >= 1 && hot0.csv && Math.abs(th.temps[0].t - t2c.thermal.max) < 0.01 && th.corners.length === hot0.corners && th.csv.startsWith("Kind,#,X (mm),Y (mm),Z (mm),Temperature (C),Heat flux (W/m2)")
+      && (hot0.rows < 2 || (th.sel === 1 && hot1.sel === 1 && hot1.peaks.includes("t1") && t2c.plot.kind === "temp")),
+      `thermal 1.711: the hottest points of a thermal result are listed, the first one is the hottest temperature, a picked one is labelled on the temperature plot, and they save as CSV (${JSON.stringify({ hot0, hot1, th, plot: t2c.plot })})`);
     // FR-TSOL-003 (1.695.0): passes 4 to 6 raise the degree only where the temperatures still move
     await tp.selectOption('#sim-tree [data-k="passes"]', "5");
     await settle();
@@ -17793,7 +17803,7 @@ try {
       `thermal 1.658: a board study cools by natural convection in the package's closed chassis with gravity along −Z, and shows the mean film coefficient it came to (${JSON.stringify(nc)})`);
     const hp1 = await bp.evaluate(() => ({ paths: window.__sv.sim.state().thermal?.paths, rows: [...document.querySelectorAll("#sim-tree .sim-paths tr[data-path]")].map(r => [r.dataset.path, r.querySelector('[data-v="pboard"]').textContent, r.querySelector('[data-v="pair"]').textContent, !!r.title]), note: document.querySelector('#sim-tree [data-v="pathnote"]')?.textContent }));
     check(hp1.rows.length === 6 && hp1.paths.every(x => Math.abs(x.board + x.air + x.chassis + x.sink + x.other - x.p) < 1e-9 && x.air > 0) && hp1.paths.filter(x => x.board > 0.1 * x.p).length >= 2 && hp1.rows.every(r => r[3]) && /kept/.test(hp1.note ?? ""),
-      `thermal 1.657: the Heat paths table says, for each package part, the share of its heat conducted into the board and the share off its own surface, with the package's split (always kept, 1.711) in the row title (${JSON.stringify(hp1)})`);
+      `thermal 1.657: the Heat paths table says, for each package part, the share of its heat conducted into the board and the share off its own surface, with the package's split (always kept, 1.712) in the row title (${JSON.stringify(hp1)})`);
     // the heat table: a part left out makes no heat; a heatsink by its thermal resistance on the transistor
     await bp.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
     await bp.waitForSelector("#sim-pm .sim-pkparts tr[data-pk]");
@@ -17807,14 +17817,14 @@ try {
       rjc: window.__sv.asm.doc.studies.find(x => x.kind === "thermal").loads.find(l => l.type === "pkgheat").parts.find(x => x.name === "Q2")?.rjc }));
     check(tbl.length === 6 && tbl[0][0] === "V3" && tbl[0][1] === "18.2" && tbl.every(r => r[2]) && /5 parts.*10\.97 W|5 parts.*11 W/.test(less.row) && less.stale && less.rjc === 2.5,
       `thermal 1.655: the Heat from package panel lists every part with its power; unticking the valve leaves 5 parts and the results go stale (${JSON.stringify({ tbl, less })})`);
-    // 1.657 / 1.711: the package's split is always kept: the board shares go into the board under each part as fixed
+    // 1.657 / 1.712: the package's split is always kept: the board shares go into the board under each part as fixed
     // powers, even in a study saved with the split off (parts are soldered, never in the air); the panel has no switch for it
     await bp.evaluate(() => window.__sv.asm.change(d => { d.studies.find(x => x.kind === "thermal").loads.find(x => x.type === "pkgheat").split = false; }));
     await bp.waitForTimeout(300);
     await bp.click('#sim-tree .sim-row[data-id="l1"] [data-a="edit"]');
     await bp.waitForSelector('#sim-pm [data-v="splithelp"]');
     const sw = await bp.evaluate(() => ({ box: !!document.querySelector('#sim-pm input[data-k="split"]'), help: document.querySelector('#sim-pm [data-v="splithelp"]')?.textContent }));
-    check(!sw.box && /soldered/.test(sw.help ?? ""), `thermal 1.711: Heat from package has no switch for the package's split, only a note that it is always kept (${JSON.stringify(sw)})`);
+    check(!sw.box && /soldered/.test(sw.help ?? ""), `thermal 1.712: Heat from package has no switch for the package's split, only a note that it is always kept (${JSON.stringify(sw)})`);
     await bp.click("#sim-pm .pm-ok");
     await bp.click('#sim-tools [data-s="solve"]');
     await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 400000 });

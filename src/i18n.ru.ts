@@ -6417,4 +6417,10 @@ export const RU: Record<string, string> = {
   "Another map…": "Другая карта…",
   "largest": "наибольшая",
   "No thermal map among these files: pick the package's ZIP, or its .vtu.": "Среди этих файлов нет тепловой карты: выберите ZIP пакета или его .vtu.",
+  "Hottest points": "Самые горячие точки",
+  "Heat flux at a sharp corner: value depends on refinement": "Тепловой поток в остром углу: значение зависит от уточнения",
+  "The heat flux at a sharp corner keeps rising with accuracy: its value there depends on refinement.": "Тепловой поток в остром углу растёт с точностью расчёта: его значение там зависит от уточнения.",
+  "The heat flux at {n} sharp corners keeps rising with accuracy: its value there depends on refinement.": "Тепловой поток в острых углах ({n}) растёт с точностью расчёта: его значение там зависит от уточнения.",
+  "Temperatures are not affected. Round the corner to get a real value.": "На температуры это не влияет. Скруглите угол, чтобы получить настоящее значение.",
+  "Save the hottest points and the sharp corners as a CSV file": "Сохранить самые горячие точки и острые углы в файл CSV",
 };
