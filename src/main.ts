@@ -109,6 +109,7 @@ const thermal = new ThermalMaps({
   addMap: () => openPicker(),
   simulate: (pkg, match, bodies) => { void simulateBoard(pkg, match, bodies); },
   savePicture: () => { void exportPng(false, parseInt($<HTMLSelectElement>("#png-scale").value) || 2); },
+  snapshot: () => (viewer.parts.length ? snapshot(viewer, annotations, { scale: 1, transparent: false, background: bgColor() }) : null),
   gerber: files => { if (state.fileKey) boardGerbers.set(state.fileKey, files); },
   pcbView: (pkg, du, dv) => void openPcbThermal(pkg, du, dv),
 });
@@ -2470,7 +2471,7 @@ canvas.addEventListener("pointerup", e => {
   const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
   const btn = downAt.button;
   downAt = null;
-  if (moved > 4 || btn !== 0 || !viewer.parts.length || modeller.picking || asm.picking || (asm.active && sim.active)) return;
+  if (moved > 4 || btn !== 0 || !viewer.parts.length || modeller.picking || asm.picking || (asm.active && sim.active) || thermal.probingNow()) return;
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
   const r = canvas.getBoundingClientRect();
   if (state.tool === "sectionFace") { sectionOnFace(faceUnder(e.clientX - r.left, e.clientY - r.top)); return; }

@@ -18714,6 +18714,14 @@ try {
     const sat = c => Math.max(...c) - Math.min(...c);
     check(/\.png$/.test(dl.suggestedFilename()) && px.type === "image/png" && px.k >= 2 && sat(px.mid) > 60 && sat(px.low) > 30 && px.low.reduce((x, y) => x + y) + 200 < px.high.reduce((x, y) => x + y),
       `thermal picture 1.660: Save picture writes a PNG with the colour scale drawn in bottom left (${JSON.stringify({ name: dl.suggestedFilename(), ...px })})`);
+    // Report (FR-TREP-001): HTML with the view, top and bottom pictures, the parts and where the values come from
+    const view0 = await ip.evaluate(() => window.__sv.viewer.getView());
+    await ip.click('#th-tools [data-th="report"]');
+    await ip.waitForSelector("dialog.choose-dlg[open]");
+    const [rd] = await Promise.all([ip.waitForEvent("download"), ip.click('dialog.choose-dlg [data-choose="html"]')]);
+    const rep = await ip.evaluate(async () => { const b = window.__blobs.at(-1), html = await b.text(); return { html: html.length, imgs: (html.match(/<img /g) ?? []).length, parts: ["V3", "R14", "Q2", "C12", "R20", "C13"].filter(n => html.includes(n)).length, from: /did not compute them/.test(html), state: window.__sv.thermal.state().report, view: window.__sv.viewer.getView() }; });
+    check(/-thermal-report\.html$/.test(rd.suggestedFilename()) && rep.imgs === 3 && rep.parts === 6 && rep.from && rep.state?.captions.join() === "The view as shown,From above,From below" && [...rep.view.t, ...rep.view.p, rep.view.h].every((v, i) => Math.abs(v - [...view0.t, ...view0.p, view0.h][i]) < 1e-3 * (1 + Math.abs(v))),
+      `thermal report 1.697: the map's report holds the view as shown and from above and below, every part and where the values come from; the view is put back (${JSON.stringify({ name: rd.suggestedFilename(), ...rep, view0 })})`);
     await ctx.close();
   }
 
