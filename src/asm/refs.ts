@@ -13,6 +13,8 @@ import type { AsmDoc } from "./types";
 export interface RefDir {
   read(path: string): Promise<Uint8Array | null>;
   write(path: string, data: Uint8Array): Promise<void>;
+  /** Every file in the folder and its subfolders (a few levels down), for finding moved files. */
+  list?(): Promise<string[]>;
 }
 
 /** The JSON of each referenced document as last read from or written to its file, by its path in the folder: what
@@ -93,6 +95,65 @@ async function resolveInto(doc: AsmDoc, dir: RefDir, base: RefBase, at: string, 
   }
 }
 
+/** What looking for moved files found. */
+export interface MovedResult {
+  doc: AsmDoc;
+  /** Names of the entries whose file was found under another name or in another folder. */
+  found: string[];
+}
+
+/** How many files at most are opened looking for moved ones. */
+const MOVED_READS = 400;
+
+/**
+ * Looks for the files of missing references (`missing` = top-level part keys) elsewhere in the folder, as other CAD
+ * apps do when a part file was renamed or moved: a file holding the same document (by its id) takes over the
+ * reference. Files with the old name go first. The document is not changed in place.
+ */
+export async function findMoved(doc: AsmDoc, dir: RefDir, missing: string[], at = ""): Promise<MovedResult> {
+  const out: MovedResult = { doc: structuredClone(doc), found: [] };
+  const want = missing.map(k => [k, out.doc.parts[k]] as const).filter(([, e]) => e?.link && (e.doc || e.asm));
+  if (!want.length || !dir.list) return out;
+  const files = (await dir.list()).map(norm);
+  const taken = new Set(Object.values(out.doc.parts).filter(e => e.link).map(e => keyOf(joinPath(at, e.link!.path))));
+  const ids = new Map<string, string | null>();
+  let reads = 0;
+  const idOf = async (p: string, asm: boolean): Promise<string | null> => {
+    if (ids.has(p)) return ids.get(p)!;
+    if (reads++ >= MOVED_READS) return null;
+    const b = await dir.read(p);
+    const got = b ? await readEntry(b, asm) : null;
+    const id = got ? (got.asm ? got.asm.id : got.doc!.id) : null;
+    ids.set(p, id);
+    return id;
+  };
+  for (const [, e] of want) {
+    const ext = e.asm ? ASM_EXT : PART_EXT, id = e.asm?.id ?? e.doc.id;
+    const name = e.link!.path.split("/").at(-1)!.toLowerCase();
+    const cands = files.filter(f => f.toLowerCase().endsWith(ext) && !taken.has(keyOf(f)) && (!at || f.startsWith(`${at}/`)))
+      .sort((a, b) => +(b.split("/").at(-1)!.toLowerCase() === name) - +(a.split("/").at(-1)!.toLowerCase() === name));
+    for (const f of cands) {
+      if (await idOf(f, !!e.asm) !== id) continue;
+      const bytes = (await dir.read(f))!;
+      e.link = { path: relTo(at, f), hash: e.link!.hash === await hashBytes(bytes) ? e.link!.hash : "" };
+      e.file = f.split("/").at(-1)!;
+      taken.add(keyOf(f));
+      out.found.push(e.name);
+      break;
+    }
+  }
+  return out;
+}
+
+/** `p` (relative to the root) written relative to the folder `at`. */
+function relTo(at: string, p: string): string {
+  if (!at) return p;
+  const a = at.split("/"), b = p.split("/");
+  let i = 0;
+  while (i < a.length && i < b.length - 1 && a[i].toLowerCase() === b[i].toLowerCase()) i++;
+  return [...a.slice(i).map(() => ".."), ...b.slice(i)].join("/");
+}
+
 /** What saving the references wrote. */
 export interface WriteResult {
   doc: AsmDoc;
@@ -169,6 +230,7 @@ export function memDir(files = new Map<string, Uint8Array>()): RefDir & { files:
     files,
     async read(p) { return files.get(norm(p)) ?? null; },
     async write(p, d) { files.set(norm(p), d); },
+    async list() { return [...files.keys()]; },
   };
 }
 
@@ -196,6 +258,20 @@ export function fsaDir(root: FileSystemDirectoryHandle): RefDir {
       const s = await h.createWritable();
       await s.write(data as BlobPart);
       await s.close();
+    },
+    async list() {
+      const out: string[] = [];
+      const walk = async (d: DirH, at: string, depth: number) => {
+        if (!d.values) return;
+        for await (const h of d.values()) {
+          if (out.length >= 5000) return;
+          const p = at ? `${at}/${h.name}` : h.name;
+          if (h.kind === "file") out.push(p);
+          else if (depth < 4 && !h.name.startsWith(".")) await walk(h as DirH, p, depth + 1);
+        }
+      };
+      try { await walk(root, "", 0); } catch { /* what was listed */ }
+      return out;
     },
   };
 }

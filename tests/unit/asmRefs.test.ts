@@ -1,7 +1,7 @@
 // Assemblies that reference their part files: save beside, read the latest, missing files, old embedded files.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { memDir, resolveRefs, writeRefs, type RefBase } from "../../src/asm/refs";
+import { findMoved, memDir, resolveRefs, writeRefs, type RefBase } from "../../src/asm/refs";
 import { packPart, unpackPart } from "../../src/model/file";
 import { unpackAsm } from "../../src/asm/file";
 import { newPart } from "../../src/model/doc";
@@ -100,4 +100,25 @@ test("toolbox fasteners stay inside; sub-assemblies are files with their own ref
   const res = await resolveRefs(r.doc, dir, new Map());
   assert.deepEqual(res.updated, ["Pin"]);
   assert.deepEqual(res.doc.parts.k_sub.asm!.parts.k_Pin.doc.props, { v: "2" });
+});
+
+test("a part file renamed or moved in the folder is found by its document", async () => {
+  const dir = memDir();
+  const saved = (await writeRefs(asmOf(["Plate", "Pin"]), dir, new Map(), APP)).doc;
+  // Pin moved into a subfolder, Plate renamed and edited there
+  dir.files.set("hw/Pin-old.mcadprt", dir.files.get("Pin.mcadprt")!); dir.files.delete("Pin.mcadprt");
+  const plate = part("Plate"); plate.props = { v: "3" } as never;
+  dir.files.set("Plate v2.mcadprt", await packPart(plate, APP)); dir.files.delete("Plate.mcadprt");
+  const decoy = part("Pin"); decoy.id = "other";
+  dir.files.set("Pin.mcadprt.bak/Pin.mcadprt", await packPart(decoy, APP));
+  const r = await resolveRefs(saved, dir, new Map());
+  assert.deepEqual(r.missing.sort(), ["k_Pin", "k_Plate"]);
+  const m = await findMoved(r.doc, dir, r.missing);
+  assert.deepEqual(m.found.sort(), ["Pin", "Plate"]);
+  assert.equal(m.doc.parts.k_Pin.link?.path, "hw/Pin-old.mcadprt");
+  assert.equal(m.doc.parts.k_Plate.link?.path, "Plate v2.mcadprt");
+  const again = await resolveRefs(m.doc, dir, new Map());
+  assert.deepEqual(again.missing, []);
+  assert.deepEqual(again.updated, ["Plate"]);
+  assert.deepEqual(again.doc.parts.k_Plate.doc.props, { v: "3" });
 });

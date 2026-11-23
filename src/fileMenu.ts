@@ -264,8 +264,9 @@ export class FileMenu {
       btn.disabled = true;
       try {
         const out: { name: string; data: Uint8Array }[] = [], used = new Set<string>();
-        const add = (f: { name: string; data: Uint8Array }, dir = "") => {
-          let n = dir + f.name.replace(/[\\/:*?"<>|]/g, "_");
+        // `keep`: the name is a path whose folders stay (an assembly's part files at their reference paths)
+        const add = (f: { name: string; data: Uint8Array }, dir = "", keep = false) => {
+          let n = dir + (keep ? f.name.split("/").map(s => s.replace(/[\\:*?"<>|]/g, "_")).join("/") : f.name.replace(/[\\/:*?"<>|]/g, "_"));
           for (let k = 2; used.has(n.toLowerCase()); k++) n = dir + f.name.replace(/(\.[^.]+)?$/, ` (${k})$1`);
           used.add(n.toLowerCase());
           out.push({ name: n, data: f.data });
@@ -274,7 +275,7 @@ export class FileMenu {
           for (const f of await x.files()) add(f);
           // an assembly's parts go beside it, where its references point
           // (a part file of that name already packed is the same part, open in its own tab: renaming it would break the reference)
-          if (parts && x.parts) for (const f of await x.parts()) { if (x.kind !== "asm") add(f, "parts/"); else if (!used.has(f.name.toLowerCase())) add(f); }
+          if (parts && x.parts) for (const f of await x.parts()) { if (x.kind !== "asm") add(f, "parts/"); else if (!used.has(f.name.toLowerCase())) add(f, "", true); }
         }
         this.host.download(new Blob([await zip(out) as BlobPart], { type: "application/zip" }), name);
         dlg.close();

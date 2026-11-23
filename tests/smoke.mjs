@@ -19894,6 +19894,19 @@ try {
     await rp.waitForFunction(() => Object.values(window.__sv.asm.doc?.parts ?? {}).some(p => p.doc.props?.description === "changed elsewhere"), null, { timeout: 30000 });
     const s3 = await rp.evaluate(() => ({ dirty: window.__sv.asm.dirty, toast: [...document.querySelectorAll(".toast")].map(x => x.textContent).join(" | ") }));
     check(!s3.dirty && /Plate/.test(s3.toast), `references: an assembly opened again takes in a part changed in its own file (${JSON.stringify(s3)})`);
+    // A part file moved into a subfolder under another name: opening the assembly finds it by its document.
+    const asmBytes = await read(asmName);
+    await rp.evaluate(async () => {
+      const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("refs-smoke");
+      const data = await (await (await d.getFileHandle("Block.mcadprt")).getFile()).arrayBuffer();
+      const w = await (await (await d.getDirectoryHandle("hw", { create: true })).getFileHandle("Block-renamed.mcadprt", { create: true })).createWritable();
+      await w.write(data); await w.close();
+      await d.removeEntry("Block.mcadprt");
+    });
+    await rp.evaluate(async ({ n, data }) => { await window.__sv.asm.openFile({ name: n, data: new Uint8Array(data).buffer }); }, { n: asmName, data: asmBytes.data });
+    await rp.waitForFunction(() => Object.values(window.__sv.asm.doc?.parts ?? {}).some(p => p.link?.path === "hw/Block-renamed.mcadprt"), null, { timeout: 30000 });
+    const s4 = await rp.evaluate(() => ({ dirty: window.__sv.asm.dirty, bar: !!document.getElementById("asm-refs"), toast: [...document.querySelectorAll(".toast")].map(x => x.textContent).join(" | ") }));
+    check(s4.dirty && !s4.bar && /renamed or moved/.test(s4.toast), `references: a part file renamed and moved into a subfolder is found by its document and the reference follows it (${JSON.stringify(s4)})`);
     // Pack and Go puts the part files beside the assembly, where its references point.
     await rp.click("#file-btn");
     await rp.click("#file-menu [data-f=pack]");
@@ -19901,7 +19914,7 @@ try {
     await rp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
     const [dl] = await Promise.all([rp.waitForEvent("download"), rp.click("#pack-dlg [data-a=ok]")]);
     const ztext = (await readFile(await dl.path())).toString("latin1");
-    check(ztext.includes("Block.mcadprt") && ztext.includes("Plate.mcadprt") && !ztext.includes("parts/Block"), `references: Pack and Go packs the part files beside the assembly, at their reference paths (${ztext.length} bytes)`);
+    check(ztext.includes("hw/Block-renamed.mcadprt") && ztext.includes("Plate.mcadprt") && !ztext.includes("parts/Block"), `references: Pack and Go packs the part files beside the assembly, at their reference paths (${ztext.length} bytes)`);
     await ctx.close();
   }
   if (inShard(1)) {
