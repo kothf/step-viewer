@@ -17814,6 +17814,22 @@ try {
     check(gm.map && gm.map[0] === 120 && gm.map[1] === 80 && gm.map[2] === 1 && gm.map[3] === 12 && Math.abs(gm.map[4][0] - 0.503) < 0.01 && Math.abs(gm.map[4][1] - 0.833) < 0.01 && gm.layers === 2 && /50 %.*83 %.*12/.test(gm.info ?? "") && gm.img === 120 && gm.stale
       && !g1.error && !g1.reused && Math.abs(g1.max - max0) > 0.05,
       `thermal 1.675: Copper from Gerber reads the board's two copper layers (50 % and 83 % copper) and 12 plated holes onto 1 mm cells, shows the map, and the study solves again with the board's conductivity following its copper (${JSON.stringify({ gm, max0, g1 })})`);
+    // 1.706 (FR-TBRD-003/004, FR-TBC-008): a heatsink part's share goes into the body it sits against. C13 is moved
+    // against Q2's side and made to make no heat, so it stands in for a heatsink; Q2's 4.2 W share then enters it.
+    await bp.evaluate(() => window.__sv.asm.change(d => {
+      const st = d.studies.find(x => x.kind === "thermal"), l = st.loads.find(x => x.type === "pkgheat"), c = l.parts.find(x => x.name === "C13");
+      c.p = 0;
+      const tf = d.components.find(x => x.id === c.comps[0]).tf;
+      tf[3] += 10; tf[7] -= 21.4;
+    }));
+    await bp.waitForTimeout(400);
+    await bp.click('#sim-tools [data-s="solve"]');
+    await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 400000 });
+    await bp.waitForTimeout(500);
+    const hs = await bp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, q2: s.thermal?.paths?.find(x => x.name === "Q2"), cell: document.querySelector('#sim-tree .sim-paths tr[data-path="Q2"] [data-v="psink"]')?.textContent,
+      head: [...document.querySelectorAll("#sim-tree .sim-paths th")].map(e => e.textContent), note: document.querySelector('#sim-tree [data-v="sinknote"]')?.textContent }; });
+    check(!hs.error && hs.q2 && hs.q2.sink > 0.5 && Math.abs(hs.q2.board + hs.q2.air + hs.q2.sink + Math.max(0, hs.q2.other) - 4.4) < 0.1 && Number(hs.cell) === Math.round(100 * Math.max(0, hs.q2.sink) / 4.4) && hs.head.some(h => /Heatsink/.test(h)) && /4\.2 W/.test(hs.note ?? ""),
+      `thermal 1.706: with the package's split kept, Q2's heatsink share of 4.2 W enters the body it sits against and the Heat paths table has a Heatsink column with Q2's net heat into it (${JSON.stringify(hs)})`);
     await ctx.close();
   }
 
@@ -19305,7 +19321,7 @@ try {
   }
 
   // --- Structural analysis 1.637 (FR-CON-020/021): a toolbox screw with its nut is analysed as a bolt ---
-  // In shard 4 since 1.707.0 (shard 3 since 1.700.0): shards 5, then 3 reached the 12 minute limit.
+  // In shard 4 since 1.708.0 (shard 3 since 1.700.0): shards 5, then 3 reached the 12 minute limit.
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
