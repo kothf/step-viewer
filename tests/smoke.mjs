@@ -7767,7 +7767,10 @@ try {
     await ctx.setOffline(true);
     let offVer = "";
     try { await pg.reload({ timeout: 20000 }); await pg.waitForFunction(() => /^v\d+\.\d+\.\d+/.test(document.querySelector("#app-version")?.textContent ?? ""), null, { timeout: 20000 }); offVer = await pg.evaluate(() => document.querySelector("#app-version").textContent); } catch (e) { offVer = String(e).slice(0, 80); }
+    // served by the worker, the page is cross-origin isolated: shared memory for the analysis threads, and workers still start
+    const iso = await pg.evaluate(async () => ({ on: crossOriginIsolated, sab: typeof SharedArrayBuffer !== "undefined" })).catch(() => ({}));
     await ctx.setOffline(false);
+    check(iso.on && iso.sab, `1.717: the page the service worker serves is cross-origin isolated (${JSON.stringify(iso)})`);
     check(/^\?v=\d+\.\d+\.\d+$/.test(swState.script) && swState.caches === 1 && swState.index && swState.occt && !swState.full && swState.n > 10 && swState.ctl && /^v\d/.test(offVer), `1.47: service worker precaches the app and it starts offline (${JSON.stringify(swState)}, ${offVer})`);
     await ctx.close();
   }
@@ -16318,9 +16321,18 @@ try {
     // Two passes; a uniform load on a cantilever: tip deflection F L³ / (8 E I) = 0.357 mm, root stress M c / I = 75 MPa.
     await mp.selectOption('#sim-tree [data-k="passes"]', "2");
     await settle();
+    // 1.717: the status bar says what the solve is doing (stage, bar, time, Stop) and the line goes when it ends
+    await mp.evaluate(() => {
+      const el = document.querySelector("#st-sim"), seen = window.__simLine = { texts: [], bar: false, stop: false, now: [] };
+      const note = () => { if (el.hidden) return; const t = el.querySelector(".st-sim-t")?.textContent ?? ""; if (t && seen.texts.at(-1) !== t) seen.texts.push(t); const b = el.querySelector('.st-sim-bar[role="progressbar"]'); seen.bar ||= !!b; if (b?.hasAttribute("aria-valuenow")) seen.now.push(Number(b.getAttribute("aria-valuenow"))); seen.stop ||= !!el.querySelector('button[data-a="simstop"]'); };
+      new MutationObserver(note).observe(el, { attributes: true, childList: true, subtree: true, characterData: true });
+    });
     await mp.click('#sim-tools [data-s="solve"]');
     await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
     await mp.waitForTimeout(200);
+    const line = await mp.evaluate(() => ({ ...window.__simLine, hidden: document.querySelector("#st-sim").hidden, empty: !document.querySelector("#st-sim").firstChild }));
+    check(line.texts.length >= 2 && line.texts.some(t => /Pass 2 of 2/.test(t)) && line.bar && line.stop && line.now.every((v, i) => v >= 0 && v <= 100 && (i === 0 || v >= line.now[i - 1])) && line.hidden && line.empty,
+      `sim 1.717: while a study is solved the status bar names the pass and the step with a bar that only moves forward and a Stop button; the line goes when the solve ends (${JSON.stringify({ texts: line.texts.slice(0, 8), n: line.now.length, last: line.now.at(-1), bar: line.bar, stop: line.stop, hidden: line.hidden })})`);
     const r1 = await sim();
     const shown = await mp.evaluate(() => ({ legend: !document.querySelector("#sim-legend").hidden, max: document.querySelector('#sim-legend [data-v="max"]')?.textContent, rows: document.querySelectorAll("#sim-tree .sim-passes tbody tr").length, kv: document.querySelector("#sim-tree .sim-kv")?.textContent ?? "" }));
     const reaction = r1.reactions[0]?.force ?? [];
@@ -17573,8 +17585,8 @@ try {
       && res1.rows.length === 2 && Math.abs(res1.heat - 4) < 0.05 && res1.wide <= 0 && ru.length === 0
       && hout.head.length === 4 && hout.rows.length === 2 && hout.rows.every(r => r.air === "0") && Math.abs(hout.rows[0].held - 4) < 0.05 && Math.abs(hout.rows[0].cond + 4) < 0.05 && Math.abs(hout.rows[1].cond - 4) < 0.05 && /: [34][.\d]* W$/.test(hout.rows[1].tip),
       `thermal 1.654: a thermal study of an assembly: 4 W made in one bar leave through the other, which is held at 20 °C; components with their conductivity, the contact with the heat through it; translated; where each bar's heat goes (${JSON.stringify({ tb, kept, tree0, error: t1.error, thermal: t1.thermal, res1, ru, hot, hout })})`);
-    // 1.717: the cells were cut by helper workers (asked for with ?simthreads=2), with the same answer as above
-    check(t1.helpers?.helpers === 2 && t1.helpers.ms >= 0, `thermal 1.717: the cells of a thermal study of an assembly are cut by two helper workers (${JSON.stringify(t1.helpers)})`);
+    // 1.718: the cells were cut by helper workers (asked for with ?simthreads=2), with the same answer as above
+    check(t1.helpers?.helpers === 2 && t1.helpers.ms >= 0, `thermal 1.718: the cells of a thermal study of an assembly are cut by two helper workers (${JSON.stringify(t1.helpers)})`);
     // a pad between the bars: 0.5 mm of 3 W/(m·K) adds P·t / (k·A)
     await ap.selectOption('#sim-tree select[data-k="tlink"]', "pad");
     await ap.waitForTimeout(400);

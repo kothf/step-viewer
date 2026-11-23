@@ -10,7 +10,7 @@ mkdirSync(out, { recursive: true });
 const lines = [];
 let fails = 0;
 // `sim-all` = the structural test set: every structural analysis scenario, on made-up and on real models
-const SIM_ALL = ["sim", "modal", "bonded", "loads2", "loads3", "refine", "section", "path", "cases", "relief", "bodymats", "simasm", "simbolt", "simweld", "simconn", "simasmmodal", "simextras", "simauto", "simspot", "simmat", "set-engine", "set-shaft"];
+const SIM_ALL = ["sim", "modal", "bonded", "loads2", "loads3", "refine", "section", "path", "cases", "relief", "bodymats", "simasm", "simbolt", "simweld", "simconn", "simasmmodal", "simextras", "simauto", "simprogress", "simspot", "simmat", "set-engine", "set-shaft"];
 const asked = process.argv.slice(2).flatMap(a => (a === "sim-all" ? SIM_ALL : [a]));
 for (const f of (asked.length ? asked : ["sketch", "model", "asm", "asm2", "select", "drawing", "keys", "polish", "polish2", "gtol", "attach", "clip", "drwmenu", "cutflow", "convert", "filletdim", "relicons", "vaultusers", "sim", "holepos", "snapref", "arcmeasure"])) {
   const r = spawnSync("node", [join(dir, `${f}.mjs`)], { encoding: "utf8", env: { ...process.env, HT_OUT: out } });

@@ -7,9 +7,11 @@
 import { Basis, basisSize } from "./basis";
 import { gauss, gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
 import { makeGrid, memoryBytes, refit, type Grid } from "./grid";
-import { BlockMatrix, Envelope, envelopeCost } from "./sparse";
+import { BlockMatrix } from "./sparse";
+import { BlockCholesky, cholPlan, type CholPlan } from "./blockchol";
 import { pcgSolver, cholesky } from "./pcg";
 import { subspace } from "./eigen";
+import { progress } from "./progress";
 
 export interface Material {
   /** Young's modulus, MPa. */
@@ -342,10 +344,10 @@ export const MODAL_DIRECT = 9000;
  */
 export const DIRECT_FLOPS = 4e10, MODAL_FLOPS = 2e11, DIRECT_VALUES = 5e7;
 /** Whether the direct solver is the one to use for A (and the element order it found, to factor with). */
-function directFits(A: BlockMatrix, limit: number, flops: number): { direct: boolean; order?: Int32Array } {
-  if (A.size <= limit) return { direct: true };
-  const c = envelopeCost(A);
-  return { direct: c.flops <= flops && c.values <= DIRECT_VALUES, order: c.order };
+function directFits(A: BlockMatrix, limit: number, flops: number): { direct: boolean; plan?: CholPlan } {
+  const plan = cholPlan(A);
+  if (A.size <= limit) return { direct: true, plan };
+  return { direct: plan.flops <= flops && plan.size <= DIRECT_VALUES, plan };
 }
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
@@ -626,6 +628,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
 
   // volume terms
   for (let e = 0; e < nel; e++) {
+    progress("assemble", e, 2 * nel);
     const E = grid.elems[e];
     const K = A.block(e, e);
     const nb = nbs[e];
@@ -1468,7 +1471,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       const fits = pb.solver ? { direct: pb.solver === "direct" } as ReturnType<typeof directFits> : directFits(A, MODAL_DIRECT, MODAL_FLOPS);
       const direct = fits.direct;
       let solve: (b: Float64Array, g?: Float64Array) => Float64Array;
-      if (direct) { const F = new Envelope(A, fits.order); solve = b => F.solve(b); }
+      if (direct) { const F = new BlockCholesky(A, { plan: fits.plan }); solve = b => F.solve(b); }
       else { const S = pcgSolver(A, { coarse: 3 * basisSize(1), tol: 1e-6, maxIt: 300 }); solve = (b, g) => { const r = S.solve(b, g); iterations += r.iterations; return r.x; }; }
       // an earlier pass's vectors in this pass's layout (zeros for the functions it did not have)
       const start = (modal.start ?? []).map(v => {
@@ -1555,6 +1558,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     for (let k = n - 1; k >= 0; k--) { let v = rhs[k]; for (let j = k + 1; j < n; j++) v -= T[k * n + j] * rhs[j]; rhs[k] = v / (T[k * n + k] || 1); }
     pre.forEach((b, k) => { b.f0 = rhs[k]; for (let i = 0; i < f.length; i++) f[i] += rhs[k] * b.g![i]; });
   };
+  progress("factor", 0, 1);
   const fitsS = modalRun || pb.solver || p < 2 ? null : directFits(A, DIRECT_LIMIT, DIRECT_FLOPS);
   const useCg = pb.solver === "pcg" || (pb.solver !== "direct" && p >= 2 && !(fitsS?.direct ?? A.size <= DIRECT_LIMIT));
   if (modalRun) {
@@ -1574,8 +1578,9 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       xs = r2.x; iterations += r2.iterations;
     }
   } else {
-    const L = new Envelope(A, fitsS?.order);
+    const L = new BlockCholesky(A, { plan: fitsS?.plan });
     t3 = now();
+    progress("solve", 0, 1);
     tighten(b => L.solve(b));
     xs = L.solve(f);
     if (reliefM) { const y = new Float64Array(f.length); reliefM(xs, y); for (let i = 0; i < y.length; i++) y[i] += f[i]; xs = L.solve(y); }

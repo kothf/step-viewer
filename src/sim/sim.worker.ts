@@ -3,25 +3,47 @@
 // The last pass's solution of a static study stays here, so the page can read it at other points
 // (results on section planes, FR-RES-030).
 
+import CholWorker from "./chol.worker?worker";
+import { canShare, setHelpers, threadStats } from "./threads";
 import { findConnections, type Connection } from "./connect";
 import { findBolts, type FastenerBody } from "./bolts";
+import { progress, progressTo, type SimProgress } from "./progress";
 import { runModal, runStatic, runThermal, runTransient, sampleAt, thermalFrame, type PassResult, type RunInput, type SampleResult, type Sampler } from "./run";
 import { usePrepared } from "./grid";
 import { prepareCells } from "./par";
 import { parPool } from "./parPool";
 
 export type SimRequest =
+  | { id: number; type: "threads"; n: number }
   | { id: number; type: "static" | "modal" | "thermal"; input: RunInput; /** Keep the solutions of the solves before (the other load cases). */ more?: boolean }
   | { id: number; type: "connect"; bodies: Float64Array[]; gap: number }
   | { id: number; type: "bolts"; bodies: Float64Array[]; fast: FastenerBody[] }
   | { id: number; type: "sample"; of: number; pos: Float32Array; scale: number; solid?: boolean };
 export type SimReply =
   | { id: number; pass: PassResult }
-  | { id: number; done: true; cut?: { helpers: number; ms: number } | null }
+  | { id: number; progress: SimProgress }
+  | { id: number; done: true; threads: ReturnType<typeof threadStats>; cut?: { helpers: number; ms: number } | null }
   | { id: number; sample: SampleResult | null }
   | { id: number; found: Connection[] }
   | { id: number; bolts: ReturnType<typeof findBolts> }
   | { id: number; error: string };
+
+/**
+ * Helper threads for the factorisations (`n` threads in all, this one among them). They need shared memory, which
+ * a page has only when it is cross-origin isolated; without it the solver runs on this thread alone.
+ */
+let ready: Promise<void> = Promise.resolve();
+function useThreads(n: number) {
+  if (!canShare() || !(self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated) return;
+  try {
+    const list = Array.from({ length: Math.max(0, Math.min(16, n) - 1) }, () => new CholWorker());
+    setHelpers(list);
+    // A helper made just before this thread starts a long solve would not start until the solve ends (a worker's
+    // own workers are started through its event loop), so a solve waits for them to report in, 3 s at most.
+    const up = Promise.all(list.map(w => new Promise<void>(res => { w.onmessage = () => res(); w.onerror = () => res(); })));
+    ready = Promise.race([up, new Promise<void>(res => setTimeout(res, 3000))]).then(() => {});
+  } catch { setHelpers([]); }
+}
 
 const post = (m: SimReply, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(m, transfer);
 const kept = new Map<number, { sample: Sampler; inside: (x: number, y: number, z: number) => boolean }>();
@@ -32,6 +54,7 @@ let cut: { helpers: number; ms: number } | null = null;
 self.onmessage = async (e: MessageEvent<SimRequest>) => {
   const r = e.data;
   try {
+    if (r.type === "threads") { useThreads(r.n); return; }
     if (r.type === "sample") {
       const k = kept.get(r.of);
       const s = k ? sampleAt(k.sample, r.pos, r.scale, r.solid ? k.inside : undefined) : null;
@@ -48,7 +71,10 @@ self.onmessage = async (e: MessageEvent<SimRequest>) => {
       post({ id: r.id, bolts }, bolts.bolts.flatMap(b => [b.a.buffer, b.b.buffer]));
       return;
     }
+    await ready;
     if (!r.more) kept.clear();
+    progressTo(p => post({ id: r.id, progress: p }));
+    progress("geometry", 0, 1);
     // a steady thermal study's cells are cut against the bodies by the helpers, all at once; the solver then finds them made
     cut = null;
     if (r.type === "thermal" && r.input.thermal && !r.input.thermal.transient) {
@@ -56,6 +82,7 @@ self.onmessage = async (e: MessageEvent<SimRequest>) => {
       if (pool) {
         try {
           const t0 = Date.now(), F = thermalFrame(r.input);
+          progress("cells", -1);
           usePrepared(await prepareCells(pool, F.tris, r.input.body.lo, r.input.body.hi, F.h));
           cut = { helpers: pool.size, ms: Date.now() - t0 };
         } catch { usePrepared(null); }
@@ -63,8 +90,10 @@ self.onmessage = async (e: MessageEvent<SimRequest>) => {
     }
     const passes = r.type === "modal" ? runModal(r.input) : r.type === "thermal" && r.input.thermal?.transient ? runTransient(r.input) : r.type === "thermal" ? runThermal(r.input, (s, inside) => { kept.set(r.id, { sample: s, inside }); }) : runStatic(r.input, (s, inside) => { kept.set(r.id, { sample: s, inside }); });
     for (const pass of passes) post({ id: r.id, pass }, [pass.u.buffer, pass.vm.buffer, pass.err.buffer, ...(pass.shapes ?? []).map(s => s.buffer), ...(pass.transient?.frames ?? []).map(f => f.buffer)]);
-    post({ id: r.id, done: true, cut });
+    progressTo(null);
+    post({ id: r.id, done: true, threads: threadStats(), cut });
   } catch (err) {
+    progressTo(null);
     post({ id: r.id, error: err instanceof Error ? err.message : String(err) });
   } finally {
     usePrepared(null);
