@@ -17742,6 +17742,16 @@ try {
     check(!b1.error && Math.abs(b1.applied - 29.17) < 1e-6 && Math.abs(outSum - 29.17) < 0.05 && b1.out.every(x => x > 1) && b1.comps.length === 7 && b1.bad.length >= 1 && b1.bad.every(n => /^(R14|R20|V3|Q2)</.test(n)) && /over/.test(b1.over ?? "")
       && b1.limits.filter(Boolean).length === 6 && b1.wide <= 0,
       `thermal 1.655: the board study solves: the 29.17 W of the package leave by convection and radiation, every part has its temperature beside its limit and the ones over are marked (${JSON.stringify(b1)})`);
+    // 1.709 (FR-TRES-030): the study beside the package map it was made from, part by part, and the difference on the model
+    const mc = await bp.evaluate(() => { const s = window.__sv.sim.state(); return { m: s.mapCmp && { name: s.mapCmp.name, rows: s.mapCmp.rows.length, most: s.mapCmp.most, missing: s.mapCmp.missing, board: s.mapCmp.rows.some(r => r.name === "") },
+      trs: [...document.querySelectorAll("#sim-tree .sim-maptable tbody tr")].map(r => r.dataset.mapcmp), hot: document.querySelector('#sim-tree [data-v="maphot"]')?.textContent ?? "" }; });
+    await bp.click('#sim-tree [data-a="mapplot"]');
+    await bp.waitForTimeout(500);
+    const mp = await bp.evaluate(() => ({ kind: document.querySelector('#sim-legend select[data-k="kind"]')?.value, lo: Number(document.querySelector('#sim-legend [data-v="min"]')?.textContent), hi: Number(document.querySelector('#sim-legend [data-v="max"]')?.textContent) }));
+    await bp.selectOption('#sim-legend select[data-k="kind"]', "temp");
+    await bp.waitForTimeout(300);
+    check(mc.m && mc.m.rows >= 6 && mc.m.board && mc.m.missing === 0 && mc.trs.includes("board") && mc.trs.includes("Q2") && /°C/.test(mc.hot) && mp.kind === "dmap" && Math.abs(mp.lo + mp.hi) < 1e-6 && mp.hi >= 1,
+      `thermal 1.709: a board study is compared with the package map it was made from: every part with both temperatures, and study − map on the model on a scale symmetric about 0 (${JSON.stringify({ mc, mp })})`);
     // 1.688 (FR-TBRD-023): electrolytics beside a part over 1 W are warned about after the solve
     const nh = await bp.evaluate(() => ({ near: window.__sv.sim.state().thermal?.near?.map(n => [n.cap, n.hot, Math.round(n.gap * 10) / 10, n.spread > 0]), li: [...document.querySelectorAll('#sim-tree [data-v="tnear"] li')].map(e => e.textContent), note: !!document.querySelector('#sim-tree [data-v="nearnote"]'),
       elyt: window.__sv.asm.doc.studies.find(x => x.kind === "thermal").loads.find(l => l.type === "pkgheat").parts.filter(x => x.elyt).map(x => x.name) }));
