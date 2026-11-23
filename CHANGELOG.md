@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.716.0] - 2026-11-23
+## [1.717.0] - 2026-11-23
 
 ### Added
 
@@ -15,6 +15,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - Structural, modal and thermal studies solve faster on one core too: the direct solver now orders the equations to keep the factor small and works on dense blocks. A bracket with six passes went from 154 s to 86 s on one thread and 69 s on four in Chrome; the results agree with the previous solver to about eight digits.
+
+## [1.716.0] - 2026-11-23
+
+### Changed
+
+- Thermal studies with radiation or natural convection are faster: each pass after the first now starts from the pass before's temperatures instead of from the ambient, so it settles in two or three solves instead of five or six. The results are the same. A board study of a 100 × 60 mm board with three parts took 7.5 minutes for two passes and now takes 5.8.
 
 ## [1.715.0] - 2026-11-23
 
@@ -4732,7 +4738,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.716.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.717.0...HEAD
+[1.717.0]: https://github.com/kothf/step-viewer/compare/v1.716.0...v1.717.0
 [1.716.0]: https://github.com/kothf/step-viewer/compare/v1.715.0...v1.716.0
 [1.715.0]: https://github.com/kothf/step-viewer/compare/v1.714.0...v1.715.0
 [1.714.0]: https://github.com/kothf/step-viewer/compare/v1.713.0...v1.714.0

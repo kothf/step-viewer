@@ -729,6 +729,14 @@ function groupedPoints(c: Ctx, s: ThermalSink, q: number, per: ArrayLike<number>
   return { L, lens: Float64Array.from(lens) };
 }
 
+/** The coefficients `prev` (degree-uniform layout of an earlier pass on the same cells) in this pass's layout, or null. */
+function startFrom(c: Ctx, prev: Float64Array | null | undefined): Float64Array | null {
+  const { nel, nbs, off } = c;
+  if (!prev || !prev.length || prev.length % nel) return null;
+  const pm = prev.length / nel, x = new Float64Array(off[nel]);
+  for (let e = 0; e < nel; e++) for (let a = 0, n = Math.min(pm, nbs[e]); a < n; a++) x[off[e] + a] = prev[e * pm + a];
+  return x;
+}
 function copyMatrix(A: BlockMatrix): BlockMatrix {
   const B = new BlockMatrix(A.nel, A.ms);
   for (const [key, blk] of A.blocks) { const a = Math.floor(key / A.nel); B.block(a, key - a * A.nel).set(blk); }
@@ -1188,7 +1196,9 @@ function solveOnce(pb: ThermalProblem, b: Built, kSteps: number, solver?: Solver
   let x: Float64Array, iterations = 1;
   if (!b.rads.length && !b.ex.some(X => Number.isFinite(X.R))) x = solver ? solver.solve(f, null) : solveSystem(c, A, f, null);
   else {
-    let last: Float64Array | null = null;
+    // the pass before's answer on these cells is where the loop starts (hierarchical basis: its coefficients lead each
+    // element's), so a later pass settles in two or three steps instead of starting from the ambient again
+    let last: Float64Array | null = startFrom(c, pb.prev);
     x = f;
     for (let it = 0; it < RAD_STEPS; it++) {
       const { B, g, lr } = linearised(b, last);
