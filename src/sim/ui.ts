@@ -4553,7 +4553,8 @@ export class SimController {
         }).join("")}</tbody></table>`
           + `<p class="pm-help muted">${esc(t("The power of each part from the board's thermal package, made throughout the part's bodies. Untick a part to leave it out, or type another power."))}</p>`
           + (parts.some(x => x.junction) ? `<p class="pm-help muted" data-v="rjchelp">${esc(t("The package gives junction temperatures for some parts: type their Rjc to report the junction, else the case is reported."))}</p>` : ""))
-          + (l.board ? group(t("Heat paths"), `<p class="pm-help muted" data-v="splithelp">${esc(t("Parts are soldered to the board, never in the air: each part's board share from the package always enters the board under the part as a fixed power, and a chassis share leaves the model; the rest is made in the part."))}</p>`) : "")
+          + (l.board ? group(t("Heat paths"), `<p class="pm-help muted" data-v="splithelp">${esc(t("Parts are soldered to the board, never in the air: each part's board share from the package always enters the board under the part as a fixed power, and a chassis share leaves the model; the rest is made in the part."))}</p>`
+            + (parts.some(x => x.into?.length) ? `<p class="pm-help muted" data-v="intohelp">${esc(t("{n} part's board share enters through its pads and the air gap under its body, where the package says.|{n} parts' board shares enter through their pads and the air gap under their bodies, where the package says.", { n: parts.filter(x => x.into?.length).length }))}</p>` : "")) : "")
           + this.profileGroup(l, group);
       }
       else if (l.type === "vheat") body += group(t("Volume heat"), nf("value", t("Heat per volume"), l.value, "W/m³")

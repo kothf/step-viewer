@@ -3,7 +3,7 @@
 // (persistent face names), so a study follows the model through edits (FR-STU-020).
 
 import type { PowerProfile, TransientSettings } from "./transient";
-import type { BoardStack } from "../thermal/study";
+import type { BoardStack, HeatInto } from "../thermal/study";
 import type { CopperMap } from "../thermal/copper";
 import type { FaceRef, Num, V3 } from "../model/types";
 import type { MatRef } from "../tools/materials";
@@ -87,6 +87,9 @@ export interface PackageHeat {
   board?: number;
   sink?: number;
   path?: "board" | "air" | "heatsink" | "chassis";
+  /** Where the board share enters the board (FR-TBRD-003): pads as discs and the air gap under the body as rectangles,
+   * mm in the assembly frame across the board, with their watts (scaled to `board`); absent = under the whole part. */
+  into?: HeatInto[];
   /** An electrolytic capacitor (FR-TBRD-023: warned about when a part over 1 W stands next to it). */
   elyt?: boolean;
   /** The package's temperature of the part is a junction's (FR-TBRD-021); `rjc` K/W junction to case, typed or from the package. */
