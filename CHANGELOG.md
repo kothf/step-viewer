@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.685.0] - 2026-11-23
+
+### Added
+
+- Isotherm clip on thermal maps. **Clip at a temperature** in the map's legend shows only the surfaces hotter (or, with **Cooler than**, cooler) than the temperature typed, in colour, with the rest of the board and the parts see-through, so the hot spots stand out. With **Rise above ambient** the temperature is typed in K above ambient. A saved picture names the clip.
+
 ## [1.684.0] - 2026-11-23
 
 ### Added
@@ -4496,7 +4502,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.684.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.685.0...HEAD
+[1.685.0]: https://github.com/kothf/step-viewer/compare/v1.684.0...v1.685.0
 [1.684.0]: https://github.com/kothf/step-viewer/compare/v1.683.0...v1.684.0
 [1.683.0]: https://github.com/kothf/step-viewer/compare/v1.682.0...v1.683.0
 [1.682.0]: https://github.com/kothf/step-viewer/compare/v1.681.0...v1.682.0
