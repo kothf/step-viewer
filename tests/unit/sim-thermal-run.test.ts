@@ -88,11 +88,13 @@ test("thermal study: radiation and a flux in W/m²", () => {
   const st = newStudy([], "thermal");
   st.loads.push({ id: "l1", type: "hflux", faces: [{ name: "x0" }], value: { v: 2000 } });
   st.supports.push({ id: "s1", type: "rad", faces: [{ name: "x1" }], emis: 0.9, ambient: 20 });
-  const r = run(st).at(-1)!;
+  const all = run(st), r = all.at(-1)!;
   const P = 2000e-6 * B * T, Ta = 293.15, Ts = (P / (0.9 * 5.670374419e-14 * B * T) + Ta ** 4) ** 0.25 - 273.15;
   assert.ok(Math.abs(r.thermal!.applied - P) < 1e-9);
   assert.ok(Math.abs(r.vm[1] - Ts) < 0.05, `radiating end ${r.vm[1]} for ${Ts}`);
-  assert.ok(r.thermal!.solves > 1);
+  assert.ok(all[0].thermal!.solves > 1);
+  // a later pass starts from the pass before's temperatures, so it needs fewer solves than the first
+  assert.ok(all.length > 1 && r.thermal!.solves < all[0].thermal!.solves, `solves ${all.map(p => p.thermal!.solves)}`);
 });
 
 test("thermal values: watts and watts per area with units", () => {
