@@ -401,7 +401,27 @@ export function splitPoly(poly: number[][], axis: number, at: number): [number[]
 /** Quadrature of triangles cut along the planes of a grid (origin lo, step h), so each piece lies in one
  * cell: `n`×`n` collapsed Gauss points per sub-triangle (exact to degree 2`n` − 2), or with `degAt` a
  * symmetric rule (`triangleRule`) of that degree or the lower one `degAt` (source triangle, the piece's middle) asks for. Returns the points and each point's source triangle. */
-export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: number, n: number, degAt?: (t: number, x: number, y: number, z: number) => number): { pts: Points; tri: Int32Array } {
+/**
+ * The degree a triangle's rule needs by its size: a triangle far smaller than a cell (the facets of a wire, of a
+ * rounded edge) sees little of the element's polynomials, so a few points integrate them as well as the full
+ * rule. One number per triangle: 2, 4, 5 or 6 for a longest edge under h / 16, h / 8, h / 4, h / 2, else 255.
+ */
+export function smallTriangleDegrees(tris: ArrayLike<number>, h: number): Uint8Array {
+  const nt = Math.floor(tris.length / 9), out = new Uint8Array(nt);
+  for (let t = 0; t < nt; t++) {
+    const o = 9 * t;
+    let L = 0;
+    for (let i = 0; i < 3; i++) {
+      const a = o + 3 * i, b = o + 3 * ((i + 1) % 3);
+      L = Math.max(L, Math.hypot(tris[b] - tris[a], tris[b + 1] - tris[a + 1], tris[b + 2] - tris[a + 2]));
+    }
+    const r = L / h;
+    out[t] = r < 1 / 16 ? 2 : r < 1 / 8 ? 4 : r < 1 / 4 ? 5 : r < 1 / 2 ? 6 : 255;
+  }
+  return out;
+}
+
+export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: number, n: number, degAt?: (t: number, x: number, y: number, z: number) => number, small?: Uint8Array): { pts: Points; tri: Int32Array } {
   const pts = new Points();
   const tri: number[] = [];
   const nt = tris.length / 9;
@@ -426,9 +446,11 @@ export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: num
       }
       polys = next;
     }
+    const few = small !== undefined && small[t] < 2 * n - 2;
     for (const P of polys) {
       let deg = 2 * n - 2;
-      if (degAt) {
+      if (few) deg = small![t];
+      else if (degAt) {
         // the piece lies in one cell: its rule follows that cell's own degree
         let x = 0, y = 0, z = 0;
         for (const q of P) { x += q[0]; y += q[1]; z += q[2]; }
@@ -437,7 +459,7 @@ export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: num
       }
       for (let i = 1; i + 1 < P.length; i++) {
       const before = pts.n;
-      if (degAt) triangleRule(P[0], P[i], P[i + 1], deg, pts);
+      if (degAt || few) triangleRule(P[0], P[i], P[i + 1], deg, pts);
       else triangleGauss(P[0], P[i], P[i + 1], n, pts);
       for (let k = before; k < pts.n; k++) tri.push(t);
       }

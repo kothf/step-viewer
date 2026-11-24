@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solveThermal, type ThermalDomain } from "../../src/sim/thermal";
+import { MeshBody, insideOf } from "../../src/sim/body";
 
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
   const a1 = (axis + 1) % 3, a2 = (axis + 2) % 3;
@@ -108,4 +109,23 @@ test("a body wholly inside an earlier one is joined to it from its own surface",
   assert.ok(Math.abs(r.contacts[0].area - area) < 1e-6 * area, `area ${r.contacts[0].area}`);
   assert.ok(Math.abs(r.contacts[0].heat - 1) < 0.02, `heat ${r.contacts[0].heat}`);
   assert.ok(r.flows[0].out > 0.98 && r.flows[0].out < 1.02, `out ${r.flows[0].out}`);
+});
+
+test("a wire far thinner than its cells: joined by its own end, solved at every degree", () => {
+  // a 1 mm wire standing on a block in 10 mm cells: the block's face has too few points to find the wire's end, and
+  // across the wire the higher powers of x and y are copies of the lower ones (degree 6 had no solution)
+  const mesh = (lo: number[], hi: number[], k: number): ThermalDomain => { const tris = boxTris(lo, hi); return { inside: insideOf(new MeshBody(Float64Array.from(tris))), k, tris }; };
+  const block = mesh([0, 0, 0], [40, 30, 10], 0.2), wire = mesh([22, 13, 10], [23, 14, 30], 0.4);
+  const sink = rectFace(2, 0, [0, 0, 0], [40, 30, 10], false), top = rectFace(2, 30, [22, 13, 10], [23, 14, 30], true);
+  const along = 0.5 * 20 / 0.4;
+  for (const p of [3, 4, 5, 6]) {
+    const r = solveThermal({ lo: [0, 0, 0], hi: [40, 30, 30], inside: block.inside, h: 10, p, k: 0, domains: [block, wire],
+      sinks: [{ tris: sink, temp: 20 }], sources: [{ tris: top, power: 0.5 }] });
+    assert.equal(r.contacts.length, 1, `p ${p}: contacts`);
+    assert.ok(Math.abs(r.contacts[0].area - 1) < 0.02, `p ${p}: area ${r.contacts[0].area}`);
+    assert.ok(Math.abs(Math.abs(r.contacts[0].heat) - 0.5) < 0.01, `p ${p}: heat ${r.contacts[0].heat}`);
+    const t = r.temp(22.5, 13.5, 29.9), foot = r.temp(22.5, 13.5, 10.1);
+    assert.ok(Math.abs(t - foot - along) < 1.5, `p ${p}: along the wire ${t - foot}, expected ${along}`);
+    assert.ok(Math.abs(r.flows[0].out - 0.5) < 0.01, `p ${p}: out ${r.flows[0].out}`);
+  }
 });

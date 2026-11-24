@@ -132,6 +132,7 @@ export class MeshBody implements Body {
    * counted without making the list. */
   inside(x: number, y: number, z: number): boolean {
     if (this.ray) return this.insideAlong(this.ray, x, y, z);
+    if (x > this.hi[0] || x < this.lo[0]) return false;
     const C = this.cols[0], t = this.t;
     const u = (C.a1 === 1 ? y : z) + this.jit, v = (C.a2 === 1 ? y : z) + 0.7071 * this.jit;
     const i = Math.floor((u - C.o1) / C.s), j = Math.floor((v - C.o2) / C.s);
@@ -156,6 +157,8 @@ export class MeshBody implements Body {
   private insideAlong(ax: number, x: number, y: number, z: number): boolean {
     const C = this.cols[ax], t = this.t, a1 = C.a1, a2 = C.a2;
     const u = (a1 === 0 ? x : a1 === 1 ? y : z) + this.jit, v = (a2 === 0 ? x : a2 === 1 ? y : z) + 0.7071 * this.jit, w = ax === 1 ? y : z;
+    // beyond the body's box along the line: nothing to cross above, or everything (an even number)
+    if (w > this.hi[ax] || w < this.lo[ax]) return false;
     const i = Math.floor((u - C.o1) / C.s), j = Math.floor((v - C.o2) / C.s);
     if (i < 0 || j < 0 || i >= C.n1 || j >= C.n2) return false;
     const b = i * C.n2 + j, idx = C.idx;

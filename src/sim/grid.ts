@@ -20,6 +20,8 @@ export interface Cell {
   fine: Points | null;
   /** Material volume / cell volume. */
   frac: number;
+  /** Cut cells: the box of the points found on the geometry (lo, hi), the material's reach in the cell. */
+  box?: number[];
   /** Element holding the cell's polynomial. */
   el: number;
   /** Domain (a body with its own material) the cell belongs to; 0 with one domain. */
@@ -209,6 +211,26 @@ function cellAt(clo: number[], chi: number[], inside: Inside, o: GridOptions, fu
   return { st, fine, pts: o.fit && fine.n > o.fit ** 3 ? fitPoints(fine, clo, chi, o.fit) : fine };
 }
 
+function pointsBox(P: Points): number[] {
+  const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], a = P.a;
+  for (let i = 0; i < P.n; i++) for (let k = 0; k < 3; k++) { const v = a[4 * i + k]; if (v < b[k]) b[k] = v; if (v > b[3 + k]) b[3 + k] = v; }
+  return b;
+}
+
+/**
+ * How far an element's material reaches along each axis, over the size of the box its polynomial is scaled to
+ * (1 = all of it). A body much thinner than its cells (a lead, a foil) has a small reach across: there the higher
+ * powers of that coordinate are all but copies of the lower ones.
+ */
+export function elementReach(g: Grid, e: number): [number, number, number] {
+  const E = g.elems[e], lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const ci of E.cells) {
+    const cl = g.cells[ci];
+    for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], cl.box ? cl.box[a] : cl.lo[a]); hi[a] = Math.max(hi[a], cl.box ? cl.box[3 + a] : cl.hi[a]); }
+  }
+  return [0, 1, 2].map(a => Math.min(1, Math.max(0, hi[a] - lo[a]) / (2 * E.s))) as [number, number, number];
+}
+
 /** The grid cubes a body can reach, [i0, i1, j0, j1, k0, k1]: its triangles' box and a cube more each way, else all. */
 function cubeRange(d: Inside, lo0: number[], h: number, n: number[]): number[] {
   const T = d.tris;
@@ -250,7 +272,7 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
       // a face lying on a grid plane leaves a film of no volume in the cell beyond it
       if (!(frac > 1e-9)) continue;
       map[at] = g.cells.length;
-      g.cells.push({ ijk: [i, j, k], lo: clo, hi: chi, state: c.st, pts, fine: c.fine, frac, el: -1, dom });
+      g.cells.push({ ijk: [i, j, k], lo: clo, hi: chi, state: c.st, pts, fine: c.fine, frac, el: -1, dom, ...(c.fine ? { box: pointsBox(c.fine) } : {}) });
     }
   }
   aggregate(g, o.minFrac ?? 0.25, doms.length > 1 ? o.rigid : undefined);
