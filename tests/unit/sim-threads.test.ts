@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { BlockMatrix, Envelope } from "../../src/sim/sparse";
 import { BlockCholesky, cholPlan, minDegreeOrder } from "../../src/sim/blockchol";
 import { serve, setHelpers, setLoopFloor, threadStats, type CholJob } from "../../src/sim/threads";
+import { kernelMemories, setKernel } from "../../src/sim/cholwasm";
 import { solveStatic } from "../../src/sim/static";
 import { solveThermal } from "../../src/sim/thermal";
 import { makeGrid } from "../../src/sim/grid";
@@ -62,6 +63,22 @@ test("block Cholesky: not positive definite is reported", () => {
   const { A } = grid(2, 2, 1, () => 4);
   A.block(3, 3).fill(0);
   assert.throws(() => new BlockCholesky(A), /E-SIM-SINGULAR/);
+});
+
+test("block Cholesky: the WebAssembly kernel and the plain loops give the same numbers bit for bit", () => {
+  // odd and even block sizes, so both the paired and the last column of every sum are used
+  const { A, b } = grid(5, 4, 3, e => 5 + (e % 6) * 3);
+  const before = kernelMemories(), x = new BlockCholesky(A).solve(b);
+  assert.equal(kernelMemories(), before + 1, "the factor is in kernel memory");
+  setKernel(false);
+  let x0: Float64Array;
+  try { x0 = new BlockCholesky(A).solve(b); } finally { setKernel(true); }
+  assert.equal(kernelMemories(), before + 1);
+  assert.deepEqual(x, x0);
+  const { A: B } = grid(2, 2, 1, () => 4);
+  B.block(3, 3).fill(0);
+  setKernel(false);
+  try { assert.throws(() => new BlockCholesky(B), /E-SIM-SINGULAR/); } finally { setKernel(true); }
 });
 
 test("threads: several threads give the same numbers bit for bit", async () => {

@@ -7,6 +7,7 @@
 
 import type { BlockMatrix } from "./sparse";
 import { progress } from "./progress";
+import { kernelOf } from "./cholwasm";
 import { factor, factorBuffer, parallelFor, sharedF64, sharedSolvePlan, worthSharing } from "./threads";
 
 /** The factor's layout: element order, each column's lower blocks and where every block lives in `data`. */
@@ -129,38 +130,41 @@ export function scatter(A: BlockMatrix, P: CholPlan, data: Float64Array) {
   }
 }
 
+/**
+ * Σ data[x + q] · data[y + q] over q < n the way the kernel sums (native/chol-kernel): even and odd q apart, added
+ * at the end, then the last q of an odd n. The loops below sum every value this way, so they give the kernel's numbers.
+ */
+function dot2(data: Float64Array, x: number, y: number, n: number): number {
+  let s0 = 0, s1 = 0, q = 0;
+  for (; q + 1 < n; q += 2) { s0 += data[x + q] * data[y + q]; s1 += data[x + q + 1] * data[y + q + 1]; }
+  let s = s0 + s1;
+  if (q < n) s += data[x + q] * data[y + q];
+  return s;
+}
+
 /** Cholesky of the diagonal block of step k in place (lower triangle; the upper is left as it is). */
 export function factorDiag(P: CholPlan, data: Float64Array, k: number) {
-  const m = P.ms[k], o = P.diagAt[k];
+  const m = P.ms[k], o = P.diagAt[k], K = kernelOf(data);
+  if (K) {
+    if (K.diag(data.byteOffset, m, o)) throw new Error(`E-SIM-SINGULAR: pivot at ${P.colStart[k]}`);
+    return;
+  }
   for (let r = 0; r < m; r++) {
     const R = o + r * m;
-    for (let c = 0; c <= r; c++) {
-      const C = o + c * m;
-      let s = data[R + c], s1 = 0, t = 0;
-      for (; t + 1 < c; t += 2) { s -= data[R + t] * data[C + t]; s1 += data[R + t + 1] * data[C + t + 1]; }
-      if (t < c) s -= data[R + t] * data[C + t];
-      s -= s1;
-      if (c < r) data[R + c] = s / data[C + c];
-      else {
-        if (!(s > 0)) throw new Error(`E-SIM-SINGULAR: pivot ${s} at ${P.colStart[k]}`);
-        data[R + r] = Math.sqrt(s);
-      }
-    }
+    for (let c = 0; c < r; c++) { const C = o + c * m; data[R + c] = (data[R + c] - dot2(data, R, C, c)) / data[C + c]; }
+    const v = data[R + r] - dot2(data, R, R, r);
+    if (!(v > 0)) throw new Error(`E-SIM-SINGULAR: pivot at ${P.colStart[k]}`);
+    data[R + r] = Math.sqrt(v);
   }
 }
 
 /** Block t of column k ← block · L_kk⁻ᵀ (row by row forward substitution). */
 export function solveBlock(P: CholPlan, data: Float64Array, k: number, t: number) {
-  const mk = P.ms[k], d = P.diagAt[k], o = P.blockAt[t], mi = P.ms[P.rows[t]];
+  const mk = P.ms[k], d = P.diagAt[k], o = P.blockAt[t], mi = P.ms[P.rows[t]], K = kernelOf(data);
+  if (K) { K.solve(data.byteOffset, mk, mi, d, o); return; }
   for (let a = 0; a < mi; a++) {
     const R = o + a * mk;
-    for (let c = 0; c < mk; c++) {
-      const C = d + c * mk;
-      let s = data[R + c], s1 = 0, q = 0;
-      for (; q + 1 < c; q += 2) { s -= data[R + q] * data[C + q]; s1 += data[R + q + 1] * data[C + q + 1]; }
-      if (q < c) s -= data[R + q] * data[C + q];
-      data[R + c] = (s - s1) / data[C + c];
-    }
+    for (let c = 0; c < mk; c++) { const C = d + c * mk; data[R + c] = (data[R + c] - dot2(data, R, C, c)) / data[C + c]; }
   }
 }
 
@@ -173,74 +177,48 @@ export function targetOf(P: CholPlan, i: number, j: number): number {
 }
 
 /**
- * The update of step k on block (rows[ti], rows[tj]) (ti ≥ tj): T −= L_ik L_jkᵀ, four rows against two columns at a time.
- * On a diagonal block only its lower triangle is made. `a0` (even) .. `a1` = the rows of the block to make: every
- * value is its own sum, so a block made in pieces by several threads is the same as one made whole.
+ * The update of step k on block (rows[ti], rows[tj]) (ti ≥ tj): T −= L_ik L_jkᵀ. On a diagonal block only its lower
+ * triangle is made. `a0` (even) .. `a1` = the rows of the block to make: every value is its own sum, so a block made
+ * in pieces by several threads is the same as one made whole. The work is the kernel's when the factor lies in its
+ * memory (cholwasm.ts); the loops here are for a factor in an ordinary array and give the same numbers.
  */
 export function updateBlock(P: CholPlan, data: Float64Array, k: number, ti: number, tj: number, to: number, a0 = 0, a1 = -1) {
   const mk = P.ms[k], i = P.rows[ti], j = P.rows[tj], mi = a1 < 0 ? P.ms[i] : a1, mj = P.ms[j];
-  const oi = P.blockAt[ti], oj = P.blockAt[tj], diag = ti === tj;
+  const oi = P.blockAt[ti], oj = P.blockAt[tj], diag = ti === tj, K = kernelOf(data);
+  if (K) { K.update(data.byteOffset, mk, mi, mj, oi, oj, to, diag ? 1 : 0, a0); return; }
+  const even = mk & ~1;
   let a = a0;
-  // four rows against two columns: 8 sums for 6 loads per step of q; on a diagonal block only the columns below
-  // the four rows go this way, the rest of each row follows one sum at a time
-  for (; a + 3 < mi; a += 4) {
-    const A0 = oi + a * mk, A1 = A0 + mk, A2 = A1 + mk, A3 = A2 + mk, T0 = to + a * mj, T1 = T0 + mj, T2 = T1 + mj, T3 = T2 + mj;
+  // two rows against two columns: each of the four sums keeps its even and odd q apart
+  for (; a + 1 < mi; a += 2) {
+    const A0 = oi + a * mk, A1 = A0 + mk, T0 = to + a * mj, T1 = T0 + mj;
     const bEnd = diag ? a : mj;
     let b = 0;
     for (; b + 1 < bEnd; b += 2) {
       const B0 = oj + b * mk, B1 = B0 + mk;
-      let s00 = 0, s01 = 0, s10 = 0, s11 = 0, s20 = 0, s21 = 0, s30 = 0, s31 = 0;
-      for (let q = 0; q < mk; q++) {
-        const y0 = data[B0 + q], y1 = data[B1 + q], x0 = data[A0 + q], x1 = data[A1 + q], x2 = data[A2 + q], x3 = data[A3 + q];
-        s00 += x0 * y0; s01 += x0 * y1; s10 += x1 * y0; s11 += x1 * y1; s20 += x2 * y0; s21 += x2 * y1; s30 += x3 * y0; s31 += x3 * y1;
-      }
-      data[T0 + b] -= s00; data[T0 + b + 1] -= s01; data[T1 + b] -= s10; data[T1 + b + 1] -= s11;
-      data[T2 + b] -= s20; data[T2 + b + 1] -= s21; data[T3 + b] -= s30; data[T3 + b + 1] -= s31;
-    }
-    for (; b < bEnd; b++) {
-      const B0 = oj + b * mk;
-      let s0 = 0, s1 = 0, s2 = 0, s3 = 0;
-      for (let q = 0; q < mk; q++) { const y = data[B0 + q]; s0 += data[A0 + q] * y; s1 += data[A1 + q] * y; s2 += data[A2 + q] * y; s3 += data[A3 + q] * y; }
-      data[T0 + b] -= s0; data[T1 + b] -= s1; data[T2 + b] -= s2; data[T3 + b] -= s3;
-    }
-    if (diag) for (let r = 0; r < 4; r++) {
-      const Ar = A0 + r * mk, Tr = T0 + r * mj;
-      for (let c = a; c <= a + r; c++) {
-        const B0 = oj + c * mk;
-        let v = 0;
-        for (let q = 0; q < mk; q++) v += data[Ar + q] * data[B0 + q];
-        data[Tr + c] -= v;
-      }
-    }
-  }
-  for (; a + 1 < mi; a += 2) {
-    const A0 = oi + a * mk, A1 = A0 + mk, T0 = to + a * mj, T1 = T0 + mj;
-    const bEnd = diag ? a + 2 : mj;
-    let b = 0;
-    for (; b + 1 < bEnd; b += 2) {
-      const B0 = oj + b * mk, B1 = B0 + mk;
-      let s00 = 0, s01 = 0, s10 = 0, s11 = 0;
-      for (let q = 0; q < mk; q++) {
+      let e00 = 0, e01 = 0, e10 = 0, e11 = 0, o00 = 0, o01 = 0, o10 = 0, o11 = 0;
+      for (let q = 0; q < even; q += 2) {
         const x0 = data[A0 + q], x1 = data[A1 + q], y0 = data[B0 + q], y1 = data[B1 + q];
+        const u0 = data[A0 + q + 1], u1 = data[A1 + q + 1], v0 = data[B0 + q + 1], v1 = data[B1 + q + 1];
+        e00 += x0 * y0; e01 += x0 * y1; e10 += x1 * y0; e11 += x1 * y1;
+        o00 += u0 * v0; o01 += u0 * v1; o10 += u1 * v0; o11 += u1 * v1;
+      }
+      let s00 = e00 + o00, s01 = e01 + o01, s10 = e10 + o10, s11 = e11 + o11;
+      if (even < mk) {
+        const x0 = data[A0 + even], x1 = data[A1 + even], y0 = data[B0 + even], y1 = data[B1 + even];
         s00 += x0 * y0; s01 += x0 * y1; s10 += x1 * y0; s11 += x1 * y1;
       }
       data[T0 + b] -= s00; data[T0 + b + 1] -= s01; data[T1 + b] -= s10; data[T1 + b + 1] -= s11;
     }
-    for (; b < bEnd; b++) {
-      const B0 = oj + b * mk;
-      let s0 = 0, s1 = 0;
-      for (let q = 0; q < mk; q++) { const y = data[B0 + q]; s0 += data[A0 + q] * y; s1 += data[A1 + q] * y; }
-      data[T0 + b] -= s0; data[T1 + b] -= s1;
+    for (; b < bEnd; b++) { const B0 = oj + b * mk; data[T0 + b] -= dot2(data, A0, B0, mk); data[T1 + b] -= dot2(data, A1, B0, mk); }
+    if (diag) {
+      data[T0 + a] -= dot2(data, A0, A0, mk);
+      data[T1 + a] -= dot2(data, A1, A0, mk);
+      data[T1 + a + 1] -= dot2(data, A1, A1, mk);
     }
   }
   for (; a < mi; a++) {
     const A0 = oi + a * mk, T0 = to + a * mj, bEnd = diag ? a + 1 : mj;
-    for (let b = 0; b < bEnd; b++) {
-      const B0 = oj + b * mk;
-      let s = 0;
-      for (let q = 0; q < mk; q++) s += data[A0 + q] * data[B0 + q];
-      data[T0 + b] -= s;
-    }
+    for (let b = 0; b < bEnd; b++) data[T0 + b] -= dot2(data, A0, oj + b * mk, mk);
   }
 }
 

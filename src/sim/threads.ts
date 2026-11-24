@@ -8,6 +8,7 @@
 // nothing to claim, one that never wakes costs nothing.
 
 import { cholSolve, factorDiag, factorSerial, solveBlock, stepCosts, targetOf, updateBlock, type CholPlan, type SolvePlan } from "./blockchol";
+import { adoptMemory, kernelBuffer, memoryOf } from "./cholwasm";
 import { progress } from "./progress";
 
 /** What a helper needs of a factorisation: the plan's arrays and the factor, all on shared memory. */
@@ -20,6 +21,8 @@ export interface CholJob {
   blockAt: Float64Array;
   diagAt: Float64Array;
   data: Float64Array;
+  /** The WebAssembly memory the factor lives in, when it does: a helper works on it through the kernel. */
+  mem?: WebAssembly.Memory;
 }
 export interface HelperLike { postMessage(m: unknown): void; terminate(): void }
 
@@ -45,7 +48,9 @@ export const threadStats = () => ({ ...stats, helpers: helpers.length });
 
 /** Memory for a factor: shared when there are helpers to share it with. */
 export function factorBuffer(n: number): Float64Array {
-  return helpers.length && sharedOk ? new Float64Array(new SharedArrayBuffer(8 * n)) : new Float64Array(n);
+  const share = helpers.length > 0 && sharedOk, k = kernelBuffer(n, share);
+  if (k) return k.data;
+  return share ? new Float64Array(new SharedArrayBuffer(8 * n)) : new Float64Array(n);
 }
 
 const planOf = (j: CholJob): CholPlan => ({ ms: j.ms, rows: j.rows, blockAt: j.blockAt, diagAt: j.diagAt } as CholPlan);
@@ -68,6 +73,7 @@ function work(j: CholJob, P: CholPlan) {
 export function serve(j: CholJob | ParJob) {
   if ("kind" in j) { serveJob(j); return; }
   const P = planOf(j), ctl = j.ctl;
+  if (j.mem) j = { ...j, data: adoptMemory(j.mem, j.data.length) };
   Atomics.add(ctl, JOINED, 1);
   let seen = -1;
   for (;;) {
@@ -120,7 +126,7 @@ export function factor(P: CholPlan, data: Float64Array) {
   if (!most || most > IDX_MASK) { factorSerial(P, data); return; }
   const job: CholJob = {
     ctl: new Int32Array(new SharedArrayBuffer(4 * 8)), nOf: new Int32Array(new SharedArrayBuffer(4 * GENS)), tasks: new Float64Array(new SharedArrayBuffer(8 * TASK * most)),
-    ms: shared(P.ms), rows: shared(P.rows), blockAt: shared(P.blockAt), diagAt: shared(P.diagAt), data,
+    ms: shared(P.ms), rows: shared(P.rows), blockAt: shared(P.blockAt), diagAt: shared(P.diagAt), data, mem: memoryOf(data),
   };
   const { ctl, nOf, tasks } = job, Q = { ...P, ms: job.ms, rows: job.rows, blockAt: job.blockAt, diagAt: job.diagAt };
   let gen = 0;
