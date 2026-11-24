@@ -7,7 +7,7 @@
 import { Basis, basisSize } from "./basis";
 import { gauss, gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
 import { makeGrid, memoryBytes, refit, type Grid } from "./grid";
-import { BlockMatrix } from "./sparse";
+import { BlockMatrix, matrixKey } from "./sparse";
 import { BlockCholesky, cholPlan, type CholPlan } from "./blockchol";
 import { pcgSolver, cholesky } from "./pcg";
 import { subspace } from "./eigen";
@@ -731,6 +731,29 @@ function facePair(K: Float64Array, Ni: Float64Array, Mi: Float64Array, si: numbe
       K[r] -= na * Mj[b9 + 6] + nbv * i2; K[r + 1] -= na * Mj[b9 + 7] + nbv * i5; K[r + 2] += pen - na * Mj[b9 + 8] - nbv * i8;
     }
   }
+}
+
+/**
+ * Factorisations kept between solves: a study solved again with other loads only (the next load case, a changed
+ * force) puts the same matrix together, bit for bit, and then takes its factor from here. Newest last.
+ */
+const keptFactors = new Map<string, BlockCholesky>();
+/** Values the kept factors may hold together (8 bytes each). */
+const KEEP_VALUES = 6e7;
+/** Solves that took a kept factorisation (for tests). */
+export let reusedFactors = 0;
+export function dropFactors() { keptFactors.clear(); }
+function factorOf(A: BlockMatrix, plan?: CholPlan): BlockCholesky {
+  const key = matrixKey(A), hit = keptFactors.get(key);
+  if (hit) { reusedFactors++; keptFactors.delete(key); keptFactors.set(key, hit); return hit; }
+  const L = new BlockCholesky(A, { plan });
+  if (L.values <= KEEP_VALUES) {
+    let sum = L.values;
+    for (const v of keptFactors.values()) sum += v.values;
+    for (const [k, v] of keptFactors) { if (sum <= KEEP_VALUES) break; keptFactors.delete(k); sum -= v.values; }
+    keptFactors.set(key, L);
+  }
+  return L;
 }
 
 export function solveStatic(pb: StaticProblem): StaticResult {
@@ -1715,7 +1738,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       xs = r2.x; iterations += r2.iterations;
     }
   } else {
-    const L = new BlockCholesky(A, { plan: fitsS?.plan });
+    const L = factorOf(A, fitsS?.plan);
     t3 = now();
     progress("solve", 0, 1);
     tighten(b => L.solve(b));

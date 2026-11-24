@@ -47,6 +47,25 @@ export class BlockMatrix {
   }
 }
 
+/**
+ * A fingerprint of a matrix: its layout and every value, bit for bit (two 32-bit hashes over the words, the sizes
+ * beside them). Two matrices put together the same way from the same numbers give the same text.
+ */
+export function matrixKey(A: BlockMatrix): string {
+  let h1 = 0x811c9dc5 | 0, h2 = 0x9e3779b9 | 0, words = 0;
+  for (const [k, B] of A.blocks) {
+    h1 = Math.imul(h1 ^ k, 0x01000193); h2 = Math.imul((h2 << 5) | (h2 >>> 27), 0x85ebca6b) ^ k;
+    const W = new Uint32Array(B.buffer, B.byteOffset, 2 * B.length), n = W.length;
+    for (let i = 0; i < n; i++) {
+      const w = W[i];
+      h1 = Math.imul(h1 ^ w, 0x01000193);
+      h2 = Math.imul(((h2 << 5) | (h2 >>> 27)) ^ w, 0x85ebca6b);
+    }
+    words += n;
+  }
+  return `${A.nel}:${A.size}:${A.blocks.size}:${words}:${(h1 >>> 0).toString(16)}:${(h2 >>> 0).toString(16)}`;
+}
+
 /** Reverse Cuthill–McKee order of a graph given by neighbour sets (self loops ignored). */
 export function rcm(adj: Set<number>[]): Int32Array {
   const n = adj.length, deg = adj.map(s => s.size);
