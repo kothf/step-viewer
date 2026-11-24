@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.732.0] - 2026-11-24
+
+### Changed
+- Static and modal studies with flat held or loaded faces build their equations faster. A flat face is many triangles, each with its own integration points; inside every cell they are now replaced by a few points that integrate the same. The bracket held on the underside of its foot had 240,000 points there on its fifth pass and now has 7,000. Five passes in Chrome on four cores: 32 s before, 24 s now. Results agree to twelve digits.
+
 ## [1.731.0] - 2026-11-24
 
 ### Fixed
@@ -4825,7 +4830,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.731.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.732.0...HEAD
+[1.732.0]: https://github.com/kothf/step-viewer/compare/v1.731.0...v1.732.0
 [1.731.0]: https://github.com/kothf/step-viewer/compare/v1.730.0...v1.731.0
 [1.730.0]: https://github.com/kothf/step-viewer/compare/v1.729.0...v1.730.0
 [1.729.0]: https://github.com/kothf/step-viewer/compare/v1.728.0...v1.729.0
