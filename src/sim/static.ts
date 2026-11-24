@@ -429,66 +429,103 @@ export function topEigen(T: Float64Array, K: Float64Array, n: number): number {
  */
 function measurePenalty(grid: Grid, nel: number, nbs: ArrayLike<number>, gam: Float64Array, p: number, rigid: (e: number) => boolean,
   facePts: (c: number, ea: number, eb: number, axis: number) => { n: number; a: ArrayLike<number> },
-  tractions: (e: number, x: number, y: number, z: number, nrm: ArrayLike<number>) => Float64Array, block: (e: number) => Float64Array, surf: ArrayLike<number>[]) {
-
-    const TT: (Float64Array | undefined)[] = new Array(nel);
-    const cutE = new Uint8Array(nel);
-    for (let e = 0; e < nel; e++) cutE[e] = !rigid(e) && grid.elems[e].cells.some(c => grid.cells[c].frac < 1 - 1e-9) ? 1 : 0;
-    const acc = (e: number, M: Float64Array, w: number) => {
-      const n = nbs[e], mm = 3 * n;
-      const T = TT[e] ?? (TT[e] = new Float64Array(mm * mm));
-      for (let a = 0; a < n; a++) for (let c = 0; c < 3; c++) {
-        const s0 = w * M[9 * a + c], s1 = w * M[9 * a + 3 + c], s2 = w * M[9 * a + 6 + c], row = (3 * a + c) * mm;
-        for (let b2 = 0; b2 <= a; b2++) {
-          const o = 9 * b2, r = row + 3 * b2;
-          T[r] += s0 * M[o] + s1 * M[o + 3] + s2 * M[o + 6];
-          T[r + 1] += s0 * M[o + 1] + s1 * M[o + 4] + s2 * M[o + 7];
-          T[r + 2] += s0 * M[o + 2] + s1 * M[o + 5] + s2 * M[o + 8];
-        }
-      }
-    };
-    const at = (e: number, x: number, y: number, z: number, w: number, nrm: ArrayLike<number>) => acc(e, tractions(e, x, y, z, nrm), w);
-    if (cutE.some(Boolean)) {
-      for (let c = 0; c < grid.cells.length; c++) {
-        const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom, ea = grid.cells[c].el;
-        for (let axis = 0; axis < 3; axis++) {
-          const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), k + (axis === 2 ? 1 : 0), d);
-          if (o < 0) continue;
-          const eb = grid.cells[o].el;
-          if (ea === eb || !(cutE[ea] || cutE[eb])) continue;
-          const pts = facePts(c, ea, eb, axis), nrm = [0, 0, 0];
-          nrm[axis] = 1;
-          for (let q2 = 0; q2 < pts.n; q2++) {
-            const o4 = 4 * q2, w = pts.a[o4 + 3];
-            if (cutE[ea]) at(ea, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], w, nrm);
-            if (cutE[eb]) at(eb, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], w, nrm);
-          }
-        }
-      }
-      // the supports' faces and the domains' surfaces
-      const tq0 = Math.max(2, p + 1), eps = 1e-7 * grid.h;
-      for (const tris of surf) {
-        const { pts, tri } = gridTrianglePoints(tris, grid.lo, grid.h, tq0), nrms = triNormals(tris);
+  lameOf: (e: number) => { lam: number; mu: number }, A: BlockMatrix, bas: Basis, surf: ArrayLike<number>[]) {
+  const cutE = new Uint8Array(nel);
+  let any = false;
+  for (let e = 0; e < nel; e++) if (!rigid(e) && grid.elems[e].cells.some(c => grid.cells[c].frac < 1 - 1e-9)) { cutE[e] = 1; any = true; }
+  if (!any) return;
+  // the supports' faces and the domains' surfaces, located once
+  const tq0 = Math.max(2, p + 1), eps = 1e-7 * grid.h;
+  const held: Float64Array[] = surf.map(tris => {
+    const { pts, tri } = gridTrianglePoints(tris, grid.lo, grid.h, tq0), nrms = triNormals(tris), L = new Float64Array(8 * pts.n);
+    let m = 0;
+    for (let q2 = 0; q2 < pts.n; q2++) {
+      const o4 = 4 * q2, t = tri[q2], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
+      const x = pts.a[o4], y = pts.a[o4 + 1], z = pts.a[o4 + 2];
+      const c = grid.cellOf(x - eps * nx, y - eps * ny, z - eps * nz);
+      if (c < 0 || !cutE[grid.cells[c].el]) continue;
+      L.set([grid.cells[c].el, x, y, z, pts.a[o4 + 3], nx, ny, nz], 8 * m++);
+    }
+    return L.subarray(0, 8 * m);
+  });
+  // the samples of each cut element (place, weight, normal), in the order they are met: one task per element
+  const faces = (each: (e: number, x: number, y: number, z: number, w: number, nx: number, ny: number, nz: number) => void) => {
+    for (let c = 0; c < grid.cells.length; c++) {
+      const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom, ea = grid.cells[c].el;
+      for (let axis = 0; axis < 3; axis++) {
+        const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), k + (axis === 2 ? 1 : 0), d);
+        if (o < 0) continue;
+        const eb = grid.cells[o].el;
+        if (ea === eb || !(cutE[ea] || cutE[eb])) continue;
+        const pts = facePts(c, ea, eb, axis), nx = axis === 0 ? 1 : 0, ny = axis === 1 ? 1 : 0, nz = axis === 2 ? 1 : 0;
         for (let q2 = 0; q2 < pts.n; q2++) {
-          const o4 = 4 * q2, t = tri[q2], nrm = [nrms[3 * t], nrms[3 * t + 1], nrms[3 * t + 2]];
-          const x = pts.a[o4], y = pts.a[o4 + 1], z = pts.a[o4 + 2];
-          const c = grid.cellOf(x - eps * nrm[0], y - eps * nrm[1], z - eps * nrm[2]);
-          if (c < 0 || !cutE[grid.cells[c].el]) continue;
-          at(grid.cells[c].el, x, y, z, pts.a[o4 + 3], nrm);
+          const o4 = 4 * q2;
+          if (cutE[ea]) each(ea, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], nx, ny, nz);
+          if (cutE[eb]) each(eb, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], nx, ny, nz);
         }
-      }
-      for (let e = 0; e < nel; e++) {
-        const T = TT[e];
-        if (!T) continue;
-        const mm = 3 * nbs[e];
-        for (let r = 0; r < mm; r++) for (let c = 0; c < r; c++) T[c * mm + r] = T[r * mm + c];
-        const lmax = topEigen(T, block(e), mm);
-        // never under the formula, and not without bound: a cell that keeps almost none of some function
-        const need = Math.min(PENALTY_CAP * gam[e], PENALTY_SAFE * 2 * lmax);
-        if (need > gam[e]) gam[e] = need;
       }
     }
+    for (const L of held) for (let o = 0; o < L.length; o += 8) each(L[o], L[o + 1], L[o + 2], L[o + 3], L[o + 4], L[o + 5], L[o + 6], L[o + 7]);
+  };
+  const count = new Int32Array(nel);
+  faces(e => { count[e]++; });
+  const els: number[] = [];
+  let total = 0, work = 0, size = 0;
+  for (let e = 0; e < nel; e++) if (count[e]) { const mm = 3 * nbs[e]; els.push(e); total += count[e]; work += count[e] * mm * mm * 2 + 60 * mm ** 3; size += mm * mm; }
+  if (!els.length) return;
+  const shared = worthSharing(work), f64 = (m: number) => (shared ? sharedF64(m) : new Float64Array(m));
+  const sam = f64(7 * total), task = f64(SMEAS * els.length), blocks = f64(size), out = f64(els.length), fill = new Int32Array(nel);
+  let from = 0, bo = 0;
+  els.forEach((e, t) => {
+    const E = grid.elems[e], mm = 3 * nbs[e], L = lameOf(e);
+    task.set([from, from + count[e], bo, E.c[0], E.c[1], E.c[2], E.s, nbs[e], L.lam, L.mu], SMEAS * t);
+    blocks.set(A.block(e, e).subarray(0, mm * mm), bo);
+    fill[e] = from;
+    from += count[e];
+    bo += mm * mm;
+  });
+  faces((e, x, y, z, w, nx, ny, nz) => { const o = 7 * fill[e]++; sam[o] = x; sam[o + 1] = y; sam[o + 2] = z; sam[o + 3] = w; sam[o + 4] = nx; sam[o + 5] = ny; sam[o + 6] = nz; });
+  if (shared) parallelFor({ kind: "smeasure", n: els.length, p: bas.p, sam, task, blocks, out } satisfies Omit<SMeasureJob, "ctl">);
+  else {
+    const nb = bas.v.length, T = new Float64Array(9 * nb * nb), M = new Float64Array(9 * nb);
+    for (let t = 0; t < els.length; t++) out[t] = measureCell(t, sam, task, blocks, bas, T, M);
+  }
+  els.forEach((e, t) => {
+    // never under the formula, and not without bound: a cell that keeps almost none of some function
+    const need = Math.min(PENALTY_CAP * gam[e], PENALTY_SAFE * 2 * out[t]);
+    if (need > gam[e]) gam[e] = need;
+  });
 }
+/** Numbers per element of a penalty loop: first and end sample, place of its block, centre, half size, functions, λ, μ. */
+const SMEAS = 10;
+/** The largest λ of T x = λ K x of one cut element: T = Σ w (σ n)ᵀ(σ n) over its samples, K its stiffness block. */
+function measureCell(t: number, sam: ArrayLike<number>, task: ArrayLike<number>, blocks: Float64Array, bas: Basis, TT: Float64Array, M: Float64Array): number {
+  const o = SMEAS * t, n = task[o + 7], mm = 3 * n, cc = [task[o + 3], task[o + 4], task[o + 5]], sz = task[o + 6], lam = task[o + 8], mu = task[o + 9];
+  const T = TT.subarray(0, mm * mm), nrm = [0, 0, 0];
+  T.fill(0);
+  for (let q = task[o]; q < task[o + 1]; q++) {
+    const s = 7 * q, w = sam[s + 3];
+    nrm[0] = sam[s + 4]; nrm[1] = sam[s + 5]; nrm[2] = sam[s + 6];
+    bas.eval(sam[s], sam[s + 1], sam[s + 2], cc, sz, n);
+    for (let b2 = 0; b2 < n; b2++) traction(bas.g, 3 * b2, nrm, lam, mu, M, 9 * b2);
+    for (let a = 0; a < n; a++) for (let c = 0; c < 3; c++) {
+      const s0 = w * M[9 * a + c], s1 = w * M[9 * a + 3 + c], s2 = w * M[9 * a + 6 + c], row = (3 * a + c) * mm;
+      for (let b2 = 0; b2 <= a; b2++) {
+        const o9 = 9 * b2, r = row + 3 * b2;
+        T[r] += s0 * M[o9] + s1 * M[o9 + 3] + s2 * M[o9 + 6];
+        T[r + 1] += s0 * M[o9 + 1] + s1 * M[o9 + 4] + s2 * M[o9 + 7];
+        T[r + 2] += s0 * M[o9 + 2] + s1 * M[o9 + 5] + s2 * M[o9 + 8];
+      }
+    }
+  }
+  for (let r = 0; r < mm; r++) for (let c = 0; c < r; c++) T[c * mm + r] = T[r * mm + c];
+  return topEigen(T, blocks.subarray(task[o + 2], task[o + 2] + mm * mm), mm);
+}
+interface SMeasureJob extends ParJob { p: number; sam: Float64Array; task: Float64Array; blocks: Float64Array; out: Float64Array }
+kernel<SMeasureJob, { j: SMeasureJob; bas: Basis; T: Float64Array; M: Float64Array }>("smeasure", {
+  init: j => { const bas = new Basis(j.p), nb = bas.v.length; return { j, bas, T: new Float64Array(9 * nb * nb), M: new Float64Array(9 * nb) }; },
+  run({ j, bas, T, M }, t) { j.out[t] = measureCell(t, j.sam, j.task, j.blocks, bas, T, M); },
+});
 
 /** A rigid domain's stiffness beside the stiffest material of the model. */
 const RIGID_STIFF = 1e3;
@@ -828,13 +865,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const surf: ArrayLike<number>[] = [];
     for (const s of pb.fixed) if (!s.spring && s.tris?.length) surf.push(s.tris);
     if (doms && doms.length > 1) for (const d of doms) if (!d.rigid) surf.push(d.tris);
-    measurePenalty(grid, nel, nbs, gam, p, rigidE, facePts, (e, x, y, z, nrm) => {
-      const E = grid!.elems[e], n = nbs[e];
-      setMat(e);
-      bas.eval(x, y, z, E.c, E.s);
-      for (let b2 = 0; b2 < n; b2++) traction(bas.g, 3 * b2, nrm, lam, mu, MA, 9 * b2);
-      return MA;
-    }, e => A.block(e, e), surf);
+    measurePenalty(grid, nel, nbs, gam, p, rigidE, facePts, e => lames[domE[e]], A, bas, surf);
   }
   faceTerms(A, grid, nbs, gam, p, e => lames[domE[e]], facePts, face);
 
