@@ -1,3 +1,4 @@
+import { RESULTS_EXT, resultsHead, resultsName, resultsOf, takeResults } from "./sim/resultsFile";
 import { onViewItems, setViewItem, viewItems, VIEW_ITEMS, type ViewItem } from "./viewItems";
 import { showSelStatus } from "./selStatus";
 import "./style.css";
@@ -857,6 +858,16 @@ const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf|sldpr
 /** Opens dropped or chosen files: one 3D model, an SLDASM assembly with its parts, or any number of PCB layers / zips. */
 async function openFiles(files: File[]) {
   if (!files.length) return;
+  // simulation results (.mcadres): the model opened with them first, then they go onto it
+  {
+    const res = files.filter(f => f.name.toLowerCase().endsWith(RESULTS_EXT));
+    if (res.length) {
+      const rest = files.filter(f => !res.includes(f));
+      if (rest.length) await openFiles(rest);
+      for (const f of res) await openResults(f);
+      return;
+    }
+  }
   // A thermal package (a ZIP with a manifest, or its loose files), alone or with the board's STEP.
   {
     const th = await thermalFilesOf(files);
@@ -899,6 +910,16 @@ async function openFiles(files: File[]) {
   if (pcb.length) return openPcb(pcb);
   if (model) return openFile(model);
   return openFile(files[0]);
+}
+
+/** A results file opened on its own or with its model: its studies come back on that part or assembly. */
+async function openResults(f: File) {
+  const bytes = new Uint8Array(await f.arrayBuffer()), head = await resultsHead(bytes);
+  if (!head) { toast(t("Could not open {name}: {err}", { name: f.name, err: t("Not a MöbiusCAD results file.") }), true); return; }
+  const live = asm.active ? asm.doc : modeller.active ? modeller.store?.doc ?? null : null;
+  const n = await takeResults(head.doc, bytes);
+  if (live?.id === head.doc) toast(t("Simulation results read from {name}: {n} study|Simulation results read from {name}: {n} studies", { name: f.name, n }), "success");
+  else toast(t("These results belong to {model}. They show when it is opened.", { model: head.model }), "warn");
 }
 
 // ---------- loading ----------
@@ -3949,8 +3970,10 @@ const fileMenu = new FileMenu({
         const st = tab.state as PartTab | null;
         return { label, kind: "part", live, async files() {
           const doc = st ? st.store.doc : modeller.store!.doc;
-          const data = st ? await packPart(doc, appGen) : (await modeller.partBytes())!;
-          return [{ name: (st ? st.fileName : plainLabel(modeller.partName)) || `${doc.name}${PART_EXT}`, data }];
+          const data = st ? await packPart(doc, appGen) : (await modeller.partBytes(false))!;
+          const name = (st ? st.fileName : plainLabel(modeller.partName)) || `${doc.name}${PART_EXT}`, results = await resultsOf(doc);
+          // its simulation results beside it (src/sim/resultsFile.ts)
+          return [{ name, data }, ...(results ? [{ name: resultsName(name), data: results }] : [])];
         } };
       }
       if (tab.kind === "asm") {
@@ -3966,7 +3989,10 @@ const fileMenu = new FileMenu({
         return {
           label, kind: "asm", live,
           // the folder as it is saved: the assembly beside its part files, which it references
-          async files() { const f = await folder(); return [{ name: f.name, data: f.files.get(f.name)! }]; },
+          async files() {
+            const f = await folder(), results = await resultsOf(doc());
+            return [{ name: f.name, data: f.files.get(f.name)! }, ...(results ? [{ name: resultsName(f.name), data: results }] : [])];
+          },
           async parts() { const f = await folder(); return [...f.files].filter(([n]) => n !== f.name).map(([name, data]) => ({ name, data })); },
         };
       }
@@ -4092,4 +4118,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, sim, thermal, pcbThermal, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setArcMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, sim, simResults: resultsOf, thermal, pcbThermal, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setArcMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });

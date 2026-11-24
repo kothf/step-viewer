@@ -5609,6 +5609,13 @@ export const RU: Record<string, string> = {
   "Clear probes": "Убрать пробы",
   "Probes": "Пробы",
   "From the last solve of this model and study.": "Из последнего расчёта этой модели и исследования.",
+  "Results kept with the model file, solved {date}.": "Результаты сохранены вместе с файлом модели, расчёт от {date}.",
+  "Results kept with the model file.": "Результаты сохранены вместе с файлом модели.",
+  "Not a MöbiusCAD results file.": "Это не файл результатов MöbiusCAD.",
+  "These results were saved by a newer MöbiusCAD. Update the app to read them.": "Эти результаты сохранены более новой версией MöbiusCAD. Обновите приложение, чтобы прочитать их.",
+  "The results file is damaged.": "Файл результатов повреждён.",
+  "Simulation results read from {name}: {n} study|Simulation results read from {name}: {n} studies": "Результаты расчёта прочитаны из {name}: {n} исследование|Результаты расчёта прочитаны из {name}: {n} исследования|Результаты расчёта прочитаны из {name}: {n} исследований",
+  "These results belong to {model}. They show when it is opened.": "Эти результаты относятся к {model}. Они появятся, когда модель будет открыта.",
   // Modal studies (FRS-structural SA2)
   "A modal study has no loads: it finds how the part vibrates on its own.": "В модальном исследовании нет нагрузок: оно находит собственные колебания детали.",
   "New modal study": "Новое модальное исследование",
