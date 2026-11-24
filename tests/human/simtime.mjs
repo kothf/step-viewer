@@ -29,5 +29,5 @@ for (;;) {
   if (!s.run && (s.done || s.err)) { console.log("total", ((Date.now() - t0) / 1000).toFixed(1), "s, passes", s.n, "threads", s.threads, s.err ?? ""); break; }
   await pg.waitForTimeout(100);
 }
-console.log(pg.errors.slice(0, 5));
+console.log(JSON.stringify(await pg.evaluate(() => { const s = window.__sv.sim.state(); return { e: s.passes.map(p => p.energy), maxVm: s.maxVm, maxU: s.maxU, r: s.reactions ?? s.balance }; })));
 await browser.close();

@@ -462,6 +462,58 @@ export function fitPoints(src: Points, lo: number[], hi: number[], q: number): P
   return out;
 }
 
+/** Moment fitting of points lying in one plane (see fitPoints): the points (indices `idx` of `src`) are replaced by
+ * the q×q Gauss points of their bounding rectangle in the plane with normal `n`, with weights that integrate every
+ * polynomial of total degree < q exactly as they do. Returns null when that is no fewer points, or the points
+ * lie along a line. */
+export function fitPlanePoints(src: Points, idx: ArrayLike<number>, n: ArrayLike<number>, q: number, tiny: number): Points | null {
+  const cnt = idx.length;
+  if (cnt <= q * q) return null;
+  // in-plane axes
+  const ax = Math.abs(n[0]), ay = Math.abs(n[1]), az = Math.abs(n[2]);
+  const e = ax <= ay && ax <= az ? [1, 0, 0] : ay <= az ? [0, 1, 0] : [0, 0, 1];
+  let ux = n[1] * e[2] - n[2] * e[1], uy = n[2] * e[0] - n[0] * e[2], uz = n[0] * e[1] - n[1] * e[0];
+  const ul = Math.hypot(ux, uy, uz);
+  ux /= ul; uy /= ul; uz /= ul;
+  const vx = n[1] * uz - n[2] * uy, vy = n[2] * ux - n[0] * uz, vz = n[0] * uy - n[1] * ux;
+  const o0 = 4 * idx[0], x0 = src.a[o0], y0 = src.a[o0 + 1], z0 = src.a[o0 + 2];
+  const U = new Float64Array(cnt), V = new Float64Array(cnt);
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (let t = 0; t < cnt; t++) {
+    const o = 4 * idx[t], dx = src.a[o] - x0, dy = src.a[o + 1] - y0, dz = src.a[o + 2] - z0;
+    const u = dx * ux + dy * uy + dz * uz, v = dx * vx + dy * vy + dz * vz;
+    U[t] = u; V[t] = v;
+    if (u < u0) u0 = u; if (u > u1) u1 = u; if (v < v0) v0 = v; if (v > v1) v1 = v;
+  }
+  const hu = (u1 - u0) / 2, hv = (v1 - v0) / 2, cu = (u1 + u0) / 2, cv = (v1 + v0) / 2;
+  if (!(hu > tiny) || !(hv > tiny)) return null;
+  const g = gauss(q), deg = q - 1;
+  const leg = (x: number, out: Float64Array) => {
+    out[0] = 1; if (deg === 0) return; out[1] = x;
+    for (let k = 2; k <= deg; k++) out[k] = ((2 * k - 1) * x * out[k - 1] - (k - 1) * out[k - 2]) / k;
+  };
+  const lu = new Float64Array(q), lv = new Float64Array(q), M = new Float64Array(q * q);
+  for (let t = 0; t < cnt; t++) {
+    const w = src.a[4 * idx[t] + 3];
+    leg((U[t] - cu) / hu, lu);
+    leg((V[t] - cv) / hv, lv);
+    for (let i = 0; i < q; i++) { const X = w * lu[i], b = i * q; for (let j = 0; i + j < q; j++) M[b + j] += X * lv[j]; }
+  }
+  for (let i = 0; i < q; i++) for (let j = 0; i + j < q; j++) M[i * q + j] *= ((2 * i + 1) * (2 * j + 1)) / 4;
+  const L: Float64Array[] = [];
+  for (let a = 0; a < q; a++) { const A = new Float64Array(q); leg(g.x[a], A); L.push(A); }
+  const out = new Points();
+  for (let a = 0; a < q; a++) for (let b = 0; b < q; b++) {
+    let sum = 0;
+    for (let i = 0; i < q; i++) { const X = L[a][i], r = i * q; for (let j = 0; i + j < q; j++) sum += X * L[b][j] * M[r + j]; }
+    const w = g.w[a] * g.w[b] * sum;
+    if (w === 0) continue;
+    const u = cu + hu * g.x[a], v = cv + hv * g.x[b];
+    out.push(x0 + u * ux + v * vx, y0 + u * uy + v * vy, z0 + u * uz + v * vz, w);
+  }
+  return out;
+}
+
 /** Moment fitting on an axis-aligned face (see fitPoints): q×q Gauss points of the face square. */
 export function fitFacePoints(src: Points, axis: number, at: number, lo: number[], hi: number[], q: number): Points {
   const a1 = (axis + 1) % 3, a2 = (axis + 2) % 3;

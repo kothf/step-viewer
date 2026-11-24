@@ -5,7 +5,7 @@
 // Units: mm, N, MPa (so E in MPa, density in t/mm³).
 
 import { Basis, basisSize } from "./basis";
-import { gauss, gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
+import { gauss, gridTrianglePoints, facePoints, fitFacePoints, fitPlanePoints, type Inside } from "./quad";
 import { makeGrid, memoryBytes, refit, type Grid } from "./grid";
 import { BlockMatrix, matrixKey } from "./sparse";
 import { BlockCholesky, cholPlan, type CholPlan } from "./blockchol";
@@ -424,6 +424,48 @@ export function topEigen(T: Float64Array, K: Float64Array, n: number): number {
 }
 
 /**
+ * The quadrature points of boundary triangles, cut at the grid planes and located: 8 numbers per point (element, x, y,
+ * z, weight, normal). The points of one cell that lie in one plane (a flat face is many triangles, each with its own
+ * points) are replaced by the (2p + 1)² fitted points of `fitPlanePoints`, which integrate what a degree-p basis
+ * puts there the same: a bracket held on its foot had 240 000 points at degree 6 where 20 000 do. Kept per grid, so
+ * the penalty measuring, the support terms and the reactions of a pass locate a face once.
+ */
+const surfaceKept = new WeakMap<Grid, Map<ArrayLike<number>, { tq: number; L: Float64Array }>>();
+function surfacePoints(grid: Grid, tris: ArrayLike<number>, tq: number, q: number): Float64Array {
+  let kept = surfaceKept.get(grid);
+  if (!kept) surfaceKept.set(grid, (kept = new Map()));
+  const had = kept.get(tris);
+  if (had && had.tq === tq) return had.L;
+  const { pts, tri } = gridTrianglePoints(tris, grid.lo, grid.h, tq), nrms = triNormals(tris);
+  const eps = 1e-7 * grid.h, tol = 1e-7;
+  // groups: the points of one cell in one plane, in the order they are first met
+  type Group = { c: number; n: number[]; d: number; idx: number[] };
+  const groups: Group[] = [], byCell = new Map<number, Group[]>();
+  for (let k = 0; k < pts.n; k++) {
+    const o = 4 * k, t = tri[k], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
+    const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
+    // nudge inwards so a point on a cell face lands in the cell the body is on
+    const c = grid.cellOf(x - eps * nx, y - eps * ny, z - eps * nz);
+    if (c < 0) continue;
+    const d = nx * x + ny * y + nz * z;
+    let list = byCell.get(c), G: Group | undefined;
+    if (!list) byCell.set(c, (list = []));
+    for (const g of list) if (Math.abs(g.n[0] - nx) < tol && Math.abs(g.n[1] - ny) < tol && Math.abs(g.n[2] - nz) < tol && Math.abs(g.d - d) < tol * grid.h) { G = g; break; }
+    if (!G) { G = { c, n: [nx, ny, nz], d, idx: [] }; list.push(G); groups.push(G); }
+    G.idx.push(k);
+  }
+  const out: number[] = [];
+  for (const G of groups) {
+    const e = grid.cells[G.c].el, F = fitPlanePoints(pts, G.idx, G.n, q, 1e-9 * grid.h);
+    if (F) for (let k = 0; k < F.n; k++) out.push(e, F.a[4 * k], F.a[4 * k + 1], F.a[4 * k + 2], F.a[4 * k + 3], G.n[0], G.n[1], G.n[2]);
+    else for (const k of G.idx) { const t = tri[k]; out.push(e, pts.a[4 * k], pts.a[4 * k + 1], pts.a[4 * k + 2], pts.a[4 * k + 3], nrms[3 * t], nrms[3 * t + 1], nrms[3 * t + 2]); }
+  }
+  const L = Float64Array.from(out);
+  kept.set(tris, { tq, L });
+  return L;
+}
+
+/**
  * Raises the penalty of the elements the body cuts to what their tractions need (see `solveStatic`): kept out of
  * `solveStatic`, which must stay small enough for the browser's compiler to optimise its loops.
  */
@@ -435,19 +477,7 @@ function measurePenalty(grid: Grid, nel: number, nbs: ArrayLike<number>, gam: Fl
   for (let e = 0; e < nel; e++) if (!rigid(e) && grid.elems[e].cells.some(c => grid.cells[c].frac < 1 - 1e-9)) { cutE[e] = 1; any = true; }
   if (!any) return;
   // the supports' faces and the domains' surfaces, located once
-  const tq0 = Math.max(2, p + 1), eps = 1e-7 * grid.h;
-  const held: Float64Array[] = surf.map(tris => {
-    const { pts, tri } = gridTrianglePoints(tris, grid.lo, grid.h, tq0), nrms = triNormals(tris), L = new Float64Array(8 * pts.n);
-    let m = 0;
-    for (let q2 = 0; q2 < pts.n; q2++) {
-      const o4 = 4 * q2, t = tri[q2], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
-      const x = pts.a[o4], y = pts.a[o4 + 1], z = pts.a[o4 + 2];
-      const c = grid.cellOf(x - eps * nx, y - eps * ny, z - eps * nz);
-      if (c < 0 || !cutE[grid.cells[c].el]) continue;
-      L.set([grid.cells[c].el, x, y, z, pts.a[o4 + 3], nx, ny, nz], 8 * m++);
-    }
-    return L.subarray(0, 8 * m);
-  });
+  const held: Float64Array[] = surf.map(tris => surfacePoints(grid, tris, Math.max(2, p + 1), 2 * p + 1));
   // the samples of each cut element (place, weight, normal), in the order they are met: one task per element
   const faces = (each: (e: number, x: number, y: number, z: number, w: number, nx: number, ny: number, nz: number) => void) => {
     for (let c = 0; c < grid.cells.length; c++) {
@@ -465,7 +495,7 @@ function measurePenalty(grid: Grid, nel: number, nbs: ArrayLike<number>, gam: Fl
         }
       }
     }
-    for (const L of held) for (let o = 0; o < L.length; o += 8) each(L[o], L[o + 1], L[o + 2], L[o + 3], L[o + 4], L[o + 5], L[o + 6], L[o + 7]);
+    for (const L of held) for (let o = 0; o < L.length; o += 8) if (cutE[L[o]]) each(L[o], L[o + 1], L[o + 2], L[o + 3], L[o + 4], L[o + 5], L[o + 6], L[o + 7]);
   };
   const count = new Int32Array(nel);
   faces(e => { count[e]++; });
@@ -1060,18 +1090,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     }
   }
   const located = (tris: ArrayLike<number>, fn: (e: number, x: number, y: number, z: number, w: number, nrm: number[]) => void) => {
-    const { pts, tri } = gridTrianglePoints(tris, grid.lo, grid.h, tq);
-    const nrms = triNormals(tris);
-    for (let k = 0; k < pts.n; k++) {
-      const o = 4 * k, t = tri[k];
-      const nrm = [nrms[3 * t], nrms[3 * t + 1], nrms[3 * t + 2]];
-      const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
-      // nudge inwards so a point on a cell face lands in the cell the body is on
-      const eps = 1e-7 * grid.h;
-      const c = grid.cellOf(x - eps * nrm[0], y - eps * nrm[1], z - eps * nrm[2]);
-      if (c < 0) continue;
-      fn(grid.cells[c].el, x, y, z, pts.a[o + 3], nrm);
-    }
+    const L = surfacePoints(grid, tris, tq, 2 * p + 1);
+    for (let o = 0; o < L.length; o += 8) fn(L[o], L[o + 1], L[o + 2], L[o + 3], L[o + 4], [L[o + 5], L[o + 6], L[o + 7]]);
   };
   // the cell a boundary point belongs to: nudged into the body, further when the first try lands outside
   const cellNear = (x: number, y: number, z: number, d: ArrayLike<number>, o: number) => {
