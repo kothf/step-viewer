@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.740.0] - 2026-11-24
+
+### Changed
+
+- Structural, modal and thermal studies fit their cut cells faster. The many sample points of a cell cut by the surface lie on lines; their sums are now made once per line instead of once per point, and the fitted points of a flat face are worked out one direction at a time. The amplifier board thermal study takes about 34 s instead of about 36.5 s in Chrome on four cores, the bracket static study with five passes about 13 s instead of about 15 s. Results agree to the last digits shown.
+
 ## [1.739.0] - 2026-11-24
 
 ### Changed
@@ -4872,7 +4878,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.739.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.740.0...HEAD
+[1.740.0]: https://github.com/kothf/step-viewer/compare/v1.739.0...v1.740.0
 [1.739.0]: https://github.com/kothf/step-viewer/compare/v1.738.0...v1.739.0
 [1.738.0]: https://github.com/kothf/step-viewer/compare/v1.737.0...v1.738.0
 [1.737.0]: https://github.com/kothf/step-viewer/compare/v1.736.0...v1.737.0

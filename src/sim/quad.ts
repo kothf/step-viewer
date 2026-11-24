@@ -405,27 +405,50 @@ export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: num
 export const MOM_CAP = 13;
 const MOM_BASE = new Int32Array(MOM_CAP * MOM_CAP);
 export const MOM_SIZE = (() => { let n = 0; for (let i = 0; i < MOM_CAP; i++) for (let j = 0; i + j < MOM_CAP; j++) { MOM_BASE[i * MOM_CAP + j] = n; n += MOM_CAP - i - j; } return n; })();
-/** Adds to `mom` the moments Σ w L_i L_j L_k of the points for have ≤ i + j + k < q, in the box of centre c and half sizes h. */
+/** Adds to `mom` the moments Σ w L_i L_j L_k of the points for have ≤ i + j + k < q, in the box of centre c and half sizes h.
+ * The points come in lines (volumePoints: consecutive points that differ in one coordinate only), and a line's
+ * moments are a product: Σ w L along the line, once, times the two other directions' values. */
 function fitMoments(src: Points, c: number[], h: number[], q: number, mom: Float64Array, have: number) {
   if (have >= q) return;
-  const deg = q - 1, lx = new Float64Array(q), ly = new Float64Array(q), lz = new Float64Array(q), a = src.a;
-  const leg = (x: number, out: Float64Array) => {
-    out[0] = 1; if (deg === 0) return; out[1] = x;
-    for (let k = 2; k <= deg; k++) out[k] = ((2 * k - 1) * x * out[k - 1] - (k - 1) * out[k - 2]) / k;
-  };
-  for (let t = 0; t < src.n; t++) {
-    const o = 4 * t, w = a[o + 3];
-    leg((a[o] - c[0]) / h[0], lx);
-    leg((a[o + 1] - c[1]) / h[1], ly);
-    leg((a[o + 2] - c[2]) / h[2], lz);
+  const deg = q - 1, lx = new Float64Array(q), ly = new Float64Array(q), lz = new Float64Array(q), tmp = new Float64Array(q), a = src.a, n = src.n;
+  const ls = [lx, ly, lz];
+  for (let t = 0; t < n; ) {
+    const o = 4 * t, x = a[o], y = a[o + 1], z = a[o + 2];
+    // the line this point starts: the points after it that share two of its coordinates
+    let v = 2, end = t + 1;
+    if (end < n) {
+      const p = o + 4, ex = a[p] === x, ey = a[p + 1] === y, ez = a[p + 2] === z;
+      v = ex && ey ? 2 : ex && ez ? 1 : ey && ez ? 0 : -1;
+      if (v < 0) v = 2;
+      else {
+        const f1 = v === 0 ? 1 : 0, f2 = v === 2 ? 1 : 2, c1 = a[o + f1], c2 = a[o + f2];
+        end++;
+        while (end < n && a[4 * end + f1] === c1 && a[4 * end + f2] === c2) end++;
+      }
+    }
+    legendre(deg, (x - c[0]) / h[0], lx);
+    legendre(deg, (y - c[1]) / h[1], ly);
+    legendre(deg, (z - c[2]) / h[2], lz);
+    const S = ls[v], w0 = a[o + 3], cv = c[v], hv = h[v];
+    for (let k = 0; k < q; k++) S[k] *= w0;
+    for (let u = t + 1; u < end; u++) {
+      const w = a[4 * u + 3];
+      legendre(deg, (a[4 * u + v] - cv) / hv, tmp);
+      for (let k = 0; k < q; k++) S[k] += w * tmp[k];
+    }
     for (let i = 0; i < q; i++) {
-      const X = w * lx[i];
+      const X = lx[i];
       for (let j = 0; i + j < q; j++) {
         const XY = X * ly[j], b = MOM_BASE[i * MOM_CAP + j], kn = q - i - j;
         for (let k = have > i + j ? have - i - j : 0; k < kn; k++) mom[b + k] += XY * lz[k];
       }
     }
+    t = end;
   }
+}
+function legendre(deg: number, x: number, out: Float64Array) {
+  out[0] = 1; if (deg === 0) return; out[1] = x;
+  for (let k = 2; k <= deg; k++) out[k] = ((2 * k - 1) * x * out[k - 1] - (k - 1) * out[k - 2]) / k;
 }
 
 /** Moment fitting: replaces many points in box [lo, hi] by the box's q×q×q Gauss points with weights
@@ -535,9 +558,18 @@ export function fitPlanePoints(src: Points, idx: ArrayLike<number>, n: ArrayLike
   const L: Float64Array[] = [];
   for (let a = 0; a < q; a++) { const A = new Float64Array(q); leg(g.x[a], A); L.push(A); }
   const out = new Points();
+  // Σ_ij L_a[i] L_b[j] M[i][j] in two steps: R[i][b] = Σ_j L_b[j] M[i][j], then Σ_i L_a[i] R[i][b]
+  const R = new Float64Array(q * q);
+  for (let i = 0; i < q; i++) for (let b = 0; b < q; b++) {
+    let r = 0;
+    const Lb = L[b], o = i * q;
+    for (let j = 0; i + j < q; j++) r += Lb[j] * M[o + j];
+    R[o + b] = r;
+  }
   for (let a = 0; a < q; a++) for (let b = 0; b < q; b++) {
     let sum = 0;
-    for (let i = 0; i < q; i++) { const X = L[a][i], r = i * q; for (let j = 0; i + j < q; j++) sum += X * L[b][j] * M[r + j]; }
+    const La = L[a];
+    for (let i = 0; i < q; i++) sum += La[i] * R[i * q + b];
     const w = g.w[a] * g.w[b] * sum;
     if (w === 0) continue;
     const u = cu + hu * g.x[a], v = cv + hv * g.x[b];
