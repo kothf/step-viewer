@@ -173,7 +173,7 @@ export function targetOf(P: CholPlan, i: number, j: number): number {
 }
 
 /**
- * The update of step k on block (rows[ti], rows[tj]) (ti ≥ tj): T −= L_ik L_jkᵀ, two rows of each at a time.
+ * The update of step k on block (rows[ti], rows[tj]) (ti ≥ tj): T −= L_ik L_jkᵀ, four rows against two columns at a time.
  * On a diagonal block only its lower triangle is made. `a0` (even) .. `a1` = the rows of the block to make: every
  * value is its own sum, so a block made in pieces by several threads is the same as one made whole.
  */
@@ -181,6 +181,38 @@ export function updateBlock(P: CholPlan, data: Float64Array, k: number, ti: numb
   const mk = P.ms[k], i = P.rows[ti], j = P.rows[tj], mi = a1 < 0 ? P.ms[i] : a1, mj = P.ms[j];
   const oi = P.blockAt[ti], oj = P.blockAt[tj], diag = ti === tj;
   let a = a0;
+  // four rows against two columns: 8 sums for 6 loads per step of q; on a diagonal block only the columns below
+  // the four rows go this way, the rest of each row follows one sum at a time
+  for (; a + 3 < mi; a += 4) {
+    const A0 = oi + a * mk, A1 = A0 + mk, A2 = A1 + mk, A3 = A2 + mk, T0 = to + a * mj, T1 = T0 + mj, T2 = T1 + mj, T3 = T2 + mj;
+    const bEnd = diag ? a : mj;
+    let b = 0;
+    for (; b + 1 < bEnd; b += 2) {
+      const B0 = oj + b * mk, B1 = B0 + mk;
+      let s00 = 0, s01 = 0, s10 = 0, s11 = 0, s20 = 0, s21 = 0, s30 = 0, s31 = 0;
+      for (let q = 0; q < mk; q++) {
+        const y0 = data[B0 + q], y1 = data[B1 + q], x0 = data[A0 + q], x1 = data[A1 + q], x2 = data[A2 + q], x3 = data[A3 + q];
+        s00 += x0 * y0; s01 += x0 * y1; s10 += x1 * y0; s11 += x1 * y1; s20 += x2 * y0; s21 += x2 * y1; s30 += x3 * y0; s31 += x3 * y1;
+      }
+      data[T0 + b] -= s00; data[T0 + b + 1] -= s01; data[T1 + b] -= s10; data[T1 + b + 1] -= s11;
+      data[T2 + b] -= s20; data[T2 + b + 1] -= s21; data[T3 + b] -= s30; data[T3 + b + 1] -= s31;
+    }
+    for (; b < bEnd; b++) {
+      const B0 = oj + b * mk;
+      let s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+      for (let q = 0; q < mk; q++) { const y = data[B0 + q]; s0 += data[A0 + q] * y; s1 += data[A1 + q] * y; s2 += data[A2 + q] * y; s3 += data[A3 + q] * y; }
+      data[T0 + b] -= s0; data[T1 + b] -= s1; data[T2 + b] -= s2; data[T3 + b] -= s3;
+    }
+    if (diag) for (let r = 0; r < 4; r++) {
+      const Ar = A0 + r * mk, Tr = T0 + r * mj;
+      for (let c = a; c <= a + r; c++) {
+        const B0 = oj + c * mk;
+        let v = 0;
+        for (let q = 0; q < mk; q++) v += data[Ar + q] * data[B0 + q];
+        data[Tr + c] -= v;
+      }
+    }
+  }
   for (; a + 1 < mi; a += 2) {
     const A0 = oi + a * mk, A1 = A0 + mk, T0 = to + a * mj, T1 = T0 + mj;
     const bEnd = diag ? a + 2 : mj;
