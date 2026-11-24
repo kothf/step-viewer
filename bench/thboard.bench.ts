@@ -89,6 +89,7 @@ for (const p of (trEnv ? runTransient : runThermal)({
     }
   }
   if (p.transient) console.log(`transient: ${p.transient.steps} steps, ${p.transient.rejected} rejected, ${p.transient.times.length} frames`);
+  if (p.transient && process.env.TRDBG) console.log("frames", [5, 15, 30, 60].map(k => p.transient!.cstats?.[k]?.map((s: any) => s.max.toFixed(3)).join(" ")).join(" | "));
   console.log(`pass ${p.pass}: p ${p.p}, ${p.dofs} unknowns, err ${p.err?.toFixed?.(1) ?? "-"} %, change ${p.change?.toFixed(2)}, ${comps}, ${((performance.now() - t0) / 1000).toFixed(1)} s (${stageText()})`);
 }
 if (session) session.post("Profiler.stop", (_e: unknown, { profile }: any) => {

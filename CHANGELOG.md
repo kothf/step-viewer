@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.745.0] - 2026-11-24
+
+### Changed
+
+- A warm-up (transient thermal study) with radiation or natural convection works out its surface terms and its matrix again about half as often: after a part has moved 4 K since the last time, where it was 2 K. Those terms are taken by their tangent, so the temperatures of a board over an hour moved by less than 0.01 K, and the warm-up takes 17 to 20 s in place of 22.5 s in Chrome on four cores. A study whose conductivity depends on temperature keeps the 2 K.
+
 ## [1.744.0] - 2026-11-24
 
 ### Changed
@@ -4902,7 +4908,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.744.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.745.0...HEAD
+[1.745.0]: https://github.com/kothf/step-viewer/compare/v1.744.0...v1.745.0
 [1.744.0]: https://github.com/kothf/step-viewer/compare/v1.743.0...v1.744.0
 [1.743.0]: https://github.com/kothf/step-viewer/compare/v1.742.0...v1.743.0
 [1.742.0]: https://github.com/kothf/step-viewer/compare/v1.741.0...v1.742.0
