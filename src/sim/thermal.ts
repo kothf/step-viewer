@@ -357,9 +357,24 @@ function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1, fit = tru
   return fit ? fitPlanar(c, L) : L;
 }
 
+let pieceRules = true;
+/** Tests: off = every piece of a surface triangle gets the rule of the highest degree, as before 1.742.0. */
+export const setPieceRules = (on: boolean) => { pieceRules = on; };
+/** What a piece of a surface triangle has to integrate: twice the degree of the element it lies in (products of two
+ * of its functions), which with local degrees is well below twice the highest. −1 = not known, the full rule. */
+function pieceDegree(c: Ctx, nrms: ArrayLike<number>, bodyOf: (t: number) => number): ((t: number, x: number, y: number, z: number) => number) | undefined {
+  if (!pieceRules) return undefined;
+  const g = c.grid, eps = 1e-7 * g.h, deg = c.deg;
+  return (t, x, y, z) => {
+    const cl = g.cellOf(x - eps * nrms[3 * t], y - eps * nrms[3 * t + 1], z - eps * nrms[3 * t + 2], bodyOf(t));
+    return cl < 0 ? -1 : 2 * deg[g.cells[cl].el];
+  };
+}
+
 /** The points of some triangles cut at the grid planes, each with its element: 8 numbers per point, triangle by triangle. */
 function cutPoints(c: Ctx, tris: ArrayLike<number>, q: number, own: Int8Array | null, dom: number): Float64Array {
-  const g = c.grid, { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q), nrms = triNormals(tris), eps = 1e-7 * g.h;
+  const g = c.grid, nrms = triNormals(tris), eps = 1e-7 * g.h;
+  const { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q, pieceDegree(c, nrms, t => own ? own[t] : dom));
   const out = new Float64Array(8 * pts.n);
   let n = 0;
   for (let i = 0; i < pts.n; i++) {
@@ -438,7 +453,7 @@ function keptPoints(c: Ctx, K: LocKept, tris: ArrayLike<number>, own: Int8Array 
   if (miss.length) {
     const sub = new Float64Array(9 * miss.length), g = c.grid, eps = 1e-7 * g.h;
     miss.forEach((t, k) => { for (let j = 0; j < 9; j++) sub[9 * k + j] = tris[9 * t + j]; });
-    const { pts, tri } = gridTrianglePoints(sub, g.lo, g.h, K.q), nrms = triNormals(sub);
+    const nrms = triNormals(sub), { pts, tri } = gridTrianglePoints(sub, g.lo, g.h, K.q, pieceDegree(c, nrms, k => K.body[recs[miss[k]]]));
     if (K.n + pts.n > K.free.length) {
       const room = Math.max(2 * K.free.length, K.n + pts.n), a = new Float64Array(5 * room), f = new Uint8Array(room);
       a.set(K.pts.subarray(0, 5 * K.n)); f.set(K.free.subarray(0, K.n));
