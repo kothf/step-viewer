@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.723.0] - 2026-11-24
+
+### Changed
+
+- STEP, IGES and BREP files get their exact values sooner on 4-core computers: the exact geometry is read alongside the display mesh, as it already was with 6 or more cores. A 3.9 MB assembly STEP had exact measurements after 5.7 s instead of 8.4 s; its first picture comes 0.2 s later.
+
 ## [1.722.0] - 2026-11-24
 
 ### Changed
@@ -4772,6 +4778,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
+[1.723.0]: https://github.com/kothf/step-viewer/compare/v1.722.0...v1.723.0
 [1.722.0]: https://github.com/kothf/step-viewer/compare/v1.721.0...v1.722.0
 [1.721.0]: https://github.com/kothf/step-viewer/compare/v1.720.0...v1.721.0
 [1.720.0]: https://github.com/kothf/step-viewer/compare/v1.719.0...v1.720.0
