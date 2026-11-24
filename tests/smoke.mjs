@@ -16240,6 +16240,66 @@ try {
     await ctx.close();
   }
 
+  // --- Display mesh kept in the part file (1.720.0): a saved part shows its body at once on the next open, before the kernel's rebuild ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_preview", name: "Kept", units: { length: "mm", decimals: 2 }, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -40, -25), P("p2", 40, -25), P("p3", 40, 25), P("p4", -40, 25),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 15 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 12, 0), { id: "c1", t: "circle", c: "c0", r: 6 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const bare = { name: "Kept.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify({ format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-23T00:00:00Z", units: "mm" }), "document.json": JSON.stringify(part) })) };
+    const page = async () => {
+      const pg = await ctx.newPage();
+      pg.on("pageerror", e => errors.push(e.message));
+      await pg.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+      await pg.goto(`${origin}/index.html?debug&nocache&nospare`);
+      await pg.waitForFunction(() => window.__sv);
+      return pg;
+    };
+    const p1 = await page();
+    await p1.setInputFiles("#file-input", bare);
+    await p1.waitForFunction(() => window.__sv.model.last()?.data, null, { timeout: 60000 });
+    const real = await p1.evaluate(() => { const d = window.__sv.model.last().data; return { min: d.bboxMin, max: d.bboxMax, tris: d.index.length / 3 }; });
+    const bytes = await p1.evaluate(async () => [...await window.__sv.modeller.partBytes()]);
+    await p1.close();
+    // No spare worker and no disk cache: the kernel needs seconds to start, the kept mesh shows first.
+    const p2 = await page();
+    await p2.setInputFiles("#file-input", { name: "Kept.mcadprt", mimeType: "application/zip", buffer: Buffer.from(bytes) });
+    await p2.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    const early = await p2.evaluate(() => { const d = window.__sv.viewer.parts[0].data; return { preview: window.__sv.modeller.previewShown, built: !!window.__sv.model.last(), min: d.bboxMin, max: d.bboxMax, tris: d.index.length / 3, faces: d.faces.length }; });
+    await p2.waitForFunction(() => window.__sv.model.last()?.data && !window.__sv.modeller.previewShown, null, { timeout: 60000 });
+    const after = await p2.evaluate(() => ({ faces: window.__sv.viewer.parts[0].data.faces.length, parts: window.__sv.viewer.parts.length }));
+    const near = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 0.01);
+    check(early.preview && !early.built && early.tris === real.tris && near(early.min, real.min) && near(early.max, real.max) && early.faces === 0 && after.faces > 0 && after.parts === 1,
+      `part file 1.720: a saved part shows its kept mesh before the kernel rebuilds it, then the real body (${JSON.stringify({ early, real: real.tris, after, bytes: bytes.length })})`);
+    await p2.close();
+    // An assembly keeps one mesh per part and draws every component from them at once, placed (here a part used twice, one turned).
+    const asmDoc = { schema: 1, kind: "assembly", id: "a_preview", name: "Kept asm", units: { length: "mm", decimals: 2 }, parts: { p0: { name: "Kept", file: "Kept.mcadprt", doc: part } },
+      components: [{ id: "c0", name: "Kept<1>", part: "p0", tf: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], fixed: true }, { id: "c1", name: "Kept<2>", part: "p0", tf: [0, -1, 0, 200, 1, 0, 0, 0, 0, 0, 1, 0] }] };
+    const ab = [...zip(Object.entries({ "manifest.json": JSON.stringify({ format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-23T00:00:00Z", units: "mm" }), "document.json": JSON.stringify(asmDoc) }))];
+    const a1 = await page();
+    await a1.evaluate(b => window.__sv.asm.openFile({ name: "Kept.mcadasm", data: new Uint8Array(b).buffer }), ab);
+    await a1.waitForFunction(() => window.__sv.viewer.parts.length === 2 && !window.__sv.asm.building, null, { timeout: 120000 });
+    const boxes = a => a.evaluate(() => window.__sv.viewer.parts.map(p => [...p.data.bboxMin, ...p.data.bboxMax].map(v => Math.round(v * 10) / 10)));
+    const realBoxes = await boxes(a1);
+    const abytes = await a1.evaluate(async () => [...await window.__sv.asm.bytes()]);
+    await a1.close();
+    const a2 = await page();
+    await a2.evaluate(b => { void window.__sv.asm.openFile({ name: "Kept.mcadasm", data: new Uint8Array(b).buffer }); }, abytes);
+    await a2.waitForFunction(() => window.__sv.viewer.parts.length === 2, null, { timeout: 60000 });
+    const aEarly = await a2.evaluate(() => ({ preview: window.__sv.asm.previewShown, faces: window.__sv.viewer.parts.map(p => p.data.faces.length) }));
+    const earlyBoxes = await boxes(a2);
+    await a2.waitForFunction(() => !window.__sv.asm.previewShown && !window.__sv.asm.building && window.__sv.viewer.parts[0]?.data.faces.length > 0, null, { timeout: 120000 });
+    const close = earlyBoxes.length === 2 && earlyBoxes.every((b, i) => b.every((v, j) => Math.abs(v - realBoxes[i][j]) <= 0.1));
+    check(aEarly.preview && aEarly.faces.every(f => f === 0) && close,
+      `part file 1.720: a saved assembly draws its components from the kept meshes at their places before the parts are built (${JSON.stringify({ aEarly, earlyBoxes, realBoxes, bytes: abytes.length })})`);
+    await ctx.close();
+  }
+
   // --- Disk cache of opened files (1.563.0): a STEP file opened again shows its mesh and exact values from IndexedDB; export still reads the B-rep ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

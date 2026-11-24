@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.720.0] - 2026-11-24
+
+### Changed
+
+- Saved parts and assemblies appear on screen at once when opened, even the first time on a computer: the file now keeps the model's display mesh, which is drawn while the features and parts are built; the built model then takes its place and faces can be picked. The model steam engine assembly showed after 7.2 s and now after about 1 s (its file grows from 44 KB to 540 KB). Files saved this way still open in older versions, which skip the mesh.
+
 ## [1.719.0] - 2026-11-23
 
 ### Changed
@@ -4750,6 +4756,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
+[1.720.0]: https://github.com/kothf/step-viewer/compare/v1.719.0...v1.720.0
 [1.719.0]: https://github.com/kothf/step-viewer/compare/v1.718.0...v1.719.0
 [1.718.0]: https://github.com/kothf/step-viewer/compare/v1.717.0...v1.718.0
 [1.717.0]: https://github.com/kothf/step-viewer/compare/v1.716.0...v1.717.0

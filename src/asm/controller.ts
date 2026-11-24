@@ -16,7 +16,8 @@ import { PART_EXT, unpackPart } from "../model/file";
 import { t, onLangChange } from "../i18n";
 import { featureLabel } from "../model/controller";
 import { askFileName, confirmModal, toast, untoast } from "../ui";
-import { ASM_EXT, packAsm, unpackAsm } from "./file";
+import { ASM_EXT, packAsm, unpackAsm, unpackAsmFile } from "./file";
+import { encodeAsmPreview, placedPreview, readAsmPreview } from "./preview";
 import { IDENTITY, applyDir, applyPoint, compose, fromPose, invert, poseAngles, rotation, translation } from "./math";
 import { activateState, addState, deleteState } from "./states";
 import { stepName } from "./steps";
@@ -126,6 +127,12 @@ export class AsmController {
   private again = false;
   private gen = 0;
   private first = true;
+  /** The last build's components and shown meshes: what Save keeps as the parts' display meshes. */
+  private lastBuilt: { comps: Component[]; parts: { id: string; data: PartData }[] } | null = null;
+  /** The display meshes the opened file kept, until a build of this document replaces them. */
+  private filePreview: Uint8Array | null = null;
+  /** The file's display meshes are on screen and no build has replaced them yet. */
+  previewShown = false;
   private drag: { id: string; idx: number; plane: THREE.Plane; start: THREE.Vector3; delta: THREE.Vector3; moved: boolean; mated: boolean; result?: Record<string, Tf>; frame?: Record<string, Tf> | null; touching?: Set<string>; stopped?: boolean; grab?: MateRef; axis?: { o: V3; u: V3 } | null } | null = null;
   /** Collision detection while dragging (FR-MATE-002): the drag stops where a component would enter another. */
   collide = (() => { try { return localStorage.getItem("mc:asmCollide") === "1"; } catch { return false; } })();
@@ -384,9 +391,37 @@ export class AsmController {
 
   async openFile(file: File | { name: string; data: ArrayBuffer }, handle: FileSystemFileHandle | null = null) {
     const buf = file instanceof File ? await file.arrayBuffer() : file.data;
-    try { this.load(await unpackAsm(buf), file.name, handle); }
+    let opened: { doc: AsmDoc; preview: Uint8Array | null };
+    try { opened = await unpackAsmFile(buf); this.load(opened.doc, file.name, handle); }
     catch (err) { toast(t("Could not open {name}: {err}", { name: file.name, err: t((err as Error).message) }), true); return; }
+    this.showPreview(opened.preview);
     await this.attachFolder();
+  }
+
+  /**
+   * Draws every component from the display meshes the file kept, at its place, while the kernel builds the parts;
+   * the built assembly replaces them (with faces to pick and exact values). Nothing when a build already answered.
+   */
+  private showPreview(bytes: Uint8Array | null) {
+    this.filePreview = bytes;
+    if (!bytes || !this.first || !this.doc) return;
+    const kept = readAsmPreview(bytes);
+    if (!kept.size) return;
+    const comps = this.expand(this.doc).doc.components.filter(c => !c.suppressed && !c.hidden);
+    const shown = placedPreview(comps, kept);
+    if (!shown.length) return;
+    this.shownIds = shown.map(p => p.id);
+    const tree: TreeNode = { name: this.doc.name, parts: [], children: shown.map((p, i) => ({ name: p.data.name, parts: [i], children: [] })) };
+    this.host.show(shown.map(p => p.data), tree, true);
+    this.first = false;
+    this.previewShown = true;
+    this.applyOpacity();
+  }
+
+  /** The parts' display meshes to keep in the saved file: from the last build, else the ones the file came with. */
+  private previewBytes(): Uint8Array | null {
+    if (this.lastBuilt) return encodeAsmPreview(this.lastBuilt.comps, this.lastBuilt.parts);
+    return this.doc && !this.dirty ? this.filePreview : null;
   }
 
   /** Document tabs (FR-DOC-003): the open assembly with its undo history, kept while another document is shown. */
@@ -460,6 +495,9 @@ export class AsmController {
     this.geo.clear();
     this.centres.clear();
     this.first = true;
+    this.lastBuilt = null;
+    this.filePreview = null;
+    this.previewShown = false;
     document.getElementById("app")!.classList.add("asm");
     $("#empty").hidden = true;
     this.host.viewer.emptySize = 50;
@@ -600,6 +638,8 @@ export class AsmController {
           const tree: TreeNode = { name: doc.name, parts: [], children: r.parts.map((p, i) => ({ name: p.data.name, parts: [i], children: [] })) };
           this.host.show(r.parts.map(p => p.data), tree, this.first && r.parts.length > 0);
           if (r.parts.length) this.first = false;
+          this.previewShown = false;
+          this.lastBuilt = { comps: ex.doc.components, parts: r.parts.map(p => ({ id: p.id, data: p.data })) };
           this.applyOpacity();
           this.drawPicked();
         } catch (err) {
@@ -3286,7 +3326,7 @@ export class AsmController {
       if (pre.updated.length) toast(t("Updated from their files: {names}", { names: pre.updated.join(", ") }), "success");
       if (pre.conflicts.length) toast(t("Changed both here and in their files: {names}. This assembly's version was saved.", { names: pre.conflicts.join(", ") }), "warn");
       const w = await writeRefs(pre.doc, dir, this.refBase, app, "", name);
-      bytes = await packAsm(w.doc, app);
+      bytes = await packAsm(w.doc, app, this.previewBytes());
       await dir.write(name, bytes);
       written = w.written;
       if (this.doc !== doc) return false;
@@ -3309,7 +3349,7 @@ export class AsmController {
 
   async save(as = false) {
     if (!this.doc) return;
-    const bytes = await packAsm(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+    const bytes = await packAsm(this.doc, `MöbiusCAD ${this.host.appVersion}`, this.previewBytes());
     if (this.vault && !as) {
       // A vaulted assembly saves into the vault's working copy, and only while checked out here (FR-PDM-081).
       if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
@@ -3355,7 +3395,7 @@ export class AsmController {
   get title() { return this.doc ? this.fileName || `${this.doc.name}${ASM_EXT}` : ""; }
 
   /** The bytes of the open assembly, as saved. */
-  bytes() { return this.doc ? packAsm(this.doc, `MöbiusCAD ${this.host.appVersion}`) : null; }
+  bytes() { return this.doc ? packAsm(this.doc, `MöbiusCAD ${this.host.appVersion}`, this.previewBytes()) : null; }
 
   // ---------- view dragging (FR-MATE-001) ----------
 
