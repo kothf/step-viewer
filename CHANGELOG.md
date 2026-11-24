@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.722.0] - 2026-11-24
+
+### Changed
+
+- Assemblies open faster: each part's mass properties are measured once in its own axes and moved with its components (or taken from the part's analysis that the parallel build or the disk cache already holds), where every component was measured again on each build, exact box included. Opening the steam engine assembly again (parts from the disk cache) takes 0.6 s instead of 1.5 s; the first open 5.9 s instead of 6.6 s. The part files beside an assembly are read at the same time instead of one after another.
+
+### Fixed
+
+- The analysis progress line in the status bar goes away as soon as a solve ends, instead of up to half a second later.
+
 ## [1.721.0] - 2026-11-24
 
 ### Changed
@@ -4762,6 +4772,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
+[1.722.0]: https://github.com/kothf/step-viewer/compare/v1.721.0...v1.722.0
 [1.721.0]: https://github.com/kothf/step-viewer/compare/v1.720.0...v1.721.0
 [1.720.0]: https://github.com/kothf/step-viewer/compare/v1.719.0...v1.720.0
 [1.719.0]: https://github.com/kothf/step-viewer/compare/v1.718.0...v1.719.0
