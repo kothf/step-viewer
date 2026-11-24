@@ -19,7 +19,7 @@ import { NO_FAST_LINES } from "../kernel/drawing";
 import type { ModelSnap } from "./drawing.worker";
 import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
-import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
+import { DRAWING_EXT, packDrawing, savedViewsText, unpackDrawing, type SavedViews } from "./file";
 import { printHtml, sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
@@ -381,11 +381,12 @@ export class DrawingWorkspace {
   async openFile(file: File | { name: string; data: ArrayBuffer }) {
     const buf = file instanceof File ? await file.arrayBuffer() : file.data;
     try {
-      const { doc, model } = await unpackDrawing(buf);
+      const { doc, model, views } = await unpackDrawing(buf);
       this.info = {};
       if (doc.source.kind === "part") this.info = partInfo(doc.source.doc);
       else if (doc.source.kind === "asm") this.info = { title: doc.source.doc.name };
       this.load(doc, model, file.name);
+      if (views) this.seedViews(views);
       await this.loadModel();
     } catch (err) { toast(t("Could not open {name}: {err}", { name: file.name, err: t((err as Error).message) }), true); }
   }
@@ -482,12 +483,27 @@ export class DrawingWorkspace {
     this.renderTree(); this.renderProps(); this.renderOverlay();
   }
 
+  /**
+   * The lines kept in the file are drawn (as previews) until the model is loaded and each view projected again,
+   * so a saved sheet is on screen at once instead of after the model build and the hidden-line passes.
+   */
+  private seedViews(views: SavedViews) {
+    if (!this.store) return;
+    const ids = new Set(this.doc.sheets.flatMap(s => s.views.map(v => v.id)));
+    let n = 0;
+    for (const [id, s] of Object.entries(views)) if (ids.has(id) && s?.proj && typeof s.dir === "string") { this.lastShown.set(id, s); n++; }
+    this.seededViews += n;
+    if (n) this.renderSheet();
+  }
+  /** Views drawn from the lines kept in their file (debug and tests). */
+  seededViews = 0;
+
   /** Pack and Go: the drawing as saved, with its model inside. */
   async packed(tab?: DrawingTab) {
     const store = tab?.store ?? this.store;
     if (!store) return null;
     const name = (tab ? tab.fileName : this.fileName) || `${store.doc.name}${DRAWING_EXT}`;
-    return { name, data: await packDrawing(store.doc, `MöbiusCAD ${this.host.appVersion}`, tab ? tab.model : this.model) };
+    return { name, data: await packDrawing(store.doc, `MöbiusCAD ${this.host.appVersion}`, tab ? tab.model : this.model, tab ? null : savedViewsText(store.doc, this.lastShown)) };
   }
 
   /** The export menu in the drawing's bar (File ▸ Export). */
@@ -4134,7 +4150,7 @@ export class DrawingWorkspace {
   /** Saves the drawing; `as` = a copy outside the vault. */
   async save(as = false) {
     if (!this.store) return;
-    const bytes = await packDrawing(this.doc, `MöbiusCAD ${this.host.appVersion}`, this.model);
+    const bytes = await packDrawing(this.doc, `MöbiusCAD ${this.host.appVersion}`, this.model, savedViewsText(this.doc, this.lastShown));
     const name = this.fileName || `${this.doc.name}${DRAWING_EXT}`;
     if (this.vault && !as) {
       if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
