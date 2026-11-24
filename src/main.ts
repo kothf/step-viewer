@@ -1268,8 +1268,11 @@ let kernelNote = "";
 /** `?nokernel` keeps mesh values only (tests that check the tessellation path). */
 const kernelOff = new URLSearchParams(location.search).has("nokernel");
 function warmKernel() { if (!kernelOff && kernelAlongside) kernel.warm(); }
-/** With fewer cores the kernel waits for the model to be on screen instead of reading alongside the import. */
-const kernelAlongside = (navigator.hardwareConcurrency || 2) >= 6;
+/**
+ * With fewer cores the kernel waits for the model to be on screen instead of reading alongside the import.
+ * On 4 cores reading alongside costs the first picture ~5 % and brings exact values 30 % sooner (engine STEP: 3.5 → 3.7 s, 8.4 → 5.7 s).
+ */
+const kernelAlongside = (navigator.hardwareConcurrency || 2) >= 4;
 /** Starts the exact-geometry read of a file; call the result with the imported parts (null: the import failed). */
 function startKernel(bytes: ArrayBuffer, name: string, token: number, t0: number, quality: string, cached = false): (parts: PartData[] | null) => void {
   if (kernelOff) return () => {};
