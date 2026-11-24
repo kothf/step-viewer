@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.728.0] - 2026-11-24
+
+### Changed
+
+- Structural, modal and thermal studies factor their matrix faster: the inner loop of the direct solver now works on four rows at a time. A bracket, five passes: 51.6 s before, 46.4 s now on one core; 16.7 s before, 16.0 s now on four. Results are the same bit for bit.
+
 ## [1.727.0] - 2026-11-24
 
 ### Changed
@@ -4803,7 +4809,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.727.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.728.0...HEAD
+[1.728.0]: https://github.com/kothf/step-viewer/compare/v1.727.0...v1.728.0
 [1.727.0]: https://github.com/kothf/step-viewer/compare/v1.726.0...v1.727.0
 [1.726.0]: https://github.com/kothf/step-viewer/compare/v1.725.0...v1.726.0
 [1.725.0]: https://github.com/kothf/step-viewer/compare/v1.724.0...v1.725.0
