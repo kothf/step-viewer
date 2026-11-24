@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.731.0] - 2026-11-24
+
+### Fixed
+- Analysis used one thread fewer than it started: in Chrome one helper thread got its jobs only after the solve had ended, so on a four-core computer two threads worked instead of three. Every helper now takes its jobs through a channel of its own and joins at once. The bracket study of 1.730.0, five passes, in Chrome on four cores: 42 s before, 32 s now. Results are unchanged.
+
 ## [1.730.0] - 2026-11-24
 
 ### Changed
@@ -4820,7 +4825,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.730.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.731.0...HEAD
+[1.731.0]: https://github.com/kothf/step-viewer/compare/v1.730.0...v1.731.0
 [1.730.0]: https://github.com/kothf/step-viewer/compare/v1.729.0...v1.730.0
 [1.729.0]: https://github.com/kothf/step-viewer/compare/v1.728.0...v1.729.0
 [1.728.0]: https://github.com/kothf/step-viewer/compare/v1.727.0...v1.728.0

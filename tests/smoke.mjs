@@ -7775,6 +7775,37 @@ try {
     await ctx.close();
   }
 
+  // --- sim 1.731: on an isolated page the analysis worker's helper thread takes its jobs while the solve runs ---
+  // (Chrome handed a message posted to a worker's worker over only once the busy parent was back in its event loop.)
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    await mp.goto(`${origin}/index.html?sw&debug&simthreads=2`);
+    await mp.evaluate(async () => { localStorage.setItem("sv:tips", "off"); for (let i = 0; i < 240; i++) { const r = await navigator.serviceWorker.getRegistration(); if (r?.active?.state === "activated" && navigator.serviceWorker.controller) return; await new Promise(f => setTimeout(f, 250)); } });
+    await mp.reload();
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    await mp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 200), P(4, -10, 200), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235 };
+      d.studies = [{ id: "st1", name: "Static 1", kind: "static", supports: [{ id: "s1", type: "fixed", faces: [{ name: "f1:side:s1l1" }] }], loads: [{ id: "l1", type: "force", value: { v: 1000 }, normal: true, faces: [{ name: "f1:end" }] }], settings: { passes: 3, energyTol: 0 } }];
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await mp.click("#cm-t-simulation");
+    await mp.waitForTimeout(300);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    const th = await mp.evaluate(() => { const s = window.__sv.sim.state(); return { iso: s.isolated, threads: s.threads, err: s.error, maxU: s.maxU, passes: s.passes?.length }; });
+    check(th.iso && !th.err && th.passes === 3 && Math.abs(th.maxU - 0.358) < 0.01 && th.threads?.helpers === 1 && th.threads.jobs + th.threads.loops > 0 && th.threads.joined + th.threads.loopJoined >= 1,
+      `sim 1.731: the helper thread of the analysis worker joins the solve while it runs (${JSON.stringify(th)})`);
+    await ctx.close();
+  }
+
   // --- 1.53: sketch: converted edges follow the model and dangle (FR-SK-064), dimension names (065), draggable text (066), edit sketch plane (007) ---
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

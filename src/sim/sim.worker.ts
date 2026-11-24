@@ -34,7 +34,12 @@ function useThreads(n: number) {
   if (!canShare() || !(self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated) return;
   try {
     const list = Array.from({ length: Math.max(0, Math.min(16, n) - 1) }, () => new CholWorker());
-    setHelpers(list);
+    // each helper gets its jobs on a port of its own (see chol.worker.ts)
+    setHelpers(list.map(w => {
+      const ch = new MessageChannel();
+      w.postMessage({ port: ch.port2 }, [ch.port2]);
+      return { postMessage: (m: unknown) => ch.port1.postMessage(m), terminate: () => { ch.port1.close(); w.terminate(); } };
+    }));
     // A helper made just before this thread starts a long solve would not start until the solve ends (a worker's
     // own workers are started through its event loop), so a solve waits for them to report in, 3 s at most.
     const up = Promise.all(list.map(w => new Promise<void>(res => { w.onmessage = () => res(); w.onerror = () => res(); })));
