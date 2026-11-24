@@ -779,15 +779,16 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
   const MA = new Float64Array(nb), MB = new Float64Array(nb);
   // a body is joined where its surface lies on a later body; a body that found nothing that way (it lies wholly inside
   // an earlier one, or its small face fell between the other's points) is then tried from its own surface
-  const joined = new Uint8Array(nd);
+  const joined = new Uint8Array(nd), isNear = new Uint8Array(nd), N = grid.domsNear(far), steps = gap > 0 ? [eps, far] : [eps];
   for (let run = 0; run < 2; run++) for (let a = 0; a < nd; a++) {
     if (run && joined[a]) continue;
     const near: number[] = [];
+    isNear.fill(0);
     for (let d = run ? 0 : a + 1; d < (run ? a : nd); d++) {
       if (how.get(Math.min(a, d) * nd + Math.max(a, d))?.type === "none") continue;
       let apart = false;
       for (let k = 0; k < 3; k++) if (boxes[a][k] > boxes[d][3 + k] + far || boxes[d][k] > boxes[a][3 + k] + far) apart = true;
-      if (!apart) near.push(d);
+      if (!apart) { near.push(d); isNear[d] = 1; }
     }
     if (!near.length) continue;
     const T = doms[a].tris, { pts, tri } = gridTrianglePoints(T, grid.lo, grid.h, tq), nrms = triNormals(T);
@@ -795,10 +796,15 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
       const o = 4 * q, t = tri[q], w = pts.a[o + 3], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
       const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
       let b = -1, bx = 0, by = 0, bz = 0;
-      for (const d of near) {
+      // with many bodies only those whose box reaches the point's cube are gone through (in the same order)
+      let from = 0, to = near.length;
+      if (N) { const [i, j, k] = grid.index(x, y, z), cu = (k * grid.n[1] + j) * grid.n[0] + i; from = N.start[cu]; to = N.start[cu + 1]; }
+      for (let qd = from; qd < to; qd++) {
+        const d = N ? N.idx[qd] : near[qd];
+        if (N && !isNear[d]) continue;
         const B = boxes[d];
         if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
-        for (const st of gap > 0 ? [eps, far] : [eps]) {
+        for (const st of steps) {
           bx = x + st * nx; by = y + st * ny; bz = z + st * nz;
           if (doms[d].inside(bx, by, bz)) { b = d; break; }
         }
@@ -892,7 +898,7 @@ function contactFlows(c: Ctx, contacts: ThermalContact[], joins: number[], x: Fl
 function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
   const { grid, pb } = c, doms = c.doms!;
   const eps = 2e-3 * grid.h, far = Math.max(0, pb.gap ?? 0) + eps;
-  const boxes = doms.map(d => triBox(d.tris));
+  const boxes = doms.map(d => triBox(d.tris)), N = grid.domsNear(far);
   // through the kept triangles each point is asked once however many sinks hold it
   const K = c.loc && c.loc.q === q ? c.loc : null, kept = K ? keptPoints(c, K, tris, bodiesOf(c, tris), -1) : null;
   const L = kept ? kept.L : located(c, tris, q, -1, false), ids = kept ? kept.ids : null;
@@ -902,7 +908,10 @@ function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
     let on = known === 2;
     if (!known) {
       const x = L[o + 1], y = L[o + 2], z = L[o + 3], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], own = c.dom[L[o]];
-      for (let d = 0; d < doms.length && !on; d++) {
+      let from = 0, to = doms.length;
+      if (N) { const [i, j, k] = grid.index(x, y, z), cu = (k * grid.n[1] + j) * grid.n[0] + i; from = N.start[cu]; to = N.start[cu + 1]; }
+      for (let qd = from; qd < to && !on; qd++) {
+        const d = N ? N.idx[qd] : qd;
         if (d === own) continue;
         const B = boxes[d];
         if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
