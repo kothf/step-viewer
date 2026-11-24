@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.747.0] - 2026-11-24
+
+### Changed
+
+- The energy and error estimate at the end of each pass of a thermal study are summed on all cores, where one core did them: about half a second less in the last pass of a board study. Same numbers.
+
 ## [1.746.0] - 2026-11-24
 
 ### Changed
@@ -4914,7 +4920,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.746.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.747.0...HEAD
+[1.747.0]: https://github.com/kothf/step-viewer/compare/v1.746.0...v1.747.0
 [1.746.0]: https://github.com/kothf/step-viewer/compare/v1.745.0...v1.746.0
 [1.745.0]: https://github.com/kothf/step-viewer/compare/v1.744.0...v1.745.0
 [1.744.0]: https://github.com/kothf/step-viewer/compare/v1.743.0...v1.744.0
