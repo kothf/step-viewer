@@ -11,6 +11,7 @@ import { BlockMatrix } from "./sparse";
 import { BlockCholesky, type CholPlan } from "./blockchol";
 import { pcgSolver } from "./pcg";
 import { makeGrid, refit, memoryBytes, type Grid } from "./grid";
+import { type MomentTables, conductFromMoments, degreeOf, massFromMoments, momentTables, momentsAdd, momentsClear, momentsPoint } from "./moments";
 import { facePoints, fitFacePoints, fitPlanePoints, gridTrianglePoints, type Inside, type Points } from "./quad";
 import { DIRECT_LIMIT, MEMORY_LIMIT, directFits, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
 import { exchangeResistance } from "./viewfactor";
@@ -411,28 +412,29 @@ function facePts(c: Ctx, ca: number, axis: number, d = c.p): Points {
   return out;
 }
 
-/** Conduction of one cell's quadrature points into its element's matrix: K += k w ∇N_a · ∇N_b. */
-function conductCell(K: Float64Array, P: { a: ArrayLike<number>; n: number }, bas: Basis, c: ArrayLike<number>, sz: number, nb: number, kx: number, ky: number, kz: number) {
-  const g = bas.g;
-  for (let q = 0; q < P.n; q++) {
-    const o = 4 * q, w = P.a[o + 3];
-    bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], c, sz, nb);
-    for (let a = 0; a < nb; a++) {
-      const ax = g[3 * a] * w * kx, ay = g[3 * a + 1] * w * ky, az = g[3 * a + 2] * w * kz, r = a * nb;
-      for (let b = 0; b < nb; b++) K[r + b] += ax * g[3 * b] + ay * g[3 * b + 1] + az * g[3 * b + 2];
-    }
-  }
+/**
+ * Conduction of an element into its matrix, K += ∫ k ∇N_a · ∇N_b, from the moments of its integration points
+ * (`moments.ts`): the points are `n` runs of four numbers from `from`; `deg` is the element's degree.
+ */
+function conductElement(K: Float64Array, T: MomentTables, pts: ArrayLike<number>, from: number, n: number, c: ArrayLike<number>, sz: number, nb: number, deg: number, kx: number, ky: number, kz: number) {
+  momentsAdd(T, pts, from, n, c, sz, Math.max(0, 2 * deg - 2));
+  conductFromMoments(T, K, nb, sz, kx, ky, kz);
+  momentsClear(T);
 }
 
 /** Conduction inside the elements, on all threads when there are several and the work is worth it. */
 function volumeTerms(c: Ctx, A: BlockMatrix) {
   const { grid, nbs, bas, nel, k3 } = c;
   let work = 0, npt = 0;
-  for (let e = 0; e < nel; e++) for (const ci of grid.elems[e].cells) { const n = grid.cells[ci].pts.n; npt += n; work += n * nbs[e] * nbs[e] * 3; }
+  for (let e = 0; e < nel; e++) for (const ci of grid.elems[e].cells) { const n = grid.cells[ci].pts.n; npt += n; work += n * 300; }
   if (!worthSharing(work)) {
+    const T = momentTables(bas.p);
+    momentsClear(T);
     for (let e = 0; e < nel; e++) {
-      const E = grid.elems[e], K = A.block(e, e);
-      for (const ci of E.cells) conductCell(K, grid.cells[ci].pts, bas, E.c, E.s, nbs[e], k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]);
+      const E = grid.elems[e], K = A.block(e, e), top = Math.max(0, 2 * c.deg[e] - 2);
+      for (const ci of E.cells) { const P = grid.cells[ci].pts; momentsAdd(T, P.a, 0, P.n, E.c, E.s, top); }
+      conductFromMoments(T, K, nbs[e], E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]);
+      momentsClear(T);
     }
     return;
   }
@@ -443,7 +445,7 @@ function volumeTerms(c: Ctx, A: BlockMatrix) {
     const E = grid.elems[e], o = TVOL * e;
     at[o] = n;
     for (const ci of E.cells) { const P = grid.cells[ci].pts; pts.set((P.a as Float64Array).subarray(0, 4 * P.n), 4 * n); n += P.n; }
-    at.set([n, size, E.c[0], E.c[1], E.c[2], E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]], o + 1);
+    at.set([n, size, E.c[0], E.c[1], E.c[2], E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2], c.deg[e]], o + 1);
     nb[e] = nbs[e];
     size += nbs[e] * nbs[e];
   }
@@ -451,14 +453,14 @@ function volumeTerms(c: Ctx, A: BlockMatrix) {
   parallelFor({ kind: "tvolume", n: nel, p: bas.p, pts, at, nb, out } satisfies Omit<TVolumeJob, "ctl">, d => progress("assemble", d, 2 * nel));
   for (let e = 0; e < nel; e++) { const o = at[TVOL * e + 2]; A.adopt(e, out.subarray(o, o + nbs[e] * nbs[e])); }
 }
-/** Numbers per element of a shared conduction loop: first point, end point, block offset, centre, half size, k along X, Y, Z. */
-const TVOL = 10;
+/** Numbers per element of a shared conduction loop: first point, end point, block offset, centre, half size, k along X, Y, Z, degree. */
+const TVOL = 11;
 interface TVolumeJob extends ParJob { p: number; pts: Float64Array; at: Float64Array; nb: Int32Array; out: Float64Array }
-kernel<TVolumeJob, { j: TVolumeJob; bas: Basis }>("tvolume", {
-  init: j => ({ j, bas: new Basis(j.p) }),
-  run({ j, bas }, e) {
+kernel<TVolumeJob, { j: TVolumeJob; T: MomentTables }>("tvolume", {
+  init: j => { const T = momentTables(j.p); momentsClear(T); return { j, T }; },
+  run({ j, T }, e) {
     const a = j.at, o = TVOL * e, nb = j.nb[e];
-    conductCell(j.out.subarray(a[o + 2], a[o + 2] + nb * nb), { a: j.pts.subarray(4 * a[o], 4 * a[o + 1]), n: a[o + 1] - a[o] }, bas, [a[o + 3], a[o + 4], a[o + 5]], a[o + 6], nb, a[o + 7], a[o + 8], a[o + 9]);
+    conductElement(j.out.subarray(a[o + 2], a[o + 2] + nb * nb), T, j.pts, 4 * a[o], a[o + 1] - a[o], [a[o + 3], a[o + 4], a[o + 5]], a[o + 6], nb, a[o + 10], a[o + 7], a[o + 8], a[o + 9]);
   },
 });
 
@@ -845,6 +847,8 @@ function naturalTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, 
 function filmCell(S: Float64Array, nb: number, mat: boolean, L: ArrayLike<number>, order: ArrayLike<number>, from: number, end: number, bas: Basis,
   cc: ArrayLike<number>, sz: number, par: ArrayLike<number>, per: ArrayLike<number> | null, stride: number, x: ArrayLike<number> | null, fo: number) {
   const f0 = nb * nb, v = bas.v, amb = par[2], rad = par[3], hasX = par[4] > 0 && !!x;
+  // the matrix Σ w h N_a N_b comes from the points' moments weighted by w h (`moments.ts`)
+  const T = mat ? momentTables(bas.p) : null, top = mat ? 2 * degreeOf(nb) : 0;
   S.fill(0, 0, f0 + nb);
   for (let q = from; q < end; q++) {
     const i = order[q], o = 8 * i, w = L[o + 4];
@@ -869,12 +873,11 @@ function filmCell(S: Float64Array, nb: number, mat: boolean, L: ArrayLike<number
         rhs = hh * t0 - es * (T0 ** 4 - Ts ** 4);
       }
     }
-    for (let a = 0; a < nb; a++) {
-      const na = w * v[a], r = a * nb;
-      S[f0 + a] += na * rhs;
-      if (mat) for (let b = 0; b < nb; b++) S[r + b] += hh * na * v[b];
-    }
+    const wr = w * rhs;
+    for (let a = 0; a < nb; a++) S[f0 + a] += wr * v[a];
+    if (T) momentsPoint(T, L[o + 1], L[o + 2], L[o + 3], w * hh, cc, sz, top);
   }
+  if (T) { massFromMoments(T, S, nb); momentsClear(T); }
 }
 
 /** The points of one surface item by element, kept with the item's points: what a loop over its elements needs. */
