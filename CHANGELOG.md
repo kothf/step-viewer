@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.749.0] - 2026-11-24
+
+### Changed
+
+- A thermal study reads its geometry several times faster on models with many small holes: small round faces are no longer cut finer than the chord deviation asks. A real board (300 holes, 43 components): reading the geometry 37 s → 4 s, three passes 171 s → 110 s in node on four cores, the same temperatures (hottest 157.5 °C before and after). Structural studies keep their finer facets.
+
 ## [1.748.0] - 2026-11-24
 
 ### Fixed
@@ -4931,7 +4937,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.748.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.749.0...HEAD
+[1.749.0]: https://github.com/kothf/step-viewer/compare/v1.748.0...v1.749.0
 [1.748.0]: https://github.com/kothf/step-viewer/compare/v1.747.0...v1.748.0
 [1.747.0]: https://github.com/kothf/step-viewer/compare/v1.746.0...v1.747.0
 [1.746.0]: https://github.com/kothf/step-viewer/compare/v1.745.0...v1.746.0
