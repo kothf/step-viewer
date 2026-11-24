@@ -6,7 +6,7 @@
 
 import { progress } from "./progress";
 import { kernel, parallelFor, sharedF64, sharedI32, worthSharing, type ParJob } from "./threads";
-import { Points, boxState, fitPoints, volumePoints, type Inside } from "./quad";
+import { MOM_SIZE, Points, boxState, fitPoints, volumePoints, type Inside } from "./quad";
 import { MeshBody, insideOf } from "./body";
 
 export interface Cell {
@@ -44,6 +44,11 @@ export class Grid {
   readonly faces = new Map<number, Points | null>();
   /** The cut cells' fine points on shared memory (`at` = a cell's first point), once a fit was shared between threads. */
   shared: { a: Float64Array; at: Float64Array } | null = null;
+  /**
+   * The cut cells' moments kept between fits (`fitPoints`): MOM_SIZE numbers per cell from `slot[cell]`, summed up
+   * to total degree `have[cell]` − 1, so a later pass adds only the moments its higher degree needs.
+   */
+  mom: { a: Float64Array; have: Int32Array; slot: Int32Array } | null = null;
   constructor(readonly lo: number[], readonly h: number, readonly n: number[]) {
     this.addMap();
   }
@@ -85,6 +90,23 @@ export class Grid {
     const m = 1e-7 * this.h;
     return x > cl.lo[0] + m && x < cl.hi[0] - m && y > cl.lo[1] + m && y < cl.hi[1] - m && z > cl.lo[2] + m && z < cl.hi[2] - m;
   }
+  /**
+   * The cell of each point of `pos` (stepped `eps` against its normal when given), found once per list and kept:
+   * every pass reads its results at the same points of the picture, and the cells do not change between passes.
+   */
+  cellsOf(pos: ArrayLike<number>, nrm: ArrayLike<number> | undefined, eps: number): Int32Array {
+    const key = pos as object, had = this.found.get(key);
+    if (had && had.nrm === nrm && had.n === pos.length) return had.cells;
+    const n = pos.length / 3, cells = new Int32Array(n);
+    for (let i = 0; i < n; i++) {
+      let x = pos[3 * i], y = pos[3 * i + 1], z = pos[3 * i + 2];
+      if (nrm) { x -= eps * nrm[3 * i]; y -= eps * nrm[3 * i + 1]; z -= eps * nrm[3 * i + 2]; }
+      cells[i] = this.cellOf(x, y, z);
+    }
+    this.found.set(key, { nrm, n: pos.length, cells });
+    return cells;
+  }
+  private found = new WeakMap<object, { nrm: ArrayLike<number> | undefined; n: number; cells: Int32Array }>();
   cellOf(x: number, y: number, z: number, dom = -1) {
     const [i, j, k] = this.index(x, y, z);
     if (dom < 0 && this.maps.length > 1) {
@@ -271,8 +293,14 @@ export function refit(g: Grid, q: number, fit: number, degree?: (c: Cell) => num
     c.pts = c.fine ?? volumePoints(c.lo, c.hi, q, () => true, 0, new Points(), 1);
   }
   if (!todo.length) return;
-  if (!worthSharing(work)) {
-    todo.forEach((i, t) => { const c = g.cells[i]; if (!(t & 3)) progress("cells", t, todo.length); c.pts = fitPoints(c.fine!, c.lo, c.hi, fits[t]); });
+  const share = worthSharing(work), M = momentsOf(g, share);
+  if (!share) {
+    todo.forEach((i, t) => {
+      const c = g.cells[i], s = M.slot[i];
+      if (!(t & 3)) progress("cells", t, todo.length);
+      c.pts = fitPoints(c.fine!, c.lo, c.hi, fits[t], M.a.subarray(s, s + MOM_SIZE), M.have[i]);
+      if (fits[t] > M.have[i]) M.have[i] = fits[t];
+    });
     return;
   }
   // the fine points move to shared memory once and stay there for the later degrees
@@ -294,27 +322,43 @@ export function refit(g: Grid, q: number, fit: number, degree?: (c: Cell) => num
   let room = 0;
   todo.forEach((i, t) => {
     const c = g.cells[i], o = FIT_TASK * t;
-    task[o] = g.shared!.at[i]; task[o + 1] = c.fine!.n; task[o + 2] = fits[t]; task[o + 3] = room;
+    task[o] = g.shared!.at[i]; task[o + 1] = c.fine!.n; task[o + 2] = fits[t]; task[o + 3] = room; task[o + 10] = M.slot[i]; task[o + 11] = M.have[i];
     for (let k = 0; k < 3; k++) { task[o + 4 + k] = c.lo[k]; task[o + 7 + k] = c.hi[k]; }
     room += fits[t] ** 3;
   });
   const out = sharedF64(4 * room);
-  parallelFor({ kind: "fit", n: T, fine: g.shared.a, task, out, outN } satisfies Omit<FitJob, "ctl">, d => progress("cells", d, T));
+  parallelFor({ kind: "fit", n: T, fine: g.shared.a, task, out, outN, mom: M.a } satisfies Omit<FitJob, "ctl">, d => progress("cells", d, T));
   todo.forEach((i, t) => {
+    if (fits[t] > M.have[i]) M.have[i] = fits[t];
     const P = new Points(), s = 4 * task[FIT_TASK * t + 3];
     P.a = out.subarray(s, s + 4 * outN[t]); P.n = outN[t];
     g.cells[i].pts = P;
   });
 }
 
-/** Numbers per task of a shared fit: first fine point, their count, fit, first point of the output, lo, hi. */
-const FIT_TASK = 10;
-interface FitJob extends ParJob { fine: Float64Array; task: Float64Array; out: Float64Array; outN: Int32Array }
+/** The grid's kept moments, made at the first fit (on shared memory once a fit is shared between threads). */
+function momentsOf(g: Grid, share: boolean) {
+  if (!g.mom) {
+    const slot = new Int32Array(g.cells.length).fill(-1);
+    let n = 0;
+    g.cells.forEach((c, i) => { if (c.fine) { slot[i] = n; n += MOM_SIZE; } });
+    g.mom = { a: share ? sharedF64(n) : new Float64Array(n), have: new Int32Array(g.cells.length), slot };
+  } else if (share && !(g.mom.a.buffer instanceof SharedArrayBuffer)) {
+    const a = sharedF64(g.mom.a.length);
+    a.set(g.mom.a);
+    g.mom.a = a;
+  }
+  return g.mom;
+}
+
+/** Numbers per task of a shared fit: first fine point, their count, fit, first point of the output, lo, hi, first kept moment, the degree they are summed to. */
+const FIT_TASK = 12;
+interface FitJob extends ParJob { fine: Float64Array; task: Float64Array; out: Float64Array; outN: Int32Array; mom: Float64Array }
 kernel<FitJob, FitJob>("fit", {
   init: j => j,
   run(j, t) {
     const k = j.task, o = FIT_TASK * t, s = 4 * k[o], n = k[o + 1];
-    const P = fitPoints({ a: j.fine.subarray(s, s + 4 * n), n } as Points, [k[o + 4], k[o + 5], k[o + 6]], [k[o + 7], k[o + 8], k[o + 9]], k[o + 2]);
+    const P = fitPoints({ a: j.fine.subarray(s, s + 4 * n), n } as Points, [k[o + 4], k[o + 5], k[o + 6]], [k[o + 7], k[o + 8], k[o + 9]], k[o + 2], j.mom.subarray(k[o + 10], k[o + 10] + MOM_SIZE), k[o + 11]);
     j.out.set(P.a.subarray(0, 4 * P.n), 4 * k[o + 3]);
     j.outN[t] = P.n;
   },

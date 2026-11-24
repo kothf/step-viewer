@@ -401,12 +401,39 @@ export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: num
   return { pts, tri: Int32Array.from(tri) };
 }
 
+/** Kept moments of a box (`fitPoints`): for i + j + k < MOM_CAP, at MOM_BASE[i · MOM_CAP + j] + k. */
+export const MOM_CAP = 13;
+const MOM_BASE = new Int32Array(MOM_CAP * MOM_CAP);
+export const MOM_SIZE = (() => { let n = 0; for (let i = 0; i < MOM_CAP; i++) for (let j = 0; i + j < MOM_CAP; j++) { MOM_BASE[i * MOM_CAP + j] = n; n += MOM_CAP - i - j; } return n; })();
+/** Adds to `mom` the moments Σ w L_i L_j L_k of the points for have ≤ i + j + k < q, in the box of centre c and half sizes h. */
+function fitMoments(src: Points, c: number[], h: number[], q: number, mom: Float64Array, have: number) {
+  if (have >= q) return;
+  const deg = q - 1, lx = new Float64Array(q), ly = new Float64Array(q), lz = new Float64Array(q), a = src.a;
+  const leg = (x: number, out: Float64Array) => {
+    out[0] = 1; if (deg === 0) return; out[1] = x;
+    for (let k = 2; k <= deg; k++) out[k] = ((2 * k - 1) * x * out[k - 1] - (k - 1) * out[k - 2]) / k;
+  };
+  for (let t = 0; t < src.n; t++) {
+    const o = 4 * t, w = a[o + 3];
+    leg((a[o] - c[0]) / h[0], lx);
+    leg((a[o + 1] - c[1]) / h[1], ly);
+    leg((a[o + 2] - c[2]) / h[2], lz);
+    for (let i = 0; i < q; i++) {
+      const X = w * lx[i];
+      for (let j = 0; i + j < q; j++) {
+        const XY = X * ly[j], b = MOM_BASE[i * MOM_CAP + j], kn = q - i - j;
+        for (let k = have > i + j ? have - i - j : 0; k < kn; k++) mom[b + k] += XY * lz[k];
+      }
+    }
+  }
+}
+
 /** Moment fitting: replaces many points in box [lo, hi] by the box's q×q×q Gauss points with weights
  * that integrate every tensor Legendre product of degree < q per axis exactly as the given points do
  * (closed form, since the Gauss rule makes those products orthogonal). With q = 2p + 1 the stiffness
  * and mass integrands of degree-p fields come out the same as from the fine points, at a fraction of
  * the cost. Weights may be negative. */
-export function fitPoints(src: Points, lo: number[], hi: number[], q: number): Points {
+export function fitPoints(src: Points, lo: number[], hi: number[], q: number, mom?: Float64Array, have = 0): Points {
   const g = gauss(q);
   const h = [(hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2, (hi[2] - lo[2]) / 2];
   const c = [(hi[0] + lo[0]) / 2, (hi[1] + lo[1]) / 2, (hi[2] + lo[2]) / 2];
@@ -417,7 +444,11 @@ export function fitPoints(src: Points, lo: number[], hi: number[], q: number): P
     for (let k = 2; k <= n; k++) out[k] = ((2 * k - 1) * x * out[k - 1] - (k - 1) * out[k - 2]) / k;
   };
   const M = new Float64Array(q * q * q);
-  for (let t = 0; t < src.n; t++) {
+  // with `mom` (MOM_SIZE numbers kept for this box) the moments of total degree below `have` are there already
+  // from a lower q: only the others are summed, each the same sum over the points as without it
+  const keep = mom && q <= MOM_CAP ? mom : null;
+  if (keep) fitMoments(src, c, h, q, keep, have);
+  else for (let t = 0; t < src.n; t++) {
     const o = 4 * t, w = src.a[o + 3];
     leg(deg, (src.a[o] - c[0]) / h[0], lx);
     leg(deg, (src.a[o + 1] - c[1]) / h[1], ly);
@@ -430,6 +461,7 @@ export function fitPoints(src: Points, lo: number[], hi: number[], q: number): P
       for (let j = 0; i + j < q; j++) { const XY = X * ly[j], b = bi + j * q, kn = q - i - j; for (let k = 0; k < kn; k++) M[b + k] += XY * lz[k]; }
     }
   }
+  if (keep) for (let i = 0; i < q; i++) for (let j = 0; i + j < q; j++) { const b = MOM_BASE[i * MOM_CAP + j], to = (i * q + j) * q; for (let k = 0; i + j + k < q; k++) M[to + k] = keep[b + k]; }
   // divide by the norms ∫ L_i² = 2 / (2i + 1) on [−1, 1]
   for (let i = 0; i < q; i++) for (let j = 0; j < q; j++) for (let k = 0; k < q; k++)
     M[(i * q + j) * q + k] *= ((2 * i + 1) * (2 * j + 1) * (2 * k + 1)) / 8;

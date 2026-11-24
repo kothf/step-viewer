@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.737.0] - 2026-11-24
+
+### Changed
+
+- Structural and thermal studies spend less time between passes. The moments of the integration points of each cut cell are kept, so a later pass adds only the higher ones instead of summing all of them again, and the cell of every point of the result plot is found once per study instead of in every pass. Bracket static study, five passes, Chrome on four cores: 16.6 s to 14.8 s; amplifier board thermal study, three passes: 42.5 s to 41.4 s, with the same results.
+
 ## [1.736.0] - 2026-11-24
 
 ### Changed
@@ -4854,7 +4860,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.736.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.737.0...HEAD
+[1.737.0]: https://github.com/kothf/step-viewer/compare/v1.736.0...v1.737.0
 [1.736.0]: https://github.com/kothf/step-viewer/compare/v1.735.0...v1.736.0
 [1.735.0]: https://github.com/kothf/step-viewer/compare/v1.734.0...v1.735.0
 [1.734.0]: https://github.com/kothf/step-viewer/compare/v1.733.0...v1.734.0
