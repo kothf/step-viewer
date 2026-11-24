@@ -11,7 +11,7 @@ import { BlockMatrix } from "./sparse";
 import { BlockCholesky, type CholPlan } from "./blockchol";
 import { pcgSolver } from "./pcg";
 import { makeGrid, refit, memoryBytes, type Grid } from "./grid";
-import { type MomentTables, conductFromMoments, degreeOf, massFromMoments, momentTables, momentsAdd, momentsClear, momentsPoint } from "./moments";
+import { type MomentTables, conductFromMoments, degreeOf, massFromMoments, momentTables, momentsAdd, momentsClear, momentsKept, momentsPoint, legendrePoint } from "./moments";
 import { facePoints, fitFacePoints, fitPlanePoints, gridTrianglePoints, type Inside, type Points } from "./quad";
 import { DIRECT_LIMIT, MEMORY_LIMIT, directFits, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
 import { exchangeResistance } from "./viewfactor";
@@ -69,7 +69,8 @@ export function forcedH(speed: number, len: number): number {
  */
 export function naturalH(up: number, dt: number, lv: number, lh: number): number {
   const d = Math.max(Math.abs(dt), 0.05), u = dt >= 0 ? up : -up;
-  const [C, L] = u > Math.SQRT1_2 ? [1.32, lh] : u < -Math.SQRT1_2 ? [0.59, lh] : [1.42, lv];
+  // (no array here: this runs for every surface point of every step)
+  const C = u > Math.SQRT1_2 ? 1.32 : u < -Math.SQRT1_2 ? 0.59 : 1.42, L = u > Math.SQRT1_2 || u < -Math.SQRT1_2 ? lh : lv;
   return 1e-6 * C * Math.sqrt(Math.sqrt(d / (Math.max(L, 1) * 1e-3)));
 }
 
@@ -1055,18 +1056,37 @@ function naturalTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, 
  * film coefficient, ambient, emissivity, whether `x` holds temperatures, natural factor, down (3).
  */
 function filmCell(S: Float64Array, nb: number, mat: boolean, L: ArrayLike<number>, order: ArrayLike<number>, from: number, end: number, bas: Basis,
-  cc: ArrayLike<number>, sz: number, par: ArrayLike<number>, per: ArrayLike<number> | null, stride: number, x: ArrayLike<number> | null, fo: number) {
-  const f0 = nb * nb, v = bas.v, amb = par[2], rad = par[3], hasX = par[4] > 0 && !!x;
+  cc: ArrayLike<number>, sz: number, par: ArrayLike<number>, per: ArrayLike<number> | null, stride: number, x: ArrayLike<number> | null, fo: number,
+  vals: Float64Array | null, task: Float64Array, slot: number) {
+  const f0 = nb * nb, amb = par[2], rad = par[3], hasX = par[4] > 0 && !!x;
+  // what a point gives whatever the temperatures are, the functions' values and the Legendre values its moments
+  // are made of, is kept with the plan (`vals`, `filmRecord` numbers per point): made by the first loop over this element
+  const top2 = 2 * degreeOf(nb), rs = nb + 3 * (top2 + 1);
+  let vb = 0;
+  if (vals) {
+    vb = task[slot];
+    if (vb < 0) {
+      vb = -vb - 1;
+      for (let q = from, b = vb; q < end; q++, b += rs) {
+        const o = 8 * order[q];
+        bas.values(L[o + 1], L[o + 2], L[o + 3], cc, sz, nb);
+        for (let a = 0; a < nb; a++) vals[b + a] = bas.v[a];
+        legendrePoint(top2, L[o + 1], L[o + 2], L[o + 3], cc, sz, vals, b + nb);
+      }
+      task[slot] = vb;
+    }
+  }
+  const v = vals ?? bas.v;
   // the matrix Σ w h N_a N_b comes from the points' moments weighted by w h (`moments.ts`)
   const T = mat ? momentTables(bas.p) : null, top = mat ? 2 * degreeOf(nb) : 0;
   S.fill(0, 0, f0 + nb);
   for (let q = from; q < end; q++) {
-    const i = order[q], o = 8 * i, w = L[o + 4];
-    bas.values(L[o + 1], L[o + 2], L[o + 3], cc, sz, nb);
+    const i = order[q], o = 8 * i, w = L[o + 4], vo = vals ? vb + (q - from) * rs : 0;
+    if (!vals) bas.values(L[o + 1], L[o + 2], L[o + 3], cc, sz, nb);
     let hh: number, rhs: number;
     if (par[0] === 2) {
       let t0 = amb + 10;
-      if (hasX) { t0 = 0; for (let a = 0; a < nb; a++) t0 += v[a] * x![fo + a]; }
+      if (hasX) { t0 = 0; for (let a = 0; a < nb; a++) t0 += v[vo + a] * x![fo + a]; }
       const up = -(L[o + 5] * par[6] + L[o + 6] * par[7] + L[o + 7] * par[8]);
       const h = par[5] * naturalH(up, t0 - amb, per![2 * i], per![2 * i + 1]);
       hh = hasX ? 1.25 * h : h;
@@ -1077,23 +1097,31 @@ function filmCell(S: Float64Array, nb: number, mat: boolean, L: ArrayLike<number
       rhs = hp * amb;
       if (rad > 0) {
         let t0 = amb;
-        if (hasX) { t0 = 0; for (let a = 0; a < nb; a++) t0 += v[a] * x![fo + a]; }
+        if (hasX) { t0 = 0; for (let a = 0; a < nb; a++) t0 += v[vo + a] * x![fo + a]; }
         const T0 = Math.max(1, t0 + KELVIN), Ts = amb + KELVIN, es = rad * SIGMA;
-        hh = 4 * es * T0 ** 3;
-        rhs = hh * t0 - es * (T0 ** 4 - Ts ** 4);
+        const T2 = T0 * T0, S2 = Ts * Ts;
+        hh = 4 * es * (T2 * T0);
+        rhs = hh * t0 - es * (T2 * T2 - S2 * S2);
       }
     }
     const wr = w * rhs;
-    for (let a = 0; a < nb; a++) S[f0 + a] += wr * v[a];
-    if (T) momentsPoint(T, L[o + 1], L[o + 2], L[o + 3], w * hh, cc, sz, top);
+    for (let a = 0; a < nb; a++) S[f0 + a] += wr * v[vo + a];
+    if (T) { if (vals) momentsKept(T, vals, vo + nb, w * hh, top); else momentsPoint(T, L[o + 1], L[o + 2], L[o + 3], w * hh, cc, sz, top); }
   }
   if (T) { massFromMoments(T, S, nb); momentsClear(T); }
 }
 
 /** The points of one surface item by element, kept with the item's points: what a loop over its elements needs. */
-interface FilmPlan { c: Ctx; shared: boolean; work: number; n: number; L: Float64Array; order: Int32Array; task: Float64Array; per: Float64Array | null; out: Float64Array }
-/** Numbers per element of a surface loop: element, first and end place in `order`, place in `out`, centre, half size, functions, first unknown. */
-const TFILM = 10;
+interface FilmPlan { c: Ctx; shared: boolean; work: number; n: number; L: Float64Array; order: Int32Array; task: Float64Array; per: Float64Array | null; out: Float64Array; vals: Float64Array | null; where: Int32Array | null }
+/** Numbers per element of a surface loop: element, first and end place in `order`, place in `out`, centre, half size, functions, first unknown,
+ * place of its points' function values in `vals` (−place − 1 until they are made). */
+const TFILM = 11;
+/** Function values kept at surface points (`FilmPlan.vals`), numbers per build at most: beyond it they are evaluated every time. */
+let FILM_VALUES = 24e6;
+/** Tests: how many numbers may be kept at surface points (0 = evaluate every time). */
+export const setFilmValues = (n: number) => { FILM_VALUES = n; };
+const filmKept = new WeakMap<Int32Array, number>();
+const filmRecord = (nb: number) => nb + 3 * (2 * degreeOf(nb) + 1);
 const filmPlans = new WeakMap<Float64Array, FilmPlan>();
 function filmPlan(c: Ctx, L: Float64Array, per: ArrayLike<number> | null, stride: number): FilmPlan {
   const had = filmPlans.get(L);
@@ -1103,10 +1131,15 @@ function filmPlan(c: Ctx, L: Float64Array, per: ArrayLike<number> | null, stride
   for (let i = 0; i < n; i++) { const e = L[8 * i]; count.set(e, (count.get(e) ?? 0) + 1); work += 4 * nbs[e] * nbs[e]; }
   const shared = worthSharing(work), f64 = (m: number) => (shared ? sharedF64(m) : new Float64Array(m));
   const els = [...count.keys()].sort((a, b) => a - b), task = f64(TFILM * els.length), order = shared ? sharedI32(n) : new Int32Array(n), at = new Map<number, number>();
-  let from = 0, size = 0;
+  let from = 0, size = 0, nv = 0;
+  for (const e of els) nv += count.get(e)! * filmRecord(nbs[e]);
+  const used = filmKept.get(off) ?? 0, keep = used + nv <= FILM_VALUES;
+  if (keep) filmKept.set(off, used + nv);
+  nv = 0;
   els.forEach((e, t) => {
     const E = grid.elems[e], m = count.get(e)!;
-    task.set([e, from, from + m, size, E.c[0], E.c[1], E.c[2], E.s, nbs[e], off[e]], TFILM * t);
+    task.set([e, from, from + m, size, E.c[0], E.c[1], E.c[2], E.s, nbs[e], off[e], -nv - 1], TFILM * t);
+    nv += m * filmRecord(nbs[e]);
     at.set(e, from);
     from += m;
     size += nbs[e] * nbs[e] + nbs[e];
@@ -1114,7 +1147,7 @@ function filmPlan(c: Ctx, L: Float64Array, per: ArrayLike<number> | null, stride
   for (let i = 0; i < n; i++) { const e = L[8 * i], k = at.get(e)!; order[k] = i; at.set(e, k + 1); }
   let LL = L, pp = per ? (per as Float64Array) : null;
   if (shared) { LL = sharedF64(L.length); LL.set(L); if (per) { pp = sharedF64(stride * n); pp.set(per as Float64Array); } }
-  const plan: FilmPlan = { c, shared, work, n: els.length, L: LL, order, task, per: pp, out: f64(size) };
+  const plan: FilmPlan = { c, shared, work, n: els.length, L: LL, order, task, per: pp, out: f64(size), vals: keep ? f64(nv) : null, where: null };
   filmPlans.set(L, plan);
   return plan;
 }
@@ -1128,11 +1161,11 @@ function surfaceTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64
   if (!L.length) return;
   const P = filmPlan(c, L, per, stride), { task, out } = P, mat = !!A;
   if (P.shared && worthSharing(P.work)) {
-    parallelFor({ kind: "tfilm", n: P.n, p: c.bas.p, L: P.L, order: P.order, task, per: P.per, stride, x, par: Float64Array.from(par), mat, out } satisfies Omit<TFilmJob, "ctl">);
+    parallelFor({ kind: "tfilm", n: P.n, p: c.bas.p, L: P.L, order: P.order, task, per: P.per, stride, x, par: Float64Array.from(par), mat, out, vals: P.vals } satisfies Omit<TFilmJob, "ctl">);
   } else {
     for (let t = 0; t < P.n; t++) {
       const o = TFILM * t, nb = task[o + 8];
-      filmCell(out.subarray(task[o + 3], task[o + 3] + nb * nb + nb), nb, mat, P.L, P.order, task[o + 1], task[o + 2], c.bas, [task[o + 4], task[o + 5], task[o + 6]], task[o + 7], par, P.per, stride, x, task[o + 9]);
+      filmCell(out.subarray(task[o + 3], task[o + 3] + nb * nb + nb), nb, mat, P.L, P.order, task[o + 1], task[o + 2], c.bas, [task[o + 4], task[o + 5], task[o + 6]], task[o + 7], par, P.per, stride, x, task[o + 9], P.vals, task, o + 10);
     }
   }
   for (let t = 0; t < P.n; t++) {
@@ -1141,14 +1174,30 @@ function surfaceTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64
     if (A) { const K = A.block(e, e); for (let i = 0; i < nb * nb; i++) K[i] += out[so + i]; }
   }
 }
-interface TFilmJob extends ParJob { p: number; L: Float64Array; order: Int32Array; task: Float64Array; per: Float64Array | null; stride: number; x: Float64Array | null; par: Float64Array; mat: boolean; out: Float64Array }
+interface TFilmJob extends ParJob { p: number; L: Float64Array; order: Int32Array; task: Float64Array; per: Float64Array | null; stride: number; x: Float64Array | null; par: Float64Array; mat: boolean; out: Float64Array; vals: Float64Array | null }
 kernel<TFilmJob, { j: TFilmJob; bas: Basis }>("tfilm", {
   init: j => ({ j, bas: new Basis(j.p) }),
   run({ j, bas }, t) {
     const k = j.task, o = TFILM * t, nb = k[o + 8];
-    filmCell(j.out.subarray(k[o + 3], k[o + 3] + nb * nb + nb), nb, j.mat, j.L, j.order, k[o + 1], k[o + 2], bas, [k[o + 4], k[o + 5], k[o + 6]], k[o + 7], j.par, j.per, j.stride, j.x, k[o + 9]);
+    filmCell(j.out.subarray(k[o + 3], k[o + 3] + nb * nb + nb), nb, j.mat, j.L, j.order, k[o + 1], k[o + 2], bas, [k[o + 4], k[o + 5], k[o + 6]], k[o + 7], j.par, j.per, j.stride, j.x, k[o + 9], j.vals, k, o + 10);
   },
 });
+
+/** Where each point of `L` has its function values in the plan's `vals` (null until every element's are made). */
+function filmValues(c: Ctx, L: Float64Array): { vals: Float64Array; where: Int32Array } | null {
+  const P = filmPlans.get(L);
+  if (!P || !P.vals || P.c.grid !== c.grid || P.c.off !== c.off) return null;
+  if (!P.where) {
+    const { task, order } = P, where = new Int32Array(L.length / 8);
+    for (let t = 0; t < P.n; t++) {
+      const o = TFILM * t, vb = task[o + 10], nb = task[o + 8];
+      if (vb < 0) return null;
+      for (let q = task[o + 1], b = vb, rs = filmRecord(nb); q < task[o + 2]; q++, b += rs) where[order[q]] = b;
+    }
+    P.where = where;
+  }
+  return { vals: P.vals, where: P.where };
+}
 
 /** The points of a natural convection sink, located face by face so each keeps its face's sizes (2 numbers per point). */
 function naturalPoints(c: Ctx, s: ThermalSink, q: number): { L: Float64Array; lens: Float64Array } {
@@ -1298,6 +1347,7 @@ function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?:
   const forced = s.forced && s.temp === undefined && lens ? lens : null;
   const held = s.temp !== undefined;
   let out = 0, area = 0, sum = 0, hs = 0;
+  const kept = held ? null : filmValues(c, L), ambK = (s.ambient ?? 0) + KELVIN, amb4 = ambK * ambK * (ambK * ambK);
   const by = c.doms ? new Float64Array(3 * c.doms.length) : null;
   for (let o = 0; o < L.length; o += 8) {
     const e = L[o], E = grid.elems[e], w = L[o + 4], was = out;
@@ -1310,6 +1360,9 @@ function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?:
         t += v * bas.v[a];
         dn += v * (bas.g[3 * a] * k3[3 * e] * L[o + 5] + bas.g[3 * a + 1] * k3[3 * e + 1] * L[o + 6] + bas.g[3 * a + 2] * k3[3 * e + 2] * L[o + 7]);
       }
+    } else if (kept) {
+      const b = kept.where[o / 8], V = kept.vals;
+      for (let a = 0; a < nb; a++) t += x[fo + a] * V[b + a];
     } else {
       // only a held face's flow needs the gradients
       bas.values(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, nb);
@@ -1317,7 +1370,7 @@ function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?:
     }
     area += w; sum += w * t;
     if (s.temp !== undefined) out += w * (-dn + 2 * gam[e] * (t - s.temp));
-    if (s.temp === undefined && s.emissivity) { rad = w * s.emissivity * SIGMA * ((t + KELVIN) ** 4 - ((s.ambient ?? 0) + KELVIN) ** 4); out += rad; }
+    if (s.temp === undefined && s.emissivity) { const T2 = (t + KELVIN) * (t + KELVIN); rad = w * s.emissivity * SIGMA * (T2 * T2 - amb4); out += rad; }
     if (s.temp === undefined && nat && lens) {
       const o2 = o / 4, up = -(L[o + 5] * nat.down[0] + L[o + 6] * nat.down[1] + L[o + 7] * nat.down[2]);
       const h = nat.factor * naturalH(up, t - amb, lens[o2], lens[o2 + 1]);

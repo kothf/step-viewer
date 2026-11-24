@@ -1,5 +1,5 @@
 // Times the amp board's own thermal study in the packaged app (not a test): node tests/human/thtime.mjs with dist/step-viewer
-// served on :8123. SAVE = a folder to save the assembly in first (NOSOLVE = only that). Q = page query (default "&sw"), PASSES (study default when unset). Prints the time of every step the
+// served on :8123. SAVE = a folder to save the assembly in first (NOSOLVE = only that). Q = page query (default "&sw"), PASSES (study default when unset), WARMUP = a warm-up (transient) of the default hour. Prints the time of every step the
 // status bar shows, then the passes' hottest temperatures and heat balance, so runs can be compared for speed and sameness.
 import { resolve } from "node:path";
 import { open, openFiles, saveModel } from "./lib.mjs";
@@ -15,6 +15,7 @@ await pg.waitForFunction(() => window.__sv.asm.doc?.components.length === 7 && !
 await pg.waitForTimeout(1200);
 if (process.env.SAVE) { console.log("saved", await saveModel(pg, process.env.SAVE, "amp-board")); if (process.env.NOSOLVE) { await browser.close(); process.exit(0); } }
 if (process.env.PASSES) { await pg.selectOption('#sim-tree [data-k="passes"]', process.env.PASSES); await pg.waitForTimeout(300); }
+if (process.env.WARMUP) { await pg.click('#sim-tools [data-s="transient"]'); await pg.waitForTimeout(400); }
 const t0 = Date.now(); let last = "", lt = t0;
 await pg.click('#sim-tools [data-s="solve"]');
 for (;;) {

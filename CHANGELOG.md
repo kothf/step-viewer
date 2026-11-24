@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.741.0] - 2026-11-24
+## [1.742.0] - 2026-11-24
 
 ### Added
 
 - Simulation results are saved with the model and come back when it is opened. Every solved structural, modal and thermal study of a part or assembly is written to a results file (`.mcadres`): beside the assembly file when the assembly is saved into its folder, and as its own file beside the model in Pack and Go; a part or assembly saved as a single file (and every file in a vault) carries it inside. Opening the model shows the last results of the active study at once, with the date they were solved; results solved for an earlier state of the model or study open marked out of date, with Solve beside them. A `.mcadres` file can also be opened together with its model, or on its own over that model. A steady thermal study also goes into the results file as a thermal package (the board design app's format: `.vtu` surface temperatures, heat-source table, manifest). The study set-ups stay in the part or assembly file as before; files from older versions open as before.
+
+## [1.741.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies with radiation or natural convection spend less time on their surfaces, most of all a warm-up over time, which works those conditions out again at nearly every time step. What a surface point gives whatever the temperatures are is now made once and kept; the fourth powers of radiation are plain multiplications; natural convection no longer makes a temporary list per point. The warm-up of the amplifier board over an hour takes about 24.5 s instead of about 27 s in Chrome on four cores, its steady study about 32 s instead of about 34 s. Results agree to the last digits shown.
 
 ## [1.740.0] - 2026-11-24
 
@@ -4884,7 +4890,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.741.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.742.0...HEAD
+[1.742.0]: https://github.com/kothf/step-viewer/compare/v1.741.0...v1.742.0
 [1.741.0]: https://github.com/kothf/step-viewer/compare/v1.740.0...v1.741.0
 [1.740.0]: https://github.com/kothf/step-viewer/compare/v1.739.0...v1.740.0
 [1.739.0]: https://github.com/kothf/step-viewer/compare/v1.738.0...v1.739.0

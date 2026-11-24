@@ -7806,7 +7806,7 @@ try {
     await ctx.close();
   }
 
-  // --- sim 1.741: results are saved with the part (inside it, or as a .mcadres file beside it) and come back on open ---
+  // --- sim 1.742: results are saved with the part (inside it, or as a .mcadres file beside it) and come back on open ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const mp = await ctx.newPage();
@@ -7870,7 +7870,7 @@ try {
       && inside.fromFile && !inside.stale && !inside.old && inside.passes === 2 && Math.abs(inside.maxU - solved.maxU) < 1e-9 && inside.note
       && beside.fromFile && !beside.stale && beside.passes === 2 && Math.abs(beside.maxU - solved.maxU) < 1e-9
       && old.fromFile && old.old && old.stale && old.out,
-      `sim 1.741: results saved inside the part or beside it (.mcadres) come back when it is opened, and out of date after a change (${JSON.stringify({ solved, pkg, sizes: [files.full.length, files.bare.length, files.res?.length], inside, beside, old })})`);
+      `sim 1.742: results saved inside the part or beside it (.mcadres) come back when it is opened, and out of date after a change (${JSON.stringify({ solved, pkg, sizes: [files.full.length, files.bare.length, files.res?.length], inside, beside, old })})`);
     await ctx.close();
   }
 
