@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.748.0] - 2026-11-24
+
+### Fixed
+
+- A thermal study of a board with many small parts (a real board export: 43 components, 246 bodies, wire leads 0.6 mm thick) stopped with "nothing holds these bodies" or with a singular matrix in its third pass. A body lying wholly inside another, or touching it over an area far smaller than the cells, is now joined to it from its own surface, and a lead thinner than a quarter of its cell no longer makes the equations singular at the higher degrees. Contacts between a wire end and a big body are found the same way in every pass, so the result settles from pass to pass (the change between passes was 68 %, now 5 to 7 %).
+
+### Changed
+
+- The same study is several times faster: each body is looked for only where its box reaches, the inside test of a body runs along the axis its box is shortest on and rejects points beyond the box at once, small facets get fewer integration points, and the terms between touching bodies are summed per pair of elements. Three passes of that board take about 3 minutes in Chrome, where the first pass alone took longer before.
+- A study with **Solve on change** is no longer started by itself right after its file opens: it waits for the first change or for Solve. Opening a big assembly no longer goes straight into a long solve.
+
 ## [1.747.0] - 2026-11-24
 
 ### Changed
@@ -4920,7 +4931,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.747.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.748.0...HEAD
+[1.748.0]: https://github.com/kothf/step-viewer/compare/v1.747.0...v1.748.0
 [1.747.0]: https://github.com/kothf/step-viewer/compare/v1.746.0...v1.747.0
 [1.746.0]: https://github.com/kothf/step-viewer/compare/v1.745.0...v1.746.0
 [1.745.0]: https://github.com/kothf/step-viewer/compare/v1.744.0...v1.745.0
