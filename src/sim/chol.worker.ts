@@ -5,5 +5,12 @@ import { serve, type CholJob, type ParJob } from "./threads";
 import "./static";
 import "./thermal";
 
-self.onmessage = (e: MessageEvent<CholJob | ParJob>) => { serve(e.data); };
-(self as unknown as { postMessage(m: unknown): void }).postMessage({ ready: true });
+// Jobs come through a message port of the helper's own: Chrome hands a message posted to a worker's worker straight
+// over only on a port; posted to the worker itself, it can wait until the busy parent is back in its event loop.
+const run = (e: MessageEvent<CholJob | ParJob>) => { serve(e.data); };
+self.onmessage = (e: MessageEvent<{ port?: MessagePort }>) => {
+  const port = e.data.port;
+  if (!port) return;
+  port.onmessage = run;
+  (self as unknown as { postMessage(m: unknown): void }).postMessage({ ready: true });
+};
