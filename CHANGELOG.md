@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.746.0] - 2026-11-24
+
+### Changed
+
+- A warm-up (transient thermal study) starts its time steps on the cells and equations its last steady pass has just made, where it made them a second time, and the heat leaving through the surfaces at each output time is summed on all cores. A warm-up of a board over an hour takes about 16 s in place of 17 to 20 s in Chrome on four cores; a steady study gains a little too. Temperatures are the same numbers; heat flows are the same to rounding.
+
 ## [1.745.0] - 2026-11-24
 
 ### Changed
@@ -4908,7 +4914,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.745.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.746.0...HEAD
+[1.746.0]: https://github.com/kothf/step-viewer/compare/v1.745.0...v1.746.0
 [1.745.0]: https://github.com/kothf/step-viewer/compare/v1.744.0...v1.745.0
 [1.744.0]: https://github.com/kothf/step-viewer/compare/v1.743.0...v1.744.0
 [1.743.0]: https://github.com/kothf/step-viewer/compare/v1.742.0...v1.743.0

@@ -39,6 +39,12 @@ function problem(p: number): ThermalProblem {
   };
 }
 
+const close = (got: number[], want: number[]) => {
+  assert.equal(got.length, want.length);
+  const top = Math.max(1e-300, ...want.map(Math.abs));
+  got.forEach((v, i) => assert.ok(Math.abs(v - want[i]) <= 1e-10 * top, `${i}: ${v} vs ${want[i]}`));
+};
+
 test("kept function values at surface points give the same answer as evaluating them every step", () => {
   for (const p of [2, 3]) {
     setFilmValues(0);
@@ -47,9 +53,11 @@ test("kept function values at surface points give the same answer as evaluating 
     const b = solveThermal(problem(p));
     assert.ok(b.iterations > 1 && b.iterations === a.iterations);
     assert.deepEqual([...b.x], [...a.x], `p ${p}: coefficients`);
-    assert.deepEqual(b.flows.map(f => f.out), a.flows.map(f => f.out));
-    assert.deepEqual(b.flows.map(f => f.mean), a.flows.map(f => f.mean));
-    assert.deepEqual(b.flows.map(f => f.h), a.flows.map(f => f.h));
+    // the flows of a plan with kept values are summed element by element (1.746.0): the same to rounding
+    close(b.flows.map(f => f.out), a.flows.map(f => f.out));
+    close(b.flows.map(f => f.mean), a.flows.map(f => f.mean));
+    close(b.flows.map(f => f.h ?? 0), a.flows.map(f => f.h ?? 0));
+    for (let i = 0; i < a.flows.length; i++) close([...b.flows[i].doms!], [...a.flows[i].doms!]);
   }
   // a budget too small for the second sink: some plans keep values, the others do not
   setFilmValues(3000);
@@ -57,5 +65,5 @@ test("kept function values at surface points give the same answer as evaluating 
   setFilmValues(24e6);
   const d = solveThermal(problem(2));
   assert.deepEqual([...c.x], [...d.x]);
-  assert.deepEqual(c.flows.map(f => f.out), d.flows.map(f => f.out));
+  close(c.flows.map(f => f.out), d.flows.map(f => f.out));
 });
