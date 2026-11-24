@@ -7,7 +7,7 @@
 // atomic add until none are left. Helpers never need to be counted or waited for: one that wakes late finds
 // nothing to claim, one that never wakes costs nothing.
 
-import { factorDiag, factorSerial, solveBlock, stepCosts, targetOf, updateBlock, type CholPlan } from "./blockchol";
+import { cholSolve, factorDiag, factorSerial, solveBlock, stepCosts, targetOf, updateBlock, type CholPlan, type SolvePlan } from "./blockchol";
 import { progress } from "./progress";
 
 /** What a helper needs of a factorisation: the plan's arrays and the factor, all on shared memory. */
@@ -211,4 +211,15 @@ export function parallelFor(job: { kind: string; n: number; [k: string]: unknown
   for (;;) { const d = Atomics.load(j.ctl, P_DONE); if (d >= j.n) break; Atomics.wait(j.ctl, P_DONE, d, 50); }
   stats.loopJoined = Atomics.load(j.ctl, P_JOINED);
   if (Atomics.load(j.ctl, P_FAIL)) throw new Error("E-SIM-THREADS");
+}
+
+// Solves with one factorisation for several right-hand sides: one task per right-hand side (blockchol.ts `solveAll`).
+interface SolveJob extends ParJob, SolvePlan { size: number; data: Float64Array; B: Float64Array; X: Float64Array }
+kernel<SolveJob, { j: SolveJob; y: Float64Array }>("cholsolve", {
+  init: j => ({ j, y: new Float64Array(j.size) }),
+  run({ j, y }, i) { const n = j.size; cholSolve(j, j.data, j.B.subarray(n * i, n * i + n), y, j.X.subarray(n * i, n * i + n)); },
+});
+/** A solve plan with its arrays on shared memory, so a job does not copy them to every thread. */
+export function sharedSolvePlan(P: SolvePlan): SolvePlan {
+  return { nel: P.nel, ms: shared(P.ms), perm: shared(P.perm), colStart: shared(P.colStart), rows: shared(P.rows), blockAt: shared(P.blockAt), diagAt: shared(P.diagAt), off: shared(P.off), poff: shared(P.poff) };
 }

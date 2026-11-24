@@ -16,6 +16,8 @@ export interface EigenOptions {
   extra?: number;
   /** The solves are exact (a factorisation): K y is then the right-hand side itself, not multiplied out. */
   exact?: boolean;
+  /** Solves K y = b for every b at once (a factorisation shared between threads); the answers must equal `solve`'s. */
+  solveAll?: (bs: Float64Array[]) => Float64Array[];
 }
 
 export interface EigenResult {
@@ -103,12 +105,14 @@ export function subspace(
     it++;
     progress("modes", Math.min(it, 12), 14);
     const Y: Float64Array[] = [], KY: Float64Array[] = [], MY: Float64Array[] = [];
+    // with a factorisation every right-hand side is made first and the solves go out together (on all threads)
+    const all = o.solveAll ? o.solveAll(X.map(x => { const z = new Float64Array(n); mulM(x, z); return z; })) : null;
     for (let j = 0; j < X.length; j++) {
       mulM(X[j], Z);
       // K y = M x: near a mode, y ≈ x / θ
       let g: Float64Array | undefined;
-      if (theta[j] > 0) { for (let i = 0; i < n; i++) guess[i] = X[j][i] / theta[j]; g = guess; }
-      const y = solve(Z, g);
+      if (!all && theta[j] > 0) { for (let i = 0; i < n; i++) guess[i] = X[j][i] / theta[j]; g = guess; }
+      const y = all ? all[j] : solve(Z, g);
       const ky = new Float64Array(n), my = new Float64Array(n);
       if (o.exact) ky.set(Z); else mulK(y, ky);
       mulM(y, my);
