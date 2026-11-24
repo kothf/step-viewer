@@ -7806,6 +7806,74 @@ try {
     await ctx.close();
   }
 
+  // --- sim 1.742: results are saved with the part (inside it, or as a .mcadres file beside it) and come back on open ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    // ?nocache: nothing comes back from the browser's own disk cache, only from the files
+    const url = `${origin}/index.html?debug&nocache`;
+    await mp.goto(url);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    await mp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 200), P(4, -10, 200), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235, k: 50, cp: 460 };
+      d.studies = [{ id: "st1", name: "Static 1", kind: "static", supports: [{ id: "s1", type: "fixed", faces: [{ name: "f1:side:s1l1" }] }], loads: [{ id: "l1", type: "force", value: { v: 1000 }, normal: true, faces: [{ name: "f1:end" }] }], settings: { passes: 2, energyTol: 0 } },
+        { id: "st2", name: "Thermal 1", kind: "thermal", supports: [{ id: "t1", type: "temp", faces: [{ name: "f1:side:s1l1" }], temp: 20 }, { id: "t2", type: "temp", faces: [{ name: "f1:side:s1l3" }], temp: 220 }], loads: [], settings: { passes: 2, energyTol: 1, ambient: 25 } }];
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await mp.click("#cm-t-simulation");
+    await mp.waitForTimeout(300);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    // the thermal study too: it also goes into the results file as a thermal package
+    await mp.selectOption('#sim-tree select[data-k="study"]', "st2");
+    await mp.waitForTimeout(200);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.study === "st2" && s.done || s.error; }, null, { timeout: 240000 });
+    await mp.selectOption('#sim-tree select[data-k="study"]', "st1");
+    // the structural study's results come back from what this session kept (no disk cache here)
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.study === "st1" && s.passes.length && !s.passes.some(p => p.energy == null) && s.maxU > 0.1; }, null, { timeout: 20000 }).catch(() => {});
+    const solved = await mp.evaluate(() => { const s = window.__sv.sim.state(); return { err: s.error, maxU: s.maxU, passes: s.passes.length, saved: s.savedStudies }; });
+    const files = await mp.evaluate(async () => {
+      const m = window.__sv.modeller, doc = window.__sv.model.store.doc;
+      const full = await m.partBytes(), bare = await m.partBytes(false), res = await window.__sv.simResults(doc);
+      return { full: Array.from(full), bare: Array.from(bare), res: res ? Array.from(res) : null };
+    });
+    // opens a part from the file input of a freshly loaded app, and waits for its results to come back
+    const reopen = async (list, want) => {
+      await mp.goto(url);
+      await mp.waitForFunction(() => window.__sv);
+      await mp.setInputFiles("#file-input", list.map(f => ({ name: f.name, mimeType: "application/octet-stream", buffer: Buffer.from(f.data) })));
+      await mp.waitForFunction(() => window.__sv.model?.store?.doc.features.length && document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+      await mp.waitForFunction(w => { const s = window.__sv.sim.state(); return s.passes.length && s.fromFile && s.stale === w; }, want, { timeout: 30000 }).catch(() => {});
+      await mp.waitForTimeout(200);
+      return mp.evaluate(() => { const s = window.__sv.sim.state(); return { fromFile: s.fromFile, old: s.oldResults, stale: s.stale, maxU: s.maxU, passes: s.passes.length, note: !!document.querySelector("#sim-tree .sim-fromfile"), out: (document.querySelector("#sim-tree")?.textContent ?? "").includes("Out of date") }; });
+    };
+    const inside = await reopen([{ name: "Bar.mcadprt", data: files.full }], false);
+    const beside = await reopen([{ name: "Bar.mcadprt", data: files.bare }, { name: "Bar.mcadres", data: files.res ?? [] }], false);
+    // the model changes and is saved without solving again: the results go with it, marked out of date when opened
+    await mp.evaluate(() => window.__sv.model.store.change("Depth", d => { d.features.find(f => f.id === "f1").depth = { v: 25 }; }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const changed = Array.from(await mp.evaluate(async () => Array.from(await window.__sv.modeller.partBytes())));
+    const old = await reopen([{ name: "Bar.mcadprt", data: changed }], true);
+    const bareHas = files.bare.length < files.full.length - 1000, resText = Buffer.from(files.res ?? []).toString("latin1");
+    const pkg = resText.includes("thermal/") && resText.includes("-thermal.vtu") && resText.includes("-heat-sources.csv");
+    check(!solved.err && solved.passes === 2 && solved.saved.includes("st1") && solved.saved.includes("st2") && files.res && bareHas && pkg
+      && inside.fromFile && !inside.stale && !inside.old && inside.passes === 2 && Math.abs(inside.maxU - solved.maxU) < 1e-9 && inside.note
+      && beside.fromFile && !beside.stale && beside.passes === 2 && Math.abs(beside.maxU - solved.maxU) < 1e-9
+      && old.fromFile && old.old && old.stale && old.out,
+      `sim 1.742: results saved inside the part or beside it (.mcadres) come back when it is opened, and out of date after a change (${JSON.stringify({ solved, pkg, sizes: [files.full.length, files.bare.length, files.res?.length], inside, beside, old })})`);
+    await ctx.close();
+  }
+
   // --- 1.53: sketch: converted edges follow the model and dangle (FR-SK-064), dimension names (065), draggable text (066), edit sketch plane (007) ---
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -18230,7 +18298,7 @@ try {
   }
 
   // --- bolted joints 1.673 (FRS-thermal FR-TCON-003): plates a toolbox bolt clamps pass heat by a bolted joint's conductance ---
-  if (inShard(1)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
@@ -19510,8 +19578,8 @@ try {
   }
 
   // --- Structural analysis 1.637 (FR-CON-020/021): a toolbox screw with its nut is analysed as a bolt ---
-  // In shard 6 since 1.734.0 (shard 4 since 1.710.0, shard 3 since 1.700.0): shards 5, 3, then 4 reached the 12 minute limit.
-  if (inShard(6)) {
+  // In shard 5 since 1.741.0 (shard 6 reached the limit), shard 6 since 1.734.0 (shard 4 since 1.710.0, shard 3 since 1.700.0): shards 5, 3, then 4 reached the 12 minute limit.
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
