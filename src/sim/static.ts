@@ -2023,8 +2023,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const local = new Float32Array(nel);
   for (let e = 0; e < nel; e++) local[e] = strain > 0 ? 100 * Math.sqrt((eta[e] * nel) / strain) : 0;
 
-  const at = (px: number, py: number, pz: number) => {
-    const c = grid.cellOf(px, py, pz);
+  const at = (px: number, py: number, pz: number, known = -2) => {
+    const c = known > -2 ? known : grid.cellOf(px, py, pz);
     if (c < 0) return -1;
     const E = el(c);
     bas.eval(px, py, pz, E.c, E.s);
@@ -2046,12 +2046,13 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       const hit = hits ? new Uint8Array(n) : undefined, dom = doms ? new Uint8Array(n) : undefined;
       const eps = 1e-6 * grid.h, G = new Float64Array(9);
       const thT = th ? th.field(Float64Array.from(pos), false).t : null;
+      const cells = typeof pos === "object" ? grid.cellsOf(pos, nrm, eps) : null;
       for (let i = 0; i < n; i++) {
         let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
         if (nrm) { px -= eps * nrm[3 * i]; py -= eps * nrm[3 * i + 1]; pz -= eps * nrm[3 * i + 2]; }
         // asked with `hits`: a point outside the grid's box has no value (the nearest cell's would be an extrapolation)
         if (hit && (px < grid.lo[0] - eps || py < grid.lo[1] - eps || pz < grid.lo[2] - eps || px > grid.lo[0] + grid.n[0] * grid.h + eps || py > grid.lo[1] + grid.n[1] * grid.h + eps || pz > grid.lo[2] + grid.n[2] * grid.h + eps)) continue;
-        const e = at(px, py, pz);
+        const e = cells ? at(px, py, pz, cells[i]) : at(px, py, pz);
         if (e < 0) continue;
         if (hit) hit[i] = 1;
         if (dom) dom[i] = domE[e];
@@ -2284,10 +2285,15 @@ function relative(C: Float64Array, F: Float64Array, ridge: number) {
 
 /** The box of a triangle soup: [lo x, y, z, hi x, y, z]. */
 export function triBox(T: ArrayLike<number>) {
+  const had = typeof T === "object" ? triBoxes.get(T as object) : undefined;
+  if (had) return had;
   const B = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < T.length; i++) { const a = i % 3; if (T[i] < B[a]) B[a] = T[i]; if (T[i] > B[3 + a]) B[3 + a] = T[i]; }
+  for (let i = 0; i < T.length; i += 3) for (let a = 0; a < 3; a++) { const v = T[i + a]; if (v < B[a]) B[a] = v; if (v > B[3 + a]) B[3 + a] = v; }
+  if (typeof T === "object") triBoxes.set(T as object, B);
   return B;
 }
+/** The box of each triangle list, found once (the lists are not changed after they are made). */
+const triBoxes = new WeakMap<object, number[]>();
 
 /**
  * What one support holds of a domain (`b` = −1), or what a joint shares between two: sums over its points of

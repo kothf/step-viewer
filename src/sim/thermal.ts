@@ -359,7 +359,8 @@ function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1, fit = tru
     // nudged inwards so a point on a cell face lands in the cell the body is on
     const cl = g.cellOf(x - eps * nx, y - eps * ny, z - eps * nz, own ? own[t] : dom);
     if (cl < 0) continue;
-    out.set([g.cells[cl].el, x, y, z, pts.a[o + 3], nx, ny, nz], 8 * n++);
+    const w = 8 * n++;
+    out[w] = g.cells[cl].el; out[w + 1] = x; out[w + 2] = y; out[w + 3] = z; out[w + 4] = pts.a[o + 3]; out[w + 5] = nx; out[w + 6] = ny; out[w + 7] = nz;
   }
   return fit ? fitPlanar(c, out.subarray(0, 8 * n)) : out.subarray(0, 8 * n);
 }
@@ -1446,14 +1447,21 @@ function samplerOf(c: Ctx, x: Float64Array, local: Float32Array | null) {
     bas.eval(px, py, pz, E.c, E.s, c.nbs[e]);
     return e;
   };
+  const elIn = (cl: number, px: number, py: number, pz: number) => {
+    if (cl < 0) return -1;
+    const e = g0.cells[cl].el, E = g0.elems[e];
+    bas.eval(px, py, pz, E.c, E.s, c.nbs[e]);
+    return e;
+  };
   const sample = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): ThermalSample => {
     const n = pos.length / 3, temp = new Float32Array(n), flux = new Float32Array(3 * n), err = new Float32Array(n);
     const hit = hits ? new Uint8Array(n) : undefined, eps = 1e-6 * g0.h, where = doms ? new Uint8Array(n) : undefined;
+    const cells = typeof pos === "object" ? g0.cellsOf(pos, nrm, eps) : null;
     for (let i = 0; i < n; i++) {
       let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
       if (nrm) { px -= eps * nrm[3 * i]; py -= eps * nrm[3 * i + 1]; pz -= eps * nrm[3 * i + 2]; }
       if (hit && (px < g0.lo[0] - eps || py < g0.lo[1] - eps || pz < g0.lo[2] - eps || px > g0.lo[0] + g0.n[0] * g0.h + eps || py > g0.lo[1] + g0.n[1] * g0.h + eps || pz > g0.lo[2] + g0.n[2] * g0.h + eps)) continue;
-      const e = elAt(px, py, pz);
+      const e = cells ? elIn(cells[i], px, py, pz) : elAt(px, py, pz);
       if (e < 0) continue;
       if (hit) hit[i] = 1;
       let t = 0, gx = 0, gy = 0, gz = 0;
