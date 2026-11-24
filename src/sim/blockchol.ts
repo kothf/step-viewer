@@ -267,7 +267,7 @@ export class BlockCholesky {
   /** Solves for several right-hand sides, on all threads when that is worth it: the same numbers as `solve` gives one by one. */
   solveAll(bs: Float64Array[]): Float64Array[] {
     const n = this.n, q = bs.length;
-    if (q < 2 || !(this.data.buffer instanceof SharedArrayBuffer) || !worthSharing(4 * q * this.data.length)) return bs.map(b => this.solve(b));
+    if (q < 2 || typeof SharedArrayBuffer === "undefined" || !(this.data.buffer instanceof SharedArrayBuffer) || !worthSharing(4 * q * this.data.length)) return bs.map(b => this.solve(b));
     const P = (this.sharedPlan ??= sharedSolvePlan(this.solvePlan()));
     const B = sharedF64(n * q), X = sharedF64(n * q);
     for (let j = 0; j < q; j++) B.set(bs[j], n * j);

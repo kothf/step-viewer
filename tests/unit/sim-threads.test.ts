@@ -97,6 +97,11 @@ test("threads: several right-hand sides solved on several threads are the same b
     assert.equal(threadStats().loops - before, 1);
     assert.deepEqual(many, one);
   } finally { setHelpers([]); setLoopFloor(2e7); }
+  // a page that is not cross-origin isolated has no SharedArrayBuffer at all
+  const g = globalThis as { SharedArrayBuffer?: unknown }, kept = g.SharedArrayBuffer;
+  const F = new BlockCholesky(A);
+  g.SharedArrayBuffer = undefined;
+  try { assert.deepEqual(F.solveAll(bs), one); } finally { g.SharedArrayBuffer = kept; }
 });
 
 test("threads: the equations built on several threads are the same bit for bit", async () => {
