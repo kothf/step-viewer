@@ -28,6 +28,8 @@ export class MeshBody implements Body {
   private readonly g3: { n: number[]; o: number[]; s: number; idx: Int32Array; start: Int32Array };
   /** Irrational offsets keep lines off triangle edges and vertices. */
   private readonly jit: number;
+  /** The axis the inside test counts crossings along when it is not X. */
+  private ray = 0;
 
   /** The triangles the body was made from. */
   get tris(): Float64Array { return this.t; }
@@ -63,11 +65,32 @@ export class MeshBody implements Body {
         const v0 = Math.min(t[o + a2], t[o + 3 + a2], t[o + 6 + a2]), v1 = Math.max(t[o + a2], t[o + 3 + a2], t[o + 6 + a2]);
         const i0 = Math.max(0, Math.floor((u0 - o1) / s)), i1 = Math.min(n1 - 1, Math.floor((u1 - o1) / s));
         const j0 = Math.max(0, Math.floor((v0 - o2) / s)), j1 = Math.min(n2 - 1, Math.floor((v1 - o2) / s));
-        for (let ii = i0; ii <= i1; ii++) for (let jj = j0; jj <= j1; jj++) lists[ii * n2 + jj].push(i);
+        // a triangle seen edge-on along this axis is never crossed by a line along it (the tests skip it: d = 0)
+        const x0 = t[o + a1], y0 = t[o + a2], x1 = t[o + 3 + a1], y1 = t[o + 3 + a2], x2 = t[o + 6 + a1], y2 = t[o + 6 + a2];
+        if ((y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2) === 0) continue;
+        if ((i1 - i0 + 1) * (j1 - j0 + 1) <= 2) { for (let ii = i0; ii <= i1; ii++) for (let jj = j0; jj <= j1; jj++) lists[ii * n2 + jj].push(i); continue; }
+        // a long thin triangle lying askew goes only into the buckets it reaches, not all of its box
+        const tol = 1e-7 * s, ex = [y1 - y0, y2 - y1, y0 - y2], ey = [x0 - x1, x1 - x2, x2 - x0], px = [x0, x1, x2], py = [y0, y1, y2], qx = [x2, x0, x1], qy = [y2, y0, y1];
+        const len = [Math.hypot(ex[0], ey[0]), Math.hypot(ex[1], ey[1]), Math.hypot(ex[2], ey[2])];
+        for (let ii = i0; ii <= i1; ii++) for (let jj = j0; jj <= j1; jj++) {
+          const r0 = o1 + ii * s, r1 = r0 + s, q0 = o2 + jj * s, q1 = q0 + s;
+          let out = false;
+          for (let e = 0; e < 3 && !out; e++) {
+            const side = ex[e] * (qx[e] - px[e]) + ey[e] * (qy[e] - py[e]), base = ex[e] * px[e] + ey[e] * py[e], lim = tol * len[e];
+            if (side > 0) out = ex[e] * (ex[e] > 0 ? r1 : r0) + ey[e] * (ey[e] > 0 ? q1 : q0) - base < -lim;
+            else out = ex[e] * (ex[e] > 0 ? r0 : r1) + ey[e] * (ey[e] > 0 ? q0 : q1) - base > lim;
+          }
+          if (!out) lists[ii * n2 + jj].push(i);
+        }
       }
       const { idx, start } = flatten(lists);
       this.cols.push({ a1, a2, n1, n2, o1, o2, s, idx, start });
     }
+    // the inside test runs along X unless a line along another axis meets under a third of the triangles (a board
+    // asked along its length passes every hole's wall)
+    const cost = this.cols.map(C => { let q = 0; for (let b = 0; b + 1 < C.start.length; b++) { const l = C.start[b + 1] - C.start[b]; q += l * l; } return q / Math.max(1, C.idx.length); });
+    const best = cost[1] < cost[2] ? 1 : 2;
+    if (cost[best] * 3 < cost[0]) this.ray = best;
     const n = [0, 1, 2].map(a => Math.max(1, Math.ceil((this.hi[a] - this.lo[a]) / s) + 1));
     const lists: number[][] = Array.from({ length: n[0] * n[1] * n[2] }, () => []);
     for (let i = 0; i < this.nt; i++) {
@@ -108,6 +131,8 @@ export class MeshBody implements Body {
   /** Odd number of surface crossings beyond x on the line along X through the point: the cuts `hits(0, …)` gives,
    * counted without making the list. */
   inside(x: number, y: number, z: number): boolean {
+    if (this.ray) return this.insideAlong(this.ray, x, y, z);
+    if (x > this.hi[0] || x < this.lo[0]) return false;
     const C = this.cols[0], t = this.t;
     const u = (C.a1 === 1 ? y : z) + this.jit, v = (C.a2 === 1 ? y : z) + 0.7071 * this.jit;
     const i = Math.floor((u - C.o1) / C.s), j = Math.floor((v - C.o2) / C.s);
@@ -124,6 +149,30 @@ export class MeshBody implements Body {
       const l2 = 1 - l0 - l1;
       if (l0 < 0 || l1 < 0 || l2 < 0) continue;
       if (l0 * t[o] + l1 * t[o + 3] + l2 * t[o + 6] > x) c++;
+    }
+    return (c & 1) === 1;
+  }
+
+  /** The same count along another axis (a thin plate is asked across its thickness: few triangles per line). */
+  private insideAlong(ax: number, x: number, y: number, z: number): boolean {
+    const C = this.cols[ax], t = this.t, a1 = C.a1, a2 = C.a2;
+    const u = (a1 === 0 ? x : a1 === 1 ? y : z) + this.jit, v = (a2 === 0 ? x : a2 === 1 ? y : z) + 0.7071 * this.jit, w = ax === 1 ? y : z;
+    // beyond the body's box along the line: nothing to cross above, or everything (an even number)
+    if (w > this.hi[ax] || w < this.lo[ax]) return false;
+    const i = Math.floor((u - C.o1) / C.s), j = Math.floor((v - C.o2) / C.s);
+    if (i < 0 || j < 0 || i >= C.n1 || j >= C.n2) return false;
+    const b = i * C.n2 + j, idx = C.idx;
+    let c = 0;
+    for (let k = C.start[b], end = C.start[b + 1]; k < end; k++) {
+      const o = 9 * idx[k];
+      const x0 = t[o + a1], y0 = t[o + a2], x1 = t[o + 3 + a1], y1 = t[o + 3 + a2], x2 = t[o + 6 + a1], y2 = t[o + 6 + a2];
+      const d = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
+      if (d === 0) continue;
+      const l0 = ((y1 - y2) * (u - x2) + (x2 - x1) * (v - y2)) / d;
+      const l1 = ((y2 - y0) * (u - x2) + (x0 - x2) * (v - y2)) / d;
+      const l2 = 1 - l0 - l1;
+      if (l0 < 0 || l1 < 0 || l2 < 0) continue;
+      if (l0 * t[o + ax] + l1 * t[o + 3 + ax] + l2 * t[o + 6 + ax] > w) c++;
     }
     return (c & 1) === 1;
   }

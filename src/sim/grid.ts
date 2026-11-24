@@ -20,6 +20,8 @@ export interface Cell {
   fine: Points | null;
   /** Material volume / cell volume. */
   frac: number;
+  /** Cut cells: the box of the points found on the geometry (lo, hi), the material's reach in the cell. */
+  box?: number[];
   /** Element holding the cell's polynomial. */
   el: number;
   /** Domain (a body with its own material) the cell belongs to; 0 with one domain. */
@@ -64,18 +66,53 @@ export class Grid {
   domainOf(x: number, y: number, z: number) {
     const D = this.doms;
     if (!D) return 0;
-    for (let d = 0; d < D.length; d++) if (D[d](x, y, z)) return d;
+    // only the bodies whose box reaches the point's cube are asked (the others cannot hold it or a point a step away)
+    const N = this.domsNear(0);
+    let L: ArrayLike<number> | null = null, from = 0, to = D.length;
+    if (N) { const [i, j, k] = this.index(x, y, z), c = (k * this.n[1] + j) * this.n[0] + i; L = N.idx; from = N.start[c]; to = N.start[c + 1]; }
+    for (let q = from; q < to; q++) { const d = L ? L[q] : q; if (D[d](x, y, z)) return d; }
     // just outside every domain: look a little way along the axes
     for (const s of [0.01, 0.05]) {
       const e = s * this.h;
-      for (let d = 0; d < D.length; d++)
+      for (let q = from; q < to; q++) {
+        const d = L ? L[q] : q;
         if (D[d](x + e, y, z) || D[d](x - e, y, z) || D[d](x, y + e, z) || D[d](x, y - e, z) || D[d](x, y, z + e) || D[d](x, y, z - e)) return d;
+      }
       // on an edge or a corner of a box-like body no step along one axis goes in: try the diagonals too
-      for (let d = 0; d < D.length; d++)
+      for (let q = from; q < to; q++) {
+        const d = L ? L[q] : q;
         for (let m = 0; m < 8; m++) if (D[d](x + (m & 1 ? e : -e), y + (m & 2 ? e : -e), z + (m & 4 ? e : -e))) return d;
+      }
     }
     return -1;
   }
+  /**
+   * Per grid cube the bodies (ascending) whose triangles' box, grown by `pad` and 0.06 h, reaches it: null unless
+   * every body is a mesh. A point in a cube can only lie in, or within that distance of, those bodies.
+   */
+  domsNear(pad: number): { start: Int32Array; idx: Int32Array } | null {
+    const D = this.doms;
+    if (!D || D.length < 8) return null;
+    if (this.nearKept && this.nearKept.pad >= pad) return this.nearKept.n;
+    if (this.nearKept === null) return null;
+    if (!D.every(d => d.tris)) { this.nearKept = null; return null; }
+    const n = this.n, h = this.h, m = pad + 0.06 * h, per = n[0] * n[1] * n[2], count = new Int32Array(per + 1), R: number[][] = [];
+    for (const d of D) {
+      const T = d.tris!, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < T.length; i++) { const a = i % 3, v = T[i]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
+      const r: number[] = [];
+      // a point outside the grid is asked in the nearest cube: the range is clamped the same way
+      for (let a = 0; a < 3; a++) r.push(Math.min(n[a] - 1, Math.max(0, Math.floor((lo[a] - m - this.lo[a]) / h))), Math.min(n[a] - 1, Math.max(0, Math.floor((hi[a] + m - this.lo[a]) / h))));
+      R.push(r);
+      for (let k = r[4]; k <= r[5]; k++) for (let j = r[2]; j <= r[3]; j++) for (let i = r[0]; i <= r[1]; i++) count[(k * n[1] + j) * n[0] + i + 1]++;
+    }
+    for (let c = 0; c < per; c++) count[c + 1] += count[c];
+    const idx = new Int32Array(count[per]), at = count.slice(0, per);
+    R.forEach((r, d) => { for (let k = r[4]; k <= r[5]; k++) for (let j = r[2]; j <= r[3]; j++) for (let i = r[0]; i <= r[1]; i++) idx[at[(k * n[1] + j) * n[0] + i]++] = d; });
+    this.nearKept = { pad, n: { start: count, idx } };
+    return this.nearKept.n;
+  }
+  private nearKept: { pad: number; n: { start: Int32Array; idx: Int32Array } } | null | undefined;
   /** Grid index along each axis for a point (clamped). */
   index(x: number, y: number, z: number): [number, number, number] {
     const f = (v: number, a: number) => Math.min(this.n[a] - 1, Math.max(0, Math.floor((v - this.lo[a]) / this.h)));
@@ -174,6 +211,37 @@ function cellAt(clo: number[], chi: number[], inside: Inside, o: GridOptions, fu
   return { st, fine, pts: o.fit && fine.n > o.fit ** 3 ? fitPoints(fine, clo, chi, o.fit) : fine };
 }
 
+function pointsBox(P: Points): number[] {
+  const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], a = P.a;
+  for (let i = 0; i < P.n; i++) for (let k = 0; k < 3; k++) { const v = a[4 * i + k]; if (v < b[k]) b[k] = v; if (v > b[3 + k]) b[3 + k] = v; }
+  return b;
+}
+
+/**
+ * How far an element's material reaches along each axis, over the size of the box its polynomial is scaled to
+ * (1 = all of it). A body much thinner than its cells (a lead, a foil) has a small reach across: there the higher
+ * powers of that coordinate are all but copies of the lower ones.
+ */
+export function elementReach(g: Grid, e: number): [number, number, number] {
+  const E = g.elems[e], lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const ci of E.cells) {
+    const cl = g.cells[ci];
+    for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], cl.box ? cl.box[a] : cl.lo[a]); hi[a] = Math.max(hi[a], cl.box ? cl.box[3 + a] : cl.hi[a]); }
+  }
+  return [0, 1, 2].map(a => Math.min(1, Math.max(0, hi[a] - lo[a]) / (2 * E.s))) as [number, number, number];
+}
+
+/** The grid cubes a body can reach, [i0, i1, j0, j1, k0, k1]: its triangles' box and a cube more each way, else all. */
+function cubeRange(d: Inside, lo0: number[], h: number, n: number[]): number[] {
+  const T = d.tris;
+  if (!T || !T.length) return [0, n[0] - 1, 0, n[1] - 1, 0, n[2] - 1];
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < T.length; i++) { const a = i % 3, v = T[i]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
+  const r: number[] = [];
+  for (let a = 0; a < 3; a++) r.push(Math.max(0, Math.floor((lo[a] - lo0[a]) / h) - 1), Math.min(n[a] - 1, Math.floor((hi[a] - lo0[a]) / h) + 1));
+  return r;
+}
+
 /** Cells of size h over [lo, hi] for the body `inside`. */
 export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, o: GridOptions): Grid {
   const n = [0, 1, 2].map(a => Math.max(1, Math.ceil((hi[a] - lo[a]) / h - 1e-4)));
@@ -183,24 +251,28 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
   const vol = h * h * h;
   const doms = o.domains && o.domains.length > 1 ? o.domains : [inside];
   if (doms.length > 1) g.doms = doms;
-  const per = n[0] * n[1] * n[2], tasks = doms.length * per;
+  const per = n[0] * n[1] * n[2];
+  // a mesh body is only looked for in the cubes its box reaches (with many small bodies nearly every cube misses each)
+  const ranges = doms.map(d => cubeRange(d, lo0, h, n));
+  let tasks = 0;
+  for (const r of ranges) tasks += (r[1] - r[0] + 1) * (r[3] - r[2] + 1) * (r[5] - r[4] + 1);
   // mesh bodies and several threads: the cubes are worked through on all of them (the same points either way)
-  const found = doms.every(d => d.tris) && worthSharing(tasks * 1e6) ? sharedCells(lo0, h, n, doms, o) : null;
+  const found = doms.every(d => d.tris) && worthSharing(tasks * 1e6) ? sharedCells(lo0, h, n, doms, o, ranges, tasks) : null;
   for (let dom = 0; dom < doms.length; dom++) {
-    const map = dom ? g.addMap() : g.map;
-    for (let k = 0; k < n[2]; k++) for (let j = 0; j < n[1]; j++) for (let i = 0; i < n[0]; i++) {
-      if (i === 0 && !found) progress("cells", dom * n[2] * n[1] + k * n[1] + j, doms.length * n[2] * n[1]);
+    const map = dom ? g.addMap() : g.map, R = ranges[dom];
+    for (let k = R[4]; k <= R[5]; k++) for (let j = R[2]; j <= R[3]; j++) for (let i = R[0]; i <= R[1]; i++) {
+      if (i === R[0] && !found) progress("cells", dom * n[2] * n[1] + k * n[1] + j, doms.length * n[2] * n[1]);
       const clo = [lo0[0] + i * h, lo0[1] + j * h, lo0[2] + k * h];
       const chi = [clo[0] + h, clo[1] + h, clo[2] + h];
       const at = (k * n[1] + j) * n[0] + i;
-      const c = found ? found[dom * per + at] : cellAt(clo, chi, doms[dom], o, true);
+      const c = found ? found.get(dom * per + at) ?? null : cellAt(clo, chi, doms[dom], o, true);
       if (!c) continue;
       const pts = c.pts ?? volumePoints(clo, chi, o.q, doms[dom], 0, new Points(), 1);
       const frac = pts.weight() / vol;
       // a face lying on a grid plane leaves a film of no volume in the cell beyond it
       if (!(frac > 1e-9)) continue;
       map[at] = g.cells.length;
-      g.cells.push({ ijk: [i, j, k], lo: clo, hi: chi, state: c.st, pts, fine: c.fine, frac, el: -1, dom });
+      g.cells.push({ ijk: [i, j, k], lo: clo, hi: chi, state: c.st, pts, fine: c.fine, frac, el: -1, dom, ...(c.fine ? { box: pointsBox(c.fine) } : {}) });
     }
   }
   aggregate(g, o.minFrac ?? 0.25, doms.length > 1 ? o.rigid : undefined);
@@ -211,7 +283,7 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
 const CELL_ROOM = 1.5e6, CELL_RESERVE = 1e5;
 /** Numbers per cube of the shared cell loop: status (0 nothing, 1 whole, 2 cut, 3 no room: again), state, first fine point, fine points, first fitted point, fitted points (−1 = the fine ones). */
 const CELL_REC = 6;
-interface CellJob extends ParJob { key: number; tris: Float64Array[]; ids: Int32Array; rec: Float64Array; out: Float64Array; ptr: Int32Array; lo0: number[]; h: number; dims: number[]; opt: { q: number; depth: number; fit?: number; leafQ?: number } }
+interface CellJob extends ParJob { key: number; tris: Float64Array[]; ids: Int32Array; slots: Int32Array; rec: Float64Array; out: Float64Array; ptr: Int32Array; lo0: number[]; h: number; dims: number[]; opt: { q: number; depth: number; fit?: number; leafQ?: number } }
 /** The bodies of the cell loop under way, per thread: made once from the job's triangles (this thread already has them). */
 let cellBodies: { key: number; doms: Inside[] } = { key: 0, doms: [] };
 let cellKey = 0;
@@ -221,7 +293,7 @@ kernel<CellJob, { j: CellJob; doms: Inside[] }>("cells", {
     return { j, doms: cellBodies.doms };
   },
   run({ j, doms }, t) {
-    const id = j.ids[t], r = CELL_REC * id, rec = j.rec, cap = j.out.length / 4;
+    const id = j.ids[t], r = CELL_REC * j.slots[t], rec = j.rec, cap = j.out.length / 4;
     if (Atomics.load(j.ptr, 0) > cap - CELL_RESERVE) { rec[r] = 3; return; }
     const [n0, n1, n2] = j.dims, per = n0 * n1 * n2, dom = Math.floor(id / per), at = id - dom * per, i = at % n0, jj = Math.floor(at / n0) % n1, k = Math.floor(at / (n0 * n1));
     const clo = [j.lo0[0] + i * j.h, j.lo0[1] + jj * j.h, j.lo0[2] + k * j.h], chi = [clo[0] + j.h, clo[1] + j.h, clo[2] + j.h];
@@ -243,31 +315,39 @@ kernel<CellJob, { j: CellJob; doms: Inside[] }>("cells", {
  * are written to shared memory a round at a time (a round ends when its memory is full; the cubes left over go
  * into the next one), and the cells keep views of it.
  */
-function sharedCells(lo0: number[], h: number, n: number[], doms: Inside[], o: GridOptions): ({ st: number; fine: Points | null; pts: Points | null } | null)[] {
-  const per = n[0] * n[1] * n[2], tasks = doms.length * per, res: ({ st: number; fine: Points | null; pts: Points | null } | null)[] = new Array(tasks).fill(null);
+function sharedCells(lo0: number[], h: number, n: number[], doms: Inside[], o: GridOptions, ranges: number[][], tasks: number): Map<number, { st: number; fine: Points | null; pts: Points | null }> {
+  const per = n[0] * n[1] * n[2], res = new Map<number, { st: number; fine: Points | null; pts: Points | null }>();
   const key = ++cellKey, tris = doms.map(d => { const t = sharedF64(d.tris!.length); t.set(d.tris!); return t; });
   cellBodies = { key, doms };
+  // a cube's record is kept by its place in the first list of cubes
   const rec = sharedF64(CELL_REC * tasks), opt = { q: o.q, depth: o.depth, fit: o.fit, leafQ: o.leafQ };
+  const all = new Int32Array(tasks);
+  let m = 0;
+  for (let dom = 0; dom < doms.length; dom++) {
+    const R = ranges[dom];
+    for (let k = R[4]; k <= R[5]; k++) for (let j = R[2]; j <= R[3]; j++) for (let i = R[0]; i <= R[1]; i++) all[m++] = dom * per + (k * n[1] + j) * n[0] + i;
+  }
   let left = Int32Array.from({ length: tasks }, (_v, i) => i), done = 0;
   const view = (out: Float64Array, off: number, cnt: number) => { const P = new Points(); P.a = out.subarray(4 * off, 4 * (off + cnt)); P.n = cnt; return P; };
   while (left.length) {
-    const ids = sharedI32(left.length), out = sharedF64(4 * CELL_ROOM), ptr = sharedI32(1), base = done;
-    ids.set(left);
-    parallelFor({ kind: "cells", n: ids.length, key, tris, ids, rec, out, ptr, lo0, h, dims: n, opt } satisfies Omit<CellJob, "ctl">, d => progress("cells", Math.min(tasks, base + d), tasks));
+    const ids = sharedI32(left.length), slots = sharedI32(left.length), out = sharedF64(4 * CELL_ROOM), ptr = sharedI32(1), base = done;
+    for (let q = 0; q < left.length; q++) { slots[q] = left[q]; ids[q] = all[left[q]]; }
+    parallelFor({ kind: "cells", n: ids.length, key, tris, ids, slots, rec, out, ptr, lo0, h, dims: n, opt } satisfies Omit<CellJob, "ctl">, d => progress("cells", Math.min(tasks, base + d), tasks));
     const again: number[] = [];
-    for (const id of left) {
-      const r = CELL_REC * id, s = rec[r];
-      if (s === 3) { again.push(id); continue; }
+    for (const slot of left) {
+      const r = CELL_REC * slot, s = rec[r], id = all[slot];
+      if (s === 3) { again.push(slot); continue; }
       done++;
-      if (s === 1) res[id] = { st: rec[r + 1], fine: null, pts: null };
-      else if (s === 2) { const fine = view(out, rec[r + 2], rec[r + 3]); res[id] = { st: rec[r + 1], fine, pts: rec[r + 5] < 0 ? fine : view(out, rec[r + 4], rec[r + 5]) }; }
+      if (s === 1) res.set(id, { st: rec[r + 1], fine: null, pts: null });
+      else if (s === 2) { const fine = view(out, rec[r + 2], rec[r + 3]); res.set(id, { st: rec[r + 1], fine, pts: rec[r + 5] < 0 ? fine : view(out, rec[r + 4], rec[r + 5]) }); }
     }
     if (again.length === left.length) {
       // not even one cube fitted (a cube with more points than a round holds): the rest on this thread
-      for (const id of again) {
-        const dom = Math.floor(id / per), at = id - dom * per, i = at % n[0], j = Math.floor(at / n[0]) % n[1], k = Math.floor(at / (n[0] * n[1]));
+      for (const slot of again) {
+        const id = all[slot], dom = Math.floor(id / per), at = id - dom * per, i = at % n[0], j = Math.floor(at / n[0]) % n[1], k = Math.floor(at / (n[0] * n[1]));
         const clo = [lo0[0] + i * h, lo0[1] + j * h, lo0[2] + k * h];
-        res[id] = cellAt(clo, [clo[0] + h, clo[1] + h, clo[2] + h], doms[dom], o, true);
+        const c = cellAt(clo, [clo[0] + h, clo[1] + h, clo[2] + h], doms[dom], o, true);
+        if (c) res.set(id, c);
       }
       break;
     }

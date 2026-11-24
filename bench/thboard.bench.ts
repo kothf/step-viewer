@@ -26,7 +26,8 @@ const doc = await unpackAsm(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLe
 const st = doc.studies![Number(process.argv[3] ?? 0)];
 const asm = new Assembler(oc);
 const { placed } = asm.evaluate(doc, 1);
-const shown = placed.filter((p: any) => p.body && !doc.components.find(c => c.id === p.id)?.hidden);
+const only = process.env.THBOARD_ONLY?.split(",");
+const shown = placed.filter((p: any) => p.body && !doc.components.find(c => c.id === p.id)?.hidden && (!only || only.includes(doc.components.find(c => c.id === p.id)?.name ?? "")));
 const geo: any = asmSimGeometry(oc, shown.map((p: any) => ({ id: p.id, shape: p.body.shape, faces: p.body.faces, names: p.body.names })), 0.0024, 0.05);
 const partOf = new Map(shown.map((p: any) => [p.id, p.part]));
 const bodies = geo.regions.map((q: any) => ({ key: q.comp, tris: q.tris, name: doc.components.find(c => c.id === q.comp)?.name ?? q.comp, mat: (doc.parts as any)[partOf.get(q.comp)]?.doc?.material ?? null }));
@@ -35,7 +36,7 @@ const kOf = (i: number) => bks[i]?.along ?? bodies[i].mat?.k;
 const kmaps = bodies.map((q: any, i: number) => { const bd = st.comps?.[q.key]?.board; return bd?.map && bks[i] ? boardMap(q.tris, bd, bks[i]!.t) : null; });
 const k3s = bodies.map((_q: any, i: number) => (bks[i]?.k3 ? bks[i]!.k3!.map(v => v * 1e-3) : null));
 const setup = thermalSetup(st, geo, bodies.map((q: any) => q.key));
-if (setup.problems.length) throw new Error(JSON.stringify(setup.problems));
+if (setup.problems.length && !only) throw new Error(JSON.stringify(setup.problems));
 console.log(bodies.map((q: any, i: number) => `${q.name}: k ${kOf(i)}`).join(", "));
 const pos = new Float32Array(geo.tris.length / 3 * 3);
 for (let i = 0; i < geo.tris.length / 3; i++) for (let a = 0; a < 3; a++) pos[3 * i + a] = geo.tris[3 * i + a];
@@ -71,7 +72,11 @@ for (const p of (trEnv ? runTransient : runThermal)({
   thermal: { k: kOf(0) * 1e-3, setup, ks: bodies.map((_q: any, i: number) => kOf(i) * 1e-3), k3s, gap: st.settings.gap ?? DEFAULT_GAP, links: [], ...(kmaps.some(Boolean) ? { kmaps } : {}), ...(trEnv ? { transient: { rc: rcs[0], rcs, t0: st.settings.ambient ?? 25, end: trEnv[0], out: trEnv[1], profiles: {} } } : {}) },
 } as any, (sm: any) => { sampler = sm; })) {
   const comps = p.thermal?.comps?.map((c: any, i: number) => `${bodies[i].name} ${c.max.toFixed(1)}/${c.mean.toFixed(1)}`).join(", ");
-  if (sampler && spots.length) {
+  if (process.env.TRDBG) {
+    console.log("contacts", (p.thermal?.contacts ?? []).map((c: any) => `${c.a}-${c.b} ${c.area.toFixed(2)} ${c.heat.toFixed(3)}`).join(", "));
+    console.log("boxes", bodies.map((q: any, i: number) => { const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9]; for (let j = 0; j < q.tris.length; j++) { lo[j % 3] = Math.min(lo[j % 3], q.tris[j]); hi[j % 3] = Math.max(hi[j % 3], q.tris[j]); } return `${i} ${q.name} [${lo.map(v => v.toFixed(1))}]..[${hi.map(v => v.toFixed(1))}]`; }).join("; "));
+  }
+  if (sampler && spots.length && !only) {
     const pos = Float32Array.from(spots.flatMap(q => q.p)), r = sampler(pos, new Float32Array(pos.length));
     console.log("  " + spots.map((q, i) => `${q.name} ${r.vm[i].toFixed(1)}`).join(", "));
     // the board's top face around each disc, every 0.2 mm: its hottest point
@@ -99,3 +104,4 @@ if (session) session.post("Profiler.stop", (_e: unknown, { profile }: any) => {
 });
 console.log(JSON.stringify(threadStats()));
 setHelpers([]);
+

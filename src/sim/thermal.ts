@@ -10,9 +10,9 @@ import { Basis, basisSize } from "./basis";
 import { BlockMatrix } from "./sparse";
 import { BlockCholesky, type CholPlan } from "./blockchol";
 import { pcgSolver } from "./pcg";
-import { makeGrid, refit, memoryBytes, type Grid } from "./grid";
+import { makeGrid, refit, memoryBytes, elementReach, type Grid } from "./grid";
 import { type MomentTables, conductFromMoments, degreeOf, massFromMoments, momentTables, momentsAdd, momentsClear, momentsKept, momentsPoint, legendrePoint } from "./moments";
-import { facePoints, fitFacePoints, fitPlanePoints, gridTrianglePoints, type Inside, type Points } from "./quad";
+import { facePoints, fitFacePoints, fitPlanePoints, gridTrianglePoints, smallTriangleDegrees, type Inside, type Points } from "./quad";
 import { DIRECT_LIMIT, MEMORY_LIMIT, directFits, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
 import { exchangeResistance } from "./viewfactor";
 import { progress } from "./progress";
@@ -308,6 +308,8 @@ export interface ThermalResult {
 
 interface Ctx {
   pb: ThermalProblem;
+  /** Elements much thinner than their cells whose higher functions are held at zero (`holdThin`). */
+  held?: number;
   grid: Grid;
   p: number;
   /** Functions of degree `p`; each element's own count and where its unknowns start (nel + 1 entries). */
@@ -362,6 +364,9 @@ let pieceRules = true;
 export const setPieceRules = (on: boolean) => { pieceRules = on; };
 /** What a piece of a surface triangle has to integrate: twice the degree of the element it lies in (products of two
  * of its functions), which with local degrees is well below twice the highest. −1 = not known, the full rule. */
+/** `smallTriangleDegrees` with the piece rules on (off = the full rule everywhere, tests). */
+const smallOf = (tris: ArrayLike<number>, h: number) => (pieceRules ? smallTriangleDegrees(tris, h) : undefined);
+
 function pieceDegree(c: Ctx, nrms: ArrayLike<number>, bodyOf: (t: number) => number): ((t: number, x: number, y: number, z: number) => number) | undefined {
   if (!pieceRules) return undefined;
   const g = c.grid, eps = 1e-7 * g.h, deg = c.deg;
@@ -374,7 +379,7 @@ function pieceDegree(c: Ctx, nrms: ArrayLike<number>, bodyOf: (t: number) => num
 /** The points of some triangles cut at the grid planes, each with its element: 8 numbers per point, triangle by triangle. */
 function cutPoints(c: Ctx, tris: ArrayLike<number>, q: number, own: Int8Array | null, dom: number): Float64Array {
   const g = c.grid, nrms = triNormals(tris), eps = 1e-7 * g.h;
-  const { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q, pieceDegree(c, nrms, t => own ? own[t] : dom));
+  const { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q, pieceDegree(c, nrms, t => own ? own[t] : dom), smallOf(tris, g.h));
   const out = new Float64Array(8 * pts.n);
   let n = 0;
   for (let i = 0; i < pts.n; i++) {
@@ -453,7 +458,7 @@ function keptPoints(c: Ctx, K: LocKept, tris: ArrayLike<number>, own: Int8Array 
   if (miss.length) {
     const sub = new Float64Array(9 * miss.length), g = c.grid, eps = 1e-7 * g.h;
     miss.forEach((t, k) => { for (let j = 0; j < 9; j++) sub[9 * k + j] = tris[9 * t + j]; });
-    const nrms = triNormals(sub), { pts, tri } = gridTrianglePoints(sub, g.lo, g.h, K.q, pieceDegree(c, nrms, k => K.body[recs[miss[k]]]));
+    const nrms = triNormals(sub), { pts, tri } = gridTrianglePoints(sub, g.lo, g.h, K.q, pieceDegree(c, nrms, k => K.body[recs[miss[k]]]), smallOf(sub, g.h));
     if (K.n + pts.n > K.free.length) {
       const room = Math.max(2 * K.free.length, K.n + pts.n), a = new Float64Array(5 * room), f = new Uint8Array(room);
       a.set(K.pts.subarray(0, 5 * K.n)); f.set(K.free.subarray(0, K.n));
@@ -758,6 +763,15 @@ function pair(ni: number, nb: number, K: Float64Array, Ni: Float64Array, Mi: Flo
   }
 }
 
+/** `pair` of an element with itself (a symmetric block): its lower triangle only. */
+function pairLower(n: number, K: Float64Array, N: Float64Array, M: Float64Array, s: number, w: number, gamma: number) {
+  const hw = 0.5 * w * s, gw = gamma * w;
+  for (let a = 0; a < n; a++) {
+    const na = N[a] * hw, ma = M[a] * hw, ga = gw * N[a], r = a * n;
+    for (let b = 0; b <= a; b++) K[r + b] += -na * M[b] - ma * N[b] + ga * N[b];
+  }
+}
+
 /** Numbers kept per joining point: contact, elements a and b, x, y, z, w, normal, γ (0 with a conductance), conductance. */
 const JOIN = 12;
 
@@ -766,6 +780,16 @@ const JOIN = 12;
  * step along the normal (or the gap) ends inside B. Perfect contact = the terms between elements, each side
  * with its own conductivity; a resistance = a conductance between the two temperatures.
  */
+/** The area of a triangle list (nine numbers each). */
+function surfaceArea(T: ArrayLike<number>): number {
+  let s = 0;
+  for (let i = 0; i + 8 < T.length; i += 9) {
+    const ux = T[i + 3] - T[i], uy = T[i + 4] - T[i + 1], uz = T[i + 5] - T[i + 2], vx = T[i + 6] - T[i], vy = T[i + 7] - T[i + 1], vz = T[i + 8] - T[i + 2];
+    s += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+  }
+  return s;
+}
+
 function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalContact[]; joins: number[] } {
   const { grid, nb, nbs, bas, bas2, gam, k3, pb } = c, doms = c.doms!, nd = doms.length;
   const contacts: ThermalContact[] = [], joins: number[] = [];
@@ -777,24 +801,48 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
   }
   const boxes = doms.map(d => triBox(d.tris)), found = new Map<number, number>();
   const MA = new Float64Array(nb), MB = new Float64Array(nb);
-  for (let a = 0; a + 1 < nd; a++) {
+  const Saa = new Float64Array(nb * nb), Sab = new Float64Array(nb * nb), Sbb = new Float64Array(nb * nb);
+  let runA = -1, runB = -1;
+  const flush = () => {
+    if (runA < 0) return;
+    const ma = nbs[runA], mb = nbs[runB];
+    const Kaa = A.block(runA, runA), Kab = A.block(runA, runB), Kba = A.block(runB, runA), Kbb = A.block(runB, runB);
+    for (let i = 0; i < ma; i++) for (let j = 0; j <= i; j++) { const v = Saa[i * ma + j]; Kaa[i * ma + j] += v; if (j < i) Kaa[j * ma + i] += v; }
+    for (let i = 0; i < mb; i++) for (let j = 0; j <= i; j++) { const v = Sbb[i * mb + j]; Kbb[i * mb + j] += v; if (j < i) Kbb[j * mb + i] += v; }
+    for (let i = 0; i < ma; i++) for (let j = 0; j < mb; j++) { const v = Sab[i * mb + j]; Kab[i * mb + j] += v; Kba[j * ma + i] += v; }
+    Saa.fill(0, 0, ma * ma); Sbb.fill(0, 0, mb * mb); Sab.fill(0, 0, ma * mb);
+    runA = runB = -1;
+  };
+  // a pair of bodies is joined where the surface of the one with less surface lies on the other: the points on a big
+  // face are too far apart to find a wire's end on it (a resistor's lead was joined in one pass and not in the next),
+  // and a body wholly inside another has only its own surface there
+  const isNear = new Uint8Array(nd), N = grid.domsNear(far), steps = gap > 0 ? [eps, far] : [eps];
+  const areas = doms.map(d => surfaceArea(d.tris));
+  for (let a = 0; a < nd; a++) {
     const near: number[] = [];
-    for (let d = a + 1; d < nd; d++) {
-      if (how.get(a * nd + d)?.type === "none") continue;
+    isNear.fill(0);
+    for (let d = 0; d < nd; d++) {
+      if (d === a || areas[d] < areas[a] || (areas[d] === areas[a] && d < a)) continue;
+      if (how.get(Math.min(a, d) * nd + Math.max(a, d))?.type === "none") continue;
       let apart = false;
       for (let k = 0; k < 3; k++) if (boxes[a][k] > boxes[d][3 + k] + far || boxes[d][k] > boxes[a][3 + k] + far) apart = true;
-      if (!apart) near.push(d);
+      if (!apart) { near.push(d); isNear[d] = 1; }
     }
     if (!near.length) continue;
-    const T = doms[a].tris, { pts, tri } = gridTrianglePoints(T, grid.lo, grid.h, tq), nrms = triNormals(T);
+    const T = doms[a].tris, { pts, tri } = gridTrianglePoints(T, grid.lo, grid.h, tq, undefined, smallTriangleDegrees(T, grid.h)), nrms = triNormals(T);
     for (let q = 0; q < pts.n; q++) {
       const o = 4 * q, t = tri[q], w = pts.a[o + 3], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
       const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
       let b = -1, bx = 0, by = 0, bz = 0;
-      for (const d of near) {
+      // with many bodies only those whose box reaches the point's cube are gone through (in the same order)
+      let from = 0, to = near.length;
+      if (N) { const [i, j, k] = grid.index(x, y, z), cu = (k * grid.n[1] + j) * grid.n[0] + i; from = N.start[cu]; to = N.start[cu + 1]; }
+      for (let qd = from; qd < to; qd++) {
+        const d = N ? N.idx[qd] : near[qd];
+        if (N && !isNear[d]) continue;
         const B = boxes[d];
         if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
-        for (const st of gap > 0 ? [eps, far] : [eps]) {
+        for (const st of steps) {
           bx = x + st * nx; by = y + st * ny; bz = z + st * nz;
           if (doms[d].inside(bx, by, bz)) { b = d; break; }
         }
@@ -803,7 +851,7 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
       if (b < 0) continue;
       const ca = grid.cellOf(x - eps * nx, y - eps * ny, z - eps * nz, a), cb = grid.cellOf(bx, by, bz, b);
       if (ca < 0 || cb < 0) continue;
-      const link = how.get(a * nd + b), hc = link?.type === "resistance" ? link.h! : 0;
+      const link = how.get(Math.min(a, b) * nd + Math.max(a, b)), hc = link?.type === "resistance" ? link.h! : 0;
       let ci = found.get(a * nd + b);
       if (ci === undefined) { ci = contacts.length; found.set(a * nd + b, ci); contacts.push({ a, b, area: 0, type: hc ? "resistance" : "perfect", heat: 0, ta: 0, tb: 0 }); }
       contacts[ci].area += w;
@@ -833,12 +881,15 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
       // pair() takes half of each side's flux: the weights make it wa·(A's) + wb·(B's)
       for (let i = 0; i < ma; i++) MA[i] = 2 * wa * (bas.g[3 * i] * ax + bas.g[3 * i + 1] * ay + bas.g[3 * i + 2] * az);
       for (let i = 0; i < mb; i++) MB[i] = 2 * wb * (bas2.g[3 * i] * bx2 + bas2.g[3 * i + 1] * by2 + bas2.g[3 * i + 2] * bz2);
-      pair(ma, ma, Kaa, bas.v, MA, 1, bas.v, MA, 1, w, gamma);
-      pair(ma, mb, Kab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
-      pair(mb, ma, Kba, bas2.v, MB, -1, bas.v, MA, 1, w, gamma);
-      pair(mb, mb, Kbb, bas2.v, MB, -1, bas2.v, MB, -1, w, gamma);
+      // the points of one pair of elements are summed apart and added once (`flush`): the aa and bb blocks by their
+      // lower triangles, ba as ab turned over
+      if (ea !== runA || eb !== runB) { flush(); runA = ea; runB = eb; }
+      pairLower(ma, Saa, bas.v, MA, 1, w, gamma);
+      pair(ma, mb, Sab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
+      pairLower(mb, Sbb, bas2.v, MB, -1, w, gamma);
       joins.push(ci, ea, eb, x, y, z, w, nx, ny, nz, gamma, 0);
     }
+    flush();
   }
   return { contacts, joins };
 }
@@ -887,7 +938,7 @@ function contactFlows(c: Ctx, contacts: ThermalContact[], joins: number[], x: Fl
 function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
   const { grid, pb } = c, doms = c.doms!;
   const eps = 2e-3 * grid.h, far = Math.max(0, pb.gap ?? 0) + eps;
-  const boxes = doms.map(d => triBox(d.tris));
+  const boxes = doms.map(d => triBox(d.tris)), N = grid.domsNear(far);
   // through the kept triangles each point is asked once however many sinks hold it
   const K = c.loc && c.loc.q === q ? c.loc : null, kept = K ? keptPoints(c, K, tris, bodiesOf(c, tris), -1) : null;
   const L = kept ? kept.L : located(c, tris, q, -1, false), ids = kept ? kept.ids : null;
@@ -897,7 +948,10 @@ function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
     let on = known === 2;
     if (!known) {
       const x = L[o + 1], y = L[o + 2], z = L[o + 3], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], own = c.dom[L[o]];
-      for (let d = 0; d < doms.length && !on; d++) {
+      let from = 0, to = doms.length;
+      if (N) { const [i, j, k] = grid.index(x, y, z), cu = (k * grid.n[1] + j) * grid.n[0] + i; from = N.start[cu]; to = N.start[cu + 1]; }
+      for (let qd = from; qd < to && !on; qd++) {
+        const d = N ? N.idx[qd] : qd;
         if (d === own) continue;
         const B = boxes[d];
         if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
@@ -1681,8 +1735,35 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   const fs: Float64Array[] = [], put: number[] = [];
   for (const s of pb.sources) { const r = sourceLoad(c, s, tq, volume, volumes); fs.push(r.f); put.push(r.put); }
   c.loc = undefined;
+  holdThin(c, A);
   const rads = pb.sinks.map((s, i) => (s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural) ? i : -1)).filter(i => i >= 0);
   return { c, A, f, fs, put, at, lens, rads, contacts, joins, volume, volumes, memory, ex, t0: meanTemp(pb) };
+}
+
+/** A reach below this fraction of the element's box counts as thin along that axis. */
+const THIN_REACH = 0.25;
+/** The functions kept on a thin element: the sum over its thin axes of degree × lg(1 / reach) up to this. */
+const THIN_DIGITS = 3;
+/**
+ * A body far thinner than its cells (a lead, a foil, an anode plate): across it the higher powers of the coordinate
+ * differ from the lower ones by (reach)^degree, so from some degree on the element's matrix is singular to the
+ * digits kept (a board with leads a tenth of a cell across was solved at degree 4, gave coefficients in the
+ * thousands at 5 and failed at 6). Those functions are held at zero by a large diagonal term: the ones whose
+ * degrees along the thin axes, each times lg(1 / reach), add up to more than `THIN_DIGITS`.
+ */
+function holdThin(c: Ctx, A: BlockMatrix) {
+  const { grid, nbs, bas } = c, ex = bas.ex;
+  for (let e = 0; e < c.nel; e++) {
+    if (grid.elems[e].cells.every(ci => !grid.cells[ci].box)) continue;
+    const r = elementReach(grid, e);
+    if (r[0] >= THIN_REACH && r[1] >= THIN_REACH && r[2] >= THIN_REACH) continue;
+    const w = r.map(v => (v >= THIN_REACH ? 0 : Math.log10(1 / Math.max(v, 1e-6))));
+    const m = nbs[e], K = A.block(e, e);
+    let top = 0, any = false;
+    for (let b = 0; b < m; b++) top = Math.max(top, Math.abs(K[b * m + b]));
+    for (let b = 0; b < m; b++) if (ex[3 * b] * w[0] + ex[3 * b + 1] * w[1] + ex[3 * b + 2] * w[2] > THIN_DIGITS) { K[b * m + b] += 1e6 * top; any = true; }
+    if (any) c.held = (c.held ?? 0) + 1;
+  }
 }
 
 const meanTemp = (pb: ThermalProblem) => { const temps = pb.sinks.map(s => s.temp ?? s.ambient ?? 0); return temps.reduce((a, v) => a + v, 0) / Math.max(1, temps.length); };
