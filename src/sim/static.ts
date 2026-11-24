@@ -756,6 +756,65 @@ function factorOf(A: BlockMatrix, plan?: CholPlan): BlockCholesky {
   return L;
 }
 
+// Support terms of one boundary point, as functions of their own: inside solveStatic Chrome ran these loops
+// unoptimised (a bracket's fifth pass spent 7 s here in the browser against 0.07 s in node).
+// K += w N_a N_b P
+function penaltyBlock(K: Float64Array, ne: number, v: ArrayLike<number>, w: number, P: Float64Array) {
+  const m = 3 * ne;
+  for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
+    const q = w * v[a] * v[b];
+    for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) K[(3 * a + c) * m + 3 * b + d] += q * P[3 * c + d];
+  }
+}
+// PM = P M per function, then K += −w (N_a (P M_b) + N_b (P M_a)ᵀ) + gw N_a N_b P
+function heldBlock(K: Float64Array, ne: number, nb: number, v: ArrayLike<number>, w: number, gw: number, P: Float64Array, MA: Float64Array, PM: Float64Array) {
+  for (let b = 0; b < nb; b++) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++)
+    PM[9 * b + 3 * c + d] = P[3 * c] * MA[9 * b + d] + P[3 * c + 1] * MA[9 * b + 3 + d] + P[3 * c + 2] * MA[9 * b + 6 + d];
+  const m = 3 * ne;
+  for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
+    const pen = gw * v[a] * v[b];
+    for (let c = 0; c < 3; c++) {
+      const row = (3 * a + c) * m + 3 * b;
+      for (let d = 0; d < 3; d++)
+        K[row + d] += -w * (v[a] * PM[9 * b + 3 * c + d] + v[b] * PM[9 * a + 3 * d + c]) + pen * P[3 * c + d];
+    }
+  }
+}
+// A held face without an enforced displacement: the points of one element under one support and one normal share
+// P and the material, so only S = Σ w N_a N_b and G = Σ w N_a ∂N_b are summed per point (4 products per pair of
+// functions instead of some 50) and the block is written once from them: with M_b[r][d] = Σ_k C[r][d][k] ∂_k N_b,
+// C = λ n_r δ_dk + μ (δ_rd n_k + n_d δ_rk) and D = P C,
+// K[3a+c][3b+d] += −Σ_k (D[c][d][k] G[a][b][k] + D[d][c][k] G[b][a][k]) + 2γ S[a][b] P[c][d].
+function heldSum(S: Float64Array, G: Float64Array, ne: number, v: ArrayLike<number>, g: ArrayLike<number>, w: number) {
+  for (let a = 0; a < ne; a++) {
+    const wa = w * v[a];
+    for (let b = 0, o = a * ne; b < ne; b++, o++) {
+      S[o] += wa * v[b];
+      G[3 * o] += wa * g[3 * b]; G[3 * o + 1] += wa * g[3 * b + 1]; G[3 * o + 2] += wa * g[3 * b + 2];
+    }
+  }
+}
+const heldD = new Float64Array(27);
+function heldWrite(K: Float64Array, ne: number, S: Float64Array, G: Float64Array, P: Float64Array, n: ArrayLike<number>, lam: number, mu: number, gam2: number) {
+  const D = heldD, m = 3 * ne;
+  for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) for (let k = 0; k < 3; k++) {
+    let q = 0;
+    for (let r = 0; r < 3; r++) q += P[3 * c + r] * (lam * n[r] * (d === k ? 1 : 0) + mu * ((r === d ? n[k] : 0) + (r === k ? n[d] : 0)));
+    D[9 * c + 3 * d + k] = q;
+  }
+  for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
+    const ab = a * ne + b, ba = b * ne + a, pen = gam2 * S[ab];
+    const g0 = G[3 * ab], g1 = G[3 * ab + 1], g2 = G[3 * ab + 2], h0 = G[3 * ba], h1 = G[3 * ba + 1], h2 = G[3 * ba + 2];
+    for (let c = 0; c < 3; c++) {
+      const row = (3 * a + c) * m + 3 * b;
+      for (let d = 0; d < 3; d++) {
+        const o = 9 * c + 3 * d, t = 9 * d + 3 * c;
+        K[row + d] += pen * P[3 * c + d] - (D[o] * g0 + D[o + 1] * g1 + D[o + 2] * g2 + D[t] * h0 + D[t + 1] * h1 + D[t + 2] * h2);
+      }
+    }
+  }
+  S.fill(0, 0, ne * ne); G.fill(0, 0, 3 * ne * ne);
+}
 export function solveStatic(pb: StaticProblem): StaticResult {
   const t0 = now();
   const p = pb.p, q = p + 1;
@@ -1358,53 +1417,51 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const k = s.spring!;
     for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) P[3 * c + d] = (c === d ? k.kt : 0) + (k.kn - k.kt) * nrm[c] * nrm[d];
   };
+  const HS = new Float64Array(nb * nb), HG = new Float64Array(3 * nb * nb), hN = [0, 0, 0];
+  let hE = -1, hS: Support | null = null;
+  const heldDone = () => {
+    if (hE < 0) return;
+    setMat(hE);
+    holdMatrix(hS!, hN, P);
+    heldWrite(A.block(hE, hE), nbs[hE], HS, HG, P, hN, lam, mu, 2 * gam[hE]);
+    hE = -1;
+  };
   for (const s of pb.fixed) located(s.tris, (e, x, y, z, w, nrm) => {
     const E = grid.elems[e];
     bas.eval(x, y, z, E.c, E.s);
     setMat(e);
     if (s.spring) {
       springAt(s, nrm);
-      const K = A.block(e, e), v = bas.v, ne = nbs[e], m = 3 * ne;
-      for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
-        const q = w * v[a] * v[b];
-        for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) K[(3 * a + c) * m + 3 * b + d] += q * P[3 * c + d];
-      }
+      penaltyBlock(A.block(e, e), nbs[e], bas.v, w, P);
+      return;
+    }
+    const v = bas.v, ne = nbs[e];
+    const g = s.value;
+    if (!g) {
+      // sums over the points of one element, support and normal; the block is written when one of them changes
+      if (e !== hE || s !== hS || nrm[0] !== hN[0] || nrm[1] !== hN[1] || nrm[2] !== hN[2]) { heldDone(); hE = e; hS = s; hN[0] = nrm[0]; hN[1] = nrm[1]; hN[2] = nrm[2]; }
+      heldSum(HS, HG, ne, v, bas.g, w);
       return;
     }
     for (let b = 0; b < nb; b++) traction(bas.g, 3 * b, nrm, lam, mu, MA, 9 * b);
     holdMatrix(s, nrm, P);
-    for (let b = 0; b < nb; b++) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++)
-      PM[9 * b + 3 * c + d] = P[3 * c] * MA[9 * b + d] + P[3 * c + 1] * MA[9 * b + 3 + d] + P[3 * c + 2] * MA[9 * b + 6 + d];
-    const K = A.block(e, e), v = bas.v;
-    const ne = nbs[e], m = 3 * ne;
-    const gw = 2 * gam[e] * w;
-    for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
-      const pen = gw * v[a] * v[b];
-      for (let c = 0; c < 3; c++) {
-        const row = (3 * a + c) * m + 3 * b;
-        for (let d = 0; d < 3; d++)
-          K[row + d] += -w * (v[a] * PM[9 * b + 3 * c + d] + v[b] * PM[9 * a + 3 * d + c]) + pen * P[3 * c + d];
-      }
-    }
+    heldBlock(A.block(e, e), ne, nb, v, w, 2 * gam[e] * w, P, MA, PM);
     // an enforced displacement g: −(P σ(v) n)·g + 2γ (P g)·v on the right-hand side
-    const g = s.value;
-    if (g) {
+    {
       for (let c = 0; c < 3; c++) Pg[c] = P[3 * c] * g[0] + P[3 * c + 1] * g[1] + P[3 * c + 2] * g[2];
       for (let a = 0, o = off[e]; a < ne; a++) for (let c = 0; c < 3; c++)
         f[o + 3 * a + c] += w * (-(PM[9 * a + c] * g[0] + PM[9 * a + 3 + c] * g[1] + PM[9 * a + 6 + c] * g[2]) + 2 * gam[e] * v[a] * Pg[c]);
     }
   });
+  heldDone();
   // edges and points: a penalty on P u there (no flux terms: a line carries no traction integral)
   const N0 = [0, 0, 0];
   for (const s of pb.fixed) heldAt(s, (c, x, y, z, w) => {
     const e = grid.cells[c].el, E = grid.elems[e];
     bas.eval(x, y, z, E.c, E.s);
     holdMatrix(s, N0, P);
-    const K = A.block(e, e), v = bas.v, ne = nbs[e], m = 3 * ne;
-    for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
-      const pen = w * v[a] * v[b];
-      for (let c2 = 0; c2 < 3; c2++) for (let d = 0; d < 3; d++) K[(3 * a + c2) * m + 3 * b + d] += pen * P[3 * c2 + d];
-    }
+    const v = bas.v, ne = nbs[e];
+    penaltyBlock(A.block(e, e), ne, v, w, P);
     const g = s.value;
     if (g) for (let a = 0, o = off[e]; a < ne; a++) for (let c2 = 0; c2 < 3; c2++)
       f[o + 3 * a + c2] += w * v[a] * (P[3 * c2] * g[0] + P[3 * c2 + 1] * g[1] + P[3 * c2 + 2] * g[2]);
