@@ -32,6 +32,8 @@ export function gauss(n: number) {
 export type Inside = ((x: number, y: number, z: number) => boolean) & {
   hits?(axis: number, p: ArrayLike<number>): number[];
   hint?(lo: ArrayLike<number>, hi: ArrayLike<number>): { axis: number; edge: boolean } | null;
+  /** A mesh body's triangles (9 numbers each): another thread can make the same body from them. */
+  tris?: Float64Array;
 };
 
 /** Points (x, y, z, w) in a growable buffer. */

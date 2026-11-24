@@ -27,6 +27,9 @@ export class MeshBody implements Body {
   /** Irrational offsets keep lines off triangle edges and vertices. */
   private readonly jit: number;
 
+  /** The triangles the body was made from. */
+  get tris(): Float64Array { return this.t; }
+
   constructor(tris: ArrayLike<number>) {
     this.nt = tris.length / 9;
     this.t = Float64Array.from(tris);
@@ -175,5 +178,6 @@ export function insideOf(b: Body): import("./quad").Inside {
   const f = ((x: number, y: number, z: number) => b.inside(x, y, z)) as import("./quad").Inside;
   if (b.hits) f.hits = (a, p) => b.hits!(a, p);
   if (b.hint) f.hint = (l, h) => b.hint!(l, h);
+  if (b instanceof MeshBody) f.tris = b.tris;
   return f;
 }

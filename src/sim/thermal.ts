@@ -8,13 +8,14 @@
 
 import { Basis, basisSize } from "./basis";
 import { BlockMatrix } from "./sparse";
-import { BlockCholesky } from "./blockchol";
+import { BlockCholesky, type CholPlan } from "./blockchol";
 import { pcgSolver } from "./pcg";
 import { makeGrid, refit, memoryBytes, type Grid } from "./grid";
 import { facePoints, fitFacePoints, gridTrianglePoints, type Inside, type Points } from "./quad";
-import { DIRECT_LIMIT, MEMORY_LIMIT, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
+import { DIRECT_FLOPS, DIRECT_LIMIT, MEMORY_LIMIT, directFits, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
 import { exchangeResistance } from "./viewfactor";
 import { progress } from "./progress";
+import { kernel, parallelFor, sharedF64, sharedI32, worthSharing, type ParJob } from "./threads";
 
 /** Stefan–Boltzmann constant, W/(mm²·K⁴). */
 export const SIGMA = 5.670374419e-14;
@@ -374,25 +375,56 @@ function facePts(c: Ctx, ca: number, axis: number, d = c.p): Points {
   return out;
 }
 
-/** Conduction inside the elements: K += k w ∇N_a · ∇N_b. */
-function volumeTerms(c: Ctx, A: BlockMatrix) {
-  const { grid, nbs, bas } = c;
-  for (let e = 0; e < c.nel; e++) {
-    const nb = nbs[e], E = grid.elems[e], K = A.block(e, e), kx = c.k3[3 * e], ky = c.k3[3 * e + 1], kz = c.k3[3 * e + 2];
-    for (const ci of E.cells) {
-      const P = grid.cells[ci].pts;
-      for (let q = 0; q < P.n; q++) {
-        const o = 4 * q, w = P.a[o + 3];
-        bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], E.c, E.s, c.nbs[e]);
-        const g = bas.g;
-        for (let a = 0; a < nb; a++) {
-          const ax = g[3 * a] * w * kx, ay = g[3 * a + 1] * w * ky, az = g[3 * a + 2] * w * kz, r = a * nb;
-          for (let b = 0; b < nb; b++) K[r + b] += ax * g[3 * b] + ay * g[3 * b + 1] + az * g[3 * b + 2];
-        }
-      }
+/** Conduction of one cell's quadrature points into its element's matrix: K += k w ∇N_a · ∇N_b. */
+function conductCell(K: Float64Array, P: { a: ArrayLike<number>; n: number }, bas: Basis, c: ArrayLike<number>, sz: number, nb: number, kx: number, ky: number, kz: number) {
+  const g = bas.g;
+  for (let q = 0; q < P.n; q++) {
+    const o = 4 * q, w = P.a[o + 3];
+    bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], c, sz, nb);
+    for (let a = 0; a < nb; a++) {
+      const ax = g[3 * a] * w * kx, ay = g[3 * a + 1] * w * ky, az = g[3 * a + 2] * w * kz, r = a * nb;
+      for (let b = 0; b < nb; b++) K[r + b] += ax * g[3 * b] + ay * g[3 * b + 1] + az * g[3 * b + 2];
     }
   }
 }
+
+/** Conduction inside the elements, on all threads when there are several and the work is worth it. */
+function volumeTerms(c: Ctx, A: BlockMatrix) {
+  const { grid, nbs, bas, nel, k3 } = c;
+  let work = 0, npt = 0;
+  for (let e = 0; e < nel; e++) for (const ci of grid.elems[e].cells) { const n = grid.cells[ci].pts.n; npt += n; work += n * nbs[e] * nbs[e] * 3; }
+  if (!worthSharing(work)) {
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e], K = A.block(e, e);
+      for (const ci of E.cells) conductCell(K, grid.cells[ci].pts, bas, E.c, E.s, nbs[e], k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]);
+    }
+    return;
+  }
+  // the points, the elements and the blocks they fill, on shared memory: one task per element
+  const pts = sharedF64(4 * npt), at = sharedF64(TVOL * nel), nb = sharedI32(nel);
+  let n = 0, size = 0;
+  for (let e = 0; e < nel; e++) {
+    const E = grid.elems[e], o = TVOL * e;
+    at[o] = n;
+    for (const ci of E.cells) { const P = grid.cells[ci].pts; pts.set((P.a as Float64Array).subarray(0, 4 * P.n), 4 * n); n += P.n; }
+    at.set([n, size, E.c[0], E.c[1], E.c[2], E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]], o + 1);
+    nb[e] = nbs[e];
+    size += nbs[e] * nbs[e];
+  }
+  const out = sharedF64(size);
+  parallelFor({ kind: "tvolume", n: nel, p: bas.p, pts, at, nb, out } satisfies Omit<TVolumeJob, "ctl">, d => progress("assemble", d, 2 * nel));
+  for (let e = 0; e < nel; e++) { const o = at[TVOL * e + 2]; A.adopt(e, out.subarray(o, o + nbs[e] * nbs[e])); }
+}
+/** Numbers per element of a shared conduction loop: first point, end point, block offset, centre, half size, k along X, Y, Z. */
+const TVOL = 10;
+interface TVolumeJob extends ParJob { p: number; pts: Float64Array; at: Float64Array; nb: Int32Array; out: Float64Array }
+kernel<TVolumeJob, { j: TVolumeJob; bas: Basis }>("tvolume", {
+  init: j => ({ j, bas: new Basis(j.p) }),
+  run({ j, bas }, e) {
+    const a = j.at, o = TVOL * e, nb = j.nb[e];
+    conductCell(j.out.subarray(a[o + 2], a[o + 2] + nb * nb), { a: j.pts.subarray(4 * a[o], 4 * a[o + 1]), n: a[o + 1] - a[o] }, bas, [a[o + 3], a[o + 4], a[o + 5]], a[o + 6], nb, a[o + 7], a[o + 8], a[o + 9]);
+  },
+});
 
 /**
  * The penalty the cut elements need: γ = 2 λmax(T, K) with T = ∫ (k ∂N/∂n)² over the element's interior faces
@@ -610,33 +642,93 @@ function looseDomains(c: Ctx, contacts: ThermalContact[], at: Float64Array[], ex
 }
 
 /** Elements joined across the faces between their cells: −½ [N]{k ∂N/∂n} − ½ {k ∂N/∂n}[N] + γ [N][N]. */
+/**
+ * One face between two elements: its four blocks summed over the face's points into S (aa, ab, ba, bb, each in a
+ * quarter of the slot), from zero. The same sums on one thread and on several.
+ */
+function faceBlocks(S: Float64Array, q: number, a: ArrayLike<number>, from: number, end: number, axis: number, k: number, gamma: number,
+  bas: Basis, bas2: Basis, ca: ArrayLike<number>, sa: number, cb: ArrayLike<number>, sb: number, ma: number, mb: number, MA: Float64Array, MB: Float64Array) {
+  const Saa = S.subarray(0, ma * ma), Sab = S.subarray(q, q + ma * mb), Sba = S.subarray(2 * q, 2 * q + mb * ma), Sbb = S.subarray(3 * q, 3 * q + mb * mb);
+  Saa.fill(0); Sab.fill(0); Sba.fill(0); Sbb.fill(0);
+  for (let i = from; i < end; i++) {
+    const o4 = 4 * i, w = a[o4 + 3], x = a[o4], y = a[o4 + 1], z = a[o4 + 2];
+    bas.eval(x, y, z, ca, sa, ma);
+    bas2.eval(x, y, z, cb, sb, mb);
+    for (let b = 0; b < ma; b++) MA[b] = k * bas.g[3 * b + axis];
+    for (let b = 0; b < mb; b++) MB[b] = k * bas2.g[3 * b + axis];
+    pair(ma, ma, Saa, bas.v, MA, 1, bas.v, MA, 1, w, gamma);
+    pair(ma, mb, Sab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
+    pair(mb, ma, Sba, bas2.v, MB, -1, bas.v, MA, 1, w, gamma);
+    pair(mb, mb, Sbb, bas2.v, MB, -1, bas2.v, MB, -1, w, gamma);
+  }
+}
+/** Adds a face's blocks to the matrix. */
+function addFace(A: BlockMatrix, S: Float64Array, q: number, ea: number, eb: number, ma: number, mb: number) {
+  const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
+  for (let i = 0, n = ma * ma; i < n; i++) Kaa[i] += S[i];
+  for (let i = 0, n = ma * mb; i < n; i++) { Kab[i] += S[q + i]; Kba[i] += S[2 * q + i]; }
+  for (let i = 0, n = mb * mb; i < n; i++) Kbb[i] += S[3 * q + i];
+}
+
+/** The interior-penalty terms of the faces between cells of different elements, on all threads when the work is worth it. */
 function faceTerms(c: Ctx, A: BlockMatrix) {
-  const { grid, nb, nbs, bas, bas2, gam } = c;
-  const MA = new Float64Array(nb), MB = new Float64Array(nb);
+  const { grid, nb, nbs, bas, bas2, gam, nel } = c;
+  const faces: number[] = [];
+  let work = 0;
   for (let ci = 0; ci < grid.cells.length; ci++) {
     const [i, j, kk] = grid.cells[ci].ijk, ea = grid.cells[ci].el;
     for (let axis = 0; axis < 3; axis++) {
       const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), kk + (axis === 2 ? 1 : 0), grid.cells[ci].dom);
-      if (o < 0) continue;
-      const eb = grid.cells[o].el;
-      if (ea === eb) continue;
-      const k = c.k3[3 * ea + axis];
-      const EA = grid.elems[ea], EB = grid.elems[eb], pts = facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb])), gamma = Math.max(gam[ea], gam[eb]);
-      const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb), ma = nbs[ea], mb = nbs[eb];
-      for (let q = 0; q < pts.n; q++) {
-        const o4 = 4 * q, w = pts.a[o4 + 3], x = pts.a[o4], y = pts.a[o4 + 1], z = pts.a[o4 + 2];
-        bas.eval(x, y, z, EA.c, EA.s, c.nbs[ea]);
-        bas2.eval(x, y, z, EB.c, EB.s, c.nbs[eb]);
-        for (let b = 0; b < ma; b++) MA[b] = k * bas.g[3 * b + axis];
-        for (let b = 0; b < mb; b++) MB[b] = k * bas2.g[3 * b + axis];
-        pair(ma, ma, Kaa, bas.v, MA, 1, bas.v, MA, 1, w, gamma);
-        pair(ma, mb, Kab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
-        pair(mb, ma, Kba, bas2.v, MB, -1, bas.v, MA, 1, w, gamma);
-        pair(mb, mb, Kbb, bas2.v, MB, -1, bas2.v, MB, -1, w, gamma);
-      }
+      if (o < 0 || grid.cells[o].el === ea) continue;
+      faces.push(ci, o, axis);
+      work += (c.p + 1) ** 2 * (nbs[ea] + nbs[grid.cells[o].el]) ** 2 * 2;
     }
   }
+  const nf = faces.length / 3, q = nb * nb, slot = 4 * q;
+  const taskOf = (f: number) => {
+    const ci = faces[3 * f], axis = faces[3 * f + 2], ea = grid.cells[ci].el, eb = grid.cells[faces[3 * f + 1]].el;
+    return { axis, ea, eb, pts: facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb])), k: c.k3[3 * ea + axis], gamma: Math.max(gam[ea], gam[eb]) };
+  };
+  if (!worthSharing(work)) {
+    const S = new Float64Array(slot), MA = new Float64Array(nb), MB = new Float64Array(nb);
+    for (let f = 0; f < nf; f++) {
+      const t = taskOf(f), EA = grid.elems[t.ea], EB = grid.elems[t.eb];
+      faceBlocks(S, q, t.pts.a, 0, t.pts.n, t.axis, t.k, t.gamma, bas, bas2, EA.c, EA.s, EB.c, EB.s, nbs[t.ea], nbs[t.eb], MA, MB);
+      addFace(A, S, q, t.ea, t.eb, nbs[t.ea], nbs[t.eb]);
+    }
+    return;
+  }
+  const B = Math.max(1, Math.min(nf, 512, Math.floor(TFACE_SCRATCH / (8 * slot))));
+  const out = sharedF64(B * slot), task = sharedF64(TFACE * B);
+  let pts = sharedF64(4 * B * (2 * c.p + 1) ** 2);
+  for (let f0 = 0; f0 < nf; f0 += B) {
+    const n = Math.min(B, nf - f0), els: number[] = [];
+    let np = 0;
+    for (let t = 0; t < n; t++) {
+      const T = taskOf(f0 + t), EA = grid.elems[T.ea], EB = grid.elems[T.eb], P = T.pts;
+      if (4 * (np + P.n) > pts.length) { const more = sharedF64(Math.max(2 * pts.length, 4 * (np + P.n))); more.set(pts.subarray(0, 4 * np)); pts = more; }
+      pts.set((P.a as Float64Array).subarray(0, 4 * P.n), 4 * np);
+      task.set([np, P.n, T.axis, EA.c[0], EA.c[1], EA.c[2], EA.s, EB.c[0], EB.c[1], EB.c[2], EB.s, nbs[T.ea], nbs[T.eb], T.k, T.gamma], TFACE * t);
+      els.push(T.ea, T.eb);
+      np += P.n;
+    }
+    parallelFor({ kind: "tfaces", n, p: c.p, slot, pts, task, out } satisfies Omit<TFaceJob, "ctl">);
+    progress("assemble", nel + ((f0 + n) * nel) / nf, 2 * nel);
+    for (let t = 0; t < n; t++) addFace(A, out.subarray(slot * t, slot * (t + 1)), q, els[2 * t], els[2 * t + 1], nbs[els[2 * t]], nbs[els[2 * t + 1]]);
+  }
 }
+/** Bytes of scratch a batch of faces may take, and the numbers per face of a shared face loop: first point, points,
+ * axis, the two elements' centres and half sizes, their function counts, conductivity across, penalty. */
+const TFACE_SCRATCH = 96e6, TFACE = 15;
+interface TFaceJob extends ParJob { p: number; slot: number; pts: Float64Array; task: Float64Array; out: Float64Array }
+kernel<TFaceJob, { j: TFaceJob; bas: Basis; bas2: Basis; MA: Float64Array; MB: Float64Array }>("tfaces", {
+  init: j => { const bas = new Basis(j.p); return { j, bas, bas2: new Basis(j.p), MA: new Float64Array(bas.n), MB: new Float64Array(bas.n) }; },
+  run({ j, bas, bas2, MA, MB }, t) {
+    const k = j.task, o = TFACE * t;
+    faceBlocks(j.out.subarray(j.slot * t, j.slot * (t + 1)), j.slot / 4, j.pts, k[o], k[o] + k[o + 1], k[o + 2], k[o + 13], k[o + 14],
+      bas, bas2, [k[o + 3], k[o + 4], k[o + 5]], k[o + 6], [k[o + 7], k[o + 8], k[o + 9]], k[o + 10], k[o + 11], k[o + 12], MA, MB);
+  },
+});
 
 /** A fixed temperature g on boundary points (Nitsche): K += −N_a M_b − M_a N_b + 2γ N_a N_b, f += (−M_a + 2γ N_a) g. */
 function heldTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Array, g: number) {
@@ -743,12 +835,65 @@ function copyMatrix(A: BlockMatrix): BlockMatrix {
   return B;
 }
 
-function factorSystem(c: Ctx, A: BlockMatrix): Solver {
-  const pb = c.pb, useCg = pb.solver === "pcg" || (pb.solver !== "direct" && A.size > DIRECT_LIMIT);
-  if (useCg) { const P = pcgSolver(A, { coarse: basisSize(1), tol: pb.tol ?? 1e-9 }); return { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
-  const E = new BlockCholesky(A);
-  progress("solve", 0, 1);
+/**
+ * How a study's matrices are solved: directly while the factorisation is cheap (as the structural solver decides),
+ * else by the iterative solver. Asked once per set of equations: the linearised and time-step matrices of one
+ * `Ctx` have the same blocks, so they share the answer and the factorisation's plan.
+ */
+const solverPlans = new WeakMap<Ctx, { blocks: number; direct: boolean; plan?: CholPlan }>();
+function systemSolver(c: Ctx, A: BlockMatrix): Solver {
+  const pb = c.pb;
+  let how = solverPlans.get(c);
+  if (!how || how.blocks !== A.blocks.size) {
+    const fits = pb.solver ? { direct: pb.solver === "direct" } as ReturnType<typeof directFits> : directFits(A, DIRECT_LIMIT, DIRECT_FLOPS);
+    solverPlans.set(c, (how = { blocks: A.blocks.size, direct: fits.direct, plan: fits.plan }));
+  }
+  if (!how.direct) { const P = pcgSolver(A, { coarse: basisSize(1), tol: pb.tol ?? 1e-9 }); return { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
+  const E = new BlockCholesky(A, { plan: how.plan });
+  how.plan = E.plan;
   return { solve: f => E.solve(f) };
+}
+
+const isDirect = (c: Ctx) => !!solverPlans.get(c)?.direct;
+
+/**
+ * A x = f by conjugate gradients from `x0`, preconditioned by the solver of a matrix close to A (the same
+ * equations linearised a step earlier). Null when it has not converged in `POLISH_STEPS` iterations.
+ */
+const POLISH_STEPS = 40, POLISH_TOL = 1e-11;
+function polished(A: BlockMatrix, f: Float64Array, x0: Float64Array, pre: Solver): Float64Array | null {
+  const n = f.length, x = Float64Array.from(x0), r = new Float64Array(n), q = new Float64Array(n);
+  A.mul(x, q);
+  let f2 = 0, r2 = 0;
+  for (let i = 0; i < n; i++) { r[i] = f[i] - q[i]; f2 += f[i] * f[i]; r2 += r[i] * r[i]; }
+  const stop = POLISH_TOL * POLISH_TOL * f2;
+  if (r2 <= stop) return x;
+  let z = pre.solve(r, null), rz = 0;
+  const d = Float64Array.from(z);
+  for (let i = 0; i < n; i++) rz += r[i] * z[i];
+  for (let it = 0; it < POLISH_STEPS; it++) {
+    A.mul(d, q);
+    let dq = 0;
+    for (let i = 0; i < n; i++) dq += d[i] * q[i];
+    if (!(dq > 0)) return null;
+    const a = rz / dq;
+    r2 = 0;
+    for (let i = 0; i < n; i++) { x[i] += a * d[i]; r[i] -= a * q[i]; r2 += r[i] * r[i]; }
+    if (r2 <= stop) return x;
+    z = pre.solve(r, null);
+    let rz1 = 0;
+    for (let i = 0; i < n; i++) rz1 += r[i] * z[i];
+    const beta = rz1 / rz;
+    rz = rz1;
+    for (let i = 0; i < n; i++) d[i] = z[i] + beta * d[i];
+  }
+  return null;
+}
+
+function factorSystem(c: Ctx, A: BlockMatrix): Solver {
+  const s = systemSolver(c, A);
+  progress("solve", 0, 1);
+  return s;
 }
 
 function solveSystem(c: Ctx, A: BlockMatrix, f: Float64Array, x0: Float64Array | null, lr: LowRank | null = null): Float64Array {
@@ -1198,12 +1343,20 @@ function solveOnce(pb: ThermalProblem, b: Built, kSteps: number, solver?: Solver
   else {
     // the pass before's answer on these cells is where the loop starts (hierarchical basis: its coefficients lead each
     // element's), so a later pass settles in two or three steps instead of starting from the ambient again
-    let last: Float64Array | null = startFrom(c, pb.prev);
+    let last: Float64Array | null = startFrom(c, pb.prev), kept0: Solver | null = null;
     x = f;
     for (let it = 0; it < RAD_STEPS; it++) {
       const { B, g, lr } = linearised(b, last);
       for (let i = 0; i < g.length; i++) g[i] += f[i];
-      x = solveSystem(c, B, g, last, lr);
+      // the films move little from one step to the next: the first step's factorisation, kept, solves the later
+      // steps' equations in a few conjugate-gradient iterations (a new one only when that stalls)
+      const y = !lr && kept0 && last ? polished(B, g, last, kept0) : null;
+      if (y) x = y;
+      else {
+        const s0 = factorSystem(c, B);
+        kept0 = lr || !isDirect(c) ? null : s0;
+        x = withLowRank(s0, lr).solve(g, last);
+      }
       iterations = it + 1;
       let d = 0, top = 0;
       if (last) for (let e = 0; e < nel; e++) { d = Math.max(d, Math.abs(x[off[e]] - last[off[e]])); top = Math.max(top, Math.abs(x[off[e]])); }
@@ -1347,10 +1500,7 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
     if (had) return had;
     const B = copyMatrix(linB ?? b.A);
     for (let e = 0; e < nel; e++) { const K = B.block(e, e), Ce = C[e]; for (let i = 0; i < nb * nb; i++) K[i] += a * Ce[i]; }
-    const pbx = c.pb, useCg = pbx.solver === "pcg" || (pbx.solver !== "direct" && B.size > DIRECT_LIMIT);
-    let s0: Solver;
-    if (useCg) { const P = pcgSolver(B, { coarse: basisSize(1), tol: pbx.tol ?? 1e-9 }); s0 = { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
-    else { const E = new BlockCholesky(B); s0 = { solve: f => E.solve(f) }; }
+    const s0 = systemSolver(c, B);
     const s = withLowRank(s0, linLr);
     // a new linearisation makes the older matrices useless
     for (const key2 of [...cache.keys()]) if (!key2.endsWith(`|${linGen}`)) cache.delete(key2);

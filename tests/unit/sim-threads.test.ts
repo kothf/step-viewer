@@ -8,6 +8,9 @@ import { BlockMatrix, Envelope } from "../../src/sim/sparse";
 import { BlockCholesky, cholPlan, minDegreeOrder } from "../../src/sim/blockchol";
 import { serve, setHelpers, setLoopFloor, threadStats, type CholJob } from "../../src/sim/threads";
 import { solveStatic } from "../../src/sim/static";
+import { solveThermal } from "../../src/sim/thermal";
+import { makeGrid } from "../../src/sim/grid";
+import { MeshBody, insideOf } from "../../src/sim/body";
 
 if (!isMainThread) parentPort!.on("message", (j: CholJob) => serve(j));
 
@@ -105,4 +108,54 @@ test("threads: the equations built on several threads are the same bit for bit",
     assert.deepEqual(many, one);
   } finally { setHelpers([]); setLoopFloor(2e7); }
 });
+test("threads: a thermal study's equations built on several threads are the same bit for bit", async () => {
+  // the same bar: held at 20 °C at one end, a film and radiation at the other, heat made throughout
+  const L = 120, W = 20, lo = [0, -W / 2, -W / 2], hi = [L, W / 2, W / 2];
+  const inside = (x: number, y: number, z: number) => x >= -1e-12 && x <= L + 1e-12 && Math.abs(y) <= W / 2 + 1e-12 && Math.abs(z) <= W / 2 + 1e-12;
+  const end = (x: number, out: boolean) => { const q = [x, -W / 2, -W / 2, x, W / 2, -W / 2, x, W / 2, W / 2, x, -W / 2, -W / 2, x, W / 2, W / 2, x, -W / 2, W / 2]; return out ? q : [...q.slice(0, 3), ...q.slice(6, 9), ...q.slice(3, 6), ...q.slice(9, 12), ...q.slice(15, 18), ...q.slice(12, 15)]; };
+  const run = () => {
+    const pb = { lo, hi, inside, h: 13, k: 0.05, sinks: [{ tris: end(0, false), temp: 20 }, { tris: end(L, true), h: 2e-5, ambient: 25 }, { tris: end(L, true), emissivity: 0.9, ambient: 25 }], sources: [{ power: 3 }] };
+    const a = solveThermal({ ...pb, p: 2 });
+    const b = solveThermal({ ...pb, p: 3, grid: a.grid, prev: a.x });
+    return [a.x, b.x, a.iterations, b.iterations];
+  };
+  const one = run();
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const before = threadStats().loops;
+    const many = run();
+    // conduction and the faces between elements of both solves
+    assert.ok(threadStats().loops - before >= 4, JSON.stringify(threadStats()));
+    assert.deepEqual(many, one);
+    // radiation settles in a few steps, and the answer is the one a fresh factorisation per step gives
+    assert.ok((one[2] as number) > 1 && (one[2] as number) < 12);
+  } finally { setHelpers([]); setLoopFloor(2e7); }
+});
+
+test("threads: the cells of a mesh body found on several threads are the same", async () => {
+  // a tetrahedron leaning in its box: most cubes are cut, some hold nothing
+  const P = [[0, 0, 0], [40, 3, 2], [5, 37, 4], [8, 6, 33]];
+  const tris = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]].flatMap(f => f.flatMap(v => P[v]));
+  const body = new MeshBody(tris);
+  const make = () => {
+    const g = makeGrid(body.lo, body.hi, 9, insideOf(body), { q: 3, depth: 3, fit: 5 });
+    return g.cells.map(c => ({ ijk: c.ijk, state: c.state, frac: c.frac, el: c.el, pts: Array.from(c.pts.a.subarray(0, 4 * c.pts.n)), fine: c.fine ? Array.from(c.fine.a.subarray(0, 4 * c.fine.n)) : null }));
+  };
+  const one = make();
+  assert.ok(one.length > 20 && one.some(c => c.fine));
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const before = threadStats().loops;
+    const many = make();
+    assert.ok(threadStats().loops > before, JSON.stringify(threadStats()));
+    assert.deepEqual(many, one);
+  } finally { setHelpers([]); setLoopFloor(2e7); }
+});
+
 }
