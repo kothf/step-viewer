@@ -345,10 +345,10 @@ export const MODAL_DIRECT = 9000;
  */
 export const DIRECT_FLOPS = 4e10, MODAL_FLOPS = 2e11, DIRECT_VALUES = 5e7;
 /** Whether the direct solver is the one to use for A (and the element order it found, to factor with). */
-export function directFits(A: BlockMatrix, limit: number, flops: number): { direct: boolean; plan?: CholPlan } {
+export function directFits(A: BlockMatrix, limit: number, flops: number, values = DIRECT_VALUES): { direct: boolean; plan?: CholPlan } {
   const plan = cholPlan(A);
   if (A.size <= limit) return { direct: true, plan };
-  return { direct: plan.flops <= flops && plan.size <= DIRECT_VALUES, plan };
+  return { direct: plan.flops <= flops && plan.size <= values, plan };
 }
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());

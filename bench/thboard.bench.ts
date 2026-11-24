@@ -1,7 +1,10 @@
 // A thermal study saved in an assembly file, solved in node as the Simulation tab solves it (no bolts, no typed k tables):
 //   node bench/run.mjs bench/thboard.bench.ts <file.mcadasm> [study index]
-// Prints each pass and the hottest temperature of every component. THBOARD_PASSES overrides the study's passes.
+// Prints each pass and the hottest temperature of every component. THBOARD_PASSES overrides the study's passes; PROF=1 prints a CPU profile, SIMTHREADS (1) = threads.
 import { readFileSync } from "node:fs";
+import { Worker, isMainThread, parentPort } from "node:worker_threads";
+import { fileURLToPath } from "node:url";
+import { serve, setHelpers, threadStats } from "../src/sim/threads";
 import { MeshBody, insideOf } from "../src/sim/body";
 import { Assembler } from "../src/kernel/assembly";
 import { asmSimGeometry } from "../src/kernel/simgeo";
@@ -13,6 +16,9 @@ import { boardMap } from "../src/thermal/copper";
 // @ts-expect-error no types
 import init from "opencascade.js/dist/node.js";
 
+if (!isMainThread) { parentPort!.on("message", (j: any) => serve(j)); await new Promise(() => {}); }
+const threads = Number(process.env.SIMTHREADS ?? 1);
+if (threads > 1) setHelpers(Array.from({ length: threads - 1 }, () => new Worker(fileURLToPath(import.meta.url))));
 const oc = await init();
 const b = readFileSync(process.argv[2]);
 const doc = await unpackAsm(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
@@ -47,6 +53,8 @@ const discs: [number, number, number, string][] = [];
 for (const l of st.loads) for (const q of l.parts ?? []) for (const r of q.into ?? []) if (r.disc && q.name === "R1") discs.push([r.disc[0], r.disc[1], r.disc[2], q.name]);
 const inBoard = insideOf(new MeshBody(Float64Array.from(bt)));
 let sampler: any = null;
+let session: any = null;
+if (process.env.PROF) { const { Session } = await import("node:inspector"); session = new Session(); session.connect(); session.post("Profiler.enable"); session.post("Profiler.start"); }
 const t0 = performance.now(), passes = Number(process.env.THBOARD_PASSES ?? st.settings.passes);
 for (const p of runThermal({
   body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] } as any, passes, energyTol: st.settings.energyTol ?? 0, pos, nrm: new Float32Array(pos.length),
@@ -73,3 +81,10 @@ for (const p of runThermal({
   }
   console.log(`pass ${p.pass}: p ${p.p}, ${p.dofs} unknowns, err ${p.err?.toFixed?.(1) ?? "-"} %, change ${p.change?.toFixed(2)}, ${comps}, ${((performance.now() - t0) / 1000).toFixed(1)} s`);
 }
+if (session) session.post("Profiler.stop", (_e: unknown, { profile }: any) => {
+  const self = new Map<string, number>(), dt = profile.timeDeltas as number[], byId = new Map<number, any>(profile.nodes.map((n: any) => [n.id, n]));
+  profile.samples.forEach((id: number, i: number) => { const f = byId.get(id).callFrame, k = `${f.functionName || "(anon)"} ${f.url.split("/").pop()}:${f.lineNumber}`; self.set(k, (self.get(k) ?? 0) + dt[i]); });
+  for (const [k, v] of [...self].sort((a, b) => b[1] - a[1]).slice(0, 30)) console.log(`${(v / 1e6).toFixed(2)} s  ${k}`);
+});
+console.log(JSON.stringify(threadStats()));
+setHelpers([]);
