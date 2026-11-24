@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.734.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies build their conduction, film and radiation matrices from moments. A product of two of an element's functions is a fixed sum of Legendre products, so its integral is a sum of a few hundred moments of the element's integration points instead of a pass over every pair of functions at every point; the matrices are the same to rounding. Amplifier board study, three passes, Chrome on four cores: 72 s to 66 s with the same temperatures (building the equations of the third pass 17 s to 12 s).
+
 ## [1.733.0] - 2026-11-24
 
 ### Changed
@@ -4836,7 +4842,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.733.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.734.0...HEAD
+[1.734.0]: https://github.com/kothf/step-viewer/compare/v1.733.0...v1.734.0
 [1.733.0]: https://github.com/kothf/step-viewer/compare/v1.732.0...v1.733.0
 [1.732.0]: https://github.com/kothf/step-viewer/compare/v1.731.0...v1.732.0
 [1.731.0]: https://github.com/kothf/step-viewer/compare/v1.730.0...v1.731.0

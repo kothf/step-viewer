@@ -11,6 +11,7 @@ import { asmSimGeometry } from "../src/kernel/simgeo";
 import { unpackAsm } from "../src/asm/file";
 import { thermalSetup, runThermal } from "../src/sim/run";
 import { DEFAULT_GAP } from "../src/sim/types";
+import { progressTo } from "../src/sim/progress";
 import { boardK } from "../src/thermal/study";
 import { boardMap } from "../src/thermal/copper";
 // @ts-expect-error no types
@@ -55,6 +56,12 @@ const inBoard = insideOf(new MeshBody(Float64Array.from(bt)));
 let sampler: any = null;
 let session: any = null;
 if (process.env.PROF) { const { Session } = await import("node:inspector"); session = new Session(); session.connect(); session.post("Profiler.enable"); session.post("Profiler.start"); }
+// seconds per stage of the pass under way, from the solver's own progress reports
+const stages = new Map<string, number>();
+let stageNow = "", stageAt = performance.now();
+const stageEnd = () => { const t = performance.now(); if (stageNow) stages.set(stageNow, (stages.get(stageNow) ?? 0) + (t - stageAt) / 1000); stageAt = t; };
+progressTo(q => { if (q.stage !== stageNow) { stageEnd(); stageNow = q.stage; } });
+const stageText = () => { stageEnd(); stageNow = ""; const r = [...stages].map(([k, v]) => `${k} ${v.toFixed(1)}`).join(", "); stages.clear(); return r; };
 const t0 = performance.now(), passes = Number(process.env.THBOARD_PASSES ?? st.settings.passes);
 for (const p of runThermal({
   body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] } as any, passes, energyTol: st.settings.energyTol ?? 0, pos, nrm: new Float32Array(pos.length),
@@ -79,7 +86,7 @@ for (const p of runThermal({
       console.log(`  board near ${d[3]} (${d[0].toFixed(1)}, ${d[1].toFixed(1)}): max ${rr.vm[m].toFixed(1)} at (${pts[3 * m].toFixed(1)}, ${pts[3 * m + 1].toFixed(1)}), ${pts.length / 3} points`);
     }
   }
-  console.log(`pass ${p.pass}: p ${p.p}, ${p.dofs} unknowns, err ${p.err?.toFixed?.(1) ?? "-"} %, change ${p.change?.toFixed(2)}, ${comps}, ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  console.log(`pass ${p.pass}: p ${p.p}, ${p.dofs} unknowns, err ${p.err?.toFixed?.(1) ?? "-"} %, change ${p.change?.toFixed(2)}, ${comps}, ${((performance.now() - t0) / 1000).toFixed(1)} s (${stageText()})`);
 }
 if (session) session.post("Profiler.stop", (_e: unknown, { profile }: any) => {
   const self = new Map<string, number>(), dt = profile.timeDeltas as number[], byId = new Map<number, any>(profile.nodes.map((n: any) => [n.id, n]));
