@@ -28,7 +28,7 @@ const asm = new Assembler(oc);
 const { placed } = asm.evaluate(doc, 1);
 const only = process.env.THBOARD_ONLY?.split(",");
 const shown = placed.filter((p: any) => p.body && !doc.components.find(c => c.id === p.id)?.hidden && (!only || only.includes(doc.components.find(c => c.id === p.id)?.name ?? "")));
-const geo: any = asmSimGeometry(oc, shown.map((p: any) => ({ id: p.id, shape: p.body.shape, faces: p.body.faces, names: p.body.names })), 0.0024, 0.05);
+const geo: any = asmSimGeometry(oc, shown.map((p: any) => ({ id: p.id, shape: p.body.shape, faces: p.body.faces, names: p.body.names })), 0.0024, Number(process.env.THBOARD_ANG ?? 0.2));
 const partOf = new Map(shown.map((p: any) => [p.id, p.part]));
 const bodies = geo.regions.map((q: any) => ({ key: q.comp, tris: q.tris, name: doc.components.find(c => c.id === q.comp)?.name ?? q.comp, mat: (doc.parts as any)[partOf.get(q.comp)]?.doc?.material ?? null }));
 const bks = bodies.map((q: any) => { const bd = st.comps?.[q.key]?.board; return bd ? boardK(q.tris, bd, bd.t) : null; });

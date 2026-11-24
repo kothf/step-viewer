@@ -119,6 +119,8 @@ const STAGE_TEXT: Record<SimStage, string> = {
   geometry: "reading the geometry", cells: "cutting the cells", assemble: "building the equations", factor: "factorising the matrix",
   solve: "solving", modes: "finding the modes", time: "stepping in time", results: "reading the results",
 };
+/** Angle between neighbouring facets of a thermal study's geometry, rad: the chord deviation decides above a radius of 0.4 mm, and temperatures do not need rounder small holes (a board with 300 holes read in 25 s at 0.05). */
+const THERMAL_ANG = 0.2;
 const AUTO_DELAY = 700;
 
 /**
@@ -618,7 +620,7 @@ export class SimController {
     this.renderAll();
     try {
       const size = this.host.viewer.modelSize, key = this.foundKey(st);
-      const { regions } = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
+      const { regions } = await this.host.simGeo(Math.max(0.002, size * 2e-5), st.kind === "thermal" ? THERMAL_ANG : 0.05);
       const off = offComps(st);
       // a thermal study keeps the fasteners as solids: heat passes through them
       const uses = await this.boltsOf(st, regions ?? []);
@@ -1601,7 +1603,7 @@ export class SimController {
     let done = false;
     try {
       const size = this.host.viewer.modelSize;
-      const got = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
+      const got = await this.host.simGeo(Math.max(0.002, size * 2e-5), THERMAL_ANG);
       if (!asm && got.solids !== 1) throw new Error("E-SIM-BODIES");
       const bolted = asm ? this.boltedPairs(await this.boltsOf(st, got.regions ?? [])) : undefined;
       const { off, geo, bodies, mats, bks, k3s, kOf, nameOf, links, setup, kts, kmaps } = this.thermalParts(st, got, bolted);
