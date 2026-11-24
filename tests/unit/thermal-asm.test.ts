@@ -96,3 +96,16 @@ test("a body that conducts differently along the axes (a board: FR-TBRD-010)", (
   assert.ok(Math.abs(q.flows[0].out - 2) < 2e-3 * 2, `out ${q.flows[0].out}`);
   assert.throws(() => solveThermal({ lo, hi, inside: whole, h: 10, p: 2, k: 0, domains: [A, { ...B, k3: [1, 0, 1] }], sinks: [{ tris: left, temp: 20 }], sources: [{ tris: right, power: P }] }), /E-TH-NOK/);
 });
+
+test("a body wholly inside an earlier one is joined to it from its own surface", () => {
+  // an anode drawn inside a tube's solid bulb: the bulb's surface never meets it, so the join is found from the inner body
+  const out = dom([0, 0, 0], [40, 30, 30], 0.2), inner = dom([14, 11, 11], [26, 19, 19], 0.05);
+  const r = solveThermal({ lo: [0, 0, 0], hi: [40, 30, 30], inside: boxIn([0, 0, 0], [40, 30, 30]), h: 10, p: 2, k: 0, domains: [out, inner],
+    sinks: [{ tris: rectFace(0, 0, [0, 0, 0], [40, 30, 30], false), temp: 20 }], sources: [{ power: 1, doms: [1] }] });
+  assert.equal(r.contacts.length, 1);
+  assert.deepEqual([r.contacts[0].a, r.contacts[0].b], [1, 0]);
+  const area = 2 * (12 * 8 + 12 * 8 + 8 * 8);
+  assert.ok(Math.abs(r.contacts[0].area - area) < 1e-6 * area, `area ${r.contacts[0].area}`);
+  assert.ok(Math.abs(r.contacts[0].heat - 1) < 0.02, `heat ${r.contacts[0].heat}`);
+  assert.ok(r.flows[0].out > 0.98 && r.flows[0].out < 1.02, `out ${r.flows[0].out}`);
+});

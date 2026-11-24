@@ -777,10 +777,14 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
   }
   const boxes = doms.map(d => triBox(d.tris)), found = new Map<number, number>();
   const MA = new Float64Array(nb), MB = new Float64Array(nb);
-  for (let a = 0; a + 1 < nd; a++) {
+  // a body is joined where its surface lies on a later body; a body that found nothing that way (it lies wholly inside
+  // an earlier one, or its small face fell between the other's points) is then tried from its own surface
+  const joined = new Uint8Array(nd);
+  for (let run = 0; run < 2; run++) for (let a = 0; a < nd; a++) {
+    if (run && joined[a]) continue;
     const near: number[] = [];
-    for (let d = a + 1; d < nd; d++) {
-      if (how.get(a * nd + d)?.type === "none") continue;
+    for (let d = run ? 0 : a + 1; d < (run ? a : nd); d++) {
+      if (how.get(Math.min(a, d) * nd + Math.max(a, d))?.type === "none") continue;
       let apart = false;
       for (let k = 0; k < 3; k++) if (boxes[a][k] > boxes[d][3 + k] + far || boxes[d][k] > boxes[a][3 + k] + far) apart = true;
       if (!apart) near.push(d);
@@ -803,10 +807,11 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
       if (b < 0) continue;
       const ca = grid.cellOf(x - eps * nx, y - eps * ny, z - eps * nz, a), cb = grid.cellOf(bx, by, bz, b);
       if (ca < 0 || cb < 0) continue;
-      const link = how.get(a * nd + b), hc = link?.type === "resistance" ? link.h! : 0;
+      const link = how.get(Math.min(a, b) * nd + Math.max(a, b)), hc = link?.type === "resistance" ? link.h! : 0;
       let ci = found.get(a * nd + b);
       if (ci === undefined) { ci = contacts.length; found.set(a * nd + b, ci); contacts.push({ a, b, area: 0, type: hc ? "resistance" : "perfect", heat: 0, ta: 0, tb: 0 }); }
       contacts[ci].area += w;
+      joined[a] = joined[b] = 1;
       const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb];
       bas.eval(x, y, z, EA.c, EA.s, c.nbs[ea]);
       bas2.eval(x, y, z, EB.c, EB.s, c.nbs[eb]);
