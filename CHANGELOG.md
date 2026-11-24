@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.726.0] - 2026-11-24
+
+### Changed
+
+- Static and modal studies measure the penalty of cut elements on all processor cores (it was the largest step still on one thread). A bracket, five passes on four cores: 20 s before, 16.6 s now. Results are the same bit for bit whatever the number of threads.
+
 ## [1.725.0] - 2026-11-24
 
 ### Changed
@@ -4791,7 +4797,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.725.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.726.0...HEAD
+[1.726.0]: https://github.com/kothf/step-viewer/compare/v1.725.0...v1.726.0
 [1.725.0]: https://github.com/kothf/step-viewer/compare/v1.724.0...v1.725.0
 [1.724.0]: https://github.com/kothf/step-viewer/compare/v1.723.0...v1.724.0
 [1.723.0]: https://github.com/kothf/step-viewer/compare/v1.722.0...v1.723.0

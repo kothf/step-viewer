@@ -103,8 +103,8 @@ test("threads: the equations built on several threads are the same bit for bit",
     const before = threadStats().loops;
     const many = run();
     const st = threadStats();
-    // each solve shares its element stiffness, the second also the fitting of the cut cells' points
-    assert.ok(st.loops - before >= 3 && st.loopJoined >= 1, JSON.stringify(st));
+    // each solve shares its element stiffness, faces and penalty measuring, the second also the fitting of the cut cells' points
+    assert.ok(st.loops - before >= 7 && st.loopJoined >= 1, JSON.stringify(st));
     assert.deepEqual(many, one);
   } finally { setHelpers([]); setLoopFloor(2e7); }
 });
