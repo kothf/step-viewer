@@ -8,7 +8,7 @@ import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { DEFAULT_AMBIENT, DEFAULT_REF, keepsSplit, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch, facingPatch, intoPatch } from "../thermal/study";
-import { forcedH, kmapMean, ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
+import { forcedH, keepBuild, kmapMean, ktFactor, solveThermal, takeBuild, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
 import { viewFactor } from "./viewfactor";
 import { progress, progressPass } from "./progress";
 
@@ -1403,11 +1403,17 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!heat && temps.size < 2 && temps.has(Tr.t0)) throw new Error("E-TH-NOHEAT");
   let p = 2, pass = 0, steady: number | null = null, powers: number[] = [];
+  // the last steady pass's cells, matrix and surface points are the warm-up's own: kept for it instead of made again
+  let built: unknown;
   if (heat) {
-    for (const r of runThermal({ ...inp, cells: inp.cells ?? 150, passes: Math.min(2, Math.max(1, Math.round(inp.passes))) })) {
-      pass = r.pass; p = r.p; steady = r.thermal?.max ?? null; powers = (r.thermal?.comps ?? []).map(c => c.power);
-      yield { ...r, done: false, converged: false };
-    }
+    keepBuild(true);
+    try {
+      for (const r of runThermal({ ...inp, cells: inp.cells ?? 150, passes: Math.min(2, Math.max(1, Math.round(inp.passes))) })) {
+        pass = r.pass; p = r.p; steady = r.thermal?.max ?? null; powers = (r.thermal?.comps ?? []).map(c => c.power);
+        yield { ...r, done: false, converged: false };
+      }
+      built = takeBuild();
+    } finally { keepBuild(false); }
   }
   progressPass(0, 0);
   const t0 = Date.now();
@@ -1423,7 +1429,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const r = transientThermal(
     { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), sinks: set.sinks, sources: set.sources, ...(set.exchanges?.length ? { exchanges: exchangesOf(set, inp.body) } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
     {
-      rc: R ? Tr.rcs! : [Tr.rc], t0: Tr.t0, times, ...(Number.isFinite(maxStep) ? { maxStep } : {}), breaks: prof.flatMap(profileBreaks),
+      rc: R ? Tr.rcs! : [Tr.rc], t0: Tr.t0, times, built, ...(Number.isFinite(maxStep) ? { maxStep } : {}), breaks: prof.flatMap(profileBreaks),
       factor: (i, t) => profileFactor(prof[i], t),
       frame: (k, _t, sample, fl, applied) => {
         const s = sample(inp.pos, inp.nrm);

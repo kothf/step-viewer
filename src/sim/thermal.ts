@@ -1365,11 +1365,78 @@ function energies(c: Ctx, x: Float64Array, prev: Float64Array | null) {
   return { energy, eta };
 }
 
+/**
+ * One element's share of what a film, radiating or natural convection sink takes at the temperatures `x`, summed from
+ * zero into `S[so…]` (film heat, radiated heat, area, ∫T, ∫h: the element's room in the plan's `out` holds more) over its points (`vals` = the functions' values kept at them). `par` = ambient, emissivity, film
+ * coefficient, kind (0 that coefficient, 1 one per point in `per`, 2 natural with two sizes per point), natural factor, down (3).
+ */
+function flowCell(S: Float64Array, so: number, L: ArrayLike<number>, order: ArrayLike<number>, from: number, end: number, nb: number, fo: number,
+  x: ArrayLike<number>, vals: Float64Array, vb: number, rs: number, par: ArrayLike<number>, per: ArrayLike<number> | null) {
+  const amb = par[0], emis = par[1], h0 = par[2], kind = par[3], ambK = amb + KELVIN, amb4 = ambK * ambK * (ambK * ambK);
+  let conv = 0, rad = 0, area = 0, sum = 0, hs = 0;
+  for (let q = from, b = vb; q < end; q++, b += rs) {
+    const i = order[q], o = 8 * i, w = L[o + 4];
+    let t = 0;
+    for (let a = 0; a < nb; a++) t += x[fo + a] * vals[b + a];
+    area += w; sum += w * t;
+    if (emis) { const T2 = (t + KELVIN) * (t + KELVIN); rad += w * emis * SIGMA * (T2 * T2 - amb4); }
+    if (kind === 2) {
+      const up = -(L[o + 5] * par[5] + L[o + 6] * par[6] + L[o + 7] * par[7]);
+      const h = par[4] * naturalH(up, t - amb, per![2 * i], per![2 * i + 1]);
+      hs += w * h;
+      conv += w * h * (t - amb);
+    } else if (kind === 1) { const h = per![i]; hs += w * h; conv += w * h * (t - amb); }
+    else conv += w * h0 * (t - amb);
+  }
+  S[so] = conv; S[so + 1] = rad; S[so + 2] = area; S[so + 3] = sum; S[so + 4] = hs;
+}
+interface TFlowJob extends ParJob { L: Float64Array; order: Int32Array; task: Float64Array; per: Float64Array | null; x: Float64Array; par: Float64Array; out: Float64Array; vals: Float64Array }
+kernel<TFlowJob, TFlowJob>("tflow", {
+  init: j => j,
+  run(j, t) {
+    const k = j.task, o = TFILM * t, nb = k[o + 8];
+    flowCell(j.out, k[o + 3], j.L, j.order, k[o + 1], k[o + 2], nb, k[o + 9], j.x, j.vals, k[o + 10], filmRecord(nb), j.par, j.per);
+  },
+});
+
+/**
+ * A sink that holds no temperature, through its plan (the points by element, the functions' values kept at them):
+ * each element's sums are made from zero, on all threads when there are enough points (a warm-up asks at every
+ * output time), and added in the elements' order. Null = no kept values: the caller goes point by point.
+ */
+function planFlow(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?: Float64Array): SinkFlow | null {
+  const P = filmPlans.get(L), nat = s.natural, forced = !!s.forced && !!lens;
+  if (!P || !P.vals || P.c.grid !== c.grid || P.c.off !== c.off) return null;
+  const kind = nat && lens ? 2 : forced ? 1 : 0;
+  // the plan holds the per-point numbers of the terms it was made for: the same ones here, or none are needed
+  if (kind && (!P.per || P.per.length !== (kind === 2 ? 2 : 1) * (L.length / 8))) return null;
+  const { task, out } = P;
+  for (let t = 0; t < P.n; t++) if (task[TFILM * t + 10] < 0) return null;
+  const par = Float64Array.of(s.ambient ?? 0, s.emissivity ?? 0, s.h ?? 0, kind, nat?.factor ?? 0, nat?.down[0] ?? 0, nat?.down[1] ?? 0, nat?.down[2] ?? 0);
+  if (P.shared && worthSharing(8 * c.nb * (L.length / 8))) {
+    parallelFor({ kind: "tflow", n: P.n, L: P.L, order: P.order, task, per: P.per, x, par, out, vals: P.vals } satisfies Omit<TFlowJob, "ctl">);
+  } else {
+    for (let t = 0; t < P.n; t++) {
+      const o = TFILM * t, nb = task[o + 8];
+      flowCell(out, task[o + 3], P.L, P.order, task[o + 1], task[o + 2], nb, task[o + 9], x, P.vals, task[o + 10], filmRecord(nb), par, P.per);
+    }
+  }
+  const by = c.doms ? new Float64Array(3 * c.doms.length) : null;
+  let conv = 0, rad = 0, area = 0, sum = 0, hs = 0;
+  for (let t = 0; t < P.n; t++) {
+    const o = TFILM * t, so = task[o + 3];
+    conv += out[so]; rad += out[so + 1]; area += out[so + 2]; sum += out[so + 3]; hs += out[so + 4];
+    if (by) { const d = 3 * c.dom[task[o]]; by[d] += out[so]; by[d + 1] += out[so + 1]; }
+  }
+  return { out: conv + rad, area, mean: area > 0 ? sum / area : 0, ...(nat || forced ? { h: area > 0 ? hs / area : 0 } : {}), ...(by ? { doms: by } : {}) };
+}
+
 /** What a sink takes, W: the flux the terms above carry through its points. */
 function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?: Float64Array): SinkFlow {
   const { grid, nbs, off, bas, k3, gam } = c, nat = s.natural, amb = s.ambient ?? 0;
   const forced = s.forced && s.temp === undefined && lens ? lens : null;
   const held = s.temp !== undefined;
+  if (!held) { const r = planFlow(c, s, L, x, lens); if (r) return r; }
   let out = 0, area = 0, sum = 0, hs = 0;
   const kept = held ? null : filmValues(c, L), ambK = (s.ambient ?? 0) + KELVIN, amb4 = ambK * ambK * (ambK * ambK);
   const by = c.doms ? new Float64Array(3 * c.doms.length) : null;
@@ -1764,20 +1831,46 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   return { ...r, airSteps: steps };
 }
 
+/**
+ * The set-up of the last steady solve, kept for the warm-up that follows it (`keepBuild(true)` before the steady passes,
+ * `takeBuild` after): a warm-up steps on the cells, matrix and surface points its last steady pass has just made, so
+ * making them again was the same work twice. Only a plain set-up is kept (one degree everywhere, no conductivity table,
+ * no air layer: those are made at the warm-up's own temperatures).
+ */
+interface KeptBuild { b: Built; pb: ThermalProblem }
+let keepBuilds = false, lastBuild: KeptBuild | null = null;
+export function keepBuild(on: boolean) { keepBuilds = on; lastBuild = null; }
+/** The kept set-up (given once: the next call has none), to pass as `TransientRun.built`. */
+export function takeBuild(): unknown { const k = lastBuild; lastBuild = null; return k; }
+const noteBuild = (pb: ThermalProblem, b: Built): Built => {
+  if (keepBuilds) lastBuild = !pb.degrees && !ktOf(pb) && !(pb.links ?? []).some(l => l.air !== undefined) ? { b, pb } : null;
+  return b;
+};
+/** Whether a kept set-up is the one `build(pb)` would make. */
+function sameBuild(k: KeptBuild | null | undefined, pb: ThermalProblem): k is KeptBuild {
+  if (!k) return false;
+  const q = k.pb, same = (x: ArrayLike<number>, y: ArrayLike<number>) => x.length === y.length && Array.prototype.every.call(x, (v: number, i: number) => v === y[i]);
+  return q.p === pb.p && q.h === pb.h && same(q.lo, pb.lo) && same(q.hi, pb.hi) && (q.inside === pb.inside || (!!q.inside.tris && !!pb.inside.tris && same(q.inside.tris, pb.inside.tris))) && q.k === pb.k && q.k3 === pb.k3
+    && q.sinks === pb.sinks && q.sources === pb.sources && q.links === pb.links && q.gap === pb.gap && (q.depth ?? 3) === (pb.depth ?? 3)
+    && (q.exchanges?.length ?? 0) === (pb.exchanges?.length ?? 0) && (q.exchanges ?? []).every((X, i) => X.a === pb.exchanges![i].a && X.b === pb.exchanges![i].b && X.f === pb.exchanges![i].f && X.ea === pb.exchanges![i].ea && X.eb === pb.exchanges![i].eb)
+    && (q.domains?.length ?? 0) === (pb.domains?.length ?? 0)
+    && (q.domains ?? []).every((d, i) => { const e = pb.domains![i]; return d.tris === e.tris && d.k === e.k && d.k3 === e.k3 && d.kmap === e.kmap; });
+}
+
 function solveLinked(pb: ThermalProblem): ThermalResult {
   const tab = ktOf(pb);
   const linear = !tab && !(pb.exchanges ?? []).length && !pb.sinks.some(s => s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural));
   if (pb.reuse && linear && !pb.degrees) {
     if (kept.key !== pb.reuse) dropReuse();
     const hit = kept.byP.get(pb.p);
-    if (hit && (!pb.grid || pb.grid === hit.b.c.grid)) { reusedSolves++; return { ...solveOnce(pb, reloaded(hit.b, pb), 0, hit.solver), reused: true }; }
-    const b = build(pb), solver = factorSystem(b.c, b.A);
+    if (hit && (!pb.grid || pb.grid === hit.b.c.grid)) { reusedSolves++; return { ...solveOnce(pb, noteBuild(pb, reloaded(hit.b, pb)), 0, hit.solver), reused: true }; }
+    const b = noteBuild(pb, build(pb)), solver = factorSystem(b.c, b.A);
     let bytes = 2 * b.memory;
     for (const k of kept.byP.values()) bytes += 2 * k.b.memory;
     if (bytes <= REUSE_BYTES) { kept.key = pb.reuse; kept.byP.set(pb.p, { b, solver }); }
     return solveOnce(pb, b, 0, solver);
   }
-  if (!tab) return solveOnce(pb, build(pb), 0);
+  if (!tab) return solveOnce(pb, noteBuild(pb, build(pb)), 0);
   // FR-TMAT-004: solved again with each element's k at the temperatures found until no k changes by more than 0.5 %
   const t0 = startTemp(pb);
   let scale = new Float64Array(0);
@@ -1864,6 +1957,8 @@ export interface TransientRun {
   t0: number;
   times: number[];
   factor(i: number, t: number): number;
+  /** The last steady pass's set-up (`takeBuild()`), used when it is this problem's. */
+  built?: unknown;
   /** Each output time's solution (the steps are interpolated to it): read the temperatures, what the sinks take and the heat put in. */
   frame(k: number, t: number, sample: (pos: ArrayLike<number>, nrm?: ArrayLike<number>) => ThermalSample, flows: SinkFlow[], applied: number): void;
   /** Allowed temperature change per step, K (at least 2 K). */
@@ -1935,11 +2030,13 @@ const RELIN = 2;
 export function transientThermal(pb: ThermalProblem, run: TransientRun): TransientResult {
   // a conductivity that changes with temperature is taken at the element temperatures, again whenever they moved more than the step allowance
   const tab = ktOf(pb);
+  // the steady pass before it has made this very set-up
+  const had = run.built as KeptBuild | undefined, ready = !tab && !pb.degrees && !(pb.links ?? []).some(l => l.air !== undefined) && sameBuild(had, pb) ? had.b : null;
   // an air layer is taken at the run's starting temperature
   if ((pb.links ?? []).some(l => l.air !== undefined)) pb = { ...pb, links: airLinks(pb.links!, () => run.t0) };
   // steps on one degree everywhere
   if (pb.degrees) pb = { ...pb, degrees: undefined };
-  let b = build(pb, tab ? dom => ktScale(dom, basisSize(pb.p), tab, null, run.t0) : null), c = b.c;
+  let b = ready ?? build(pb, tab ? dom => ktScale(dom, basisSize(pb.p), tab, null, run.t0) : null), c = b.c;
   const { nb, nel, grid } = c;
   const { C, total } = capacity(c, run.rc);
   if (!(total > 0)) throw new Error("E-TH-NOCP");
