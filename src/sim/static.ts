@@ -1607,8 +1607,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       const n = A.size;
       const fits = pb.solver ? { direct: pb.solver === "direct" } as ReturnType<typeof directFits> : directFits(A, MODAL_DIRECT, MODAL_FLOPS);
       const direct = fits.direct;
-      let solve: (b: Float64Array, g?: Float64Array) => Float64Array;
-      if (direct) { const F = new BlockCholesky(A, { plan: fits.plan }); solve = b => F.solve(b); }
+      let solve: (b: Float64Array, g?: Float64Array) => Float64Array, solveAll: ((bs: Float64Array[]) => Float64Array[]) | undefined;
+      if (direct) { const F = new BlockCholesky(A, { plan: fits.plan }); solve = b => F.solve(b); solveAll = bs => F.solveAll(bs); }
       else { const S = pcgSolver(A, { coarse: 3 * basisSize(1), tol: 1e-6, maxIt: 300 }); solve = (b, g) => { const r = S.solve(b, g); iterations += r.iterations; return r.x; }; }
       // an earlier pass's vectors in this pass's layout (zeros for the functions it did not have)
       const start = (modal.start ?? []).map(v => {
@@ -1617,7 +1617,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         for (let e = 0; e < nel; e++) w.set(v.subarray(e * pm, e * pm + Math.min(pm, m)), e * m);
         return w;
       });
-      const r = subspace(n, solve, (v, y) => { A.mul(v, y); }, mulM, { count: modal.count, start, tol: modal.tol ?? (direct ? 1e-8 : 1e-6), exact: direct });
+      const r = subspace(n, solve, (v, y) => { A.mul(v, y); }, mulM, { count: modal.count, start, tol: modal.tol ?? (direct ? 1e-8 : 1e-6), exact: direct, solveAll });
       space = r.space;
       modes = r.values.map((th, k) => {
         const v = r.vectors[k], lambda = th - sigma, rigid = lambda < 1e-5 * (sigma || scale * 1e-4) ;

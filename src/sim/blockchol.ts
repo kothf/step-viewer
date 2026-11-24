@@ -7,7 +7,7 @@
 
 import type { BlockMatrix } from "./sparse";
 import { progress } from "./progress";
-import { factor, factorBuffer } from "./threads";
+import { factor, factorBuffer, parallelFor, sharedF64, sharedSolvePlan, worthSharing } from "./threads";
 
 /** The factor's layout: element order, each column's lower blocks and where every block lives in `data`. */
 export interface CholPlan {
@@ -260,47 +260,66 @@ export class BlockCholesky {
   }
   get values() { return this.data.length; }
   solve(b: Float64Array): Float64Array {
-    const P = this.plan, L = this.data, nel = P.nel, ms = P.ms, poff = this.poff, off = this.off;
-    const y = new Float64Array(this.n);
-    for (let k = 0; k < nel; k++) { const e = P.perm[k]; y.set(b.subarray(off[e], off[e] + ms[k]), poff[k]); }
-    // forward: L y = b
-    for (let k = 0; k < nel; k++) {
-      const m = ms[k], d = P.diagAt[k], y0 = poff[k];
-      for (let r = 0; r < m; r++) {
-        let s = y[y0 + r];
-        const R = d + r * m;
-        for (let c = 0; c < r; c++) s -= L[R + c] * y[y0 + c];
-        y[y0 + r] = s / L[R + r];
-      }
-      for (let t = P.colStart[k]; t < P.colStart[k + 1]; t++) {
-        const i = P.rows[t], mi = ms[i], o = P.blockAt[t], yi = poff[i];
-        for (let a = 0; a < mi; a++) {
-          let s = 0;
-          const R = o + a * m;
-          for (let c = 0; c < m; c++) s += L[R + c] * y[y0 + c];
-          y[yi + a] -= s;
-        }
-      }
-    }
-    // backward: Lᵀ x = y
-    for (let k = nel - 1; k >= 0; k--) {
-      const m = ms[k], d = P.diagAt[k], y0 = poff[k];
-      for (let t = P.colStart[k]; t < P.colStart[k + 1]; t++) {
-        const i = P.rows[t], mi = ms[i], o = P.blockAt[t], yi = poff[i];
-        for (let a = 0; a < mi; a++) {
-          const v = y[yi + a];
-          if (v === 0) continue;
-          const R = o + a * m;
-          for (let c = 0; c < m; c++) y[y0 + c] -= L[R + c] * v;
-        }
-      }
-      for (let r = m - 1; r >= 0; r--) {
-        const v = (y[y0 + r] /= L[d + r * m + r]);
-        if (v !== 0) for (let c = 0; c < r; c++) y[y0 + c] -= L[d + r * m + c] * v;
-      }
-    }
     const x = new Float64Array(this.n);
-    for (let k = 0; k < nel; k++) { const e = P.perm[k]; x.set(y.subarray(poff[k], poff[k] + ms[k]), off[e]); }
+    cholSolve(this.solvePlan(), this.data, b, new Float64Array(this.n), x);
     return x;
   }
+  /** Solves for several right-hand sides, on all threads when that is worth it: the same numbers as `solve` gives one by one. */
+  solveAll(bs: Float64Array[]): Float64Array[] {
+    const n = this.n, q = bs.length;
+    if (q < 2 || !(this.data.buffer instanceof SharedArrayBuffer) || !worthSharing(4 * q * this.data.length)) return bs.map(b => this.solve(b));
+    const P = (this.sharedPlan ??= sharedSolvePlan(this.solvePlan()));
+    const B = sharedF64(n * q), X = sharedF64(n * q);
+    for (let j = 0; j < q; j++) B.set(bs[j], n * j);
+    parallelFor({ kind: "cholsolve", n: q, size: n, ...P, data: this.data, B, X });
+    return bs.map((_, j) => X.slice(n * j, n * j + n));
+  }
+  private sharedPlan?: SolvePlan;
+  private solvePlan(): SolvePlan { const P = this.plan; return { nel: P.nel, ms: P.ms, perm: P.perm, colStart: P.colStart, rows: P.rows, blockAt: P.blockAt, diagAt: P.diagAt, off: this.off, poff: this.poff }; }
 }
+
+/** The plan's arrays a solve reads (they may be shared copies). */
+export interface SolvePlan { nel: number; ms: Int32Array; perm: Int32Array; colStart: Int32Array; rows: Int32Array; blockAt: Float64Array; diagAt: Float64Array; off: Int32Array; poff: Int32Array }
+/** Solves L Lᵀ x = b with the factor `L`: `y` is scratch of the same length, `x` takes the answer (b and x may be parts of longer arrays). */
+export function cholSolve(P: SolvePlan, L: Float64Array, b: Float64Array, y: Float64Array, x: Float64Array) {
+  const nel = P.nel, ms = P.ms, poff = P.poff, off = P.off;
+  for (let k = 0; k < nel; k++) { const e = P.perm[k]; y.set(b.subarray(off[e], off[e] + ms[k]), poff[k]); }
+  // forward: L y = b
+  for (let k = 0; k < nel; k++) {
+    const m = ms[k], d = P.diagAt[k], y0 = poff[k];
+    for (let r = 0; r < m; r++) {
+      let s = y[y0 + r];
+      const R = d + r * m;
+      for (let c = 0; c < r; c++) s -= L[R + c] * y[y0 + c];
+      y[y0 + r] = s / L[R + r];
+    }
+    for (let t = P.colStart[k]; t < P.colStart[k + 1]; t++) {
+      const i = P.rows[t], mi = ms[i], o = P.blockAt[t], yi = poff[i];
+      for (let a = 0; a < mi; a++) {
+        let s = 0;
+        const R = o + a * m;
+        for (let c = 0; c < m; c++) s += L[R + c] * y[y0 + c];
+        y[yi + a] -= s;
+      }
+    }
+  }
+  // backward: Lᵀ x = y
+  for (let k = nel - 1; k >= 0; k--) {
+    const m = ms[k], d = P.diagAt[k], y0 = poff[k];
+    for (let t = P.colStart[k]; t < P.colStart[k + 1]; t++) {
+      const i = P.rows[t], mi = ms[i], o = P.blockAt[t], yi = poff[i];
+      for (let a = 0; a < mi; a++) {
+        const v = y[yi + a];
+        if (v === 0) continue;
+        const R = o + a * m;
+        for (let c = 0; c < m; c++) y[y0 + c] -= L[R + c] * v;
+      }
+    }
+    for (let r = m - 1; r >= 0; r--) {
+      const v = (y[y0 + r] /= L[d + r * m + r]);
+      if (v !== 0) for (let c = 0; c < r; c++) y[y0 + c] -= L[d + r * m + c] * v;
+    }
+  }
+  for (let k = 0; k < nel; k++) { const e = P.perm[k]; x.set(y.subarray(poff[k], poff[k] + ms[k]), off[e]); }
+}
+

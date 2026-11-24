@@ -1,4 +1,4 @@
-// The block factorisation (blockchol.ts) and its sharing between threads (threads.ts): the same numbers as the
+// The block factorisation (blockchol.ts), its solves and its sharing between threads (threads.ts): the same numbers as the
 // envelope solver within round-off, and bit for bit the same with one thread or several.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -81,6 +81,22 @@ test("threads: several threads give the same numbers bit for bit", async () => {
     assert.deepEqual(again, one);
     assert.ok(threadStats().joined >= 1, JSON.stringify(threadStats()));
   } finally { setHelpers([]); }
+});
+
+test("threads: several right-hand sides solved on several threads are the same bit for bit", async () => {
+  const { A, b } = grid(5, 4, 3, e => 12 + (e % 4) * 6);
+  const bs = [b, b.map((v, i) => v * Math.cos(i)), b.map((v, i) => v + (i % 7)), b.map(v => -2 * v), b.map((_, i) => 1 / (1 + i))];
+  const one = bs.map(v => new BlockCholesky(A).solve(v));
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const before = threadStats().loops;
+    const many = new BlockCholesky(A).solveAll(bs);
+    assert.equal(threadStats().loops - before, 1);
+    assert.deepEqual(many, one);
+  } finally { setHelpers([]); setLoopFloor(2e7); }
 });
 
 test("threads: the equations built on several threads are the same bit for bit", async () => {
