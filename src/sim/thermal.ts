@@ -358,7 +358,7 @@ function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1, fit = tru
 }
 
 let pieceRules = true;
-/** Tests: off = every piece of a surface triangle gets the rule of the highest degree, as before 1.742.0. */
+/** Tests: off = every piece of a surface triangle gets the rule of the highest degree, as before 1.743.0. */
 export const setPieceRules = (on: boolean) => { pieceRules = on; };
 /** What a piece of a surface triangle has to integrate: twice the degree of the element it lies in (products of two
  * of its functions), which with local degrees is well below twice the highest. −1 = not known, the full rule. */

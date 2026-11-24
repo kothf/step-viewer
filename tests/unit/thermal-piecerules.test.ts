@@ -1,4 +1,4 @@
-// Rules of surface pieces by their element's degree (1.742.0): a piece of a surface triangle lies in one cell and
+// Rules of surface pieces by their element's degree (1.743.0): a piece of a surface triangle lies in one cell and
 // integrates products of two functions of that cell's element, so with local degrees it needs far fewer points than
 // the highest degree's rule gives. Polynomials are integrated exactly either way: the answers agree to rounding.
 import { test } from "node:test";

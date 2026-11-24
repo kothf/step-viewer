@@ -27,6 +27,7 @@ import { activate, addConfig, applyConfigTable, configTable, nextConfigName, rem
 import { download } from "../tools/exporters";
 import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, unpackPartFile, PART_EXT, type JournalEntry } from "./file";
+import { resultsOf, takeResults } from "../sim/resultsFile";
 import { decodePreview, encodePreview } from "./preview";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { KERNEL_MEMORY, ModelKernel, type Rebuild } from "./kernelClient";
@@ -391,11 +392,11 @@ export class ModelController {
     bar.querySelector("button")!.addEventListener("click", () => { void this.vault?.checkOut(); });
   }
 
-  /** The bytes of the open part, as saved (for the vault). */
-  async partBytes() {
+  /** The bytes of the open part, as saved (for the vault); `results` false leaves its simulation results out (Pack and Go puts them beside). */
+  async partBytes(results = true) {
     if (!this.store) return null;
     if (this.mode.kind === "sketch") this.ok();
-    return packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, this.previewBytes());
+    return packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, this.previewBytes(), results ? await resultsOf(this.doc) : null);
   }
 
   /** The display mesh to keep in the saved file: the body last shown whole, else the one the file came with. */
@@ -768,11 +769,13 @@ export class ModelController {
 
   async openFile(file: File | { name: string; data: ArrayBuffer }, handle: FileSystemFileHandle | null = null) {
     const buf = file instanceof File ? await file.arrayBuffer() : file.data;
-    let doc: PartDoc, preview: Uint8Array | null;
-    try { ({ doc, preview } = await unpackPartFile(buf)); }
+    let doc: PartDoc, preview: Uint8Array | null, results: Uint8Array | null;
+    try { ({ doc, preview, results } = await unpackPartFile(buf)); }
     catch (err) { toast(t("Could not open {name}: {err}", { name: file.name, err: t((err as Error).message) }), true); return; }
     this.load(doc, file.name, handle);
     this.showPreview(preview);
+    // the simulation results saved with the part come back with it
+    void takeResults(doc.id, results);
   }
 
   /**
@@ -2621,8 +2624,8 @@ export class ModelController {
   async save(as = false) {
     if (!this.store) return;
     if (this.mode.kind === "sketch") this.ok();
-    const preview = this.previewBytes();
-    let bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, preview);
+    const preview = this.previewBytes(), results = await resultsOf(this.doc);
+    let bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, preview, results);
     if (this.vault && !as) {
       // A vaulted part saves into the vault's working copy, and only while checked out here (FR-PDM-081).
       if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
@@ -2642,7 +2645,7 @@ export class ModelController {
       const base = file.replace(/\.[^.]+$/, "");
       if (!base || base === this.doc.name) return;
       this.store!.amend(d => { d.name = base; });
-      bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, preview);
+      bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, preview, results);
       blob = new Blob([bytes], { type: "application/zip" });
     };
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };

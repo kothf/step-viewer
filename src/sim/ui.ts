@@ -8,6 +8,7 @@ import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import { lang, layerLabel, onLangChange, t, withLang } from "../i18n";
 import { pickMaterial } from "../materialPicker";
 import { cacheGet, cacheKey, cachePut } from "../buildCache";
+import { keyHash, packResults, stableJson, setResultsHub, unpackResults, type SavedStudy } from "./resultsFile";
 import type { ExprError } from "../model/expr";
 import { evalVars } from "../model/params";
 import type { FaceRef, Num, PartDoc } from "../model/types";
@@ -109,7 +110,7 @@ interface CaseResult { id: string; name: string; passes: PassResult[]; job: numb
 type BoltKept = { id: string; name: string; members: string[]; d: number; pitch: number; tapped: boolean };
 /** A bolt found among the fasteners, with the patches it joins. */
 interface BoltUse extends BoltKept { a: Float64Array; b: Float64Array; E: number; /** Components of the patch under the head and of the nut or thread. */ ca: string; cb: string }
-interface Results { /** Board studies: package parts whose heatsink share went into a heatsink body, by part id. */ heatsinks?: Record<string, { comp: string; w: number }>; /** Transient thermal studies: the last pass as solved (every output time); the last entry of `passes` is the time shown. */ tr?: PassResult; /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; /** Thermal: radiation between face sets, in the order of `thermal.exchanges`. */ xids?: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[] }
+interface Results { /** When it was solved (ISO time), for results that came back. */ at?: string; /** Read from the results kept with the model file. */ fromFile?: boolean; /** Kept with the model but solved for another model or study state. */ old?: boolean; /** Board studies: package parts whose heatsink share went into a heatsink body, by part id. */ heatsinks?: Record<string, { comp: string; w: number }>; /** Transient thermal studies: the last pass as solved (every output time); the last entry of `passes` is the time shown. */ tr?: PassResult; /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; /** Thermal: radiation between face sets, in the order of `thermal.exchanges`. */ xids?: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[] }
 const BOLT_NOTE = "Tension, shear and bending of each bolt as a beam. The safety factor compares their combined stress on the thread's stress area with the proof stress of the property class.";
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 /** Solve on change: how long after the last change the solve starts, ms. */
@@ -134,7 +135,7 @@ const RELIEF_NOTE = "The part is held by nothing: its supports are left out and 
 /** The most load cases a study has. */
 export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { heatsinks?: Record<string, { comp: string; w: number }>; xids?: string[]; welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
+interface Kept { /** When it was solved (ISO time). */ at?: string; heatsinks?: Record<string, { comp: string; w: number }>; xids?: string[]; welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
 
 /** A time in the UI's language. */
 const timeText = (s: number) => timeIn(s, { s: t("s"), min: t("min"), h: t("h") });
@@ -297,6 +298,10 @@ export class SimController {
   private autoRuns = 0;
   private cacheHits = 0;
   private docId: string | null = null;
+  /** The last results of each study, by document id: written with the model when it is saved, read back when it is opened. */
+  private files = new Map<string, Map<string, SavedStudy>>();
+  private fileHits = 0;
+  private filesRead = 0;
   private marks = new THREE.Group();
   /** An assembly's solids as last sent to the solver (the solver names them by their place in this list). */
   private comps: { key: string; name: string }[] = [];
@@ -369,6 +374,7 @@ export class SimController {
   private anim: { raf: number; base: Float32Array; u: Float32Array; scale: number; t0: number; frames: number } | null = null;
 
   constructor(private host: SimHost) {
+    setResultsHub({ pack: doc => this.packFor(doc as SimDoc), take: (id, bytes) => this.takeFile(id, bytes) });
     host.section.capSource = () => (this.overlay && this.plot.deformed && !this.anim && !this.pose.moved ? this.overlay.geometry : null);
     host.section.onCaps = caps => this.capsChanged(caps);
     this.marks.name = "sim-marks";
@@ -448,11 +454,11 @@ export class SimController {
    * The shown thermal result as a package's mesh (FR-TREP-010, FR-TRES-030): surface temperatures on the plot mesh,
    * one part per heat load's package part or component (the board = part 0); null when there is none to show.
    */
-  private studyMesh(): { mesh: ThermalMesh; parts: ExportPart[] } | null {
+  private studyMesh(of?: { res: Results; st: Study }): { mesh: ThermalMesh; parts: ExportPart[] } | null {
     // a component "R14<1>" came from the STEP solid "R14" (its second solid is "…#2")
     const bodyName = (n: string) => n.replace(/#\d+$/, "").replace(/<\d+>$/, "");
-    const res = this.res, last = res?.passes.at(-1), T = last?.thermal, st = this.study(), doc = this.host.doc();
-    if (!res || !last || !T || !st || !doc || this.stale()) return null;
+    const res = of ? of.res : this.res, last = res?.passes.at(-1), T = last?.thermal, st = of ? of.st : this.study(), doc = this.host.doc();
+    if (!res || !last || !T || !st || !doc || !of && this.stale()) return null;
     const tris = res.mesh.index.length / 3, part = new Int32Array(tris), dom = last.dom;
     const parts: ExportPart[] = [];
     if (res.comps && dom && T.comps) {
@@ -466,7 +472,7 @@ export class SimController {
         parts.push({ id, designator: name, bodies: [...new Set(doms.map(d => bodyName(res.comps![d].name)))], p: rows.reduce((a, x) => a + (x.power ?? 0), 0), t: rows.length ? Math.max(...rows.map(x => x.max)) : undefined, ...extra });
       };
       let next = 1;
-      const ptemps = this.partTempRows(res);
+      const ptemps = this.partTempRows(res, st);
       for (const x of pk?.parts ?? []) next = Math.max(next, x.id + 1);
       for (const x of pk?.parts ?? []) {
         const doms = x.comps.flatMap(c => byComp.get(c) ?? []).filter(d => idOf[d] < 0);
@@ -557,7 +563,8 @@ export class SimController {
     if (st.kind === "modal") parts.push("modal");
     else if (st.kind === "thermal") parts.push(this.powerCases(st).length ? ["thermal", st.cases!.map(c => [c.id, c.off])] : "thermal");
     else if (st.cases?.length) parts.push(st.cases.map(c => [c.id, c.off]));
-    return JSON.stringify(parts);
+    // keys sorted: a document read back from its file (saved with sorted keys) gives the same key
+    return stableJson(parts);
   }
 
   private foundKey(st: Study) { const off = [...offComps(st), ...(st.kind === "thermal" ? ["*thermal"] : this.solidScrews(st).map(id => `-${id}`))].sort(); return JSON.stringify(off.length ? [this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP, off] : [this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP]); }
@@ -694,7 +701,7 @@ export class SimController {
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, arrows: this.arrows, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
-      probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
+      probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits, fromFile: !!this.res?.fromFile, oldResults: !!this.res?.old, fileHits: this.fileHits, filesRead: this.filesRead, savedStudies: [...(this.files.get(this.host.doc()?.id ?? "")?.keys() ?? [])],
       compare: this.compared(), mapCmp: (() => { const m = this.mapCompare(); return m ? { name: m.name, rows: m.c.rows, onlyMap: m.c.onlyMap, onlyStudy: m.c.onlyStudy, hot: m.c.hot, mean: m.c.mean, most: m.c.most, shift: this.maps.get(this.study()?.id ?? "")?.shift ?? null, missing: Array.from(m.c.delta).filter(v => !Number.isFinite(v)).length } : null; })(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, pkg: this.lastPkg ? { ...this.lastPkg, data: undefined } : null, balanceCsv: this.balanceCsvText(), hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, barMode: this.mode, transient: (() => { const T = this.res?.tr?.transient; if (!T) return null; const k = Math.max(0, this.frame); return { times: T.times, max: T.max, min: T.min, put: T.put, out: T.out, steps: T.steps, rejected: T.rejected, steady: T.steady, capacity: T.capacity, frame: k, time: T.times[k], shown: last?.thermal?.max ?? null, playing: !!this.playTimer, probes: this.probeSeries().map(x => Array.from(x.v)), comps: this.compSeries().map(c => ({ name: c.name, v: Array.from(c.v) })), compsShown: [...this.compsShown(this.compSeries())].map(d => this.res?.comps?.[d]?.name ?? ""), speed: this.speed, reach: this.reach, csv: this.transientCsvText() }; })(), thermal: last?.thermal ? { contacts: (last.thermal.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, heat: c.heat, ta: c.ta, tb: c.tb })), comps: (last.thermal.comps ?? []).map((c, i) => ({ name: this.res?.comps?.[i]?.name ?? "", ...c })), paths: this.heatPaths(), parts: this.partTempRows(), near: this.nearHotRows(), min: last.thermal.min, max: last.thermal.max, applied: last.thermal.applied, out: last.thermal.flows.map(f => f.out), flows: last.thermal.flows, solves: last.thermal.solves, hot: (() => { const th = this.thermalHot(); return th ? { temps: th.temps.map(h => ({ t: h.vm, at: h.at })), corners: th.corners.map(h => ({ q: h.vm, at: h.at, growth: h.growth })), sel: this.thotSel, csv: thermalHotCsv(th.temps, th.corners) } : null; })(), exchanges: (last.thermal.exchanges ?? []).map((x, i) => ({ id: this.res?.xids?.[i] ?? "", ...x })) } : null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
@@ -775,28 +782,116 @@ export class SimController {
     void this.solve();
   }
 
-  /** Results of the last finished solve of this very study state, from the disk cache (FR-SOL-030). */
+  /** Results of the last finished solve of this very study state, from the disk cache (FR-SOL-030) or the model's results file. */
   private async restore() {
     const doc = this.host.doc(), st = this.study();
+    // another study picked: its own last results, not the one shown before
+    if (doc && st && this.res && this.res.study !== st.id && !this.running) { this.clearPlot(); this.res = null; this.solved = null; this.asked = ""; }
     if (!doc || !st || this.res || this.running || this.edit) return;
     const key = this.keyOf(doc, st), tag = `${doc.id}|${st.id}|${key}`;
     if (tag === this.asked) return;
     this.asked = tag;
-    const kept = await cacheGet<Kept>(await cacheKey("sim", key));
+    const hash = keyHash(key), saved = this.files.get(doc.id)?.get(st.id);
+    let kept: Kept | null = saved?.key === hash ? saved.data as Kept : null, fromFile = !!kept;
+    if (!kept) kept = (await cacheGet<Kept>(await cacheKey("sim", key))) ?? null;
+    // results kept with the model for an earlier state of it: shown, marked out of date
+    let old = false;
+    if (!kept?.passes?.length && saved && (saved.data as Kept)?.passes?.length) { kept = saved.data as Kept; fromFile = true; old = true; }
     const now = this.host.doc(), s2 = this.study();
     if (!kept?.passes?.length || !kept.mesh || this.res || this.running || now !== doc && now?.id !== doc.id || !s2 || s2.id !== st.id || !now || this.keyOf(now, s2) !== key) return;
-    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ...(kept.xids ? { xids: kept.xids } : {}), ...(kept.heatsinks ? { heatsinks: kept.heatsinks } : {}), ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.comps ? { comps: kept.comps } : {}), ...(kept.off ? { off: kept.off } : {}), ...(kept.bolts ? { bolts: kept.bolts } : {}), ...(kept.welds ? { welds: kept.welds } : {}), ...(kept.conns ? { conns: kept.conns } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
-      ...(kept.cases?.length ? { cases: kept.cases.map(c => ({ ...c, job: 0 })) } : {}) };
+    if (!old) this.remember(doc.id, st, hash, kept);
+    this.res = { ...this.keptResults(st, old ? `old:${saved!.key}` : key, kept), ...(!kept.at && saved && fromFile ? { at: saved.at } : {}), ...(fromFile ? { fromFile: true } : {}), ...(old ? { old: true } : {}) };
     this.caseSel = -1; this.compSel = -1;
     this.applyCase();
     this.frame = -1; this.stopPlay();
     if (this.res.passes.at(-1)?.transient) this.useFrame(this.res, this.res.passes.at(-1)!.transient!.times.length - 1);
     this.cacheHits++;
-    this.noteResult();
+    if (fromFile) this.fileHits++;
+    if (!old) this.noteResult();
     this.plot.on = false;
     this.syncProbes();
     this.syncPath();
     this.renderAll();
+  }
+
+  /** Results as kept (disk cache, results file) made into shown results. */
+  private keptResults(st: Study, key: string, kept: Kept): Results {
+    return { study: st.id, key, passes: kept.passes, ids: kept.ids, ...(kept.xids ? { xids: kept.xids } : {}), ...(kept.heatsinks ? { heatsinks: kept.heatsinks } : {}), ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}), ...(kept.comps ? { comps: kept.comps } : {}), ...(kept.off ? { off: kept.off } : {}), ...(kept.bolts ? { bolts: kept.bolts } : {}), ...(kept.welds ? { welds: kept.welds } : {}), ...(kept.conns ? { conns: kept.conns } : {}), ...(kept.bodyMats ? { bodyMats: kept.bodyMats } : {}),
+      ...(kept.cases?.length ? { cases: kept.cases.map(c => ({ ...c, job: 0 })) } : {}), ...(kept.at ? { at: kept.at } : {}) };
+  }
+
+  /**
+   * A steady thermal study's surface temperatures as a thermal package (the board design app's format, FR-TREP-010),
+   * for the results file: the same files Thermal package saves, without the picture. Only for the model on screen.
+   */
+  private async packageOf(doc: SimDoc, st: Study, kept: Kept): Promise<{ name: string; data: Uint8Array | string }[] | null> {
+    const last = kept.passes.at(-1);
+    if (st.kind !== "thermal" || !last?.thermal || last.transient || (kept.cases?.length ?? 0) > 1) return null;
+    let got: ReturnType<SimController["studyMesh"]> = null;
+    try { got = this.studyMesh({ res: this.keptResults(st, "", kept), st }); } catch { got = null; }
+    if (!got) return null;
+    const boxes = partBoxes(got.mesh);
+    for (const x of got.parts) x.box = boxes.get(x.id);
+    const enc = st.settings.enclosure;
+    return packageFiles({
+      name: `${doc.name} ${st.name}`, design: doc.name, app: `MöbiusCAD ${__APP_VERSION__}`, created: (kept.at ?? new Date().toISOString()).replace(/\.\d+Z$/, "Z"), mesh: got.mesh, parts: got.parts,
+      settings: { ambient: st.settings.ambient ?? DEFAULT_AMBIENT, enclosure: typeof enc === "string" ? enc : undefined }, study: { name: st.name, kind: "steady" },
+    });
+  }
+
+  /** A finished solve: kept in the disk cache and with the document, so saving the model keeps it. */
+  private keep(doc: SimDoc, st: Study, key: string, kept: Kept) {
+    kept.at = new Date().toISOString();
+    void cacheKey("sim", key).then(k => cachePut(k, kept));
+    this.remember(doc.id, st, keyHash(key), kept);
+  }
+
+  private remember(docId: string, st: Study, key: string, kept: Kept) {
+    let m = this.files.get(docId);
+    if (!m) this.files.set(docId, m = new Map());
+    m.set(st.id, { id: st.id, name: st.name, kind: st.kind ?? "static", key, at: kept.at ?? new Date().toISOString(), data: kept });
+  }
+
+  /**
+   * The results file of a document: every study's last results this session knows (solved, restored or read with the
+   * file). For the document on screen, studies not looked at yet are filled from the disk cache first.
+   */
+  private async packFor(doc: SimDoc): Promise<Uint8Array | null> {
+    const studies = doc.studies ?? [];
+    if (!studies.length) return null;
+    if (this.host.doc()?.id === doc.id && this.host.doc() === doc) {
+      for (const st of studies) {
+        const key = this.keyOf(doc, st), hash = keyHash(key), have = this.files.get(doc.id)?.get(st.id);
+        if (have?.key === hash) continue;
+        const kept = await cacheGet<Kept>(await cacheKey("sim", key));
+        if (kept?.passes?.length && kept.mesh) this.remember(doc.id, st, hash, kept);
+      }
+    }
+    const m = this.files.get(doc.id);
+    if (!m) return null;
+    const list: SavedStudy[] = [], pkgs = new Map<string, { name: string; data: Uint8Array | string }[]>();
+    const live = this.host.doc() === doc;
+    for (const st of studies) {
+      const e = m.get(st.id);
+      if (!e) continue;
+      list.push({ ...e, name: st.name, kind: st.kind ?? "static" });
+      // a thermal study that fits the model on screen also goes in as a thermal package
+      if (live && e.key === keyHash(this.keyOf(doc, st))) { const p = await this.packageOf(doc, st, e.data as Kept).catch(() => null); if (p) pkgs.set(st.id, p); }
+    }
+    if (!list.length) return null;
+    return packResults({ doc: doc.id, model: doc.name, saved: new Date().toISOString(), studies: list }, `MöbiusCAD ${__APP_VERSION__}`, pkgs);
+  }
+
+  /** A results file read with a document (FR-SOL-030): its studies come back when that document is shown. */
+  private async takeFile(docId: string, bytes: Uint8Array): Promise<number> {
+    const r = await unpackResults(bytes);
+    if (r.doc && r.doc !== docId) return 0;
+    let m = this.files.get(docId);
+    if (!m) this.files.set(docId, m = new Map());
+    for (const s of r.studies) if ((s.data as Kept)?.passes?.length) m.set(s.id, s);
+    this.filesRead++;
+    if (this.host.doc()?.id === docId) { this.asked = ""; void this.restore(); }
+    return r.studies.length;
   }
 
   /** The model was built and shown again: the mesh is new. */
@@ -1377,7 +1472,7 @@ export class SimController {
       // a finished solve is kept for the next time this document is opened
       if (res.passes.length) {
         const keep: Kept = { passes: res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bolts ? { bolts: res.bolts } : {}), ...(res.welds ? { welds: res.welds } : {}), ...(res.conns ? { conns: res.conns } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}), ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
-        void cacheKey("sim", key).then(k => cachePut(k, keep));
+        this.keep(doc, st, key, keep);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1583,7 +1678,7 @@ export class SimController {
       done = true;
       if ((this.res as Results | null) === res) { this.solved = res; this.running = false; this.capsSoon(); this.syncPath(); }
       const keep: Kept = { passes: res.tr ? [...res.passes.slice(0, -1), res.tr] : res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ...(res.xids ? { xids: res.xids } : {}), ...(res.heatsinks ? { heatsinks: res.heatsinks } : {}), ms: res.ms, mesh: res.mesh, ...(res.comps ? { comps: res.comps } : {}), ...(res.off ? { off: res.off } : {}), ...(res.bodyMats ? { bodyMats: res.bodyMats } : {}), ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
-      void cacheKey("sim", key).then(k => cachePut(k, keep));
+      this.keep(doc, st, key, keep);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // power cases are shown together or not at all
@@ -2051,8 +2146,8 @@ export class SimController {
    * Each package part's temperature in the solve (FR-TBRD-021): its bodies' maximum, or for a junction part its case
    * maximum plus p × Rjc (the case alone, marked, without an Rjc). Empty without a package heat load.
    */
-  private partTempRows(r: Results | null = this.res && !this.stale() ? this.res : null): PartTemp[] {
-    const last = r?.passes.at(-1), rows = last?.thermal?.comps, st = this.study(), off = new Set(st?.suppressed ?? []);
+  private partTempRows(r: Results | null = this.res && !this.stale() ? this.res : null, st: Study | null = this.study()): PartTemp[] {
+    const last = r?.passes.at(-1), rows = last?.thermal?.comps, off = new Set(st?.suppressed ?? []);
     const l = st?.loads.find(x => x.type === "pkgheat" && !off.has(x.id));
     if (!r?.comps || !rows || !l?.parts?.length) return [];
     const max = new Map<string, number>();
@@ -4268,6 +4363,13 @@ export class SimController {
     return last.capped ? `<p class="sim-note sim-capped" data-v="capped">${esc(t("The passes ended here: the next one would need about {n} MB of memory, more than a solve may take ({m} MB).", { n: last.capped, m: Math.round((memLimit() || MEMORY_LIMIT) / 2 ** 20) }))}</p>` : "";
   }
 
+  /** Where results that came back are from: the disk cache, or the results kept with the model file and when solved. */
+  private keptNote(r: Results): string {
+    const when = r.at ? new Date(r.at) : null, date = when && !Number.isNaN(+when) ? when.toLocaleString(lang() === "ru" ? "ru-RU" : "en-GB", { dateStyle: "medium", timeStyle: "short" }) : "";
+    const text = r.fromFile ? (date ? t("Results kept with the model file, solved {date}.", { date }) : t("Results kept with the model file.")) : t("From the last solve of this model and study.");
+    return `<p class="sim-note muted sim-kept${r.fromFile ? " sim-fromfile" : ""}">${esc(text)}</p>`;
+  }
+
   /** One line per local pass: where the accuracy was raised. */
   private localNotes(passes: PassResult[]): string[] {
     return passes.filter(p => p.raised != null && p.pass > GLOBAL_PASSES).map(p => t("Pass {n}: accuracy raised in {k} of {m} cells.", { n: p.pass, k: p.raised!, m: p.cells }));
@@ -4331,7 +4433,7 @@ export class SimController {
     html += this.pathHtml();
     html += this.compareHtml();
     if (!this.running) {
-      if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
+      if (r.cached) html += this.keptNote(r);
       if (!env) html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(this.study()?.settings.energyTol ?? 2), n: sig(last.change) })
         : t("One pass only: no convergence check."))}</p>`;
@@ -4522,7 +4624,7 @@ export class SimController {
     html += this.probesHtml();
     html += this.pathHtml();
     if (!this.running) {
-      if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
+      if (r.cached) html += this.keptNote(r);
       if (last.transient || r.tr) html += `<p class="sim-note muted sim-trnote">${esc(t("The steady passes chose the accuracy; the last row is the run in time from the start temperature."))}</p>`;
       else html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the temperatures by {n} % of their range.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %).", { tol: sig(st?.settings.energyTol ?? 1), n: sig(last.change) })
@@ -4559,7 +4661,7 @@ export class SimController {
     html += this.compareHtml();
     if (!this.running) {
       const st = this.study();
-      if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
+      if (r.cached) html += this.keptNote(r);
       if (st) html += `<p class="sim-note muted">${esc(this.modalNote(st, last))}</p>`;
       if (r.parts) html += `<p class="sim-note muted sim-bonded">${esc(t("The part's {n} bodies are analysed bonded: joined wherever they touch.", { n: r.parts }))}${r.bodyMats ? ` ${esc(t("Each body has its own material."))}` : ""}</p>`;
       html += `<p class="sim-note muted sim-assume">${esc(t(ASSUMPTIONS))}</p>`;
