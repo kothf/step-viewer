@@ -118,3 +118,26 @@ test("transient study: profiles, output times, time to reach, CSV", () => {
   assert.equal(timeToReach([0, 10], [20, 40], 80), null);
   assert.equal(transientCsv([0, 10], [{ name: "P1", v: [20, 30.5] }]), '"Time, s","P1, °C"\n0,20\n10,30.5\n');
 });
+
+test("a radiating block follows the lumped curve, without a new matrix at every step", () => {
+  const P = 0.75, eps = 0.9, sig = 5.670374419e-14, Ts = 293.15;
+  const times = Array.from({ length: 21 }, (_v, i) => i * 300);
+  // the lumped equation rc V dT/dt = P − ε σ A (T⁴ − Ts⁴), by small Runge-Kutta steps
+  const want: number[] = [20];
+  const F = (T: number) => (P - eps * sig * A * (T ** 4 - Ts ** 4)) / (rc * V);
+  let T = Ts;
+  for (let i = 1; i < times.length; i++) {
+    for (let s = 0; s < 300; s++) { const k1 = F(T), k2 = F(T + 0.5 * k1), k3 = F(T + 0.5 * k2), k4 = F(T + k3); T += (k1 + 2 * k2 + 2 * k3 + k4) / 6; }
+    want.push(T - 273.15);
+  }
+  const got: number[] = [];
+  const r = transientThermal({ ...base, sinks: [{ tris: skin, emissivity: eps, ambient: 20 }], sources: [{ power: P }] }, {
+    rc: [rc], t0: 20, times, factor: () => 1,
+    frame: (_k, _t, sample) => { got.push(sample([20, 5, 5]).temp[0]); },
+  });
+  const rise = want[want.length - 1] - 20;
+  assert.ok(rise > 30, `rise ${rise}`);
+  times.forEach((t, i) => assert.ok(Math.abs(got[i] - want[i]) <= 0.02 * rise, `t ${t}: ${got[i]} vs ${want[i]}`));
+  // the films are linearised again only after a move of two step allowances, so matrices are fewer than steps
+  assert.ok(r.solves < 0.6 * r.steps, `matrices ${r.solves}, steps ${r.steps}`);
+});

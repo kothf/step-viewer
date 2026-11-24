@@ -1922,6 +1922,9 @@ function capMul(C: Float64Array[], nb: number, y: Float64Array, s: number, out: 
 /** The finest step allowed is the end time over this, the coarsest the end time over `MIN_STEPS`. */
 const MAX_STEPS = 2000, MIN_STEPS = 20;
 
+/** A warm-up linearises its films again once an element has moved this many step allowances from the last time. */
+const RELIN = 2;
+
 /**
  * Steps a problem in time from a uniform temperature `t0` (FR-TSOL-006): backward Euler for the first step, BDF2 with
  * variable steps after it, on the consistent capacity matrix. The step is chosen from the temperature change per step
@@ -2021,7 +2024,11 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
     if (lin) {
       let d = 0;
       for (let e = 0; e < nel; e++) d = Math.max(d, Math.abs(mean(y0, e) - mean(lin, e)));
-      if (d > allow) { lin = Float64Array.from(y0); relinearise(true); }
+      // the films are linearised by their tangent, so what a move of d leaves out goes with d²: at twice the
+      // step allowance a board's temperatures moved by under 0.01 K, with nearly half the linearisations and
+      // factorisations of a warm-up (at the allowance itself it linearised after almost every step)
+      // (a conductivity table is read at the last linearisation as it is, so it keeps the allowance)
+      if (d > (tab ? 1 : RELIN) * allow) { lin = Float64Array.from(y0); relinearise(true); }
     }
     quiet = moved < allow / 4 ? quiet + 1 : 0;
     if (quiet >= 2 && k > kMin) { k--; quiet = 0; }
