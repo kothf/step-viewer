@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.744.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies with radiation or natural convection no longer copy the whole system of equations each time the surface terms are worked out again, and a warm-up no longer copies it at every time step: only the part those terms change is copied. A warm-up of a board over an hour takes 22.5 s in place of 23.7 s in Chrome on four cores, a steady study about a second less, and both need less memory. The results are the same numbers.
+
 ## [1.743.0] - 2026-11-24
 
 ### Changed
@@ -4896,7 +4902,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.743.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.744.0...HEAD
+[1.744.0]: https://github.com/kothf/step-viewer/compare/v1.743.0...v1.744.0
 [1.743.0]: https://github.com/kothf/step-viewer/compare/v1.742.0...v1.743.0
 [1.742.0]: https://github.com/kothf/step-viewer/compare/v1.741.0...v1.742.0
 [1.741.0]: https://github.com/kothf/step-viewer/compare/v1.740.0...v1.741.0

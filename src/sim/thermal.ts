@@ -1250,9 +1250,18 @@ function startFrom(c: Ctx, prev: Float64Array | null | undefined): Float64Array 
   for (let e = 0; e < nel; e++) for (let a = 0, n = Math.min(pm, nbs[e]); a < n; a++) x[off[e] + a] = prev[e * pm + a];
   return x;
 }
+/**
+ * A matrix to add surface and time terms to: its own copy of each element's diagonal block, the blocks between
+ * elements shared with `A` (those terms never touch them, and copying a whole matrix at every linearisation and
+ * time step was hundreds of megabytes a time). Never write an off-diagonal block of the result.
+ */
 function copyMatrix(A: BlockMatrix): BlockMatrix {
-  const B = new BlockMatrix(A.nel, A.ms);
-  for (const [key, blk] of A.blocks) { const a = Math.floor(key / A.nel); B.block(a, key - a * A.nel).set(blk); }
+  const B = new BlockMatrix(A.nel, A.ms), nel = A.nel;
+  for (const [key, blk] of A.blocks) {
+    const a = Math.floor(key / nel), b = key - a * nel;
+    if (a === b) B.block(a, a).set(blk);
+    else { B.blocks.set(key, blk); B.adj[a].add(b); B.adj[b].add(a); }
+  }
   return B;
 }
 
