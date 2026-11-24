@@ -348,6 +348,39 @@ export function triangleGauss(a: ArrayLike<number>, b: ArrayLike<number>, c: Arr
   }
 }
 
+/** Symmetric rules on a triangle (Dunavant): per degree the points as barycentric (s, t) and weight, weights summing to 1. */
+const TRI_RULES: (Float64Array | null)[] = (() => {
+  const orbit = (out: number[], a: number, w: number) => { const b = 1 - 2 * a; out.push(a, a, w, b, a, w, a, b, w); };
+  const six = (out: number[], a: number, b: number, w: number) => { const c = 1 - a - b; out.push(a, b, w, b, a, w, a, c, w, c, a, w, b, c, w, c, b, w); };
+  const r1 = [1 / 3, 1 / 3, 1];
+  const r2: number[] = []; orbit(r2, 1 / 6, 1 / 3);
+  const r4: number[] = []; orbit(r4, 0.445948490915965, 0.223381589678011); orbit(r4, 0.091576213509771, 0.109951743655322);
+  const r5: number[] = [1 / 3, 1 / 3, 0.225]; orbit(r5, 0.470142064105115, 0.132394152788506); orbit(r5, 0.101286507323456, 0.125939180544827);
+  const r6: number[] = []; orbit(r6, 0.249286745170910, 0.116786275726379); orbit(r6, 0.063089014491502, 0.050844906370207);
+  six(r6, 0.053145049844817, 0.310352451033784, 0.082851075618374);
+  const r8: number[] = [1 / 3, 1 / 3, 0.144315607677787]; orbit(r8, 0.459292588292723, 0.095091634267285); orbit(r8, 0.170569307751760, 0.103217370534718);
+  orbit(r8, 0.050547228317031, 0.032458497623198); six(r8, 0.008394777409958, 0.263112829634638, 0.027230314174435);
+  const R = [r1, r1, r2, r4, r4, r5, r6, r8, r8];
+  return R.map(r => Float64Array.from(r));
+})();
+/** The highest degree `triangleRule` has a symmetric rule for. */
+export const TRI_RULE_MAX = TRI_RULES.length - 1;
+/** Points on triangle a, b, c exact for polynomials of degree `deg`: a symmetric rule (1, 3, 6, 7, 12 or 16 points
+ * for degree 1, 2, 4, 5, 6, 8), above that the collapsed Gauss rule. */
+export function triangleRule(a: ArrayLike<number>, b: ArrayLike<number>, c: ArrayLike<number>, deg: number, out: Points) {
+  if (deg > TRI_RULE_MAX) { triangleGauss(a, b, c, (deg >> 1) + 1 + (deg & 1), out); return; }
+  const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+  const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+  const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+  const area = Math.hypot(cx, cy, cz) / 2;
+  if (area === 0) return;
+  const R = TRI_RULES[deg < 0 ? 0 : deg]!;
+  for (let i = 0; i < R.length; i += 3) {
+    const s = R[i], t = R[i + 1];
+    out.push(a[0] + s * ux + t * vx, a[1] + s * uy + t * vy, a[2] + s * uz + t * vz, R[i + 2] * area);
+  }
+}
+
 /** Splits a convex polygon by the plane x[axis] = at into the parts below and above. */
 export function splitPoly(poly: number[][], axis: number, at: number): [number[][], number[][]] {
   const lo: number[][] = [], hi: number[][] = [];
@@ -366,8 +399,9 @@ export function splitPoly(poly: number[][], axis: number, at: number): [number[]
 }
 
 /** Quadrature of triangles cut along the planes of a grid (origin lo, step h), so each piece lies in one
- * cell: `n`×`n` Duffy points per sub-triangle. Returns the points and each point's source triangle. */
-export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: number, n: number): { pts: Points; tri: Int32Array } {
+ * cell: `n`×`n` collapsed Gauss points per sub-triangle (exact to degree 2`n` − 2), or with `degAt` a
+ * symmetric rule (`triangleRule`) of that degree or the lower one `degAt` (source triangle, the piece's middle) asks for. Returns the points and each point's source triangle. */
+export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: number, n: number, degAt?: (t: number, x: number, y: number, z: number) => number): { pts: Points; tri: Int32Array } {
   const pts = new Points();
   const tri: number[] = [];
   const nt = tris.length / 9;
@@ -392,10 +426,21 @@ export function gridTrianglePoints(tris: ArrayLike<number>, lo: number[], h: num
       }
       polys = next;
     }
-    for (const P of polys) for (let i = 1; i + 1 < P.length; i++) {
+    for (const P of polys) {
+      let deg = 2 * n - 2;
+      if (degAt) {
+        // the piece lies in one cell: its rule follows that cell's own degree
+        let x = 0, y = 0, z = 0;
+        for (const q of P) { x += q[0]; y += q[1]; z += q[2]; }
+        const d = degAt(t, x / P.length, y / P.length, z / P.length);
+        if (d >= 0 && d < deg) deg = d;
+      }
+      for (let i = 1; i + 1 < P.length; i++) {
       const before = pts.n;
-      triangleGauss(P[0], P[i], P[i + 1], n, pts);
+      if (degAt) triangleRule(P[0], P[i], P[i + 1], deg, pts);
+      else triangleGauss(P[0], P[i], P[i + 1], n, pts);
       for (let k = before; k < pts.n; k++) tri.push(t);
+      }
     }
   }
   return { pts, tri: Int32Array.from(tri) };

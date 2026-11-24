@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.743.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies put fewer points on curved faces. Each small piece of a face now gets as many points as the accuracy of its own place in the model needs, where every piece used to get what the most refined place needs (16 points instead of 49 in the third pass of a board study), and the points come from rules that need fewer of them for the same exactness. The steady study of the amplifier board takes about 30 s instead of about 32 s in Chrome on four cores, its warm-up over an hour about 23.5 s instead of about 24.5 s. Temperatures did not change in the digits shown.
+
 ## [1.742.0] - 2026-11-24
 
 ### Added
@@ -4890,7 +4896,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.742.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.743.0...HEAD
+[1.743.0]: https://github.com/kothf/step-viewer/compare/v1.742.0...v1.743.0
 [1.742.0]: https://github.com/kothf/step-viewer/compare/v1.741.0...v1.742.0
 [1.741.0]: https://github.com/kothf/step-viewer/compare/v1.740.0...v1.741.0
 [1.740.0]: https://github.com/kothf/step-viewer/compare/v1.739.0...v1.740.0
