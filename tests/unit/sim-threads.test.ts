@@ -117,7 +117,10 @@ test("threads: a thermal study's equations built on several threads are the same
     const pb = { lo, hi, inside, h: 13, k: 0.05, sinks: [{ tris: end(0, false), temp: 20 }, { tris: end(L, true), h: 2e-5, ambient: 25 }, { tris: end(L, true), emissivity: 0.9, ambient: 25 }], sources: [{ power: 3 }] };
     const a = solveThermal({ ...pb, p: 2 });
     const b = solveThermal({ ...pb, p: 3, grid: a.grid, prev: a.x });
-    return [a.x, b.x, a.iterations, b.iterations];
+    // and with natural convection in place of the film
+    const nat = { factor: 1, down: [0, 0, -1], lv: [W, W], lh: [W / 4, W / 4] };
+    const n = solveThermal({ ...pb, sinks: [pb.sinks[0], { tris: end(L, true), ambient: 25, natural: nat }, pb.sinks[2]], p: 2 });
+    return [a.x, b.x, a.iterations, b.iterations, n.x];
   };
   const one = run();
   const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
@@ -127,8 +130,8 @@ test("threads: a thermal study's equations built on several threads are the same
   try {
     const before = threadStats().loops;
     const many = run();
-    // conduction and the faces between elements of both solves
-    assert.ok(threadStats().loops - before >= 4, JSON.stringify(threadStats()));
+    // conduction and the faces between elements of the solves, and the films, radiation and natural convection of every step
+    assert.ok(threadStats().loops - before >= 12, JSON.stringify(threadStats()));
     assert.deepEqual(many, one);
     // radiation settles in a few steps, and the answer is the one a fresh factorisation per step gives
     assert.ok((one[2] as number) > 1 && (one[2] as number) < 12);

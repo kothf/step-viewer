@@ -436,37 +436,74 @@ function measure(c: Ctx, A: BlockMatrix, held: Float64Array[]) {
   let any = false;
   for (let e = 0; e < nel; e++) if (grid.elems[e].cells.some(ci => grid.cells[ci].frac < 1 - 1e-9)) { cut[e] = 1; any = true; }
   if (!any) return;
-  const TT: (Float64Array | undefined)[] = new Array(nel), M = new Float64Array(c.nb);
-  const at = (e: number, x: number, y: number, z: number, w: number, nx: number, ny: number, nz: number) => {
-    const nb = nbs[e], E = grid.elems[e], T = TT[e] ?? (TT[e] = new Float64Array(nb * nb));
-    bas.eval(x, y, z, E.c, E.s, c.nbs[e]);
-    const kx = k3[3 * e] * nx, ky = k3[3 * e + 1] * ny, kz = k3[3 * e + 2] * nz;
-    for (let a = 0; a < nb; a++) M[a] = bas.g[3 * a] * kx + bas.g[3 * a + 1] * ky + bas.g[3 * a + 2] * kz;
-    for (let a = 0; a < nb; a++) { const s = w * M[a], r = a * nb; for (let b = 0; b < nb; b++) T[r + b] += s * M[b]; }
-  };
-  for (let ci = 0; ci < grid.cells.length; ci++) {
-    const [i, j, kk] = grid.cells[ci].ijk, ea = grid.cells[ci].el;
-    for (let axis = 0; axis < 3; axis++) {
-      const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), kk + (axis === 2 ? 1 : 0), grid.cells[ci].dom);
-      if (o < 0) continue;
-      const eb = grid.cells[o].el;
-      if (ea === eb || !(cut[ea] || cut[eb])) continue;
-      const pts = facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb])), n = [axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0];
-      for (let q = 0; q < pts.n; q++) {
-        const o4 = 4 * q;
-        if (cut[ea]) at(ea, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], n[0], n[1], n[2]);
-        if (cut[eb]) at(eb, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], n[0], n[1], n[2]);
+  // the samples of each cut element (place, weight, normal), in the order they are met: one task per element
+  const count = new Int32Array(nel);
+  const faces = (each: (e: number, x: number, y: number, z: number, w: number, nx: number, ny: number, nz: number) => void) => {
+    for (let ci = 0; ci < grid.cells.length; ci++) {
+      const [i, j, kk] = grid.cells[ci].ijk, ea = grid.cells[ci].el;
+      for (let axis = 0; axis < 3; axis++) {
+        const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), kk + (axis === 2 ? 1 : 0), grid.cells[ci].dom);
+        if (o < 0) continue;
+        const eb = grid.cells[o].el;
+        if (ea === eb || !(cut[ea] || cut[eb])) continue;
+        const pts = facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb])), nx = axis === 0 ? 1 : 0, ny = axis === 1 ? 1 : 0, nz = axis === 2 ? 1 : 0;
+        for (let q = 0; q < pts.n; q++) {
+          const o4 = 4 * q;
+          if (cut[ea]) each(ea, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], nx, ny, nz);
+          if (cut[eb]) each(eb, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], nx, ny, nz);
+        }
       }
     }
+    for (const L of held) for (let o = 0; o < L.length; o += 8) if (cut[L[o]]) each(L[o], L[o + 1], L[o + 2], L[o + 3], L[o + 4], L[o + 5], L[o + 6], L[o + 7]);
+  };
+  faces(e => { count[e]++; });
+  const els: number[] = [];
+  let total = 0, work = 0, size = 0;
+  for (let e = 0; e < nel; e++) if (count[e]) { els.push(e); total += count[e]; work += count[e] * nbs[e] * nbs[e] * 2 + 60 * nbs[e] ** 3; size += nbs[e] * nbs[e]; }
+  if (!els.length) return;
+  const shared = worthSharing(work), f64 = (m: number) => (shared ? sharedF64(m) : new Float64Array(m));
+  const sam = f64(7 * total), task = f64(TMEAS * els.length), blocks = f64(size), out = f64(els.length), fill = new Int32Array(nel);
+  let from = 0, bo = 0;
+  els.forEach((e, t) => {
+    const E = grid.elems[e], nb = nbs[e];
+    task.set([from, from + count[e], bo, E.c[0], E.c[1], E.c[2], E.s, nb, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]], TMEAS * t);
+    blocks.set(A.block(e, e).subarray(0, nb * nb), bo);
+    fill[e] = from;
+    from += count[e];
+    bo += nb * nb;
+  });
+  faces((e, x, y, z, w, nx, ny, nz) => { const o = 7 * fill[e]++; sam[o] = x; sam[o + 1] = y; sam[o + 2] = z; sam[o + 3] = w; sam[o + 4] = nx; sam[o + 5] = ny; sam[o + 6] = nz; });
+  if (shared) parallelFor({ kind: "tmeasure", n: els.length, p: bas.p, sam, task, blocks, out } satisfies Omit<TMeasureJob, "ctl">);
+  else {
+    const T = new Float64Array(c.nb * c.nb), M = new Float64Array(c.nb);
+    for (let t = 0; t < els.length; t++) out[t] = measureCell(t, sam, task, blocks, bas, T, M);
   }
-  for (const L of held) for (let o = 0; o < L.length; o += 8) if (cut[L[o]]) at(L[o], L[o + 1], L[o + 2], L[o + 3], L[o + 4], L[o + 5], L[o + 6], L[o + 7]);
-  for (let e = 0; e < nel; e++) {
-    const T = TT[e];
-    if (!T) continue;
-    const need = Math.min(40 * gam[e], 1.15 * 2 * topEigen(T, A.block(e, e), nbs[e]));
+  els.forEach((e, t) => {
+    const need = Math.min(40 * gam[e], 1.15 * 2 * out[t]);
     if (need > gam[e]) gam[e] = need;
-  }
+  });
 }
+/** Numbers per element of a penalty loop: first and end sample, place of its block, centre, half size, functions, k along X, Y, Z. */
+const TMEAS = 11;
+/** The largest λ of T x = λ K x of one cut element: T = Σ w (k ∂N/∂n)² over its samples, K its conduction block. */
+function measureCell(t: number, sam: ArrayLike<number>, task: ArrayLike<number>, blocks: Float64Array, bas: Basis, T: Float64Array, M: Float64Array): number {
+  const o = TMEAS * t, nb = task[o + 7], cc = [task[o + 3], task[o + 4], task[o + 5]], sz = task[o + 6], g = bas.g;
+  T.fill(0, 0, nb * nb);
+  for (let q = task[o]; q < task[o + 1]; q++) {
+    const s = 7 * q, w = sam[s + 3];
+    bas.eval(sam[s], sam[s + 1], sam[s + 2], cc, sz, nb);
+    const kx = task[o + 8] * sam[s + 4], ky = task[o + 9] * sam[s + 5], kz = task[o + 10] * sam[s + 6];
+    for (let a = 0; a < nb; a++) M[a] = g[3 * a] * kx + g[3 * a + 1] * ky + g[3 * a + 2] * kz;
+    for (let a = 0; a < nb; a++) { const m = w * M[a], r = a * nb; for (let b = 0; b < nb; b++) T[r + b] += m * M[b]; }
+  }
+  return topEigen(T.subarray(0, nb * nb), blocks.subarray(task[o + 2], task[o + 2] + nb * nb), nb);
+}
+interface TMeasureJob extends ParJob { p: number; sam: Float64Array; task: Float64Array; blocks: Float64Array; out: Float64Array }
+kernel<TMeasureJob, { j: TMeasureJob; bas: Basis; T: Float64Array; M: Float64Array }>("tmeasure", {
+  init: j => { const bas = new Basis(j.p), nb = bas.v.length; return { j, bas, T: new Float64Array(nb * nb), M: new Float64Array(nb) }; },
+  run({ j, bas, T, M }, t) { j.out[t] = measureCell(t, j.sam, j.task, j.blocks, bas, T, M); },
+});
+
 
 function pair(ni: number, nb: number, K: Float64Array, Ni: Float64Array, Mi: Float64Array, si: number, Nj: Float64Array, Mj: Float64Array, sj: number, w: number, gamma: number) {
   const hw = 0.5 * w, gw = gamma * w * si * sj;
@@ -751,24 +788,8 @@ function heldTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Arr
  * linearised about the temperatures `x` (°C): q = εσ(T⁴ − Ts⁴) ≈ q(T₀) + 4εσT₀³ (T − T₀).
  */
 function filmTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Array, h: number | ArrayLike<number>, amb: number, rad: number, x: Float64Array | null) {
-  const { grid, nbs, off, bas } = c;
-  for (let o = 0; o < L.length; o += 8) {
-    const e = L[o], nb = nbs[e], E = grid.elems[e], w = L[o + 4], K = A?.block(e, e), fo = off[e], hp = typeof h === "number" ? h : h[o / 8];
-    bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
-    let hh = hp, rhs = hp * amb;
-    if (rad > 0) {
-      let t0 = amb;
-      if (x) { t0 = 0; for (let a = 0; a < nb; a++) t0 += bas.v[a] * x[fo + a]; }
-      const T0 = Math.max(1, t0 + KELVIN), Ts = amb + KELVIN, es = rad * SIGMA;
-      hh = 4 * es * T0 ** 3;
-      rhs = hh * t0 - es * (T0 ** 4 - Ts ** 4);
-    }
-    for (let a = 0; a < nb; a++) {
-      const na = w * bas.v[a], r = a * nb;
-      f[fo + a] += na * rhs;
-      if (K) for (let b = 0; b < nb; b++) K[r + b] += hh * na * bas.v[b];
-    }
-  }
+  const per = typeof h === "number" ? null : h;
+  surfaceTerms(c, A, f, L, per, per ? 1 : 0, [0, per ? 0 : (h as number), amb, rad, x ? 1 : 0, 0, 0, 0, 0], x);
 }
 
 /**
@@ -776,22 +797,109 @@ function filmTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Arr
  * in `x` (dq/dT = 1.25 h); none yet = a plain film taken 10 K hotter than the air.
  */
 function naturalTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, s: ThermalSink, lens: Float64Array, x: Float64Array | null) {
-  const { grid, nbs, off, bas } = c, nat = s.natural!, amb = s.ambient ?? 0, dn = nat.down;
-  for (let o = 0, i = 0; o < L.length; o += 8, i += 2) {
-    const e = L[o], nb = nbs[e], E = grid.elems[e], w = L[o + 4], K = A.block(e, e), fo = off[e];
-    bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
-    let t0 = amb + 10;
-    if (x) { t0 = 0; for (let a = 0; a < nb; a++) t0 += bas.v[a] * x[fo + a]; }
-    const up = -(L[o + 5] * dn[0] + L[o + 6] * dn[1] + L[o + 7] * dn[2]);
-    const h = nat.factor * naturalH(up, t0 - amb, lens[i], lens[i + 1]);
-    const hh = x ? 1.25 * h : h, rhs = x ? hh * t0 - h * (t0 - amb) : h * amb;
+  const nat = s.natural!;
+  surfaceTerms(c, A, f, L, lens, 2, [2, 0, s.ambient ?? 0, 0, x ? 1 : 0, nat.factor, nat.down[0], nat.down[1], nat.down[2]], x);
+}
+
+/**
+ * One element's share of a film, radiation or natural convection, summed from zero into `S` (its nb × nb matrix,
+ * then its nb load values) over the points `order[from..end)` of `L`. `par` = kind (0 film or radiation, 2 natural),
+ * film coefficient, ambient, emissivity, whether `x` holds temperatures, natural factor, down (3).
+ */
+function filmCell(S: Float64Array, nb: number, mat: boolean, L: ArrayLike<number>, order: ArrayLike<number>, from: number, end: number, bas: Basis,
+  cc: ArrayLike<number>, sz: number, par: ArrayLike<number>, per: ArrayLike<number> | null, stride: number, x: ArrayLike<number> | null, fo: number) {
+  const f0 = nb * nb, v = bas.v, amb = par[2], rad = par[3], hasX = par[4] > 0 && !!x;
+  S.fill(0, 0, f0 + nb);
+  for (let q = from; q < end; q++) {
+    const i = order[q], o = 8 * i, w = L[o + 4];
+    bas.eval(L[o + 1], L[o + 2], L[o + 3], cc, sz, nb);
+    let hh: number, rhs: number;
+    if (par[0] === 2) {
+      let t0 = amb + 10;
+      if (hasX) { t0 = 0; for (let a = 0; a < nb; a++) t0 += v[a] * x![fo + a]; }
+      const up = -(L[o + 5] * par[6] + L[o + 6] * par[7] + L[o + 7] * par[8]);
+      const h = par[5] * naturalH(up, t0 - amb, per![2 * i], per![2 * i + 1]);
+      hh = hasX ? 1.25 * h : h;
+      rhs = hasX ? hh * t0 - h * (t0 - amb) : h * amb;
+    } else {
+      const hp = stride ? per![i] : par[1];
+      hh = hp;
+      rhs = hp * amb;
+      if (rad > 0) {
+        let t0 = amb;
+        if (hasX) { t0 = 0; for (let a = 0; a < nb; a++) t0 += v[a] * x![fo + a]; }
+        const T0 = Math.max(1, t0 + KELVIN), Ts = amb + KELVIN, es = rad * SIGMA;
+        hh = 4 * es * T0 ** 3;
+        rhs = hh * t0 - es * (T0 ** 4 - Ts ** 4);
+      }
+    }
     for (let a = 0; a < nb; a++) {
-      const na = w * bas.v[a], r = a * nb;
-      f[fo + a] += na * rhs;
-      for (let b = 0; b < nb; b++) K[r + b] += hh * na * bas.v[b];
+      const na = w * v[a], r = a * nb;
+      S[f0 + a] += na * rhs;
+      if (mat) for (let b = 0; b < nb; b++) S[r + b] += hh * na * v[b];
     }
   }
 }
+
+/** The points of one surface item by element, kept with the item's points: what a loop over its elements needs. */
+interface FilmPlan { c: Ctx; shared: boolean; work: number; n: number; L: Float64Array; order: Int32Array; task: Float64Array; per: Float64Array | null; out: Float64Array }
+/** Numbers per element of a surface loop: element, first and end place in `order`, place in `out`, centre, half size, functions, first unknown. */
+const TFILM = 10;
+const filmPlans = new WeakMap<Float64Array, FilmPlan>();
+function filmPlan(c: Ctx, L: Float64Array, per: ArrayLike<number> | null, stride: number): FilmPlan {
+  const had = filmPlans.get(L);
+  if (had && had.c === c) return had;
+  const { grid, nbs, off } = c, n = L.length / 8, count = new Map<number, number>();
+  let work = 0;
+  for (let i = 0; i < n; i++) { const e = L[8 * i]; count.set(e, (count.get(e) ?? 0) + 1); work += 4 * nbs[e] * nbs[e]; }
+  const shared = worthSharing(work), f64 = (m: number) => (shared ? sharedF64(m) : new Float64Array(m));
+  const els = [...count.keys()].sort((a, b) => a - b), task = f64(TFILM * els.length), order = shared ? sharedI32(n) : new Int32Array(n), at = new Map<number, number>();
+  let from = 0, size = 0;
+  els.forEach((e, t) => {
+    const E = grid.elems[e], m = count.get(e)!;
+    task.set([e, from, from + m, size, E.c[0], E.c[1], E.c[2], E.s, nbs[e], off[e]], TFILM * t);
+    at.set(e, from);
+    from += m;
+    size += nbs[e] * nbs[e] + nbs[e];
+  });
+  for (let i = 0; i < n; i++) { const e = L[8 * i], k = at.get(e)!; order[k] = i; at.set(e, k + 1); }
+  let LL = L, pp = per ? (per as Float64Array) : null;
+  if (shared) { LL = sharedF64(L.length); LL.set(L); if (per) { pp = sharedF64(stride * n); pp.set(per as Float64Array); } }
+  const plan: FilmPlan = { c, shared, work, n: els.length, L: LL, order, task, per: pp, out: f64(size) };
+  filmPlans.set(L, plan);
+  return plan;
+}
+
+/**
+ * Films, radiation and natural convection on the points `L`: each element's terms are summed from zero (on all
+ * threads when the work is worth it) and then added to its block and load in the elements' order, so the result
+ * does not depend on the number of threads.
+ */
+function surfaceTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Array, per: ArrayLike<number> | null, stride: number, par: number[], x: Float64Array | null) {
+  if (!L.length) return;
+  const P = filmPlan(c, L, per, stride), { task, out } = P, mat = !!A;
+  if (P.shared && worthSharing(P.work)) {
+    parallelFor({ kind: "tfilm", n: P.n, p: c.bas.p, L: P.L, order: P.order, task, per: P.per, stride, x, par: Float64Array.from(par), mat, out } satisfies Omit<TFilmJob, "ctl">);
+  } else {
+    for (let t = 0; t < P.n; t++) {
+      const o = TFILM * t, nb = task[o + 8];
+      filmCell(out.subarray(task[o + 3], task[o + 3] + nb * nb + nb), nb, mat, P.L, P.order, task[o + 1], task[o + 2], c.bas, [task[o + 4], task[o + 5], task[o + 6]], task[o + 7], par, P.per, stride, x, task[o + 9]);
+    }
+  }
+  for (let t = 0; t < P.n; t++) {
+    const o = TFILM * t, e = task[o], nb = task[o + 8], so = task[o + 3], fo = task[o + 9], f0 = so + nb * nb;
+    for (let a = 0; a < nb; a++) f[fo + a] += out[f0 + a];
+    if (A) { const K = A.block(e, e); for (let i = 0; i < nb * nb; i++) K[i] += out[so + i]; }
+  }
+}
+interface TFilmJob extends ParJob { p: number; L: Float64Array; order: Int32Array; task: Float64Array; per: Float64Array | null; stride: number; x: Float64Array | null; par: Float64Array; mat: boolean; out: Float64Array }
+kernel<TFilmJob, { j: TFilmJob; bas: Basis }>("tfilm", {
+  init: j => ({ j, bas: new Basis(j.p) }),
+  run({ j, bas }, t) {
+    const k = j.task, o = TFILM * t, nb = k[o + 8];
+    filmCell(j.out.subarray(k[o + 3], k[o + 3] + nb * nb + nb), nb, j.mat, j.L, j.order, k[o + 1], k[o + 2], bas, [k[o + 4], k[o + 5], k[o + 6]], k[o + 7], j.par, j.per, j.stride, j.x, k[o + 9]);
+  },
+});
 
 /** The points of a natural convection sink, located face by face so each keeps its face's sizes (2 numbers per point). */
 function naturalPoints(c: Ctx, s: ThermalSink, q: number): { L: Float64Array; lens: Float64Array } {

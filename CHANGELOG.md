@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.725.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies share two more steps between the processor cores: the films, radiation and natural convection on the surfaces (made again at every step of the radiation loop) and the measuring of the penalty of cut elements. The board with five parts, four passes: 14 s before, 12.5 s on four cores. Temperatures are the same bit for bit whatever the number of threads.
+
 ## [1.724.0] - 2026-11-24
 
 ### Changed
@@ -4785,7 +4791,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.724.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.725.0...HEAD
+[1.725.0]: https://github.com/kothf/step-viewer/compare/v1.724.0...v1.725.0
 [1.724.0]: https://github.com/kothf/step-viewer/compare/v1.723.0...v1.724.0
 [1.723.0]: https://github.com/kothf/step-viewer/compare/v1.722.0...v1.723.0
 [1.722.0]: https://github.com/kothf/step-viewer/compare/v1.721.0...v1.722.0
