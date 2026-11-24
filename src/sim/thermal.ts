@@ -324,6 +324,8 @@ interface Ctx {
   bas2: Basis;
   gam: Float64Array;
   fitted: Map<number, Points>;
+  /** While the equations are built with several bodies: the located points of the triangles met so far. */
+  loc?: LocKept;
 }
 
 /** The body each triangle of a set lies on (−1 = none found), asked once per set and kept. */
@@ -348,21 +350,143 @@ function bodiesOf(c: Ctx, tris: ArrayLike<number>): Int8Array | null {
  * (`fitPlanar`), unless `fit` is false.
  */
 function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1, fit = true): Float64Array {
-  const g = c.grid, { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q), nrms = triNormals(tris), eps = 1e-7 * g.h;
-  // with several bodies each point is read in its triangle's body (asked once per triangle, not per point)
   const own = dom < 0 ? bodiesOf(c, tris) : null;
+  if (c.loc && c.loc.q === q) { const r = keptPoints(c, c.loc, tris, own, dom); return fit ? fitPlanar(c, r.L, r.ids) : r.L; }
+  const L = cutPoints(c, tris, q, own, dom);
+  return fit ? fitPlanar(c, L) : L;
+}
+
+/** The points of some triangles cut at the grid planes, each with its element: 8 numbers per point, triangle by triangle. */
+function cutPoints(c: Ctx, tris: ArrayLike<number>, q: number, own: Int8Array | null, dom: number): Float64Array {
+  const g = c.grid, { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q), nrms = triNormals(tris), eps = 1e-7 * g.h;
   const out = new Float64Array(8 * pts.n);
   let n = 0;
   for (let i = 0; i < pts.n; i++) {
     const o = 4 * i, t = tri[i], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
     const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
-    // nudged inwards so a point on a cell face lands in the cell the body is on
+    // nudged inwards so a point on a cell face lands in the cell the body is on;
+    // with several bodies each point is read in its triangle's body (asked once per triangle, not per point)
     const cl = g.cellOf(x - eps * nx, y - eps * ny, z - eps * nz, own ? own[t] : dom);
     if (cl < 0) continue;
     const w = 8 * n++;
     out[w] = g.cells[cl].el; out[w + 1] = x; out[w + 2] = y; out[w + 3] = z; out[w + 4] = pts.a[o + 3]; out[w + 5] = nx; out[w + 6] = ny; out[w + 7] = nz;
   }
-  return fit ? fitPlanar(c, out.subarray(0, 8 * n)) : out.subarray(0, 8 * n);
+  return out.subarray(0, 8 * n);
+}
+
+/**
+ * The located points of every triangle met while one set of equations is built, kept by the triangle's corners and
+ * body: the sinks of a board study (convection face by face, radiation from all open surfaces) and the domains'
+ * surfaces ask for the same triangles two or three times. `free` remembers what `freePoints` found for a point.
+ */
+interface LocKept {
+  q: number;
+  /** Hash of a triangle → its first record; records chained through `next`. */
+  first: Map<number, number>;
+  next: number[];
+  /** Per record: where its nine corner numbers start in `key`, its body, its first point and its number of points. */
+  body: number[]; from: number[]; count: number[];
+  key: Float64Array; nk: number;
+  /** Per point: element, x, y, z, weight. */
+  pts: Float64Array; n: number;
+  /** Per point: 0 not asked, 1 open, 2 on another body. */
+  free: Uint8Array;
+  /** Fitted plane groups by their first kept point: the group's kept points and what `fitPlanar` made of them. */
+  fits: Map<number, { ids: Int32Array; out: Float64Array }[]>;
+}
+let keepPoints = true;
+/** Tests: off = every sink and surface locates and fits its points itself, as before 1.739.0. */
+export const setKeptPoints = (on: boolean) => { keepPoints = on; };
+const newLoc = (q: number): LocKept => ({ q, first: new Map(), next: [], body: [], from: [], count: [], key: new Float64Array(9 * 1024), nk: 0, pts: new Float64Array(5 * 4096), n: 0, free: new Uint8Array(4096), fits: new Map() });
+const hashWords = new Float64Array(9), hashBits = new Uint32Array(hashWords.buffer);
+function triHash(tris: ArrayLike<number>, o: number, body: number): number {
+  for (let j = 0; j < 9; j++) hashWords[j] = tris[o + j];
+  let h = (body + 0x9e3779b9) | 0;
+  for (let j = 0; j < 18; j++) h = (Math.imul(h ^ hashBits[j], 0x85ebca6b) + 0xc2b2ae35) | 0;
+  return h;
+}
+/** The record of a triangle in `K`, or −1. */
+function locFind(K: LocKept, tris: ArrayLike<number>, o: number, body: number, h: number): number {
+  for (let r = K.first.get(h) ?? -1; r >= 0; r = K.next[r]) {
+    if (K.body[r] !== body) continue;
+    const k = 9 * r;
+    let same = true;
+    for (let j = 0; j < 9 && same; j++) same = K.key[k + j] === tris[o + j];
+    if (same) return r;
+  }
+  return -1;
+}
+/** As `cutPoints`, through the kept triangles; `ids` = each point's place in `K` (for `K.free`). */
+function keptPoints(c: Ctx, K: LocKept, tris: ArrayLike<number>, own: Int8Array | null, dom: number): { L: Float64Array; ids: Int32Array } {
+  const nt = Math.floor(tris.length / 9), recs = new Int32Array(nt), miss: number[] = [];
+  for (let t = 0; t < nt; t++) {
+    const body = own ? own[t] : dom, h = triHash(tris, 9 * t, body);
+    let r = locFind(K, tris, 9 * t, body, h);
+    if (r < 0) {
+      // a new record, its points made below with the other new ones
+      r = K.body.length;
+      if (9 * (r + 1) > K.key.length) { const a = new Float64Array(2 * K.key.length); a.set(K.key); K.key = a; }
+      for (let j = 0; j < 9; j++) K.key[9 * r + j] = tris[9 * t + j];
+      K.body.push(body); K.from.push(-1); K.count.push(0);
+      K.next.push(K.first.get(h) ?? -1);
+      K.first.set(h, r);
+      miss.push(t);
+    }
+    recs[t] = r;
+  }
+  if (miss.length) {
+    const sub = new Float64Array(9 * miss.length), g = c.grid, eps = 1e-7 * g.h;
+    miss.forEach((t, k) => { for (let j = 0; j < 9; j++) sub[9 * k + j] = tris[9 * t + j]; });
+    const { pts, tri } = gridTrianglePoints(sub, g.lo, g.h, K.q), nrms = triNormals(sub);
+    if (K.n + pts.n > K.free.length) {
+      const room = Math.max(2 * K.free.length, K.n + pts.n), a = new Float64Array(5 * room), f = new Uint8Array(room);
+      a.set(K.pts.subarray(0, 5 * K.n)); f.set(K.free.subarray(0, K.n));
+      K.pts = a; K.free = f;
+    }
+    for (let i = 0; i < pts.n; i++) {
+      const o = 4 * i, k = tri[i], r = recs[miss[k]], nx = nrms[3 * k], ny = nrms[3 * k + 1], nz = nrms[3 * k + 2];
+      const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
+      const cl = g.cellOf(x - eps * nx, y - eps * ny, z - eps * nz, K.body[r]);
+      if (cl < 0) continue;
+      if (K.from[r] < 0) K.from[r] = K.n;
+      const w = 5 * K.n++;
+      K.pts[w] = g.cells[cl].el; K.pts[w + 1] = x; K.pts[w + 2] = y; K.pts[w + 3] = z; K.pts[w + 4] = pts.a[o + 3];
+      K.count[r]++;
+    }
+  }
+  let n = 0;
+  for (let t = 0; t < nt; t++) n += K.count[recs[t]];
+  const L = new Float64Array(8 * n), ids = new Int32Array(n), nrms = triNormals(tris);
+  let m = 0;
+  for (let t = 0; t < nt; t++) {
+    const r = recs[t], from = K.from[r], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
+    for (let i = 0; i < K.count[r]; i++, m++) {
+      const s = 5 * (from + i), w = 8 * m;
+      L[w] = K.pts[s]; L[w + 1] = K.pts[s + 1]; L[w + 2] = K.pts[s + 2]; L[w + 3] = K.pts[s + 3]; L[w + 4] = K.pts[s + 4]; L[w + 5] = nx; L[w + 6] = ny; L[w + 7] = nz;
+      ids[m] = from + i;
+    }
+  }
+  return { L, ids };
+}
+
+/** The fitted points kept for the group whose kept points are `ids[idx[…]]`, or null. */
+function fitKept(K: LocKept, ids: Int32Array, idx: number[]): Float64Array | null {
+  const list = K.fits.get(ids[idx[0]]);
+  if (!list) return null;
+  for (const F of list) {
+    if (F.ids.length !== idx.length) continue;
+    let same = true;
+    for (let i = 0; i < idx.length && same; i++) same = F.ids[i] === ids[idx[i]];
+    if (same) return F.out;
+  }
+  return null;
+}
+function fitKeep(K: LocKept, ids: Int32Array, idx: number[], out: Float64Array) {
+  const own = new Int32Array(idx.length);
+  for (let i = 0; i < idx.length; i++) own[i] = ids[idx[i]];
+  const list = K.fits.get(own[0]);
+  if (list) list.push({ ids: own, out });
+  else K.fits.set(own[0], [{ ids: own, out }]);
 }
 
 /**
@@ -371,7 +495,7 @@ function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1, fit = tru
  * flat face made of many triangles, each cut at the grid planes, otherwise gives each element hundreds of points.
  * Groups keep the order they are first met; groups too small to gain keep their own points.
  */
-function fitPlanar(c: Ctx, L: Float64Array): Float64Array {
+function fitPlanar(c: Ctx, L: Float64Array, ids?: Int32Array | null): Float64Array {
   const n = L.length / 8, h = c.grid.h, tol = 1e-7;
   if (n < 2) return L;
   type Group = { e: number; nx: number; ny: number; nz: number; d: number; idx: number[] };
@@ -390,29 +514,47 @@ function fitPlanar(c: Ctx, L: Float64Array): Float64Array {
     G.idx.push(i);
   }
   if (groups.length === n) return L;
-  // every group as a task: its points' numbers, its normal and degree, and room for as many points as it has
-  const ng = groups.length;
-  let work = 0;
-  for (const g of groups) { const q = 2 * c.deg[g.e] + 1; if (g.idx.length > q * q) work += g.idx.length * (q * q / 2 + 4 * q); }
-  const share = worthSharing(work);
-  const idx = share ? sharedI32(n) : new Int32Array(n), rec = share ? sharedF64(PFIT * ng) : new Float64Array(PFIT * ng);
-  const out = share ? sharedF64(8 * n) : new Float64Array(8 * n), cnt = share ? sharedI32(ng) : new Int32Array(ng);
-  let at = 0;
+  // groups fitted before from the same kept points (another sink on the same faces, the body's own surface) are taken as they were
+  const K = ids && c.loc ? c.loc : null, ng = groups.length;
+  const had: (Float64Array | null)[] = new Array(ng).fill(null), todo: number[] = [];
   for (let k = 0; k < ng; k++) {
-    const g = groups[k], o = PFIT * k;
+    const g = groups[k], q = 2 * c.deg[g.e] + 1;
+    if (K && g.idx.length > q * q) had[k] = fitKept(K, ids!, g.idx);
+    if (!had[k]) todo.push(k);
+  }
+  // every other group as a task: its points' numbers, its normal and degree, and room for as many points as it has
+  const nj = todo.length;
+  let work = 0, room = 0;
+  for (const k of todo) { const g = groups[k], q = 2 * c.deg[g.e] + 1; room += g.idx.length; if (g.idx.length > q * q) work += g.idx.length * (q * q / 2 + 4 * q); }
+  const share = nj > 0 && worthSharing(work);
+  const idx = share ? sharedI32(room) : new Int32Array(room), rec = share ? sharedF64(PFIT * nj) : new Float64Array(PFIT * nj);
+  const out = share ? sharedF64(8 * room) : new Float64Array(8 * room), cnt = share ? sharedI32(nj) : new Int32Array(nj);
+  let at = 0;
+  for (let j = 0; j < nj; j++) {
+    const g = groups[todo[j]], o = PFIT * j;
     rec[o] = at; rec[o + 1] = g.idx.length; rec[o + 2] = g.e; rec[o + 3] = g.nx; rec[o + 4] = g.ny; rec[o + 5] = g.nz; rec[o + 6] = 2 * c.deg[g.e] + 1;
     idx.set(g.idx, at);
     at += g.idx.length;
   }
-  const job: PlaneFitJob = { kind: "tplanefit", n: ng, L: share ? shared8(L) : L, idx, rec, out, cnt, tiny: 1e-9 * h };
-  if (share) parallelFor(job);
-  else { const st = planeFitInit(job); for (let k = 0; k < ng; k++) planeFitGroup(st, k); }
-  let m = 0, fitted = false;
-  for (let k = 0; k < ng; k++) { m += cnt[k]; if (cnt[k] !== rec[PFIT * k + 1]) fitted = true; }
+  if (nj) {
+    const job: PlaneFitJob = { kind: "tplanefit", n: nj, L: share ? shared8(L) : L, idx, rec, out, cnt, tiny: 1e-9 * h };
+    if (share) parallelFor(job);
+    else { const st = planeFitInit(job); for (let j = 0; j < nj; j++) planeFitGroup(st, j); }
+  }
+  let m = 0, fitted = nj < ng;
+  for (let j = 0; j < nj; j++) { m += cnt[j]; if (cnt[j] !== rec[PFIT * j + 1]) fitted = true; }
   if (!fitted) return L;
+  for (let k = 0; k < ng; k++) if (had[k]) m += had[k]!.length / 8;
   const res = new Float64Array(8 * m);
   let to = 0;
-  for (let k = 0; k < ng; k++) { const from = 8 * rec[PFIT * k]; res.set(out.subarray(from, from + 8 * cnt[k]), to); to += 8 * cnt[k]; }
+  for (let k = 0, j = 0; k < ng; k++) {
+    if (had[k]) { res.set(had[k]!, to); to += had[k]!.length; continue; }
+    const from = 8 * rec[PFIT * j], len = 8 * cnt[j];
+    res.set(out.subarray(from, from + len), to);
+    if (K && cnt[j] !== rec[PFIT * j + 1]) fitKeep(K, ids!, groups[k].idx, res.slice(to, to + len));
+    to += len;
+    j++;
+  }
   return res;
 }
 /** Numbers per group of `fitPlanar`: first index, count, element, normal, points per direction. */
@@ -729,22 +871,29 @@ function contactFlows(c: Ctx, contacts: ThermalContact[], joins: number[], x: Fl
 function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
   const { grid, pb } = c, doms = c.doms!;
   const eps = 2e-3 * grid.h, far = Math.max(0, pb.gap ?? 0) + eps;
-  const boxes = doms.map(d => triBox(d.tris)), L = located(c, tris, q, -1, false);
+  const boxes = doms.map(d => triBox(d.tris));
+  // through the kept triangles each point is asked once however many sinks hold it
+  const K = c.loc && c.loc.q === q ? c.loc : null, kept = K ? keptPoints(c, K, tris, bodiesOf(c, tris), -1) : null;
+  const L = kept ? kept.L : located(c, tris, q, -1, false), ids = kept ? kept.ids : null;
   let m = 0;
   for (let o = 0; o < L.length; o += 8) {
-    const x = L[o + 1], y = L[o + 2], z = L[o + 3], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], own = c.dom[L[o]];
-    let on = false;
-    for (let d = 0; d < doms.length && !on; d++) {
-      if (d === own) continue;
-      const B = boxes[d];
-      if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
-      on = doms[d].inside(x + eps * nx, y + eps * ny, z + eps * nz) || (far > eps && doms[d].inside(x + far * nx, y + far * ny, z + far * nz));
+    const known = ids ? K!.free[ids[o / 8]] : 0;
+    let on = known === 2;
+    if (!known) {
+      const x = L[o + 1], y = L[o + 2], z = L[o + 3], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], own = c.dom[L[o]];
+      for (let d = 0; d < doms.length && !on; d++) {
+        if (d === own) continue;
+        const B = boxes[d];
+        if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
+        on = doms[d].inside(x + eps * nx, y + eps * ny, z + eps * nz) || (far > eps && doms[d].inside(x + far * nx, y + far * ny, z + far * nz));
+      }
+      if (ids) K!.free[ids[o / 8]] = on ? 2 : 1;
     }
     if (on) continue;
-    if (m !== o) L.copyWithin(m, o, o + 8);
+    if (m !== o) { L.copyWithin(m, o, o + 8); if (ids) ids[m / 8] = ids[o / 8]; }
     m += 8;
   }
-  return fitPlanar(c, L.subarray(0, m));
+  return fitPlanar(c, L.subarray(0, m), ids ? ids.subarray(0, m / 8) : null);
 }
 
 /** The domains nothing takes heat from: no sink on them and none on anything they pass heat to. */
@@ -913,7 +1062,7 @@ function filmCell(S: Float64Array, nb: number, mat: boolean, L: ArrayLike<number
   S.fill(0, 0, f0 + nb);
   for (let q = from; q < end; q++) {
     const i = order[q], o = 8 * i, w = L[o + 4];
-    bas.eval(L[o + 1], L[o + 2], L[o + 3], cc, sz, nb);
+    bas.values(L[o + 1], L[o + 2], L[o + 3], cc, sz, nb);
     let hh: number, rhs: number;
     if (par[0] === 2) {
       let t0 = amb + 10;
@@ -1147,17 +1296,24 @@ function energies(c: Ctx, x: Float64Array, prev: Float64Array | null) {
 function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?: Float64Array): SinkFlow {
   const { grid, nbs, off, bas, k3, gam } = c, nat = s.natural, amb = s.ambient ?? 0;
   const forced = s.forced && s.temp === undefined && lens ? lens : null;
+  const held = s.temp !== undefined;
   let out = 0, area = 0, sum = 0, hs = 0;
   const by = c.doms ? new Float64Array(3 * c.doms.length) : null;
   for (let o = 0; o < L.length; o += 8) {
     const e = L[o], E = grid.elems[e], w = L[o + 4], was = out;
-    let rad = 0;
-    bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
-    let t = 0, dn = 0;
-    for (let a = 0; a < nbs[e]; a++) {
-      const v = x[off[e] + a];
-      t += v * bas.v[a];
-      dn += v * (bas.g[3 * a] * k3[3 * e] * L[o + 5] + bas.g[3 * a + 1] * k3[3 * e + 1] * L[o + 6] + bas.g[3 * a + 2] * k3[3 * e + 2] * L[o + 7]);
+    let rad = 0, t = 0, dn = 0;
+    const nb = nbs[e], fo = off[e];
+    if (held) {
+      bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, nb);
+      for (let a = 0; a < nb; a++) {
+        const v = x[fo + a];
+        t += v * bas.v[a];
+        dn += v * (bas.g[3 * a] * k3[3 * e] * L[o + 5] + bas.g[3 * a + 1] * k3[3 * e + 1] * L[o + 6] + bas.g[3 * a + 2] * k3[3 * e + 2] * L[o + 7]);
+      }
+    } else {
+      // only a held face's flow needs the gradients
+      bas.values(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, nb);
+      for (let a = 0; a < nb; a++) t += x[fo + a] * bas.v[a];
     }
     area += w; sum += w * t;
     if (s.temp !== undefined) out += w * (-dn + 2 * gam[e] * (t - s.temp));
@@ -1223,7 +1379,7 @@ function exchangeOf(c: Ctx, X: ThermalExchange, tq: number): ExBuilt {
     let area = 0;
     for (let o = 0; o < L.length; o += 8) {
       const e = L[o], E = c.grid.elems[e], w = L[o + 4];
-      c.bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
+      c.bas.values(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
       for (let a = 0; a < c.nbs[e]; a++) u[c.off[e] + a] += w * c.bas.v[a];
       area += w;
       by[c.dom[e]] += w;
@@ -1311,6 +1467,7 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   const tq = Math.max(2, p + 1);
   const A = new BlockMatrix(nel, nbs), f = new Float64Array(A.size);
   volumeTerms(c, A);
+  if (doms && keepPoints) c.loc = newLoc(tq);
   const lens: (Float64Array | undefined)[] = [];
   // sinks on the same triangles (convection and radiation from all open surfaces) share their points
   const seen = [new Map<object, Float64Array>(), new Map<object, Float64Array>()];
@@ -1340,6 +1497,7 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   for (const cl of grid.cells) { const v = cl.pts.weight(); volume += v; volumes[doms ? cl.dom : 0] += v; }
   const fs: Float64Array[] = [], put: number[] = [];
   for (const s of pb.sources) { const r = sourceLoad(c, s, tq, volume, volumes); fs.push(r.f); put.push(r.put); }
+  c.loc = undefined;
   const rads = pb.sinks.map((s, i) => (s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural) ? i : -1)).filter(i => i >= 0);
   return { c, A, f, fs, put, at, lens, rads, contacts, joins, volume, volumes, memory, ex, t0: meanTemp(pb) };
 }
