@@ -5,12 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.720.0] - 2026-11-23
+## [1.721.0] - 2026-11-24
 
 ### Changed
 
 - Thermal studies use all processor cores as well. Their equations (conduction in each element and the terms of the faces between elements) are built on every thread, and they are solved by the direct solver that shares its work between threads, wherever it is the cheaper one (as structural studies decide). With radiation or natural convection a pass now factors its matrix once: the later steps of the loop are solved with that factorisation in a few iterations instead of a new one each. A board with five parts, four passes: 30 s before, 16 s on four cores. Temperatures agree with before to the solver's tolerance, and are the same bit for bit whatever the number of threads.
 - The first pass of every study finds its cells on all cores (the cubes the body fills or cuts, and the points inside the cut ones): the longest step of a first pass. A bracket's first pass took 7.5 s and takes 2.7 s on four cores; five passes 24 s → 19 s, the board above 16 s → 14 s.
+## [1.720.0] - 2026-11-24
+
+### Changed
+
+- Saved parts and assemblies appear on screen at once when opened, even the first time on a computer: the file now keeps the model's display mesh, which is drawn while the features and parts are built; the built model then takes its place and faces can be picked. The model steam engine assembly showed after 7.2 s and now after about 1 s (its file grows from 44 KB to 540 KB). Files saved this way still open in older versions, which skip the mesh.
 
 ## [1.719.0] - 2026-11-23
 
@@ -4757,7 +4762,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.720.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.721.0...HEAD
+[1.721.0]: https://github.com/kothf/step-viewer/compare/v1.720.0...v1.721.0
 [1.720.0]: https://github.com/kothf/step-viewer/compare/v1.719.0...v1.720.0
 [1.719.0]: https://github.com/kothf/step-viewer/compare/v1.718.0...v1.719.0
 [1.718.0]: https://github.com/kothf/step-viewer/compare/v1.717.0...v1.718.0
