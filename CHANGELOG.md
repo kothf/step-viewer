@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.739.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies of assemblies and boards build their equations faster. The points on the surfaces were found again for every cooling condition: convection face by face, radiation from all open surfaces and each body's own surface asked for the same triangles two or three times. Now a triangle's points, the answer to "is this point open to the air" and the fitted points of each flat patch are made once while the equations are built and shared. The heat that leaves through each condition is summed without the gradients it never used. The amplifier board study takes about 36 s instead of about 39 s in Chrome on four cores; the temperatures are the same numbers.
+
 ## [1.738.0] - 2026-11-24
 
 ### Changed
@@ -4866,7 +4872,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.738.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.739.0...HEAD
+[1.739.0]: https://github.com/kothf/step-viewer/compare/v1.738.0...v1.739.0
 [1.738.0]: https://github.com/kothf/step-viewer/compare/v1.737.0...v1.738.0
 [1.737.0]: https://github.com/kothf/step-viewer/compare/v1.736.0...v1.737.0
 [1.736.0]: https://github.com/kothf/step-viewer/compare/v1.735.0...v1.736.0
