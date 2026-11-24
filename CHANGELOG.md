@@ -5,12 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.722.0] - 2026-11-24
+## [1.723.0] - 2026-11-24
 
 ### Changed
 
 - Thermal studies use all processor cores as well. Their equations (conduction in each element and the terms of the faces between elements) are built on every thread, and they are solved by the direct solver that shares its work between threads, wherever it is the cheaper one (as structural studies decide). With radiation or natural convection a pass now factors its matrix once: the later steps of the loop are solved with that factorisation in a few iterations instead of a new one each. A board with five parts, four passes: 30 s before, 16 s on four cores. Temperatures agree with before to the solver's tolerance, and are the same bit for bit whatever the number of threads.
 - The first pass of every study finds its cells on all cores (the cubes the body fills or cuts, and the points inside the cut ones): the longest step of a first pass. A bracket's first pass took 7.5 s and takes 2.7 s on four cores; five passes 24 s → 19 s, the board above 16 s → 14 s.
+
+## [1.722.0] - 2026-11-24
+
+### Changed
+
+- Assemblies open faster: each part's mass properties are measured once in its own axes and moved with its components (or taken from the part's analysis that the parallel build or the disk cache already holds), where every component was measured again on each build, exact box included. Opening the steam engine assembly again (parts from the disk cache) takes 0.6 s instead of 1.5 s; the first open 5.9 s instead of 6.6 s. The part files beside an assembly are read at the same time instead of one after another.
+
+### Fixed
+
+- The analysis progress line in the status bar goes away as soon as a solve ends, instead of up to half a second later.
 
 ## [1.721.0] - 2026-11-24
 
@@ -4769,7 +4779,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.722.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.723.0...HEAD
+[1.723.0]: https://github.com/kothf/step-viewer/compare/v1.722.0...v1.723.0
 [1.722.0]: https://github.com/kothf/step-viewer/compare/v1.721.0...v1.722.0
 [1.721.0]: https://github.com/kothf/step-viewer/compare/v1.720.0...v1.721.0
 [1.720.0]: https://github.com/kothf/step-viewer/compare/v1.719.0...v1.720.0

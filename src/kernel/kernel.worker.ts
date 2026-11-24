@@ -263,10 +263,12 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         if (!r.doc.parts[k]) continue;
         try {
           const src = assembler.adopt(k, r.doc, pre);
-          if (pre.data) shared.set(src, { quality: r.quality, data: pre.data });
+          if (pre.data) { shared.set(src, { quality: r.quality, data: pre.data }); assembler.knownMass(src, pre.data); }
         } catch { /* evaluated here instead */ }
       }
+      const t1 = performance.now();
       const { placed, statuses } = assembler.evaluate(r.doc, r.quality);
+      const t2 = performance.now();
       const parts = [];
       kernel.meshes = [];
       for (const p of placed) {
@@ -295,7 +297,9 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         const own = assembler.ownBodies(p.part, r.doc, p.src);
         parts.push({ id: p.id, data, faces: p.body.names, ...(own ? { bodies: moveBodies(own, p.tf) } : {}) });
       }
-      post({ id: r.id, ok: true, parts, statuses, features: assembler.featureStatus, props: assembler.props(placed), heap: heap(), ms: performance.now() - t0 });
+      const t3 = performance.now(), props = assembler.props(placed), t4 = performance.now();
+      const steps = { adopt: Math.round(t1 - t0), evaluate: Math.round(t2 - t1), parts: Math.round(t3 - t2), props: Math.round(t4 - t3) };
+      post({ id: r.id, ok: true, parts, statuses, features: assembler.featureStatus, props, heap: heap(), ms: t4 - t0, steps });
     } else if (r.type === "asmClearance") {
       assembler ??= new Assembler(kernel.module);
       const { placed } = assembler.evaluate(r.doc, 1);

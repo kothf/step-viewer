@@ -17814,7 +17814,7 @@ try {
   }
 
   // --- thermal 1.655 (FRS-thermal J5, FR-TSTU-004, FR-TBRD-001): a study straight from a board's STEP and its package ---
-  // In shard 2 since 1.722.0: shard 6 reached the 12 minute limit (this block solves the board five times, about 2.5 min).
+  // In shard 2 since 1.723.0: shard 6 reached the 12 minute limit (this block solves the board five times, about 2.5 min).
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
@@ -18329,7 +18329,7 @@ try {
   }
 
   // --- thermal stress 1.663 (FRS-thermal TH5, FR-LOAD-011): a Temperature load, uniform or from a thermal study ---
-  // In shard 5 since 1.722.0: shard 6 reached the 12 minute limit.
+  // In shard 5 since 1.723.0: shard 6 reached the 12 minute limit.
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const sp = await ctx.newPage();
