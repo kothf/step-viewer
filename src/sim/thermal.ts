@@ -375,26 +375,73 @@ function fitPlanar(c: Ctx, L: Float64Array): Float64Array {
   if (n < 2) return L;
   type Group = { e: number; nx: number; ny: number; nz: number; d: number; idx: number[] };
   const groups: Group[] = [], byEl = new Map<number, Group[]>();
+  let G: Group | undefined;
   for (let i = 0; i < n; i++) {
     const o = 8 * i, e = L[o], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], d = nx * L[o + 1] + ny * L[o + 2] + nz * L[o + 3];
-    let list = byEl.get(e), G: Group | undefined;
-    if (!list) byEl.set(e, (list = []));
-    for (const g of list) if (Math.abs(g.nx - nx) < tol && Math.abs(g.ny - ny) < tol && Math.abs(g.nz - nz) < tol && Math.abs(g.d - d) < tol * h) { G = g; break; }
-    if (!G) { G = { e, nx, ny, nz, d, idx: [] }; list.push(G); groups.push(G); }
+    // points come triangle by triangle, so the group of the point before is usually this one's
+    if (!G || G.e !== e || !(Math.abs(G.nx - nx) < tol && Math.abs(G.ny - ny) < tol && Math.abs(G.nz - nz) < tol && Math.abs(G.d - d) < tol * h)) {
+      G = undefined;
+      let list = byEl.get(e);
+      if (!list) byEl.set(e, (list = []));
+      for (const g of list) if (Math.abs(g.nx - nx) < tol && Math.abs(g.ny - ny) < tol && Math.abs(g.nz - nz) < tol && Math.abs(g.d - d) < tol * h) { G = g; break; }
+      if (!G) { G = { e, nx, ny, nz, d, idx: [] }; list.push(G); groups.push(G); }
+    }
     G.idx.push(i);
   }
   if (groups.length === n) return L;
-  const src = { a: new Float64Array(4 * n), n } as Points;
-  for (let i = 0; i < n; i++) for (let k = 0; k < 4; k++) src.a[4 * i + k] = L[8 * i + 1 + k];
-  const out: number[] = [];
-  let fitted = false;
-  for (const G of groups) {
-    const F = fitPlanePoints(src, G.idx, [G.nx, G.ny, G.nz], 2 * c.deg[G.e] + 1, 1e-9 * h);
-    if (F) { fitted = true; for (let k = 0; k < F.n; k++) out.push(G.e, F.a[4 * k], F.a[4 * k + 1], F.a[4 * k + 2], F.a[4 * k + 3], G.nx, G.ny, G.nz); }
-    else for (const i of G.idx) for (let k = 0; k < 8; k++) out.push(L[8 * i + k]);
+  // every group as a task: its points' numbers, its normal and degree, and room for as many points as it has
+  const ng = groups.length;
+  let work = 0;
+  for (const g of groups) { const q = 2 * c.deg[g.e] + 1; if (g.idx.length > q * q) work += g.idx.length * (q * q / 2 + 4 * q); }
+  const share = worthSharing(work);
+  const idx = share ? sharedI32(n) : new Int32Array(n), rec = share ? sharedF64(PFIT * ng) : new Float64Array(PFIT * ng);
+  const out = share ? sharedF64(8 * n) : new Float64Array(8 * n), cnt = share ? sharedI32(ng) : new Int32Array(ng);
+  let at = 0;
+  for (let k = 0; k < ng; k++) {
+    const g = groups[k], o = PFIT * k;
+    rec[o] = at; rec[o + 1] = g.idx.length; rec[o + 2] = g.e; rec[o + 3] = g.nx; rec[o + 4] = g.ny; rec[o + 5] = g.nz; rec[o + 6] = 2 * c.deg[g.e] + 1;
+    idx.set(g.idx, at);
+    at += g.idx.length;
   }
-  return fitted ? Float64Array.from(out) : L;
+  const job: PlaneFitJob = { kind: "tplanefit", n: ng, L: share ? shared8(L) : L, idx, rec, out, cnt, tiny: 1e-9 * h };
+  if (share) parallelFor(job);
+  else { const st = planeFitInit(job); for (let k = 0; k < ng; k++) planeFitGroup(st, k); }
+  let m = 0, fitted = false;
+  for (let k = 0; k < ng; k++) { m += cnt[k]; if (cnt[k] !== rec[PFIT * k + 1]) fitted = true; }
+  if (!fitted) return L;
+  const res = new Float64Array(8 * m);
+  let to = 0;
+  for (let k = 0; k < ng; k++) { const from = 8 * rec[PFIT * k]; res.set(out.subarray(from, from + 8 * cnt[k]), to); to += 8 * cnt[k]; }
+  return res;
 }
+/** Numbers per group of `fitPlanar`: first index, count, element, normal, points per direction. */
+const PFIT = 7;
+interface PlaneFitJob { kind: string; n: number; L: Float64Array; idx: Int32Array; rec: Float64Array; out: Float64Array; cnt: Int32Array; tiny: number; [k: string]: unknown }
+/** A copy on shared memory. */
+function shared8(a: Float64Array): Float64Array { const s = sharedF64(a.length); s.set(a); return s; }
+function planeFitInit(j: PlaneFitJob) {
+  return { j, buf: new Float64Array(0) };
+}
+/** One group of `fitPlanar`: its points fitted (or kept) into its room of `out`, their number into `cnt`. */
+function planeFitGroup(st: ReturnType<typeof planeFitInit>, k: number) {
+  const j = st.j, o = PFIT * k, from = j.rec[o], n = j.rec[o + 1], e = j.rec[o + 2], nx = j.rec[o + 3], ny = j.rec[o + 4], nz = j.rec[o + 5], q = j.rec[o + 6];
+  const L = j.L, out = j.out, to = 8 * from;
+  let F: Points | null = null;
+  if (n > q * q) {
+    if (st.buf.length < 4 * n) st.buf = new Float64Array(4 * n);
+    const a = st.buf, own = new Int32Array(n);
+    for (let t = 0; t < n; t++) { const s = 8 * j.idx[from + t] + 1; a[4 * t] = L[s]; a[4 * t + 1] = L[s + 1]; a[4 * t + 2] = L[s + 2]; a[4 * t + 3] = L[s + 3]; own[t] = t; }
+    F = fitPlanePoints({ a, n } as unknown as Points, own, [nx, ny, nz], q, j.tiny);
+  }
+  if (F) {
+    for (let t = 0; t < F.n; t++) { const w = to + 8 * t; out[w] = e; out[w + 1] = F.a[4 * t]; out[w + 2] = F.a[4 * t + 1]; out[w + 3] = F.a[4 * t + 2]; out[w + 4] = F.a[4 * t + 3]; out[w + 5] = nx; out[w + 6] = ny; out[w + 7] = nz; }
+    j.cnt[k] = F.n;
+  } else {
+    for (let t = 0; t < n; t++) { const s = 8 * j.idx[from + t], w = to + 8 * t; for (let i = 0; i < 8; i++) out[w + i] = L[s + i]; }
+    j.cnt[k] = n;
+  }
+}
+kernel<PlaneFitJob, ReturnType<typeof planeFitInit>>("tplanefit", { init: planeFitInit, run: planeFitGroup });
 
 /** The points of the face between cell `ca` and the next one along `axis`, for degree `d` (the higher side's). */
 function facePts(c: Ctx, ca: number, axis: number, d = c.p): Points {
@@ -532,8 +579,9 @@ function measureCell(t: number, sam: ArrayLike<number>, task: ArrayLike<number>,
     bas.eval(sam[s], sam[s + 1], sam[s + 2], cc, sz, nb);
     const kx = task[o + 8] * sam[s + 4], ky = task[o + 9] * sam[s + 5], kz = task[o + 10] * sam[s + 6];
     for (let a = 0; a < nb; a++) M[a] = g[3 * a] * kx + g[3 * a + 1] * ky + g[3 * a + 2] * kz;
-    for (let a = 0; a < nb; a++) { const m = w * M[a], r = a * nb; for (let b = 0; b < nb; b++) T[r + b] += m * M[b]; }
+    for (let a = 0; a < nb; a++) { const m = w * M[a], r = a * nb; for (let b = 0; b <= a; b++) T[r + b] += m * M[b]; }
   }
+  for (let a = 0; a < nb; a++) for (let b = 0; b < a; b++) T[b * nb + a] = T[a * nb + b];
   return topEigen(T.subarray(0, nb * nb), blocks.subarray(task[o + 2], task[o + 2] + nb * nb), nb);
 }
 interface TMeasureJob extends ParJob { p: number; sam: Float64Array; task: Float64Array; blocks: Float64Array; out: Float64Array }
@@ -725,17 +773,29 @@ function faceBlocks(S: Float64Array, q: number, a: ArrayLike<number>, from: numb
   bas: Basis, bas2: Basis, ca: ArrayLike<number>, sa: number, cb: ArrayLike<number>, sb: number, ma: number, mb: number, MA: Float64Array, MB: Float64Array) {
   const Saa = S.subarray(0, ma * ma), Sab = S.subarray(q, q + ma * mb), Sba = S.subarray(2 * q, 2 * q + mb * ma), Sbb = S.subarray(3 * q, 3 * q + mb * mb);
   Saa.fill(0); Sab.fill(0); Sba.fill(0); Sbb.fill(0);
+  // per point the four blocks are N c' + c N' with c = (γw/2) N ∓ (w/2) k ∂N/∂n of each side: aa and bb are
+  // symmetric (their lower triangles are summed and mirrored), ba is ab turned over
+  const NA = bas.v, NB = bas2.v;
   for (let i = from; i < end; i++) {
     const o4 = 4 * i, w = a[o4 + 3], x = a[o4], y = a[o4 + 1], z = a[o4 + 2];
     bas.eval(x, y, z, ca, sa, ma);
     bas2.eval(x, y, z, cb, sb, mb);
-    for (let b = 0; b < ma; b++) MA[b] = k * bas.g[3 * b + axis];
-    for (let b = 0; b < mb; b++) MB[b] = k * bas2.g[3 * b + axis];
-    pair(ma, ma, Saa, bas.v, MA, 1, bas.v, MA, 1, w, gamma);
-    pair(ma, mb, Sab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
-    pair(mb, ma, Sba, bas2.v, MB, -1, bas.v, MA, 1, w, gamma);
-    pair(mb, mb, Sbb, bas2.v, MB, -1, bas2.v, MB, -1, w, gamma);
+    const hw = 0.5 * w * k, gh = 0.5 * gamma * w;
+    for (let b = 0; b < ma; b++) MA[b] = gh * NA[b] - hw * bas.g[3 * b + axis];
+    for (let b = 0; b < mb; b++) MB[b] = gh * NB[b] + hw * bas2.g[3 * b + axis];
+    for (let r = 0; r < ma; r++) {
+      const n = NA[r], cc = MA[r], row = r * ma, rb = r * mb;
+      for (let b = 0; b <= r; b++) Saa[row + b] += n * MA[b] + cc * NA[b];
+      for (let b = 0; b < mb; b++) Sab[rb + b] -= n * MB[b] + cc * NB[b];
+    }
+    for (let r = 0; r < mb; r++) {
+      const n = NB[r], cc = MB[r], row = r * mb;
+      for (let b = 0; b <= r; b++) Sbb[row + b] += n * MB[b] + cc * NB[b];
+    }
   }
+  for (let r = 0; r < ma; r++) for (let b = 0; b < r; b++) Saa[b * ma + r] = Saa[r * ma + b];
+  for (let r = 0; r < mb; r++) for (let b = 0; b < r; b++) Sbb[b * mb + r] = Sbb[r * mb + b];
+  for (let r = 0; r < ma; r++) for (let b = 0; b < mb; b++) Sba[b * ma + r] = Sab[r * mb + b];
 }
 /** Adds a face's blocks to the matrix. */
 function addFace(A: BlockMatrix, S: Float64Array, q: number, ea: number, eb: number, ma: number, mb: number) {
@@ -1058,23 +1118,26 @@ function solveSystem(c: Ctx, A: BlockMatrix, f: Float64Array, x0: Float64Array |
 function energies(c: Ctx, x: Float64Array, prev: Float64Array | null) {
   const { grid, nbs, off, nel, bas, k3 } = c, eta = new Float64Array(nel), pm = prev ? prev.length / nel : 0;
   let energy = 0;
+  // xᵀ K x with each element's conduction matrix made from the moments of its points (as `volumeTerms` makes it)
+  const T = momentTables(bas.p), K = new Float64Array(c.nb * c.nb), d = new Float64Array(c.nb);
+  momentsClear(T);
   for (let e = 0; e < nel; e++) {
-    const nb = nbs[e], E = grid.elems[e], kx = k3[3 * e], ky = k3[3 * e + 1], kz = k3[3 * e + 2];
-    for (const ci of E.cells) {
-      const Q = grid.cells[ci].pts;
-      for (let q = 0; q < Q.n; q++) {
-        const o = 4 * q, w = Q.a[o + 3];
-        bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s, c.nbs[e]);
-        let gx = 0, gy = 0, gz = 0, hx = 0, hy = 0, hz = 0;
-        for (let a = 0; a < nb; a++) {
-          const v = x[off[e] + a], dv = prev ? v - (a < pm ? prev[e * pm + a] : 0) : 0;
-          gx += v * bas.g[3 * a]; gy += v * bas.g[3 * a + 1]; gz += v * bas.g[3 * a + 2];
-          hx += dv * bas.g[3 * a]; hy += dv * bas.g[3 * a + 1]; hz += dv * bas.g[3 * a + 2];
-        }
-        energy += w * (kx * gx * gx + ky * gy * gy + kz * gz * gz);
-        eta[e] += w * (kx * hx * hx + ky * hy * hy + kz * hz * hz);
-      }
+    const nb = nbs[e], E = grid.elems[e], o = off[e], top = Math.max(0, 2 * c.deg[e] - 2);
+    for (const ci of E.cells) { const P = grid.cells[ci].pts; momentsAdd(T, P.a, 0, P.n, E.c, E.s, top); }
+    K.fill(0, 0, nb * nb);
+    conductFromMoments(T, K, nb, E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]);
+    momentsClear(T);
+    if (prev) for (let a = 0; a < nb; a++) d[a] = x[o + a] - (a < pm ? prev[e * pm + a] : 0);
+    let en = 0, et = 0;
+    for (let a = 0; a < nb; a++) {
+      const r = a * nb;
+      let s1 = 0, s2 = 0;
+      for (let b = 0; b < nb; b++) { s1 += K[r + b] * x[o + b]; if (prev) s2 += K[r + b] * d[b]; }
+      en += x[o + a] * s1;
+      if (prev) et += d[a] * s2;
     }
+    energy += en;
+    eta[e] = et > 0 ? et : 0;
   }
   return { energy, eta };
 }
@@ -1330,18 +1393,15 @@ function sourceLoad(c: Ctx, s: ThermalSource, tq: number, volume: number, volume
     if (only) { vol = 0; for (const d of only) vol += volumes[d] ?? 0; }
     if (!(vol > 0)) return { f, put };
     const power = s.density !== undefined ? s.density * vol : s.power!;
-    const q = power / vol;
+    const q = power / vol, T = momentTables(c.bas.p), ex = c.bas.ex;
+    momentsClear(T);
     for (let e = 0; e < nel; e++) {
       if (only && !only.has(dom[e])) continue;
       const E = grid.elems[e];
-      for (const ci of E.cells) {
-        const P = grid.cells[ci].pts;
-        for (let i = 0; i < P.n; i++) {
-          const o = 4 * i, w = q * P.a[o + 3];
-          c.bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], E.c, E.s, c.nbs[e]);
-          for (let a = 0; a < nbs[e]; a++) f[off[e] + a] += w * c.bas.v[a];
-        }
-      }
+      // Σ w N_a over the element's points = the moment of N_a's three degrees
+      for (const ci of E.cells) { const P = grid.cells[ci].pts; momentsAdd(T, P.a, 0, P.n, E.c, E.s, c.deg[e]); }
+      for (let a = 0; a < nbs[e]; a++) f[off[e] + a] += q * T.mom[(ex[3 * a] * T.m + ex[3 * a + 1]) * T.m + ex[3 * a + 2]];
+      momentsClear(T);
     }
     put = power;
   }
