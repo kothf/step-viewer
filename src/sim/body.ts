@@ -21,6 +21,8 @@ export class MeshBody implements Body {
   private readonly t: Float64Array;
   private readonly nt: number;
   /** Per axis: 2D buckets over the other two coordinates. */
+  private seen: Int32Array | null = null;
+  private stamp = 0;
   private readonly cols: { a1: number; a2: number; n1: number; n2: number; o1: number; o2: number; s: number; idx: Int32Array; start: Int32Array }[] = [];
   /** 3D buckets for box queries. */
   private readonly g3: { n: number[]; o: number[]; s: number; idx: Int32Array; start: Int32Array };
@@ -103,25 +105,43 @@ export class MeshBody implements Body {
     return out.sort((a, b) => a - b);
   }
 
+  /** Odd number of surface crossings beyond x on the line along X through the point: the cuts `hits(0, …)` gives,
+   * counted without making the list. */
   inside(x: number, y: number, z: number): boolean {
-    const h = this.hits(0, [x, y, z]);
+    const C = this.cols[0], t = this.t;
+    const u = (C.a1 === 1 ? y : z) + this.jit, v = (C.a2 === 1 ? y : z) + 0.7071 * this.jit;
+    const i = Math.floor((u - C.o1) / C.s), j = Math.floor((v - C.o2) / C.s);
+    if (i < 0 || j < 0 || i >= C.n1 || j >= C.n2) return false;
+    const b = i * C.n2 + j, a1 = C.a1, a2 = C.a2, idx = C.idx;
     let c = 0;
-    for (const v of h) if (v > x) c++;
+    for (let k = C.start[b], end = C.start[b + 1]; k < end; k++) {
+      const o = 9 * idx[k];
+      const x0 = t[o + a1], y0 = t[o + a2], x1 = t[o + 3 + a1], y1 = t[o + 3 + a2], x2 = t[o + 6 + a1], y2 = t[o + 6 + a2];
+      const d = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
+      if (d === 0) continue;
+      const l0 = ((y1 - y2) * (u - x2) + (x2 - x1) * (v - y2)) / d;
+      const l1 = ((y2 - y0) * (u - x2) + (x0 - x2) * (v - y2)) / d;
+      const l2 = 1 - l0 - l1;
+      if (l0 < 0 || l1 < 0 || l2 < 0) continue;
+      if (l0 * t[o] + l1 * t[o + 3] + l2 * t[o + 6] > x) c++;
+    }
     return (c & 1) === 1;
   }
 
   hint(lo: ArrayLike<number>, hi: ArrayLike<number>) {
     const G = this.g3, t = this.t;
     const r = [0, 1, 2].map(a => [Math.max(0, Math.floor((lo[a] - G.o[a]) / G.s)), Math.min(G.n[a] - 1, Math.floor((hi[a] - G.o[a]) / G.s))]);
-    const seen = new Set<number>();
+    // a triangle listed in several boxes is looked at once: stamped with this call's number
+    if (!this.seen) this.seen = new Int32Array(this.nt);
+    const seen = this.seen, stamp = ++this.stamp;
     const m = [0, 0, 0];
     let first = -1, edge = false, any = false;
     for (let x = r[0][0]; x <= r[0][1]; x++) for (let y = r[1][0]; y <= r[1][1]; y++) for (let z = r[2][0]; z <= r[2][1]; z++) {
       const b = (z * G.n[1] + y) * G.n[0] + x;
       for (let k = G.start[b]; k < G.start[b + 1]; k++) {
         const i = G.idx[k];
-        if (seen.has(i)) continue;
-        seen.add(i);
+        if (seen[i] === stamp) continue;
+        seen[i] = stamp;
         if (!triBox(t, 9 * i, lo, hi)) continue;
         any = true;
         const nx = this.n[3 * i], ny = this.n[3 * i + 1], nz = this.n[3 * i + 2];
@@ -148,28 +168,38 @@ function flatten(lists: number[][]) {
   return { idx, start };
 }
 
-/** Triangle (at t[o]) meets box [lo, hi]: separating axis test. */
+/** One axis of the separating axis test: the triangle's three projections against the box's reach. */
+function axisMeets(ax0: number, ax1: number, ax2: number, e0: number, e1: number, e2: number,
+  a0: number, a1: number, a2: number, b0: number, b1: number, b2: number, c0: number, c1: number, c2: number): boolean {
+  const p0 = a0 * ax0 + a1 * ax1 + a2 * ax2, p1 = b0 * ax0 + b1 * ax1 + b2 * ax2, p2 = c0 * ax0 + c1 * ax1 + c2 * ax2;
+  const r = e0 * Math.abs(ax0) + e1 * Math.abs(ax1) + e2 * Math.abs(ax2);
+  return !(Math.min(p0, p1, p2) > r || Math.max(p0, p1, p2) < -r);
+}
+
+/** Triangle (at t[o]) meets box [lo, hi]: separating axis test (no arrays made: it runs for every triangle near
+ * every cube the cells are cut from). */
 export function triBox(t: ArrayLike<number>, o: number, lo: ArrayLike<number>, hi: ArrayLike<number>): boolean {
-  const c = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
-  const e = [(hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2, (hi[2] - lo[2]) / 2];
-  const v = [0, 1, 2].map(k => [t[o + 3 * k] - c[0], t[o + 3 * k + 1] - c[1], t[o + 3 * k + 2] - c[2]]);
-  for (let a = 0; a < 3; a++) {
-    if (Math.min(v[0][a], v[1][a], v[2][a]) > e[a] || Math.max(v[0][a], v[1][a], v[2][a]) < -e[a]) return false;
-  }
-  const f = [0, 1, 2].map(k => [v[(k + 1) % 3][0] - v[k][0], v[(k + 1) % 3][1] - v[k][1], v[(k + 1) % 3][2] - v[k][2]]);
-  const n = [f[0][1] * f[1][2] - f[0][2] * f[1][1], f[0][2] * f[1][0] - f[0][0] * f[1][2], f[0][0] * f[1][1] - f[0][1] * f[1][0]];
-  const test = (ax: number[]) => {
-    const p = v.map(w => w[0] * ax[0] + w[1] * ax[1] + w[2] * ax[2]);
-    const r = e[0] * Math.abs(ax[0]) + e[1] * Math.abs(ax[1]) + e[2] * Math.abs(ax[2]);
-    return !(Math.min(...p) > r || Math.max(...p) < -r);
-  };
-  if (!test(n)) return false;
-  for (let a = 0; a < 3; a++) for (const fk of f) {
-    const u = [0, 0, 0];
-    u[a] = 1;
-    const ax = [u[1] * fk[2] - u[2] * fk[1], u[2] * fk[0] - u[0] * fk[2], u[0] * fk[1] - u[1] * fk[0]];
-    if (!test(ax)) return false;
-  }
+  const cx = (lo[0] + hi[0]) / 2, cy = (lo[1] + hi[1]) / 2, cz = (lo[2] + hi[2]) / 2;
+  const e0 = (hi[0] - lo[0]) / 2, e1 = (hi[1] - lo[1]) / 2, e2 = (hi[2] - lo[2]) / 2;
+  const a0 = t[o] - cx, a1 = t[o + 1] - cy, a2 = t[o + 2] - cz;
+  const b0 = t[o + 3] - cx, b1 = t[o + 4] - cy, b2 = t[o + 5] - cz;
+  const c0 = t[o + 6] - cx, c1 = t[o + 7] - cy, c2 = t[o + 8] - cz;
+  if (Math.min(a0, b0, c0) > e0 || Math.max(a0, b0, c0) < -e0) return false;
+  if (Math.min(a1, b1, c1) > e1 || Math.max(a1, b1, c1) < -e1) return false;
+  if (Math.min(a2, b2, c2) > e2 || Math.max(a2, b2, c2) < -e2) return false;
+  // edges f0 = b − a, f1 = c − b, f2 = a − c
+  const f00 = b0 - a0, f01 = b1 - a1, f02 = b2 - a2, f10 = c0 - b0, f11 = c1 - b1, f12 = c2 - b2, f20 = a0 - c0, f21 = a1 - c1, f22 = a2 - c2;
+  if (!axisMeets(f01 * f12 - f02 * f11, f02 * f10 - f00 * f12, f00 * f11 - f01 * f10, e0, e1, e2, a0, a1, a2, b0, b1, b2, c0, c1, c2)) return false;
+  // box axis × edge: X × f = (0, −f2, f1), Y × f = (f2, 0, −f0), Z × f = (−f1, f0, 0)
+  if (!axisMeets(0, -f02, f01, e0, e1, e2, a0, a1, a2, b0, b1, b2, c0, c1, c2)) return false;
+  if (!axisMeets(0, -f12, f11, e0, e1, e2, a0, a1, a2, b0, b1, b2, c0, c1, c2)) return false;
+  if (!axisMeets(0, -f22, f21, e0, e1, e2, a0, a1, a2, b0, b1, b2, c0, c1, c2)) return false;
+  if (!axisMeets(f02, 0, -f00, e0, e1, e2, a0, a1, a2, b0, b1, b2, c0, c1, c2)) return false;
+  if (!axisMeets(f12, 0, -f10, e0, e1, e2, a0, a1, a2, b0, b1, b2, c0, c1, c2)) return false;
+  if (!axisMeets(f22, 0, -f20, e0, e1, e2, a0, a1, a2, b0, b1, b2, c0, c1, c2)) return false;
+  if (!axisMeets(-f01, f00, 0, e0, e1, e2, a0, a1, a2, b0, b1, b2, c0, c1, c2)) return false;
+  if (!axisMeets(-f11, f10, 0, e0, e1, e2, a0, a1, a2, b0, b1, b2, c0, c1, c2)) return false;
+  if (!axisMeets(-f21, f20, 0, e0, e1, e2, a0, a1, a2, b0, b1, b2, c0, c1, c2)) return false;
   return true;
 }
 
