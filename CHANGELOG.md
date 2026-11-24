@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.730.0] - 2026-11-24
+
+### Changed
+- Static and modal studies with a large held face solve faster: the support's terms are summed per element and written once instead of point by point. A bracket held on the underside of its foot, five passes, in Chrome on four cores: 51 s before, 31 s now. Results agree to about ten digits.
+
 ## [1.729.0] - 2026-11-24
 
 ### Changed
@@ -4815,7 +4820,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.729.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.730.0...HEAD
+[1.730.0]: https://github.com/kothf/step-viewer/compare/v1.729.0...v1.730.0
 [1.729.0]: https://github.com/kothf/step-viewer/compare/v1.728.0...v1.729.0
 [1.728.0]: https://github.com/kothf/step-viewer/compare/v1.727.0...v1.728.0
 [1.727.0]: https://github.com/kothf/step-viewer/compare/v1.726.0...v1.727.0
