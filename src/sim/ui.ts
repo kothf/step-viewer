@@ -295,6 +295,9 @@ export class SimController {
   /** Solve on change: the timer of the next look, the state it last started a solve for, and how many it started. */
   private autoTimer = 0;
   private autoFor = "";
+  /** The studies a document was opened with: each is not solved by itself until something changes (opening a big
+   *  assembly used to start its study at once, which read as a slow open). */
+  private openedWith: { doc: string; studies: Set<string> } | null = null;
   private autoRuns = 0;
   private cacheHits = 0;
   private docId: string | null = null;
@@ -733,6 +736,7 @@ export class SimController {
       this.client.cancel();
       this.clearPlot();
       this.edit = null; this.res = null; this.error = null; this.problems.clear(); this.activeId = null; this.running = false; this.probes = []; this.probeKey = ""; this.probing = false; this.asked = "";
+      this.openedWith = doc ? { doc: doc.id, studies: new Set((doc.studies ?? []).map(x => x.id)) } : null;
     }
     $("#t-sim").hidden = !doc;
     if (this.edit && !this.study()) this.edit = null;
@@ -778,6 +782,7 @@ export class SimController {
     const tag = `${doc.id}|${st.id}|${this.keyOf(doc, st)}`;
     if (tag === this.autoFor) return;
     this.autoFor = tag;
+    if (this.openedWith?.doc === doc.id && this.openedWith.studies.delete(st.id)) return;
     this.autoRuns++;
     void this.solve();
   }
