@@ -11,8 +11,8 @@ import { BlockMatrix } from "./sparse";
 import { BlockCholesky, type CholPlan } from "./blockchol";
 import { pcgSolver } from "./pcg";
 import { makeGrid, refit, memoryBytes, type Grid } from "./grid";
-import { facePoints, fitFacePoints, gridTrianglePoints, type Inside, type Points } from "./quad";
-import { DIRECT_FLOPS, DIRECT_LIMIT, MEMORY_LIMIT, directFits, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
+import { facePoints, fitFacePoints, fitPlanePoints, gridTrianglePoints, type Inside, type Points } from "./quad";
+import { DIRECT_LIMIT, MEMORY_LIMIT, directFits, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
 import { exchangeResistance } from "./viewfactor";
 import { progress } from "./progress";
 import { kernel, parallelFor, sharedF64, sharedI32, worthSharing, type ParJob } from "./threads";
@@ -341,8 +341,12 @@ function bodiesOf(c: Ctx, tris: ArrayLike<number>): Int8Array | null {
   return of;
 }
 
-/** Boundary points of some triangles with the element each lies in: e, x, y, z, w, nx, ny, nz per point. */
-function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1): Float64Array {
+/**
+ * Boundary points of some triangles with the element each lies in: e, x, y, z, w, nx, ny, nz per point. The points of
+ * one element in one plane are replaced by the few fitted points that integrate its functions' products the same
+ * (`fitPlanar`), unless `fit` is false.
+ */
+function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1, fit = true): Float64Array {
   const g = c.grid, { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q), nrms = triNormals(tris), eps = 1e-7 * g.h;
   // with several bodies each point is read in its triangle's body (asked once per triangle, not per point)
   const own = dom < 0 ? bodiesOf(c, tris) : null;
@@ -356,7 +360,39 @@ function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1): Float64A
     if (cl < 0) continue;
     out.set([g.cells[cl].el, x, y, z, pts.a[o + 3], nx, ny, nz], 8 * n++);
   }
-  return out.subarray(0, 8 * n);
+  return fit ? fitPlanar(c, out.subarray(0, 8 * n)) : out.subarray(0, 8 * n);
+}
+
+/**
+ * The points of `L` (8 numbers each) with those of one element lying in one plane replaced by the (2d + 1)² points
+ * of `fitPlanePoints` (d = the element's degree), which integrate every product of its functions as they did: a
+ * flat face made of many triangles, each cut at the grid planes, otherwise gives each element hundreds of points.
+ * Groups keep the order they are first met; groups too small to gain keep their own points.
+ */
+function fitPlanar(c: Ctx, L: Float64Array): Float64Array {
+  const n = L.length / 8, h = c.grid.h, tol = 1e-7;
+  if (n < 2) return L;
+  type Group = { e: number; nx: number; ny: number; nz: number; d: number; idx: number[] };
+  const groups: Group[] = [], byEl = new Map<number, Group[]>();
+  for (let i = 0; i < n; i++) {
+    const o = 8 * i, e = L[o], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], d = nx * L[o + 1] + ny * L[o + 2] + nz * L[o + 3];
+    let list = byEl.get(e), G: Group | undefined;
+    if (!list) byEl.set(e, (list = []));
+    for (const g of list) if (Math.abs(g.nx - nx) < tol && Math.abs(g.ny - ny) < tol && Math.abs(g.nz - nz) < tol && Math.abs(g.d - d) < tol * h) { G = g; break; }
+    if (!G) { G = { e, nx, ny, nz, d, idx: [] }; list.push(G); groups.push(G); }
+    G.idx.push(i);
+  }
+  if (groups.length === n) return L;
+  const src = { a: new Float64Array(4 * n), n } as Points;
+  for (let i = 0; i < n; i++) for (let k = 0; k < 4; k++) src.a[4 * i + k] = L[8 * i + 1 + k];
+  const out: number[] = [];
+  let fitted = false;
+  for (const G of groups) {
+    const F = fitPlanePoints(src, G.idx, [G.nx, G.ny, G.nz], 2 * c.deg[G.e] + 1, 1e-9 * h);
+    if (F) { fitted = true; for (let k = 0; k < F.n; k++) out.push(G.e, F.a[4 * k], F.a[4 * k + 1], F.a[4 * k + 2], F.a[4 * k + 3], G.nx, G.ny, G.nz); }
+    else for (const i of G.idx) for (let k = 0; k < 8; k++) out.push(L[8 * i + k]);
+  }
+  return fitted ? Float64Array.from(out) : L;
 }
 
 /** The points of the face between cell `ca` and the next one along `axis`, for degree `d` (the higher side's). */
@@ -642,7 +678,7 @@ function contactFlows(c: Ctx, contacts: ThermalContact[], joins: number[], x: Fl
 function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
   const { grid, pb } = c, doms = c.doms!;
   const eps = 2e-3 * grid.h, far = Math.max(0, pb.gap ?? 0) + eps;
-  const boxes = doms.map(d => triBox(d.tris)), L = located(c, tris, q);
+  const boxes = doms.map(d => triBox(d.tris)), L = located(c, tris, q, -1, false);
   let m = 0;
   for (let o = 0; o < L.length; o += 8) {
     const x = L[o + 1], y = L[o + 2], z = L[o + 3], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], own = c.dom[L[o]];
@@ -657,7 +693,7 @@ function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
     if (m !== o) L.copyWithin(m, o, o + 8);
     m += 8;
   }
-  return L.subarray(0, m);
+  return fitPlanar(c, L.subarray(0, m));
 }
 
 /** The domains nothing takes heat from: no sink on them and none on anything they pass heat to. */
@@ -949,11 +985,18 @@ function copyMatrix(A: BlockMatrix): BlockMatrix {
  * `Ctx` have the same blocks, so they share the answer and the factorisation's plan.
  */
 const solverPlans = new WeakMap<Ctx, { blocks: number; direct: boolean; plan?: CholPlan }>();
+/**
+ * How big a factorisation thermal solves still take directly: more than a static solve, since conjugate gradients
+ * converge slowly across bodies whose conductivities differ by a thousand times (a board and its copper parts) and
+ * a radiating study solves several times on one factorisation. A board's third pass (84,000 unknowns, 4.6e10
+ * multiplications, 6.3e7 values) took 70 s by conjugate gradients and 42 s directly on three threads.
+ */
+export const THERMAL_FLOPS = 1.5e11, THERMAL_VALUES = 7.5e7;
 function systemSolver(c: Ctx, A: BlockMatrix): Solver {
   const pb = c.pb;
   let how = solverPlans.get(c);
   if (!how || how.blocks !== A.blocks.size) {
-    const fits = pb.solver ? { direct: pb.solver === "direct" } as ReturnType<typeof directFits> : directFits(A, DIRECT_LIMIT, DIRECT_FLOPS);
+    const fits = pb.solver ? { direct: pb.solver === "direct" } as ReturnType<typeof directFits> : directFits(A, DIRECT_LIMIT, THERMAL_FLOPS, THERMAL_VALUES);
     solverPlans.set(c, (how = { blocks: A.blocks.size, direct: fits.direct, plan: fits.plan }));
   }
   if (!how.direct) { const P = pcgSolver(A, { coarse: basisSize(1), tol: pb.tol ?? 1e-9 }); return { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
@@ -1202,10 +1245,16 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   const A = new BlockMatrix(nel, nbs), f = new Float64Array(A.size);
   volumeTerms(c, A);
   const lens: (Float64Array | undefined)[] = [];
+  // sinks on the same triangles (convection and radiation from all open surfaces) share their points
+  const seen = [new Map<object, Float64Array>(), new Map<object, Float64Array>()];
   const at = pb.sinks.map((s, i) => {
     if (s.natural && s.temp === undefined) { const r = naturalPoints(c, s, tq); lens[i] = r.lens; return r.L; }
     if (s.forced && s.temp === undefined) { const r = groupedPoints(c, s, tq, [s.forced.h]); lens[i] = r.lens; return r.L; }
-    return s.free && doms ? freePoints(c, s.tris, tq) : located(c, s.tris, tq);
+    const free = !!(s.free && doms), kept = seen[free ? 1 : 0], key = s.tris as object, had = kept.get(key);
+    if (had) return had;
+    const L = free ? freePoints(c, s.tris, tq) : located(c, s.tris, tq);
+    kept.set(key, L);
+    return L;
   });
   // the penalty is measured on the fixed-temperature faces and, with several domains, on every domain's surface
   const surf = at.filter((_L, i) => pb.sinks[i].temp !== undefined);

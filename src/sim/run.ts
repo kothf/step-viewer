@@ -609,9 +609,14 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
     for (let i = 0; i < b.face.length; i++) if (!gone[b.face[i]]) keep.push(i);
     return keep;
   };
+  // the same triangles give the same array, so items on one set of faces (convection and radiation from all open surfaces) share their points in the solver
+  const gathered: { idx: number[]; tris: Float64Array }[] = [];
   const gather = (idx: number[]) => {
+    const had = gathered.find(g => g.idx.length === idx.length && g.idx.every((t, k) => t === idx[k]));
+    if (had) return had.tris;
     const tris = new Float64Array(9 * idx.length);
     idx.forEach((t, k) => { for (let j = 0; j < 9; j++) tris[9 * k + j] = b.tris[9 * t + j]; });
+    gathered.push({ idx, tris });
     return tris;
   };
   const facesOf = (it: { id: string; faces: { name: string }[] }) => { const idx = idxOf(it); return idx ? gather(idx) : null; };

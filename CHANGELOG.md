@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.733.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies take fewer points on flat faces and factor bigger systems directly. The points a film, radiation or held temperature uses on one element's part of a flat face are replaced by a few fitted points that integrate the same (a board's open surfaces: 1.08 million points to 0.31 million), and convection and radiation on the same faces share their points. A thermal system is now solved directly up to 1.5 × 10¹¹ multiplications and 7.5 × 10⁷ stored values, since conjugate gradients converge slowly between a board and its copper parts and a radiating study solves several times. The amplifier board's own study, three passes in Chrome on four cores: 97 s to 72 s, with the same temperatures.
+
 ## [1.732.0] - 2026-11-24
 
 ### Changed
@@ -4830,7 +4836,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.732.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.733.0...HEAD
+[1.733.0]: https://github.com/kothf/step-viewer/compare/v1.732.0...v1.733.0
 [1.732.0]: https://github.com/kothf/step-viewer/compare/v1.731.0...v1.732.0
 [1.731.0]: https://github.com/kothf/step-viewer/compare/v1.730.0...v1.731.0
 [1.730.0]: https://github.com/kothf/step-viewer/compare/v1.729.0...v1.730.0
