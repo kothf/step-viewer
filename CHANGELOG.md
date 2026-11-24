@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.738.0] - 2026-11-24
+
+### Changed
+
+- Structural, modal and thermal studies cut their cells faster: the tests "does this triangle meet this cube" and "is this point inside the body", which run for every cube and every sample point, no longer make temporary lists. The first cutting of the cells of the amplifier board thermal study takes 2.9 s instead of 5.9 s in Chrome on four cores, of the bracket static study 1.3 s instead of 2.3 s, with the same results.
+
 ## [1.737.0] - 2026-11-24
 
 ### Changed
@@ -4860,7 +4866,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.737.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.738.0...HEAD
+[1.738.0]: https://github.com/kothf/step-viewer/compare/v1.737.0...v1.738.0
 [1.737.0]: https://github.com/kothf/step-viewer/compare/v1.736.0...v1.737.0
 [1.736.0]: https://github.com/kothf/step-viewer/compare/v1.735.0...v1.736.0
 [1.735.0]: https://github.com/kothf/step-viewer/compare/v1.734.0...v1.735.0
