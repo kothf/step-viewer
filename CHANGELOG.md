@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.735.0] - 2026-11-24
+
+### Changed
+
+- The factorisation of structural, modal and thermal studies, and the solves with it, run their inner loops in WebAssembly with SIMD. The factor now lives in a WebAssembly memory that every thread works on in place; each value is still one sum made the same way on every thread, so results do not depend on the number of threads (they differ from 1.734.0 in the last digits). Amplifier board thermal study, three passes, Chrome on four cores: 66 s to 48 s (factorising the third pass 17.6 s to 4.3 s) with the same temperatures; bracket static study, five passes: 24 s to 17 s.
+
 ## [1.734.0] - 2026-11-24
 
 ### Changed
@@ -4842,7 +4848,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.734.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.735.0...HEAD
+[1.735.0]: https://github.com/kothf/step-viewer/compare/v1.734.0...v1.735.0
 [1.734.0]: https://github.com/kothf/step-viewer/compare/v1.733.0...v1.734.0
 [1.733.0]: https://github.com/kothf/step-viewer/compare/v1.732.0...v1.733.0
 [1.732.0]: https://github.com/kothf/step-viewer/compare/v1.731.0...v1.732.0
