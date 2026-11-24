@@ -19578,8 +19578,8 @@ try {
   }
 
   // --- Structural analysis 1.637 (FR-CON-020/021): a toolbox screw with its nut is analysed as a bolt ---
-  // In shard 6 since 1.734.0 (shard 4 since 1.710.0, shard 3 since 1.700.0): shards 5, 3, then 4 reached the 12 minute limit.
-  if (inShard(6)) {
+  // In shard 5 since 1.741.0 (shard 6 reached the limit), shard 6 since 1.734.0 (shard 4 since 1.710.0, shard 3 since 1.700.0): shards 5, 3, then 4 reached the 12 minute limit.
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
