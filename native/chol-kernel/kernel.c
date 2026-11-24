@@ -91,3 +91,52 @@ int diag(f64 *d, int m, int o) {
   }
   return 0;
 }
+
+// Solves with the factor, block by block (blockchol.ts walks the blocks). `y` is the right-hand side in step order,
+// in the same memory; all places are counted in doubles from `d`.
+
+// Forward with a diagonal block: the m values at y0 ← L⁻¹ · them.
+__attribute__((export_name("fdiag")))
+void fdiag(f64 *d, int m, int dg, int y0) {
+  f64 *y = d + y0;
+  for (int r = 0; r < m; r++) {
+    const f64 *R = d + dg + r * m;
+    y[r] = (y[r] - dot(R, y, r)) / R[r];
+  }
+}
+
+// Forward with a block below: the mi values at yi −= block · the mk values at y0.
+__attribute__((export_name("fblock")))
+void fblock(f64 *d, int mk, int mi, int o, int y0, int yi) {
+  const f64 *y = d + y0;
+  f64 *t = d + yi;
+  for (int a = 0; a < mi; a++) t[a] -= dot(d + o + a * mk, y, mk);
+}
+
+// Backward with a block below: the mk values at y0 −= blockᵀ · the mi values at yi (row after row).
+__attribute__((export_name("bblock")))
+void bblock(f64 *d, int mk, int mi, int o, int y0, int yi) {
+  f64 *y = d + y0;
+  const f64 *t = d + yi;
+  for (int a = 0; a < mi; a++) {
+    const f64 *R = d + o + a * mk;
+    v128_t v = wasm_f64x2_splat(t[a]);
+    int c = 0;
+    for (; c + 1 < mk; c += 2) wasm_v128_store(y + c, wasm_f64x2_sub(wasm_v128_load(y + c), wasm_f64x2_mul(wasm_v128_load(R + c), v)));
+    if (c < mk) y[c] -= R[c] * t[a];
+  }
+}
+
+// Backward with a diagonal block: the m values at y0 ← L⁻ᵀ · them.
+__attribute__((export_name("bdiag")))
+void bdiag(f64 *d, int m, int dg, int y0) {
+  f64 *y = d + y0;
+  for (int r = m - 1; r >= 0; r--) {
+    const f64 *R = d + dg + r * m;
+    f64 s = (y[r] /= R[r]);
+    v128_t v = wasm_f64x2_splat(s);
+    int c = 0;
+    for (; c + 1 < r; c += 2) wasm_v128_store(y + c, wasm_f64x2_sub(wasm_v128_load(y + c), wasm_f64x2_mul(wasm_v128_load(R + c), v)));
+    if (c < r) y[c] -= R[c] * s;
+  }
+}

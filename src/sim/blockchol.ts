@@ -7,7 +7,7 @@
 
 import type { BlockMatrix } from "./sparse";
 import { progress } from "./progress";
-import { kernelOf } from "./cholwasm";
+import { kernelOf, scratchOf, type CholKernel } from "./cholwasm";
 import { factor, factorBuffer, parallelFor, sharedF64, sharedSolvePlan, worthSharing } from "./threads";
 
 /** The factor's layout: element order, each column's lower blocks and where every block lives in `data`. */
@@ -262,7 +262,7 @@ export class BlockCholesky {
     this.n = A.size;
     const P = (this.plan = opts.plan ?? cholPlan(A, opts.order));
     if (P.size > 2 ** 28) throw new Error(`E-SIM-MEMORY: factor of ${P.size} values`);
-    this.data = opts.data ?? factorBuffer(P.size);
+    this.data = opts.data ?? factorBuffer(P.size, this.n);
     if (!opts.factored) { scatter(A, P, this.data); factor(P, this.data); }
     this.off = A.off;
     this.poff = new Int32Array(P.nel + 1);
@@ -270,8 +270,9 @@ export class BlockCholesky {
   }
   get values() { return this.data.length; }
   solve(b: Float64Array): Float64Array {
-    const x = new Float64Array(this.n);
-    cholSolve(this.solvePlan(), this.data, b, new Float64Array(this.n), x);
+    const x = new Float64Array(this.n), K = kernelOf(this.data), y = K && (this.scratch ??= scratchOf(this.data, this.n));
+    if (K && y) kernelSolve(K, this.solvePlan(), this.data, b, y, x);
+    else cholSolve(this.solvePlan(), this.data, b, new Float64Array(this.n), x);
     return x;
   }
   /** Solves for several right-hand sides, on all threads when that is worth it: the same numbers as `solve` gives one by one. */
@@ -285,32 +286,26 @@ export class BlockCholesky {
     return bs.map((_, j) => X.slice(n * j, n * j + n));
   }
   private sharedPlan?: SolvePlan;
+  private scratch?: Float64Array | null;
   private solvePlan(): SolvePlan { const P = this.plan; return { nel: P.nel, ms: P.ms, perm: P.perm, colStart: P.colStart, rows: P.rows, blockAt: P.blockAt, diagAt: P.diagAt, off: this.off, poff: this.poff }; }
 }
 
 /** The plan's arrays a solve reads (they may be shared copies). */
 export interface SolvePlan { nel: number; ms: Int32Array; perm: Int32Array; colStart: Int32Array; rows: Int32Array; blockAt: Float64Array; diagAt: Float64Array; off: Int32Array; poff: Int32Array }
-/** Solves L Lᵀ x = b with the factor `L`: `y` is scratch of the same length, `x` takes the answer (b and x may be parts of longer arrays). */
+/**
+ * Solves L Lᵀ x = b with the factor `L`: `y` is scratch of the same length, `x` takes the answer (b and x may be parts
+ * of longer arrays). Sums are made the way the kernel makes them (`kernelSolve` gives the same numbers).
+ */
 export function cholSolve(P: SolvePlan, L: Float64Array, b: Float64Array, y: Float64Array, x: Float64Array) {
   const nel = P.nel, ms = P.ms, poff = P.poff, off = P.off;
   for (let k = 0; k < nel; k++) { const e = P.perm[k]; y.set(b.subarray(off[e], off[e] + ms[k]), poff[k]); }
   // forward: L y = b
   for (let k = 0; k < nel; k++) {
     const m = ms[k], d = P.diagAt[k], y0 = poff[k];
-    for (let r = 0; r < m; r++) {
-      let s = y[y0 + r];
-      const R = d + r * m;
-      for (let c = 0; c < r; c++) s -= L[R + c] * y[y0 + c];
-      y[y0 + r] = s / L[R + r];
-    }
+    for (let r = 0; r < m; r++) { const R = d + r * m; y[y0 + r] = (y[y0 + r] - dotLy(L, R, y, y0, r)) / L[R + r]; }
     for (let t = P.colStart[k]; t < P.colStart[k + 1]; t++) {
       const i = P.rows[t], mi = ms[i], o = P.blockAt[t], yi = poff[i];
-      for (let a = 0; a < mi; a++) {
-        let s = 0;
-        const R = o + a * m;
-        for (let c = 0; c < m; c++) s += L[R + c] * y[y0 + c];
-        y[yi + a] -= s;
-      }
+      for (let a = 0; a < mi; a++) y[yi + a] -= dotLy(L, o + a * m, y, y0, m);
     }
   }
   // backward: Lᵀ x = y
@@ -319,17 +314,38 @@ export function cholSolve(P: SolvePlan, L: Float64Array, b: Float64Array, y: Flo
     for (let t = P.colStart[k]; t < P.colStart[k + 1]; t++) {
       const i = P.rows[t], mi = ms[i], o = P.blockAt[t], yi = poff[i];
       for (let a = 0; a < mi; a++) {
-        const v = y[yi + a];
-        if (v === 0) continue;
-        const R = o + a * m;
+        const v = y[yi + a], R = o + a * m;
         for (let c = 0; c < m; c++) y[y0 + c] -= L[R + c] * v;
       }
     }
     for (let r = m - 1; r >= 0; r--) {
       const v = (y[y0 + r] /= L[d + r * m + r]);
-      if (v !== 0) for (let c = 0; c < r; c++) y[y0 + c] -= L[d + r * m + c] * v;
+      for (let c = 0; c < r; c++) y[y0 + c] -= L[d + r * m + c] * v;
     }
   }
   for (let k = 0; k < nel; k++) { const e = P.perm[k]; x.set(y.subarray(poff[k], poff[k] + ms[k]), off[e]); }
 }
-
+/** Σ L[x + q] · y[at + q] over q < n, summed as `dot2` sums. */
+function dotLy(L: Float64Array, x: number, y: Float64Array, at: number, n: number): number {
+  let s0 = 0, s1 = 0, q = 0;
+  for (; q + 1 < n; q += 2) { s0 += L[x + q] * y[at + q]; s1 += L[x + q + 1] * y[at + q + 1]; }
+  let s = s0 + s1;
+  if (q < n) s += L[x + q] * y[at + q];
+  return s;
+}
+/** `cholSolve` by the kernel: `y` is scratch in the factor's own memory, right after the factor. */
+function kernelSolve(K: CholKernel, P: SolvePlan, L: Float64Array, b: Float64Array, y: Float64Array, x: Float64Array) {
+  const nel = P.nel, ms = P.ms, poff = P.poff, off = P.off, d = L.byteOffset, at = L.length;
+  for (let k = 0; k < nel; k++) { const e = P.perm[k]; y.set(b.subarray(off[e], off[e] + ms[k]), poff[k]); }
+  for (let k = 0; k < nel; k++) {
+    const m = ms[k], y0 = at + poff[k];
+    K.fdiag(d, m, P.diagAt[k], y0);
+    for (let t = P.colStart[k], t1 = P.colStart[k + 1]; t < t1; t++) { const i = P.rows[t]; K.fblock(d, m, ms[i], P.blockAt[t], y0, at + poff[i]); }
+  }
+  for (let k = nel - 1; k >= 0; k--) {
+    const m = ms[k], y0 = at + poff[k];
+    for (let t = P.colStart[k], t1 = P.colStart[k + 1]; t < t1; t++) { const i = P.rows[t]; K.bblock(d, m, ms[i], P.blockAt[t], y0, at + poff[i]); }
+    K.bdiag(d, m, P.diagAt[k], y0);
+  }
+  for (let k = 0; k < nel; k++) { const e = P.perm[k]; x.set(y.subarray(poff[k], poff[k] + ms[k]), off[e]); }
+}

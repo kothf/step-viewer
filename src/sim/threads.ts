@@ -46,9 +46,9 @@ export const helperCount = () => helpers.length;
 /** Jobs shared so far, the steps shared out and the helpers that took part in the last job (tests, debug). */
 export const threadStats = () => ({ ...stats, helpers: helpers.length });
 
-/** Memory for a factor: shared when there are helpers to share it with. */
-export function factorBuffer(n: number): Float64Array {
-  const share = helpers.length > 0 && sharedOk, k = kernelBuffer(n, share);
+/** Memory for a factor: shared when there are helpers to share it with (`extra` doubles of room after it, where the kernel's memory is had). */
+export function factorBuffer(n: number, extra = 0): Float64Array {
+  const share = helpers.length > 0 && sharedOk, k = kernelBuffer(n, share, extra);
   if (k) return k.data;
   return share ? new Float64Array(new SharedArrayBuffer(8 * n)) : new Float64Array(n);
 }

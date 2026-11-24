@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 
-- The factorisation of structural, modal and thermal studies runs its inner loops in WebAssembly with SIMD. The factor now lives in a WebAssembly memory that every thread works on in place; each value is still one sum made the same way on every thread, so results do not depend on the number of threads (they differ from 1.734.0 in the last digits). Amplifier board thermal study, three passes, Chrome on four cores: 66 s to 49 s (factorising the third pass 17.6 s to 4.3 s) with the same temperatures; bracket static study, five passes: 24 s to 17 s.
+- The factorisation of structural, modal and thermal studies, and the solves with it, run their inner loops in WebAssembly with SIMD. The factor now lives in a WebAssembly memory that every thread works on in place; each value is still one sum made the same way on every thread, so results do not depend on the number of threads (they differ from 1.734.0 in the last digits). Amplifier board thermal study, three passes, Chrome on four cores: 66 s to 48 s (factorising the third pass 17.6 s to 4.3 s) with the same temperatures; bracket static study, five passes: 24 s to 17 s.
 
 ## [1.734.0] - 2026-11-24
 

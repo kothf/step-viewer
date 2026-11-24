@@ -10,6 +10,10 @@ export interface CholKernel {
   update(d: number, mk: number, mi: number, mj: number, oi: number, oj: number, to: number, diag: number, a0: number): void;
   solve(d: number, mk: number, mi: number, dg: number, o: number): void;
   diag(d: number, m: number, o: number): number;
+  fdiag(d: number, m: number, dg: number, y0: number): void;
+  fblock(d: number, mk: number, mi: number, o: number, y0: number, yi: number): void;
+  bblock(d: number, mk: number, mi: number, o: number, y0: number, yi: number): void;
+  bdiag(d: number, m: number, dg: number, y0: number): void;
 }
 
 /** The factor starts one page into its memory: the first page is the module's own (its stack). */
@@ -37,13 +41,14 @@ export function setKernel(on: boolean) { off = !on; }
 export const kernelMemories = () => made;
 
 /**
- * Memory for a factor of n doubles that the kernel can work on, `shared` between threads or not; null when there
- * is no such memory to be had here (the caller then uses an ordinary array).
+ * Memory for a factor of n doubles that the kernel can work on, `shared` between threads or not, with room for
+ * `extra` doubles after it (`scratchOf`); null when there is no such memory to be had here (the caller then uses
+ * an ordinary array).
  */
-export function kernelBuffer(n: number, shared: boolean): { data: Float64Array; mem: WebAssembly.Memory } | null {
+export function kernelBuffer(n: number, shared: boolean, extra = 0): { data: Float64Array; mem: WebAssembly.Memory } | null {
   if (off || typeof WebAssembly === "undefined") return null;
   try {
-    const pages = Math.ceil((HEAD + 8 * n) / PAGE);
+    const pages = Math.ceil((HEAD + 8 * (n + extra)) / PAGE);
     const mem = new WebAssembly.Memory(shared ? { initial: pages, maximum: pages, shared: true } : { initial: pages, maximum: pages });
     attach(mem, shared);
     memories.set(mem.buffer, mem);
@@ -66,4 +71,9 @@ export function kernelOf(data: Float64Array): CholKernel | null {
   if (b === lastBuffer) return lastKernel;
   lastBuffer = b;
   return (lastKernel = kernels.get(b) ?? null);
+}
+/** The `n` doubles after a factor made with that much room to spare, or null. */
+export function scratchOf(data: Float64Array, n: number): Float64Array | null {
+  const at = data.byteOffset + 8 * data.length;
+  return kernels.has(data.buffer) && at + 8 * n <= data.buffer.byteLength ? new Float64Array(data.buffer, at, n) : null;
 }
