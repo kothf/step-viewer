@@ -1338,32 +1338,71 @@ function solveSystem(c: Ctx, A: BlockMatrix, f: Float64Array, x0: Float64Array |
 }
 
 /** ∫ k |∇T|² and, with the pass before, the same of what this pass changed per element. */
+/**
+ * One element's xᵀ K x and (x − prev)ᵀ K (x − prev) into `out[2e]`, `out[2e + 1]`, with its conduction matrix made
+ * from the moments already summed in `T` (cleared here). `K` and `d` are scratch.
+ */
+function energyCell(T: MomentTables, K: Float64Array, d: Float64Array, nb: number, sz: number, kx: number, ky: number, kz: number,
+  x: ArrayLike<number>, o: number, prev: ArrayLike<number> | null, pm: number, e: number, out: Float64Array) {
+  K.fill(0, 0, nb * nb);
+  conductFromMoments(T, K, nb, sz, kx, ky, kz);
+  momentsClear(T);
+  if (prev) for (let a = 0; a < nb; a++) d[a] = x[o + a] - (a < pm ? prev[e * pm + a] : 0);
+  let en = 0, et = 0;
+  for (let a = 0; a < nb; a++) {
+    const r = a * nb;
+    let s1 = 0, s2 = 0;
+    for (let b = 0; b < nb; b++) { s1 += K[r + b] * x[o + b]; if (prev) s2 += K[r + b] * d[b]; }
+    en += x[o + a] * s1;
+    if (prev) et += d[a] * s2;
+  }
+  out[2 * e] = en; out[2 * e + 1] = et;
+}
+
 function energies(c: Ctx, x: Float64Array, prev: Float64Array | null) {
   const { grid, nbs, off, nel, bas, k3 } = c, eta = new Float64Array(nel), pm = prev ? prev.length / nel : 0;
-  let energy = 0;
   // xᵀ K x with each element's conduction matrix made from the moments of its points (as `volumeTerms` makes it)
-  const T = momentTables(bas.p), K = new Float64Array(c.nb * c.nb), d = new Float64Array(c.nb);
-  momentsClear(T);
-  for (let e = 0; e < nel; e++) {
-    const nb = nbs[e], E = grid.elems[e], o = off[e], top = Math.max(0, 2 * c.deg[e] - 2);
-    for (const ci of E.cells) { const P = grid.cells[ci].pts; momentsAdd(T, P.a, 0, P.n, E.c, E.s, top); }
-    K.fill(0, 0, nb * nb);
-    conductFromMoments(T, K, nb, E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]);
+  let npt = 0;
+  for (let e = 0; e < nel; e++) for (const ci of grid.elems[e].cells) npt += grid.cells[ci].pts.n;
+  let out: Float64Array;
+  if (!worthSharing(npt * 300 + nel * c.nb * c.nb * 40)) {
+    out = new Float64Array(2 * nel);
+    const T = momentTables(bas.p), K = new Float64Array(c.nb * c.nb), d = new Float64Array(c.nb);
     momentsClear(T);
-    if (prev) for (let a = 0; a < nb; a++) d[a] = x[o + a] - (a < pm ? prev[e * pm + a] : 0);
-    let en = 0, et = 0;
-    for (let a = 0; a < nb; a++) {
-      const r = a * nb;
-      let s1 = 0, s2 = 0;
-      for (let b = 0; b < nb; b++) { s1 += K[r + b] * x[o + b]; if (prev) s2 += K[r + b] * d[b]; }
-      en += x[o + a] * s1;
-      if (prev) et += d[a] * s2;
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e], top = Math.max(0, 2 * c.deg[e] - 2);
+      for (const ci of E.cells) { const P = grid.cells[ci].pts; momentsAdd(T, P.a, 0, P.n, E.c, E.s, top); }
+      energyCell(T, K, d, nbs[e], E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2], x, off[e], prev, pm, e, out);
     }
-    energy += en;
-    eta[e] = et > 0 ? et : 0;
+  } else {
+    // the points, the elements and the answer on shared memory: one task per element, the same sums
+    const pts = sharedF64(4 * npt), at = sharedF64(TVOL * nel), nb = sharedI32(nel), xs = sharedF64(x.length), ps = sharedF64(prev ? prev.length : 0);
+    xs.set(x); if (prev) ps.set(prev);
+    let n = 0;
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e], o = TVOL * e;
+      at[o] = n;
+      for (const ci of E.cells) { const P = grid.cells[ci].pts; pts.set((P.a as Float64Array).subarray(0, 4 * P.n), 4 * n); n += P.n; }
+      at.set([n, off[e], E.c[0], E.c[1], E.c[2], E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2], c.deg[e]], o + 1);
+      nb[e] = nbs[e];
+    }
+    out = sharedF64(2 * nel);
+    parallelFor({ kind: "tenergy", n: nel, p: bas.p, nbMax: c.nb, pts, at, nb, x: xs, prev: ps, pm, out } satisfies Omit<TEnergyJob, "ctl">);
   }
+  let energy = 0;
+  for (let e = 0; e < nel; e++) { energy += out[2 * e]; const et = out[2 * e + 1]; eta[e] = et > 0 ? et : 0; }
   return { energy, eta };
 }
+/** The energies' loop: `at` as in the conduction loop, with the element's place in `x` instead of a block offset. */
+interface TEnergyJob extends ParJob { p: number; nbMax: number; pts: Float64Array; at: Float64Array; nb: Int32Array; x: Float64Array; prev: Float64Array; pm: number; out: Float64Array }
+kernel<TEnergyJob, { j: TEnergyJob; T: MomentTables; K: Float64Array; d: Float64Array }>("tenergy", {
+  init: j => { const T = momentTables(j.p); momentsClear(T); return { j, T, K: new Float64Array(j.nbMax * j.nbMax), d: new Float64Array(j.nbMax) }; },
+  run({ j, T, K, d }, e) {
+    const a = j.at, o = TVOL * e;
+    momentsAdd(T, j.pts, 4 * a[o], a[o + 1] - a[o], [a[o + 3], a[o + 4], a[o + 5]], a[o + 6], Math.max(0, 2 * a[o + 10] - 2));
+    energyCell(T, K, d, j.nb[e], a[o + 6], a[o + 7], a[o + 8], a[o + 9], j.x, a[o + 2], j.prev.length ? j.prev : null, j.pm, e, j.out);
+  },
+});
 
 /**
  * One element's share of what a film, radiating or natural convection sink takes at the temperatures `x`, summed from
