@@ -4003,6 +4003,7 @@ export class SimController {
     this.renderTree();
     this.renderPanel();
     this.renderLegend();
+    this.renderStatus();
   }
 
   private renderBar() {
