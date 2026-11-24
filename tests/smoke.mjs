@@ -16300,6 +16300,41 @@ try {
     await ctx.close();
   }
 
+  // --- Drawing view lines kept in the drawing file (1.721.0): a saved drawing shows its views at once, while they are projected again ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_views", name: "Plate", units: { length: "mm", decimals: 2 }, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -40, -25), P("p2", 40, -25), P("p3", 40, 25), P("p4", -40, 25),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 15 } },
+    ] };
+    const page = async () => {
+      const pg = await ctx.newPage();
+      pg.on("pageerror", e => errors.push(e.message));
+      await pg.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+      await pg.goto(`${origin}/index.html?debug&nocache&nospare`);
+      await pg.waitForFunction(() => window.__sv);
+      return pg;
+    };
+    const d1 = await page();
+    await d1.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify({ format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-24T00:00:00Z", units: "mm" }), "document.json": JSON.stringify(part) })) });
+    await d1.waitForFunction(() => window.__sv.model.last()?.data, null, { timeout: 60000 });
+    await newDrawing3(d1);
+    await d1.waitForFunction(() => window.__sv.drw.ready(), null, { timeout: 120000 });
+    const dbytes = await d1.evaluate(async () => [...(await window.__sv.drawing.packed()).data]);
+    await d1.close();
+    const d2 = await page();
+    await d2.evaluate(b => { void window.__sv.drawing.openFile({ name: "Plate.mcaddrw", data: new Uint8Array(b).buffer }); }, dbytes);
+    await d2.waitForFunction(() => document.querySelectorAll("#drw .drw-view path, #drw .drw-view line, #drw .drw-view polyline").length > 0, null, { timeout: 60000 });
+    const early = await d2.evaluate(() => ({ seeded: window.__sv.drawing.seededViews, ready: window.__sv.drw.ready(), pre: document.querySelectorAll("#drw .drw-view.drw-preview").length }));
+    await d2.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector("#drw .drw-view.drw-preview"), null, { timeout: 120000 });
+    const late = await d2.evaluate(() => document.querySelectorAll("#drw .drw-view").length);
+    check(early.seeded === 3 && !early.ready && early.pre === 3 && late === 3,
+      `drawing file 1.721: a saved drawing draws its three views from the kept lines before projecting them again (${JSON.stringify({ early, late, bytes: dbytes.length })})`);
+    await ctx.close();
+  }
+
   // --- Disk cache of opened files (1.563.0): a STEP file opened again shows its mesh and exact values from IndexedDB; export still reads the B-rep ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

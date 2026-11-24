@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.721.0] - 2026-11-24
+
+### Changed
+
+- Saved drawings show their views at once when opened: the drawing file now keeps the lines each view was last drawn with, shown while the model loads and the views are projected again. The steam engine assembly drawing showed its views after 8.9 s and now after 0.3 s. Older versions skip the kept lines.
+
 ## [1.720.0] - 2026-11-24
 
 ### Changed
@@ -4756,6 +4762,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
+[1.721.0]: https://github.com/kothf/step-viewer/compare/v1.720.0...v1.721.0
 [1.720.0]: https://github.com/kothf/step-viewer/compare/v1.719.0...v1.720.0
 [1.719.0]: https://github.com/kothf/step-viewer/compare/v1.718.0...v1.719.0
 [1.718.0]: https://github.com/kothf/step-viewer/compare/v1.717.0...v1.718.0
