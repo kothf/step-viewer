@@ -32,7 +32,8 @@ export const basisSize = (p: number) => ((p + 1) * (p + 2) * (p + 3)) / 6;
 /** Scalar basis of one cell: values and gradients (in model mm) at a point. */
 export class Basis {
   readonly n: number;
-  private readonly ex: Int32Array;
+  /** The degrees (i, j, k) of each function's Legendre product, three per function. */
+  readonly ex: Int32Array;
   private readonly lx = new Float64Array(18);
   private readonly ly = new Float64Array(18);
   private readonly lz = new Float64Array(18);

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.736.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies build their equations faster. The terms on the faces between elements are summed as two products per entry instead of three, with the symmetric blocks summed once; the penalty measuring sums one triangle of its matrix; whole-body heat sources and the energy of a pass come from the moments of the integration points; the fitting of points on flat faces runs on all cores. Amplifier board study, three passes, Chrome on four cores: 48 s to 42 s with the same temperatures (results differ from 1.735.0 in the last digits).
+
 ## [1.735.0] - 2026-11-24
 
 ### Changed
@@ -4848,7 +4854,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.735.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.736.0...HEAD
+[1.736.0]: https://github.com/kothf/step-viewer/compare/v1.735.0...v1.736.0
 [1.735.0]: https://github.com/kothf/step-viewer/compare/v1.734.0...v1.735.0
 [1.734.0]: https://github.com/kothf/step-viewer/compare/v1.733.0...v1.734.0
 [1.733.0]: https://github.com/kothf/step-viewer/compare/v1.732.0...v1.733.0
