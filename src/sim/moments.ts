@@ -199,6 +199,29 @@ export function momentsPoint(T: MomentTables, x: number, y: number, z: number, w
   }
 }
 
+/** The Legendre values `momentsPoint` makes for a point, written to `out` from `o`: 3 · (top + 1) numbers (x, y, z). */
+export function legendrePoint(top: number, x: number, y: number, z: number, c: ArrayLike<number>, s: number, out: Float64Array, o: number) {
+  const inv = 1 / s, n1 = top + 1;
+  for (let d = 0; d < 3; d++) {
+    const v = ((d === 0 ? x : d === 1 ? y : z) - c[d]) * inv, b = o + d * n1;
+    out[b] = 1;
+    if (top > 0) out[b + 1] = v;
+    for (let k = 2; k <= top; k++) out[b + k] = ((2 * k - 1) * v * out[b + k - 1] - (k - 1) * out[b + k - 2]) / k;
+  }
+}
+
+/** `momentsPoint` from a point's kept Legendre values (`legendrePoint`, at `o` of `A`): the same sums. */
+export function momentsKept(T: MomentTables, A: Float64Array, o: number, w: number, top: number) {
+  const { m, mom } = T, n1 = top + 1, oy = o + n1, oz = oy + n1;
+  for (let r = 0; r <= top; r++) {
+    const wr = w * A[o + r];
+    for (let t = 0, tm = top - r; t <= tm; t++) {
+      const wrs = wr * A[oy + t], row = (r * m + t) * m;
+      for (let u = 0, um = tm - t; u <= um; u++) mom[row + u] += wrs * A[oz + u];
+    }
+  }
+}
+
 /** S (nb × nb, row-major, both triangles) += Σ w N_a N_b over the points whose moments (to degree 2 · the element's) are held. */
 export function massFromMoments(T: MomentTables, S: Float64Array, nb: number) {
   const { massAt, mmi, mco, mom } = T;

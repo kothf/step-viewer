@@ -1,6 +1,6 @@
 // A thermal study saved in an assembly file, solved in node as the Simulation tab solves it (no bolts, no typed k tables):
 //   node bench/run.mjs bench/thboard.bench.ts <file.mcadasm> [study index]
-// Prints each pass and the hottest temperature of every component. THBOARD_PASSES overrides the study's passes; PROF=1 prints a CPU profile, SIMTHREADS (1) = threads.
+// Prints each pass and the hottest temperature of every component. THBOARD_PASSES overrides the study's passes; THBOARD_TRANSIENT=<end s>,<output s> runs a warm-up; PROF=1 prints a CPU profile, SIMTHREADS (1) = threads.
 import { readFileSync } from "node:fs";
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,7 @@ import { MeshBody, insideOf } from "../src/sim/body";
 import { Assembler } from "../src/kernel/assembly";
 import { asmSimGeometry } from "../src/kernel/simgeo";
 import { unpackAsm } from "../src/asm/file";
-import { thermalSetup, runThermal } from "../src/sim/run";
+import { thermalSetup, runThermal, runTransient } from "../src/sim/run";
 import { DEFAULT_GAP } from "../src/sim/types";
 import { progressTo } from "../src/sim/progress";
 import { boardK } from "../src/thermal/study";
@@ -63,10 +63,12 @@ const stageEnd = () => { const t = performance.now(); if (stageNow) stages.set(s
 progressTo(q => { if (q.stage !== stageNow) { stageEnd(); stageNow = q.stage; } });
 const stageText = () => { stageEnd(); stageNow = ""; const r = [...stages].map(([k, v]) => `${k} ${v.toFixed(1)}`).join(", "); stages.clear(); return r; };
 const t0 = performance.now(), passes = Number(process.env.THBOARD_PASSES ?? st.settings.passes);
-for (const p of runThermal({
+const trEnv = process.env.THBOARD_TRANSIENT?.split(",").map(Number);
+const rcs = bodies.map((q: any) => ((q.mat?.density ?? 1.85) * 1e-6 * (q.mat?.cp ?? 1100)));
+for (const p of (trEnv ? runTransient : runThermal)({
   body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] } as any, passes, energyTol: st.settings.energyTol ?? 0, pos, nrm: new Float32Array(pos.length),
   mat: { name: "", E: 0, nu: 0, rho: 0 }, regions: bodies.map((q: any) => ({ tris: q.tris, mat: { name: "", E: 0, nu: 0, rho: 0 } })),
-  thermal: { k: kOf(0) * 1e-3, setup, ks: bodies.map((_q: any, i: number) => kOf(i) * 1e-3), k3s, gap: st.settings.gap ?? DEFAULT_GAP, links: [], ...(kmaps.some(Boolean) ? { kmaps } : {}) },
+  thermal: { k: kOf(0) * 1e-3, setup, ks: bodies.map((_q: any, i: number) => kOf(i) * 1e-3), k3s, gap: st.settings.gap ?? DEFAULT_GAP, links: [], ...(kmaps.some(Boolean) ? { kmaps } : {}), ...(trEnv ? { transient: { rc: rcs[0], rcs, t0: st.settings.ambient ?? 25, end: trEnv[0], out: trEnv[1], profiles: {} } } : {}) },
 } as any, (sm: any) => { sampler = sm; })) {
   const comps = p.thermal?.comps?.map((c: any, i: number) => `${bodies[i].name} ${c.max.toFixed(1)}/${c.mean.toFixed(1)}`).join(", ");
   if (sampler && spots.length) {
@@ -86,6 +88,7 @@ for (const p of runThermal({
       console.log(`  board near ${d[3]} (${d[0].toFixed(1)}, ${d[1].toFixed(1)}): max ${rr.vm[m].toFixed(1)} at (${pts[3 * m].toFixed(1)}, ${pts[3 * m + 1].toFixed(1)}), ${pts.length / 3} points`);
     }
   }
+  if (p.transient) console.log(`transient: ${p.transient.steps} steps, ${p.transient.rejected} rejected, ${p.transient.times.length} frames`);
   console.log(`pass ${p.pass}: p ${p.p}, ${p.dofs} unknowns, err ${p.err?.toFixed?.(1) ?? "-"} %, change ${p.change?.toFixed(2)}, ${comps}, ${((performance.now() - t0) / 1000).toFixed(1)} s (${stageText()})`);
 }
 if (session) session.post("Profiler.stop", (_e: unknown, { profile }: any) => {
