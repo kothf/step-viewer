@@ -1776,8 +1776,8 @@ export class SimController {
           const mp = bd.map, bk = mp ? stackK(bd.t ?? 1.6, bd, mp.means) : boardConductivity(bd.t ?? 1.6, bd), off = dis || (o?.off ? " disabled" : "");
           return `<li data-comp="${esc(c.id)}" class="th board ${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
             + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Worked out from the copper layers below: heat spreads along a board through its copper, and must cross the glass-epoxy to go through it"))}">${esc(t("Conducts {a} W/(m·K) along it, {b} W/(m·K) through it", { a: sig(bk.along), b: sig(bk.through) }))}</span>`
-            + `<span class="sim-boardset"><label>${esc(t("Copper layers"))} <input type="text" inputmode="numeric" data-k="blayers" data-c="${esc(c.id)}" value="${bd.layers}"${off} /></label>`
-            + `<label>${esc(t("Copper"))}, µm <input type="text" inputmode="decimal" data-k="bcopper" data-c="${esc(c.id)}" value="${sig(bd.copper)}"${off} /></label>`
+            + `<span class="sim-boardset"><span class="sim-bshead">${esc(t("Copper"))}</span><label>${esc(t("Layers"))} <input type="text" inputmode="numeric" data-k="blayers" data-c="${esc(c.id)}" value="${bd.layers}"${off} /></label>`
+            + `<label>${esc(t("Thickness"))}, µm <input type="text" inputmode="decimal" data-k="bcopper" data-c="${esc(c.id)}" value="${sig(bd.copper)}"${off} /></label>`
             + (mp ? "" : `<label>${esc(t("Coverage"))}, % <input type="text" inputmode="decimal" data-k="bcover" data-c="${esc(c.id)}" value="${sig(bd.cover * 100)}"${off} /></label>`) + `</span>`
             + this.boardMapHtml(c.id, bd, off) + `</li>`;
         }
@@ -1925,7 +1925,7 @@ export class SimController {
       .concat(list.map(c => `<option value="${esc(c.id)}" translate="no"${c.id === cur ? " selected" : ""}${st.comps?.[c.id]?.off ? " disabled" : ""}>${esc(c.name)}${st.comps?.[c.id]?.off ? ` ${esc(t("(left out of the study)"))}` : ""}</option>`));
     return `<div class="sim-boardpick"><label>${esc(t("Circuit board"))} <select data-k="boardpick" aria-describedby="sim-boardnote" title="${esc(t("The component that is the printed circuit board. Its heat spreads through the copper layers you give under its name: far better along the board than through it. The other components conduct by their materials."))}"${dis}>${opts.join("")}</select></label>`
       + (boards.length > 1 ? `<span class="muted">${esc(t("Also boards: {names}", { names: boards.slice(1).map(b => b.name).join(", ") }))}</span>` : "")
-      + `<p class="sim-note muted" id="sim-boardnote">${esc(cur ? t("Found by itself. Set its copper layers below, or pick another if this one is wrong.") : t("No circuit board found. Pick it here if the assembly has one: its copper then carries the heat along it."))}</p></div>`;
+      + `<p class="sim-note muted" id="sim-boardnote">${esc(cur ? t("Found by itself. Set its layers below, or pick another if this one is wrong.") : t("No circuit board found. Pick it here if the assembly has one: its copper then carries the heat along it."))}</p></div>`;
   }
 
   /** Makes `id` the study's circuit board ("" = none): every other component goes back to an ordinary part. */
@@ -1955,7 +1955,7 @@ export class SimController {
   /** A board's copper from its Gerber set (FR-TBRD-020): the button to read one, or the map with what it holds. */
   private boardMapHtml(id: string, bd: BoardStack & { map?: CopperMap }, off: string): string {
     const m = bd.map;
-    if (!m) return `<span class="sim-bmap"><button class="btn small" data-a="bgerber" data-c="${esc(id)}" title="${esc(t("Read the board's Gerber files: the conductivity then follows its copper and plated holes cell by cell"))}"${off}>${esc(t("Copper from Gerber…"))}</button></span>`;
+    if (!m) return `<span class="sim-bmap"><button class="btn small" data-a="bgerber" data-c="${esc(id)}" title="${esc(t("Read the board's Gerber files: the conductivity then follows its copper and plated holes cell by cell"))}"${off}>${esc(t("From Gerber files…"))}</button></span>`;
     const layers = m.labels.map((l, i) => `${esc(layerLabel(l))} ${Math.round(m.means[i] * 100)} %`).join(", ");
     return `<span class="sim-bmap on"><img data-v="bmap" alt="${esc(t("Copper map"))}" src="${this.mapImage(m)}" />`
       + `<span class="muted" data-v="bmapinfo"><span translate="no">${esc(m.name)}</span>: ${layers}; ${esc(t("{n} plated holes", { n: m.holes }))}; ${esc(t("cells of {s} mm", { s: sig(m.cell) }))}</span>`

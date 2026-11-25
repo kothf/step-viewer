@@ -1893,6 +1893,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-ktbtn.on { border-color: var(--accent); }
 .sim-boardset { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 0 0 2px 20px; font-size: 11px; }
 .sim-boardset label { gap: 4px; }
+.sim-bshead { font-weight: 600; flex-basis: 100%; }
 .sim-boardset input { width: 44px; font-size: 11px; padding: 2px 4px; }
 .sim-boltset select, .sim-boltset input { font-size: 11px; min-width: 0; padding: 2px 4px; }
 .sim-boltall { display: grid; grid-template-columns: 1fr; gap: 2px; font-size: 12px; margin-top: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
