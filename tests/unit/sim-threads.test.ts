@@ -10,7 +10,7 @@ import { serve, setHelpers, setLoopFloor, threadStats, type CholJob } from "../.
 import { kernelMemories, setKernel } from "../../src/sim/cholwasm";
 import { solveStatic } from "../../src/sim/static";
 import { solveThermal } from "../../src/sim/thermal";
-import { makeGrid } from "../../src/sim/grid";
+import { makeGrid, refit, setDropPoints } from "../../src/sim/grid";
 import { MeshBody, insideOf } from "../../src/sim/body";
 
 if (!isMainThread) parentPort!.on("message", (j: CholJob) => serve(j));
@@ -201,3 +201,35 @@ test("threads: the cells of a mesh body found on several threads are the same", 
 });
 
 }
+
+// the helpers load this file too: a long test must not run in them, or they are busy when a job arrives
+if (isMainThread) test("threads: a big model lets its fine points go after the first fit, with the same fitted points", async () => {
+  const P = [[0, 0, 0], [40, 3, 2], [5, 37, 4], [8, 6, 33]];
+  const tris = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]].flatMap(f => f.flatMap(v => P[v]));
+  const body = new MeshBody(tris);
+  const make = (drop: number) => {
+    setDropPoints(drop);
+    try {
+      const g = makeGrid(body.lo, body.hi, 5, insideOf(body), { q: 3, depth: 4, fit: 5 });
+      const out: number[][][] = [];
+      for (const [q, fit] of [[5, 9], [6, 11], [7, 13], [6, 11]]) { refit(g, q, fit); out.push(g.cells.map(c => Array.from(c.pts.a.subarray(0, 4 * c.pts.n)))); }
+      return { out, gone: g.cells.filter(c => c.fine && c.fine.n && !c.fine.a.length).length, big: g.cells.filter(c => c.fine && c.fine.n > 13 ** 3).length };
+    } finally { setDropPoints(); }
+  };
+  const kept = make(Infinity), dropped = make(0);
+  assert.equal(kept.gone, 0);
+  assert.ok(dropped.big > 3 && dropped.gone === dropped.big, JSON.stringify([dropped.gone, dropped.big]));
+  assert.deepEqual(dropped.out, kept.out);
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const before = threadStats().loops;
+    const many = make(0);
+    assert.ok(threadStats().loops > before);
+    assert.equal(many.gone, many.big);
+    assert.deepEqual(many.out, kept.out);
+    assert.deepEqual(make(Infinity).out, kept.out);
+  } finally { setHelpers([]); setLoopFloor(2e7); for (const w of ws) await w.terminate(); }
+});

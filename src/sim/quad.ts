@@ -523,7 +523,7 @@ function legendre(deg: number, x: number, out: Float64Array) {
  * (closed form, since the Gauss rule makes those products orthogonal). With q = 2p + 1 the stiffness
  * and mass integrands of degree-p fields come out the same as from the fine points, at a fraction of
  * the cost. Weights may be negative. */
-export function fitPoints(src: Points, lo: number[], hi: number[], q: number, mom?: Float64Array, have = 0): Points {
+export function fitPoints(src: Points, lo: number[], hi: number[], q: number, mom?: Float64Array, have = 0, upto = q): Points {
   const g = gauss(q);
   const h = [(hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2, (hi[2] - lo[2]) / 2];
   const c = [(hi[0] + lo[0]) / 2, (hi[1] + lo[1]) / 2, (hi[2] + lo[2]) / 2];
@@ -537,7 +537,8 @@ export function fitPoints(src: Points, lo: number[], hi: number[], q: number, mo
   // with `mom` (MOM_SIZE numbers kept for this box) the moments of total degree below `have` are there already
   // from a lower q: only the others are summed, each the same sum over the points as without it
   const keep = mom && q <= MOM_CAP ? mom : null;
-  if (keep) fitMoments(src, c, h, q, keep, have);
+  // `upto` (≥ q) sums the kept moments further than this fit needs, so the points are not needed again
+  if (keep) fitMoments(src, c, h, Math.max(q, Math.min(upto, MOM_CAP)), keep, have);
   else for (let t = 0; t < src.n; t++) {
     const o = 4 * t, w = src.a[o + 3];
     leg(deg, (src.a[o] - c[0]) / h[0], lx);

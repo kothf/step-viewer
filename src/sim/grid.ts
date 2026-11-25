@@ -6,7 +6,7 @@
 
 import { progress } from "./progress";
 import { kernel, parallelFor, sharedF64, sharedI32, worthSharing, type ParJob } from "./threads";
-import { MOM_SIZE, Points, boxState, fitPoints, volumePoints, type Inside } from "./quad";
+import { MOM_CAP, MOM_SIZE, Points, boxState, fitPoints, volumePoints, type Inside } from "./quad";
 import { MeshBody, insideOf } from "./body";
 
 export interface Cell {
@@ -44,8 +44,8 @@ export class Grid {
   doms: Inside[] | null = null;
   /** Fine quadrature of the faces between cells (key cell·3 + axis), reused by later passes. */
   readonly faces = new Map<number, Points | null>();
-  /** The cut cells' fine points on shared memory (`at` = a cell's first point), once a fit was shared between threads. */
-  shared: { a: Float64Array; at: Float64Array } | null = null;
+  /** The cut cells' fine points on shared memory (`buf` = which of `bufs` a cell's points are in, `at` = its first point there), once a fit was shared between threads. */
+  shared: { bufs: Float64Array[]; at: Float64Array; buf: Int32Array } | null = null;
   /**
    * The cut cells' moments kept between fits (`fitPoints`): MOM_SIZE numbers per cell from `slot[cell]`, summed up
    * to total degree `have[cell]` − 1, so a later pass adds only the moments its higher degree needs.
@@ -370,50 +370,99 @@ export function refit(g: Grid, q: number, fit: number, degree?: (c: Cell) => num
     if (!(seen++ & 15) && !todo.length) progress("cells", seen, g.cells.length);
     if (degree) { const d = degree(c); q = Math.min(q0, d + 1); fit = Math.min(fit0, 2 * d + 1); }
     if (c.fine && fit && c.fine.n > fit ** 3) { todo.push(i); fits.push(fit); work += (c.fine.n * fit ** 3) / 6; continue; }
+    if (c.fine && c.fine.n && !c.fine.a.length) throw new Error("E-SIM-FINE");
     c.pts = c.fine ?? volumePoints(c.lo, c.hi, q, () => true, 0, new Points(), 1);
   }
   if (!todo.length) return;
   const share = worthSharing(work), M = momentsOf(g, share);
+  // a big model's cells sum their moments to the cap at once, and the fine points go afterwards (`dropFine`)
+  let fineAll = 0;
+  for (const c of g.cells) if (c.fine) fineAll += c.fine.n;
+  const upto = todo.map((i, t) => {
+    const f = g.cells[i].fine!;
+    if (!f.a.length && fits[t] > M.have[i]) throw new Error("E-SIM-FINE");
+    return fineAll > DROP_POINTS && f.n > MOM_CAP ** 3 && fits[t] <= MOM_CAP ? MOM_CAP : fits[t];
+  });
   if (!share) {
     todo.forEach((i, t) => {
       const c = g.cells[i], s = M.slot[i];
       if (!(t & 3)) progress("cells", t, todo.length);
-      c.pts = fitPoints(c.fine!, c.lo, c.hi, fits[t], M.a.subarray(s, s + MOM_SIZE), M.have[i]);
-      if (fits[t] > M.have[i]) M.have[i] = fits[t];
+      c.pts = fitPoints(c.fine!, c.lo, c.hi, fits[t], M.a.subarray(s, s + MOM_SIZE), M.have[i], upto[t]);
+      if (upto[t] > M.have[i]) M.have[i] = upto[t];
     });
+    if (fineAll > DROP_POINTS) dropFine(g, M.have);
     return;
   }
-  // the fine points move to shared memory once and stay there for the later degrees
+  // the fine points are on shared memory for the later degrees: the cell loop's rounds as they are, the rest moved once
   if (!g.shared) {
+    const bufs: Float64Array[] = [], known = new Map<ArrayBufferLike, number>();
+    const at = new Float64Array(g.cells.length), buf = new Int32Array(g.cells.length);
     let n = 0;
-    for (const c of g.cells) if (c.fine) n += c.fine.n;
-    const a = sharedF64(4 * n), at = new Float64Array(g.cells.length);
+    for (const c of g.cells) if (c.fine && !(c.fine.a.buffer instanceof SharedArrayBuffer)) n += c.fine.n;
+    const a = n ? sharedF64(4 * n) : null;
+    if (a) bufs.push(a);
     n = 0;
     g.cells.forEach((c, i) => {
       if (!c.fine) return;
+      const b = c.fine.a.buffer;
+      if (b instanceof SharedArrayBuffer) {
+        let k = known.get(b);
+        if (k === undefined) { k = bufs.length; known.set(b, k); bufs.push(new Float64Array(b)); }
+        buf[i] = k; at[i] = c.fine.a.byteOffset / 32;
+        return;
+      }
       at[i] = n;
-      a.set(c.fine.a.subarray(0, 4 * c.fine.n), 4 * n);
-      c.fine.a = a.subarray(4 * n, 4 * (n + c.fine.n));
+      a!.set(c.fine.a.subarray(0, 4 * c.fine.n), 4 * n);
+      c.fine.a = a!.subarray(4 * n, 4 * (n + c.fine.n));
       n += c.fine.n;
     });
-    g.shared = { a, at };
+    g.shared = { bufs, at, buf };
   }
   const T = todo.length, task = sharedF64(FIT_TASK * T), outN = sharedI32(T);
   let room = 0;
   todo.forEach((i, t) => {
     const c = g.cells[i], o = FIT_TASK * t;
-    task[o] = g.shared!.at[i]; task[o + 1] = c.fine!.n; task[o + 2] = fits[t]; task[o + 3] = room; task[o + 10] = M.slot[i]; task[o + 11] = M.have[i];
+    task[o] = g.shared!.at[i]; task[o + 1] = c.fine!.n; task[o + 2] = fits[t]; task[o + 3] = room; task[o + 10] = M.slot[i]; task[o + 11] = M.have[i]; task[o + 12] = g.shared!.buf[i]; task[o + 13] = upto[t];
     for (let k = 0; k < 3; k++) { task[o + 4 + k] = c.lo[k]; task[o + 7 + k] = c.hi[k]; }
     room += fits[t] ** 3;
   });
   const out = sharedF64(4 * room);
-  parallelFor({ kind: "fit", n: T, fine: g.shared.a, task, out, outN, mom: M.a } satisfies Omit<FitJob, "ctl">, d => progress("cells", d, T));
+  parallelFor({ kind: "fit", n: T, fine: g.shared.bufs, task, out, outN, mom: M.a } satisfies Omit<FitJob, "ctl">, d => progress("cells", d, T));
   todo.forEach((i, t) => {
-    if (fits[t] > M.have[i]) M.have[i] = fits[t];
+    if (upto[t] > M.have[i]) M.have[i] = upto[t];
     const P = new Points(), s = 4 * task[FIT_TASK * t + 3];
     P.a = out.subarray(s, s + 4 * outN[t]); P.n = outN[t];
     g.cells[i].pts = P;
   });
+  if (fineAll > DROP_POINTS) dropFine(g, M.have);
+}
+
+/** Fine points of a model above which the cut cells' moments are summed to the cap in one go and the points let go. */
+let DROP_POINTS = 4e6;
+/** Tests: the count of fine points from which they are let go (Infinity = never). */
+export function setDropPoints(n = 4e6) { DROP_POINTS = n; }
+/**
+ * Lets go of the fine points of the cells whose kept moments are complete (a later fit needs only the moments):
+ * the cell keeps their count. The other cells' points move out of the memory they shared with them, so that
+ * memory is freed. On a board with many small bodies the fine points were 1.2 GB for the whole solve.
+ */
+function dropFine(g: Grid, have: Int32Array) {
+  let any = false;
+  g.cells.forEach((c, i) => {
+    if (!c.fine || !c.fine.a.length || have[i] < MOM_CAP || c.fine.n <= MOM_CAP ** 3 || c.pts === c.fine) return;
+    const stub = new Points();
+    stub.a = new Float64Array(0); stub.n = c.fine.n;
+    c.fine = stub;
+    any = true;
+  });
+  if (!any) return;
+  for (const c of g.cells) {
+    if (!c.fine || !c.fine.a.length) continue;
+    const own = c.pts === c.fine, a = c.fine.a.slice(0, 4 * c.fine.n);
+    c.fine.a = a;
+    if (own) c.pts = c.fine;
+  }
+  g.shared = null;
 }
 
 /** The grid's kept moments, made at the first fit (on shared memory once a fit is shared between threads). */
@@ -431,14 +480,14 @@ function momentsOf(g: Grid, share: boolean) {
   return g.mom;
 }
 
-/** Numbers per task of a shared fit: first fine point, their count, fit, first point of the output, lo, hi, first kept moment, the degree they are summed to. */
-const FIT_TASK = 12;
-interface FitJob extends ParJob { fine: Float64Array; task: Float64Array; out: Float64Array; outN: Int32Array; mom: Float64Array }
+/** Numbers per task of a shared fit: first fine point, their count, fit, first point of the output, lo, hi, first kept moment, the degree they are summed to, the memory the fine points are in, the degree to sum them to. */
+const FIT_TASK = 14;
+interface FitJob extends ParJob { fine: Float64Array[]; task: Float64Array; out: Float64Array; outN: Int32Array; mom: Float64Array }
 kernel<FitJob, FitJob>("fit", {
   init: j => j,
   run(j, t) {
     const k = j.task, o = FIT_TASK * t, s = 4 * k[o], n = k[o + 1];
-    const P = fitPoints({ a: j.fine.subarray(s, s + 4 * n), n } as Points, [k[o + 4], k[o + 5], k[o + 6]], [k[o + 7], k[o + 8], k[o + 9]], k[o + 2], j.mom.subarray(k[o + 10], k[o + 10] + MOM_SIZE), k[o + 11]);
+    const P = fitPoints({ a: j.fine[k[o + 12]].subarray(s, s + 4 * n), n } as Points, [k[o + 4], k[o + 5], k[o + 6]], [k[o + 7], k[o + 8], k[o + 9]], k[o + 2], j.mom.subarray(k[o + 10], k[o + 10] + MOM_SIZE), k[o + 11], k[o + 13]);
     j.out.set(P.a.subarray(0, 4 * P.n), 4 * k[o + 3]);
     j.outN[t] = P.n;
   },
