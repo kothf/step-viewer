@@ -16,7 +16,7 @@ await pg.waitForTimeout(1200);
 const made = await pg.evaluate(() => ({ comps: [...document.querySelectorAll("#sim-tree .sim-complist li")].map(li => li.textContent.replace(/\s+/g, " ").trim()),
   rows: [...document.querySelectorAll("#sim-tree .sim-row")].map(r => r.innerText.replace(/\s+/g, " ").trim()), ambient: document.querySelector('#sim-tree input[data-k="ambient"]')?.value,
   tabs: [...document.querySelectorAll("#doc-tabs [data-dt]")].map(e => e.textContent.trim()), mode: document.querySelector('#sim-tools [data-s="mode-thermal"]')?.getAttribute("aria-pressed") }));
-check("TB-1", made.comps.length === 7 && made.comps.some(c => /^PCB<1>.*7\.12 \/ 0\.314 W\/\(m·K\).*Board/.test(c)) && made.comps.some(c => /^Q2<1>.*Copper/.test(c)) && made.rows.some(r => /Heat from package 1.*6 parts/.test(r))
+check("TB-1", made.comps.length === 7 && made.comps.some(c => /^PCB<1>.*Circuit board.*7\.12 W\/\(m·K\) along the board, 0\.314 W\/\(m·K\) through/.test(c)) && made.comps.some(c => /^Q2<1>.*Copper/.test(c)) && made.rows.some(r => /Heat from package 1.*6 parts/.test(r))
   && made.rows.some(r => /Convection 1.*all open surfaces/.test(r)) && made.rows.some(r => /Radiation 1.*all open surfaces/.test(r)) && made.ambient === "40" && made.tabs.length === 2,
   "Simulate makes an assembly named after the package's parts, with the board marked as a circuit board (its conductivity along and through from its copper) and guessed part materials, and a thermal study: heat from the package, the package's ambient, convection and radiation from all open surfaces", made, await snap(pg, "board-study"));
 
