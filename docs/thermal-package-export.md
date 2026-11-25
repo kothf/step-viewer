@@ -84,7 +84,7 @@ All of this is optional; a package without it works as before (materials guessed
 
 - `materials`: by a key of your choice. `k_WmK` is required (an entry without it is ignored); `emissivity` is 0 to 1.
 - `body_materials` (per part): STEP solid name → material key. `material` (per part): the key for its other solids. A key that is not in `materials` is looked up as a MöbiusCAD library material name; nothing given = the guess as before. Names are compared without case.
-- `heat_bodies` (per part): the STEP solids the part's own heat is made in (die, wound core, a valve's plate). Absent = all its solids. The board share of the split still enters the board under the part.
+- `heat_bodies` (per part): the STEP solids the part's own heat is made in (die, wound core, a valve's plate). Absent = all its solids. The board share of the split still enters the board under the part; from 1.758.0 a part with heat bodies makes its whole `p_total_W` in them and gives the board (and heatsink) share up at its surface where it meets the board, so the die-to-case path carries all the power.
 - A part with `t_kind` `junction` and `heat_bodies` reports the hottest point of those bodies as its junction; `rjc_KW` is then ignored. Without `heat_bodies`, `rjc_KW` works as before.
 - `board.emissivity`: the board's surface. Radiation from all open surfaces uses each body's own emissivity where its material has one, and the study's value on the rest.
 - The heat-source CSV may carry `heat_bodies` (names separated by `;`) and `material` columns.
