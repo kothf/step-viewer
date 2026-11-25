@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.760.0] - 2026-11-25
+
+### Changed
+
+- In a thermal study of an assembly, the small "Board" button on every component row is gone: one **Circuit board** picker above the Components list says which component is the printed circuit board, with a tooltip and a note saying what that does (its heat spreads through the copper layers you give under its name, far better along it than through it). A new thermal study of an assembly finds its board by itself: a component named board or PCB, of a board material, or a thin flat non-metal plate larger than every other component; the picker is there to correct it or to say None. The conductivity reads "Conducts … W/(m·K) along the board, … W/(m·K) through it".
+- Picking another board, or none, says that the copper layers (and a Gerber copper map) were dropped and that Ctrl+Z brings them back.
+
+### Fixed
+
+- The **Copper from Gerber…** button of a board was cut off in the Components list.
+
 ## [1.759.0] - 2026-11-25
 
 ### Added
@@ -5006,7 +5017,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.759.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.760.0...HEAD
+[1.760.0]: https://github.com/kothf/step-viewer/compare/v1.759.0...v1.760.0
 [1.759.0]: https://github.com/kothf/step-viewer/compare/v1.758.0...v1.759.0
 [1.758.0]: https://github.com/kothf/step-viewer/compare/v1.757.0...v1.758.0
 [1.757.0]: https://github.com/kothf/step-viewer/compare/v1.756.0...v1.757.0
