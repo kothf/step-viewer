@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.750.0] - 2026-11-25
+
+### Changed
+
+- An analysis of a model with many cut cells needs far less memory: the fine integration points of the cut cells were kept twice while the cells were made and then for the whole solve. Now they stay in the memory they were made in, the cells' moments are summed to the highest degree in one go, and the points are let go after that. A real board (43 components, 246 bodies): the peak of a three-pass thermal study 6.0 GB → 4.4 GB, the same temperatures in the same time. A browser tab that ran out of memory on such a board was closed by the system.
+
 ## [1.749.0] - 2026-11-24
 
 ### Changed
@@ -4937,7 +4943,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.749.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.750.0...HEAD
+[1.750.0]: https://github.com/kothf/step-viewer/compare/v1.749.0...v1.750.0
 [1.749.0]: https://github.com/kothf/step-viewer/compare/v1.748.0...v1.749.0
 [1.748.0]: https://github.com/kothf/step-viewer/compare/v1.747.0...v1.748.0
 [1.747.0]: https://github.com/kothf/step-viewer/compare/v1.746.0...v1.747.0

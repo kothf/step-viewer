@@ -1,6 +1,6 @@
 // A thermal study saved in an assembly file, solved in node as the Simulation tab solves it (no bolts, no typed k tables):
 //   node bench/run.mjs bench/thboard.bench.ts <file.mcadasm> [study index]
-// Prints each pass and the hottest temperature of every component. THBOARD_PASSES overrides the study's passes; THBOARD_TRANSIENT=<end s>,<output s> runs a warm-up; PROF=1 prints a CPU profile, SIMTHREADS (1) = threads.
+// Prints each pass and the hottest temperature of every component. THBOARD_PASSES overrides the study's passes; THBOARD_TRANSIENT=<end s>,<output s> runs a warm-up; PROF=1 prints a CPU profile, SIMTHREADS (1) = threads, THBOARD_MEM=1 prints the memory in use after each stage.
 import { readFileSync } from "node:fs";
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
@@ -61,7 +61,8 @@ if (process.env.PROF) { const { Session } = await import("node:inspector"); sess
 const stages = new Map<string, number>();
 let stageNow = "", stageAt = performance.now();
 const stageEnd = () => { const t = performance.now(); if (stageNow) stages.set(stageNow, (stages.get(stageNow) ?? 0) + (t - stageAt) / 1000); stageAt = t; };
-progressTo(q => { if (q.stage !== stageNow) { stageEnd(); stageNow = q.stage; } });
+const memLine = (tag: string) => { const m = process.memoryUsage(); console.log(`  mem ${tag}: rss ${(m.rss / 1e6).toFixed(0)}, heap ${(m.heapUsed / 1e6).toFixed(0)}/${(m.heapTotal / 1e6).toFixed(0)}, buffers ${(m.arrayBuffers / 1e6).toFixed(0)}, external ${(m.external / 1e6).toFixed(0)} MB`); };
+progressTo(q => { if (q.stage !== stageNow) { stageEnd(); if (process.env.THBOARD_MEM) memLine(`after ${stageNow || "start"}`); stageNow = q.stage; } });
 const stageText = () => { stageEnd(); stageNow = ""; const r = [...stages].map(([k, v]) => `${k} ${v.toFixed(1)}`).join(", "); stages.clear(); return r; };
 const t0 = performance.now(), passes = Number(process.env.THBOARD_PASSES ?? st.settings.passes);
 const trEnv = process.env.THBOARD_TRANSIENT?.split(",").map(Number);
