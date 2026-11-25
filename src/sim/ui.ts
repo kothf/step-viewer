@@ -91,6 +91,8 @@ export interface SimHost {
   simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts?: number; regions?: { key: string; tris: Float64Array; mat?: MatRef | null; name?: string; /** A solid of a part with several: the names of its body (typed name, Bodies key, feature name). */ body?: string[] }[] }>;
   /** No part command is open. */
   idle(): boolean;
+  /** An assembly whose components are still being built (first open, a change): there is nothing to analyse until it ends. */
+  building?(): boolean;
   /** Draws the part's planes, sketches and marks again. */
   redraw(): void;
   /** Shows the Study side tab. */
@@ -244,6 +246,9 @@ export class SimController {
   private edit: Edit | null = null;
   private res: Results | null = null;
   private running = false;
+  /** Waiting for the assembly's build before a solve (`waits` = how often, for tests). */
+  private waiting = false;
+  private waits = 0;
   private progress = "";
   /** The solver's last report of the running solve (the status bar's progress line), and when the solve began. */
   private prog: SimProgress | null = null;
@@ -615,6 +620,7 @@ export class SimController {
   async findLinks() {
     const st = this.study();
     if (!st || !this.host.asm() || this.finding || this.running) return;
+    if (!(await this.built()) || this.study() !== st || this.finding || this.running) return;
     if (!this.host.model()) { toast(t("The assembly has no components to analyse yet."), "warn"); return; }
     this.finding = true;
     this.renderAll();
@@ -701,7 +707,7 @@ export class SimController {
   state() {
     const last = this.res?.passes.at(-1);
     return {
-      threads: this.client.threads, isolated: typeof crossOriginIsolated !== "undefined" && crossOriginIsolated, refine: (this.study()?.refine ?? []).map(r => [r.faces.length, r.level]), study: this.study()?.id ?? null, editing: this.edit ? this.edit.draft.id : null, running: this.running, error: this.error, stale: this.stale(),
+      waiting: this.waiting, waits: this.waits, threads: this.client.threads, isolated: typeof crossOriginIsolated !== "undefined" && crossOriginIsolated, refine: (this.study()?.refine ?? []).map(r => [r.faces.length, r.level]), study: this.study()?.id ?? null, editing: this.edit ? this.edit.draft.id : null, running: this.running, error: this.error, stale: this.stale(),
       passes: this.res?.passes.map(p => ({ p: p.p, raised: p.raised ?? null, cells: p.cells, dofs: p.dofs, energy: p.energy, change: p.change, ms: p.ms, memory: p.memory ?? null })) ?? [], errors: last?.errors ?? [], capped: last?.capped ?? null, auto: !!this.study()?.auto, autoRuns: this.autoRuns,
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
@@ -762,7 +768,7 @@ export class SimController {
     const doc = this.host.doc(), st = this.study();
     if (!doc || !st?.auto) return;
     // a solve under way, an open panel or an open command: look again later
-    if (this.running || this.edit || !this.host.idle()) { this.autoSoon(); return; }
+    if (this.running || this.edit || this.waiting || !this.host.idle() || this.host.building?.()) { this.autoSoon(); return; }
     if (this.res && !this.stale()) return;
     // nothing to solve yet: no support (unless the body is free on purpose), or no load
     const off = new Set(st.suppressed ?? []), on = <T extends { id: string }>(l: T[]) => l.filter(x => !off.has(x.id));
@@ -1292,12 +1298,19 @@ export class SimController {
   private renderStatus() {
     const el = document.getElementById("st-sim");
     if (!el) return;
+    if (!this.running && this.waiting) {
+      // the assembly is still being built: say so where the solve's progress will be
+      el.innerHTML = `<i class="spin" aria-hidden="true"></i><span class="st-sim-t" data-v="building" role="status"></span>`;
+      el.firstElementChild!.nextElementSibling!.textContent = t("Building the assembly…");
+      el.hidden = false;
+      return;
+    }
     if (!this.running) {
       clearInterval(this.progTimer); this.progTimer = 0; this.prog = null;
       if (!el.hidden) { el.hidden = true; el.replaceChildren(); }
       return;
     }
-    if (!el.firstChild) {
+    if (!el.querySelector(".st-sim-bar")) {
       el.innerHTML = `<i class="spin" aria-hidden="true"></i><span class="st-sim-t"></span><span class="st-sim-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></span><span class="st-sim-p mono"></span><span class="st-sim-s mono muted"></span><button type="button" class="st-sim-x" data-a="simstop"></button>`;
       const b = el.querySelector("button")!;
       b.textContent = t("Stop");
@@ -1320,7 +1333,27 @@ export class SimController {
     if (run) run.textContent = text;
   }
 
+  /**
+   * Waits while the assembly is still being built (a first open takes a while), with a note in the status bar:
+   * false when a wait is already under way or the document went away meanwhile.
+   */
+  private async built(): Promise<boolean> {
+    if (!this.host.building?.()) return true;
+    if (this.waiting) return false;
+    const host = this.host, id = host.doc()?.id;
+    this.waiting = true;
+    this.waits++;
+    toast(t("The assembly is still being built. The solve starts when it is ready."));
+    this.renderStatus();
+    try {
+      for (let i = 0; i < 3000 && this.host === host && host.building?.(); i++) await new Promise(r => setTimeout(r, 100));
+    } finally { this.waiting = false; this.renderStatus(); }
+    return this.host === host && !!id && host.doc()?.id === id && !host.building?.();
+  }
+
   async solve() {
+    if (!this.host.doc() || !this.study() || this.running) return;
+    if (!(await this.built())) return;
     const doc = this.host.doc(), st = this.study();
     if (!doc || !st || this.running) return;
     if (this.edit) { toast(t("Finish the open command first.")); return; }
@@ -2291,7 +2324,7 @@ export class SimController {
       + (limits.size ? `<p class="${over ? "sim-warn" : "sim-note muted"}" data-v="tover">${esc(over ? t("{n} part is over its temperature limit.|{n} parts are over their temperature limits.", { n: over }) : t("Every part is within its temperature limit."))}</p>` : "")
       + this.nearHtml(r) + this.partTempsHtml()
       + `<table class="sim-comptable sim-tcomps"><thead><tr><th>${esc(t("Component"))}</th><th title="${esc(t("Highest temperature"))}">${esc(t("Max"))}, °C</th>${limits.size ? `<th title="${esc(t("Temperature limit from the package"))}">${esc(t("Limit"))}, °C</th>` : `<th title="${esc(t("Mean temperature of its surface"))}">${esc(t("Mean"))}, °C</th>`}${power ? `<th title="${esc(t("Heat made in the component"))}">${esc(t("Heat"))}, W</th>` : ""}</tr></thead><tbody>`
-      + rows.map((x, d) => `<tr data-a="rcomp" data-rcomp="${d}" tabindex="0" class="${d === alone ? "sel" : ""}${bad(x, d) ? " bad" : ""}"><td translate="no" title="${esc(r.comps![d].name)}">${esc(r.comps![d].name)}</td><td data-v="tcmax">${sig(x.max)}</td>${limits.size ? `<td data-v="tclimit">${lim(d) === undefined ? "" : sig(lim(d)!)}</td>` : `<td>${sig(x.mean)}</td>`}${power ? `<td data-v="tcpower">${x.power ? sig(x.power) : ""}</td>` : ""}</tr>`).join("") + `</tbody></table>`
+      + rows.map((x, d) => `<tr data-a="rcomp" data-rcomp="${d}" tabindex="0" class="${d === alone ? "sel" : ""}${bad(x, d) ? " bad" : ""}"><td translate="no" title="${esc(r.comps![d].name)}">${esc(r.comps![d].name)}</td><td data-v="tcmax"${x.deep ? ` data-deep="1" title="${esc(t("The hottest point is inside the body."))}"` : ""}>${sig(x.max)}</td>${limits.size ? `<td data-v="tclimit">${lim(d) === undefined ? "" : sig(lim(d)!)}</td>` : `<td>${sig(x.mean)}</td>`}${power ? `<td data-v="tcpower">${x.power ? sig(x.power) : ""}</td>` : ""}</tr>`).join("") + `</tbody></table>`
       + this.heatOutHtml(r, last, alone)
       + `<p class="sim-note muted" data-v="compnote">${alone >= 0 ? `${esc(t("Showing {name} alone, on its own colour scale.", { name: r.comps[alone].name }))} <button class="btn small" data-a="rcompall">${esc(t("Show all"))}</button>` : esc(t("Click a row to show that component alone."))}</p>`;
   }

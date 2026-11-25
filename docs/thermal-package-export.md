@@ -95,7 +95,7 @@ A writer that makes the assembly itself (one part document per part, every solid
 
 - **Emissivity**: `emis` (0 to 1) on a material (`PartDoc.material`, `PartDoc.bodies[key].material`). Radiation from all open surfaces (`{ type: "rad", all: true }`) uses it on that body's faces; the item's `emis` serves bodies whose material has none.
 - **Heat bodies**: a Heat from package row may carry `"bodies": ["Die", …]`: body names inside the row's part (the name typed in `PartDoc.bodies[key].name`, the body's key, or the name of the feature that made it; compared without case). The row's own heat is made only in those bodies; absent, or no body of that name, = all its bodies.
-- **Junction**: a row with `junction: true` and `bodies` reports the hottest point of those bodies; `rjc` is ignored for it.
+- **Junction**: a row with `junction: true` and `bodies` reports the hottest point of those bodies, inside them as well as on their faces (1.757.0); `rjc` is ignored for it.
 
 ## New optional key: the board's copper stack
 

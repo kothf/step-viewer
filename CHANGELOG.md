@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.757.0] - 2026-11-25
+
+### Fixed
+
+- A thermal study of an assembly reports a body's **highest temperature inside it**, not only on its faces. A body heated inside and cooled at its surface (a capacitor's core in its can, a die in its package) is hottest at its middle, and the table showed only what its surface reached: a 0.25 W core with k 1 W/(m·K) read 0.6 K over its can instead of 1.8 K. Each body is now also sampled at points inside it, for steady studies and every time of a warm-up. The Components table says "The hottest point is inside the body." on such a value; part temperatures, junctions read off named bodies, limits and capacitor life use it. The colours on the model are surface temperatures, as before.
+- Pressing **Solve** (or Find connections) while an assembly is **still being built**, as in the first half minute after opening a big one, no longer answers "The assembly has no components to analyse yet.": the status bar says *Building the assembly…* and the solve starts by itself when the build ends. Solve on change waits the same way.
+
 ## [1.756.0] - 2026-11-25
 
 ### Fixed
@@ -4987,7 +4994,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.756.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.757.0...HEAD
+[1.757.0]: https://github.com/kothf/step-viewer/compare/v1.756.0...v1.757.0
 [1.756.0]: https://github.com/kothf/step-viewer/compare/v1.755.0...v1.756.0
 [1.755.0]: https://github.com/kothf/step-viewer/compare/v1.754.0...v1.755.0
 [1.754.0]: https://github.com/kothf/step-viewer/compare/v1.753.0...v1.754.0

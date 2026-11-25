@@ -17939,7 +17939,20 @@ try {
       components: [{ id: "c1", name: "Board<1>", part: "pcb", tf: T(0, 0, 0), fixed: true }, { id: "c2", name: "Q1<1>", part: "q1", tf: T(0, 0, 1.6), fixed: true }], studies: [study] };
     const amf = { format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-25T00:00:00Z", units: "mm" };
     const ab = zip(Object.entries({ "manifest.json": JSON.stringify(amf), "document.json": JSON.stringify(asmDoc) }));
-    await bp.evaluate(b => window.__sv.asm.openFile({ name: "Amp.mcadasm", data: new Uint8Array(b).buffer }), [...ab]);
+    // 1.757: Solve asked while the assembly is still being built waits for it, with a note in the status bar
+    const early = await bp.evaluate(async b => {
+      await window.__sv.asm.openFile({ name: "Amp.mcadasm", data: new Uint8Array(b).buffer });
+      const building = !!window.__sv.asm.building;
+      void window.__sv.sim.solve();
+      await new Promise(r => setTimeout(r, 150));
+      const s = window.__sv.sim.state(), el = document.querySelector('#st-sim [data-v="building"]');
+      return { building, waiting: s.waiting, waits: s.waits, note: el?.textContent ?? "", shown: !!el && !document.getElementById("st-sim").hidden, toasts: [...document.querySelectorAll(".toast")].map(x => x.textContent) };
+    }, [...ab]);
+    await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.waiting && !s.running && (s.done || s.error); }, null, { timeout: 300000 });
+    const after = await bp.evaluate(() => { const s = window.__sv.sim.state(), th = s.thermal; return { error: s.error, comps: th?.comps.length, building: !!window.__sv.asm.building, note: !!document.querySelector('#st-sim [data-v="building"]'), deep: th?.comps.filter(c => c.deep).length, cells: document.querySelectorAll('#tab-sim table.sim-tcomps [data-v="tcmax"][data-deep]').length }; });
+    check(early.building && early.waiting && early.waits === 1 && early.shown && /Building the assembly/.test(early.note) && !early.toasts.some(x => /no components/.test(x))
+      && !after.error && after.comps === 3 && !after.building && !after.note && after.deep === after.cells,
+      `thermal 1.757: Solve pressed while the assembly is still being built waits with "Building the assembly…" in the status bar and solves once it is ready; a body whose hottest point is inside is marked in the components table (${JSON.stringify({ early, after })})`);
     await bp.waitForFunction(() => window.__sv.viewer.parts.length === 2 && !window.__sv.asm.building, null, { timeout: 120000 });
     await bp.click("#cm-t-simulation");
     await bp.waitForTimeout(300);

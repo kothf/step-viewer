@@ -261,6 +261,7 @@ export class AsmController {
       /** The shown components, in the view's part order, with their face names. */
       shown: () => this.shownIds.map((id, idx) => ({ idx, id, faces: this.faceNames[idx] ?? [] })),
       idle: () => !this.picking && !this.moving,
+      building: () => this.building,
       /** The mates that let two components turn on each other (hinge, concentric): a study proposes a sliding connection for them (FR-CON-008). */
       mates: () => (this.doc?.mates ?? []).filter(m => !m.suppressed && (m.type === "hinge" || m.type === "concentric")).map(m => ({ a: m.a.comp, b: m.b.comp, type: m.type, name: m.name })),
       /** The shown components, once each, with their parts' material names. */
