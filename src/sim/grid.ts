@@ -51,6 +51,8 @@ export class Grid {
    * to total degree `have[cell]` − 1, so a later pass adds only the moments its higher degree needs.
    */
   mom: { a: Float64Array; have: Int32Array; slot: Int32Array } | null = null;
+  /** The bodies' triangles on shared memory and the key the threads keep the bodies made from them under (`threadBodies`), when the cells were cut on several threads. */
+  bodies: { key: number; tris: Float64Array[] } | null = null;
   constructor(readonly lo: number[], readonly h: number, readonly n: number[]) {
     this.addMap();
   }
@@ -257,6 +259,7 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
   for (const r of ranges) tasks += (r[1] - r[0] + 1) * (r[3] - r[2] + 1) * (r[5] - r[4] + 1);
   // mesh bodies and several threads: the cubes are worked through on all of them (the same points either way)
   const found = doms.every(d => d.tris) && worthSharing(tasks * 1e6) ? sharedCells(lo0, h, n, doms, o, ranges, tasks) : null;
+  if (found && doms.length > 1) g.bodies = lastBodies;
   for (let dom = 0; dom < doms.length; dom++) {
     const map = dom ? g.addMap() : g.map, R = ranges[dom];
     for (let k = R[4]; k <= R[5]; k++) for (let j = R[2]; j <= R[3]; j++) for (let i = R[0]; i <= R[1]; i++) {
@@ -285,11 +288,15 @@ const CELL_REC = 6;
 interface CellJob extends ParJob { key: number; tris: Float64Array[]; ids: Int32Array; slots: Int32Array; rec: Float64Array; out: Float64Array; ptr: Int32Array; lo0: number[]; h: number; dims: number[]; opt: { q: number; depth: number; fit?: number; leafQ?: number } }
 /** The bodies of the cell loop under way, per thread: made once from the job's triangles (this thread already has them). */
 let cellBodies: { key: number; doms: Inside[] } = { key: 0, doms: [] };
-let cellKey = 0;
+let cellKey = 0, lastBodies: { key: number; tris: Float64Array[] } | null = null;
+/** This thread's bodies for a grid's `bodies`: the ones its cell loop made, else made again from the triangles. */
+export function threadBodies(b: { key: number; tris: Float64Array[] }): Inside[] {
+  if (cellBodies.key !== b.key) cellBodies = { key: b.key, doms: b.tris.map(t => insideOf(new MeshBody(t))) };
+  return cellBodies.doms;
+}
 kernel<CellJob, { j: CellJob; doms: Inside[] }>("cells", {
   init(j) {
-    if (cellBodies.key !== j.key) cellBodies = { key: j.key, doms: j.tris.map(t => insideOf(new MeshBody(t))) };
-    return { j, doms: cellBodies.doms };
+    return { j, doms: threadBodies(j) };
   },
   run({ j, doms }, t) {
     const id = j.ids[t], r = CELL_REC * j.slots[t], rec = j.rec, cap = j.out.length / 4;
@@ -318,6 +325,7 @@ function sharedCells(lo0: number[], h: number, n: number[], doms: Inside[], o: G
   const per = n[0] * n[1] * n[2], res = new Map<number, { st: number; fine: Points | null; pts: Points | null }>();
   const key = ++cellKey, tris = doms.map(d => { const t = sharedF64(d.tris!.length); t.set(d.tris!); return t; });
   cellBodies = { key, doms };
+  lastBodies = { key, tris };
   // a cube's record is kept by its place in the first list of cubes
   const rec = sharedF64(CELL_REC * tasks), opt = { q: o.q, depth: o.depth, fit: o.fit, leafQ: o.leafQ };
   const all = new Int32Array(tasks);

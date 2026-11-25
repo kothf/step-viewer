@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.754.0] - 2026-11-25
+
+### Changed
+
+- A thermal study of an assembly with many bodies finds which surfaces are open to the air on all processor cores, and cuts its cells with shorter look-ups along a board. On a board with 240 bodies three passes take 72 s instead of 77 s, with the same temperatures.
+
 ## [1.753.0] - 2026-11-25
 
 ### Fixed
@@ -4965,7 +4971,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.753.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.754.0...HEAD
+[1.754.0]: https://github.com/kothf/step-viewer/compare/v1.753.0...v1.754.0
 [1.753.0]: https://github.com/kothf/step-viewer/compare/v1.752.0...v1.753.0
 [1.752.0]: https://github.com/kothf/step-viewer/compare/v1.751.0...v1.752.0
 [1.751.0]: https://github.com/kothf/step-viewer/compare/v1.750.0...v1.751.0

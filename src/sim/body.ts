@@ -7,6 +7,7 @@ export interface Body {
   inside(x: number, y: number, z: number): boolean;
   /** Sorted coordinates along `axis` where the line through p along that axis crosses the boundary. */
   hits?(axis: number, p: ArrayLike<number>): number[];
+  hitsIn?(axis: number, p: ArrayLike<number>, a: number, b: number): number[];
   /** The boundary inside box [lo, hi]: the axis nearest its normal, and whether it bends sharply there. */
   hint?(lo: ArrayLike<number>, hi: ArrayLike<number>): { axis: number; edge: boolean } | null;
 }
@@ -126,6 +127,42 @@ export class MeshBody implements Body {
       out.push(l0 * t[o + axis] + l1 * t[o + 3 + axis] + l2 * t[o + 6 + axis]);
     }
     return out.sort((a, b) => a - b);
+  }
+
+  /**
+   * The cuts of `hits(axis, p)` that lie strictly between a and b, found through the boxes the stretch passes
+   * instead of the whole line's column (a line along a board passes every hole's wall): the same numbers.
+   */
+  hitsIn(axis: number, p: ArrayLike<number>, a: number, b: number): number[] {
+    const C = this.cols[axis], G = this.g3, t = this.t, a1 = C.a1, a2 = C.a2;
+    const u = p[a1] + this.jit, v = p[a2] + 0.7071 * this.jit;
+    const out: number[] = [];
+    const iu = Math.floor((u - G.o[a1]) / G.s), iv = Math.floor((v - G.o[a2]) / G.s);
+    if (iu < 0 || iv < 0 || iu >= G.n[a1] || iv >= G.n[a2] || !(b > a)) return out;
+    const k0 = Math.max(0, Math.floor((a - G.o[axis]) / G.s)), k1 = Math.min(G.n[axis] - 1, Math.floor((b - G.o[axis]) / G.s));
+    if (!this.seen) this.seen = new Int32Array(this.nt);
+    const seen = this.seen, stamp = ++this.stamp, ix = [0, 0, 0];
+    ix[a1] = iu; ix[a2] = iv;
+    for (let kk = k0; kk <= k1; kk++) {
+      ix[axis] = kk;
+      const c = (ix[2] * G.n[1] + ix[1]) * G.n[0] + ix[0];
+      for (let k = G.start[c]; k < G.start[c + 1]; k++) {
+        const i = G.idx[k];
+        if (seen[i] === stamp) continue;
+        seen[i] = stamp;
+        const o = 9 * i;
+        const x0 = t[o + a1], y0 = t[o + a2], x1 = t[o + 3 + a1], y1 = t[o + 3 + a2], x2 = t[o + 6 + a1], y2 = t[o + 6 + a2];
+        const d = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
+        if (d === 0) continue;
+        const l0 = ((y1 - y2) * (u - x2) + (x2 - x1) * (v - y2)) / d;
+        const l1 = ((y2 - y0) * (u - x2) + (x0 - x2) * (v - y2)) / d;
+        const l2 = 1 - l0 - l1;
+        if (l0 < 0 || l1 < 0 || l2 < 0) continue;
+        const x = l0 * t[o + axis] + l1 * t[o + 3 + axis] + l2 * t[o + 6 + axis];
+        if (x > a && x < b) out.push(x);
+      }
+    }
+    return out.sort((x, y) => x - y);
   }
 
   /** Odd number of surface crossings beyond x on the line along X through the point: the cuts `hits(0, …)` gives,
@@ -256,6 +293,7 @@ export function triBox(t: ArrayLike<number>, o: number, lo: ArrayLike<number>, h
 export function insideOf(b: Body): import("./quad").Inside {
   const f = ((x: number, y: number, z: number) => b.inside(x, y, z)) as import("./quad").Inside;
   if (b.hits) f.hits = (a, p) => b.hits!(a, p);
+  if (b.hitsIn) f.hitsIn = (a, p, x0, x1) => b.hitsIn!(a, p, x0, x1);
   if (b.hint) f.hint = (l, h) => b.hint!(l, h);
   if (b instanceof MeshBody) f.tris = b.tris;
   return f;

@@ -222,6 +222,41 @@ test("threads: the cells of a mesh body found on several threads are the same", 
   } finally { setHelpers([]); setLoopFloor(2e7); }
 });
 
+test("threads: the open surfaces of many bodies found on several threads are the same", async () => {
+  // nine blocks in a row, touching: the faces between them are covered, the rest is open to the air
+  const n = 9, W = 10, tri = (lo: number[], hi: number[]) => {
+    const f: number[] = [];
+    for (let a = 0; a < 3; a++) for (const out of [false, true]) {
+      const a1 = (a + 1) % 3, a2 = (a + 2) % 3, at = out ? hi[a] : lo[a];
+      const P = (u: number, v: number) => { const q = [0, 0, 0]; q[a] = at; q[a1] = u; q[a2] = v; return q; };
+      const A = P(lo[a1], lo[a2]), B = P(hi[a1], lo[a2]), C = P(hi[a1], hi[a2]), D = P(lo[a1], hi[a2]);
+      f.push(...(out ? [...A, ...B, ...C, ...A, ...C, ...D] : [...A, ...C, ...B, ...A, ...D, ...C]));
+    }
+    return f;
+  };
+  const boxes = Array.from({ length: n }, (_v, i) => tri([i * W, 0, 0], [(i + 1) * W, W, W]));
+  const all = boxes.flat();
+  const run = () => {
+    const domains = boxes.map((t, i) => ({ inside: insideOf(new MeshBody(t)), k: 0.05 + 0.01 * i, tris: t }));
+    const r = solveThermal({ lo: [0, 0, 0], hi: [n * W, W, W], inside: (x, y, z) => domains.some(d => d.inside(x, y, z)), h: 7, p: 2, k: 0, domains,
+      sinks: [{ tris: all, free: true, h: 2e-5, ambient: 25 }, { tris: all, free: true, emissivity: 0.8, ambient: 25 }], sources: [{ power: 1.5, doms: [4] }] });
+    return [r.x, r.flows.map(f => [f.out, f.area]), !!r.grid.bodies];
+  };
+  const one = run();
+  assert.equal(one[2], false);
+  // the open area: the row's outside, without the eight faces between blocks
+  assert.ok(Math.abs((one[1] as number[][])[0][1] - (4 * n * W * W + 2 * W * W)) < 1e-6, JSON.stringify(one[1]));
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const many = run();
+    assert.equal(many[2], true);
+    assert.deepEqual(many.slice(0, 2), one.slice(0, 2));
+  } finally { setHelpers([]); setLoopFloor(2e7); }
+});
+
 }
 
 // the helpers load this file too: a long test must not run in them, or they are busy when a job arrives
