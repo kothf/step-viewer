@@ -4837,6 +4837,62 @@ try {
     await ctx.close();
   }
 
+  // --- 1.759.0: Insert part in place (FR-ASM-031): New part, first sketch on a face of another component, fixed in place ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const ip = await ctx.newPage();
+    ip.on("pageerror", e => errors.push(e.message));
+    ip.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await ip.goto(`${origin}/index.html?debug`);
+    await ip.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await ip.goto(`${origin}/index.html?debug`);
+    await ip.waitForFunction(() => window.__sv);
+    await ip.click("#new-part");
+    await ip.waitForFunction(() => window.__sv.model?.store);
+    await ip.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -40, -25), P("b", 40, -25), P("c", 40, 25), P("d", -40, 25), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await ip.waitForTimeout(150);
+    await ip.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.data, null, { timeout: 120000 });
+    await ip.click("#new-more");
+    await ip.click("#new-asm-part");
+    await ip.waitForFunction(() => window.__sv.asm.doc?.components.length === 1 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 1, null, { timeout: 120000 });
+    await ip.waitForTimeout(500);
+    await ip.click('#asm-tools [data-ac="newpart"]');
+    await ip.waitForSelector('#asm-pm [data-pn]');
+    const name0 = await ip.inputValue('#asm-pm [data-pn]');
+    await ip.fill('#asm-pm [data-pn]', "Lid");
+    const spot = await ip.evaluate(() => {
+      const v = window.__sv.viewer, q = new (v.camera.position.constructor)(5, 5, 10).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    });
+    await ip.mouse.move(spot[0], spot[1]);
+    await ip.waitForTimeout(200);
+    await ip.mouse.click(spot[0], spot[1]);
+    await ip.waitForFunction(() => document.querySelector("#app").classList.contains("sketching"), null, { timeout: 60000 });
+    const plane = await ip.evaluate(() => window.__sv.model.store.doc.features[0]?.plane);
+    await ip.evaluate(() => window.__sv.model.store.change("Lid", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      Object.assign(d.features[0], { ents: [P("a", -10, -10), P("b", 10, -10), P("c", 10, 10), P("d", -10, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] });
+      d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: d.features[0].id, op: "boss", end: "blind", depth: { v: 5 } });
+    }));
+    await ip.click('#mc-ret [data-a="ret"]');
+    await ip.waitForFunction(() => window.__sv.asm.doc?.components.length === 2 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 2, null, { timeout: 120000 });
+    const got = await ip.evaluate(() => { const d = window.__sv.asm.doc, c = d.components[1], p = d.parts[c.part]; return { name: c.name, fixed: !!c.fixed, file: p.file, zmax: Math.max(...window.__sv.viewer.parts.map(q => q.data.bboxMax[2])) }; });
+    check(name0 === "Part2" && plane && "ctx" in plane && Math.abs(plane.ctx.p[2] - 10) < 1e-6, `in place 1.759: New part is named Part2 and a face click opens it with its first sketch on that face (${JSON.stringify({ name0, plane })})`);
+    check(got.name === "Lid<1>" && got.fixed && got.file === "Lid.mcadprt" && Math.abs(got.zmax - 15) < 1e-3, `in place 1.759: Return to assembly adds Lid<1> fixed, standing on the face (${JSON.stringify(got)})`);
+    await ip.click('#asm-tools [data-ac="newpart"]');
+    await ip.click('#asm-pm [data-a="origin"]');
+    await ip.waitForFunction(() => document.querySelector("#mc-ret"), null, { timeout: 60000 });
+    await ip.click('#mc-ret [data-a="ret"]');
+    await ip.waitForFunction(() => document.querySelector("#app").classList.contains("asm"), null, { timeout: 60000 });
+    await ip.waitForTimeout(300);
+    check(await ip.evaluate(() => window.__sv.asm.doc.components.length === 2), "in place 1.759: a new part left empty is not added");
+    await ctx.close();
+  }
+
   // --- 1.588.0: File ▸ Export… is a dialog; STL quality re-meshes the exact body (fine by default), File ▸ Properties is a window ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
