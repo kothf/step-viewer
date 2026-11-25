@@ -1775,7 +1775,7 @@ export class SimController {
         if (bd) {
           const mp = bd.map, bk = mp ? stackK(bd.t ?? 1.6, bd, mp.means) : boardConductivity(bd.t ?? 1.6, bd), off = dis || (o?.off ? " disabled" : "");
           return `<li data-comp="${esc(c.id)}" class="th board ${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
-            + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Worked out from the copper layers below: heat spreads along a board through its copper, and must cross the glass-epoxy to go through it"))}">${esc(t("Conducts {a} W/(m·K) along the board, {b} W/(m·K) through it", { a: sig(bk.along), b: sig(bk.through) }))}</span>`
+            + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Worked out from the copper layers below: heat spreads along a board through its copper, and must cross the glass-epoxy to go through it"))}">${esc(t("Conducts {a} W/(m·K) along it, {b} W/(m·K) through it", { a: sig(bk.along), b: sig(bk.through) }))}</span>`
             + `<span class="sim-boardset"><label>${esc(t("Copper layers"))} <input type="text" inputmode="numeric" data-k="blayers" data-c="${esc(c.id)}" value="${bd.layers}"${off} /></label>`
             + `<label>${esc(t("Copper"))}, µm <input type="text" inputmode="decimal" data-k="bcopper" data-c="${esc(c.id)}" value="${sig(bd.copper)}"${off} /></label>`
             + (mp ? "" : `<label>${esc(t("Coverage"))}, % <input type="text" inputmode="decimal" data-k="bcover" data-c="${esc(c.id)}" value="${sig(bd.cover * 100)}"${off} /></label>`) + `</span>`
@@ -1922,10 +1922,10 @@ export class SimController {
   private boardPickHtml(st: Study, list: { id: string; name: string }[], dis: string): string {
     const boards = list.filter(c => st.comps?.[c.id]?.board), cur = boards[0]?.id ?? "";
     const opts = [`<option value=""${cur ? "" : " selected"}>${esc(t("None"))}</option>`]
-      .concat(list.map(c => `<option value="${esc(c.id)}" translate="no"${c.id === cur ? " selected" : ""}${st.comps?.[c.id]?.off ? " disabled" : ""}>${esc(c.name)}</option>`));
-    return `<div class="sim-boardpick"><label>${esc(t("Circuit board"))} <select data-k="boardpick" title="${esc(t("The component that is the printed circuit board. Its heat spreads through the copper layers you give under its name: far better along the board than through it. The other components conduct by their materials."))}"${dis}>${opts.join("")}</select></label>`
+      .concat(list.map(c => `<option value="${esc(c.id)}" translate="no"${c.id === cur ? " selected" : ""}${st.comps?.[c.id]?.off ? " disabled" : ""}>${esc(c.name)}${st.comps?.[c.id]?.off ? ` ${esc(t("(left out of the study)"))}` : ""}</option>`));
+    return `<div class="sim-boardpick"><label>${esc(t("Circuit board"))} <select data-k="boardpick" aria-describedby="sim-boardnote" title="${esc(t("The component that is the printed circuit board. Its heat spreads through the copper layers you give under its name: far better along the board than through it. The other components conduct by their materials."))}"${dis}>${opts.join("")}</select></label>`
       + (boards.length > 1 ? `<span class="muted">${esc(t("Also boards: {names}", { names: boards.slice(1).map(b => b.name).join(", ") }))}</span>` : "")
-      + `<p class="sim-note muted">${esc(cur ? t("Found by itself; its copper layers are set under its name below. Change it only if another component is the board.") : t("No circuit board found. Pick it here if the assembly has one: its copper then carries the heat along it."))}</p></div>`;
+      + `<p class="sim-note muted" id="sim-boardnote">${esc(cur ? t("Found by itself. Set its copper layers below, or pick another if this one is wrong.") : t("No circuit board found. Pick it here if the assembly has one: its copper then carries the heat along it."))}</p></div>`;
   }
 
   /** Makes `id` the study's circuit board ("" = none): every other component goes back to an ordinary part. */

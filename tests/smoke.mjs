@@ -18013,8 +18013,8 @@ try {
     await bp.keyboard.press("Control+z");
     await bp.waitForTimeout(400);
     const bd2 = await brd();
-    check(JSON.stringify(bd0.board) === '{"layers":2,"copper":35,"cover":0.4,"t":1.6}' && bd0.on === "true" && bd0.others === 1 && /7\.12 W\/\(m·K\) along the board, 0\.314 W\/\(m·K\) through/.test(bd0.k ?? "") && JSON.stringify(bd0.inputs) === '["2","35","40"]' && bd0.wide <= 0
-      && bd4.board.layers === 4 && /13\.9 W\/\(m·K\) along the board, 0\.329 W/.test(bd4.k ?? "") && bdBad.board.layers === 4 && bd2.board.layers === 2,
+    check(JSON.stringify(bd0.board) === '{"layers":2,"copper":35,"cover":0.4,"t":1.6}' && bd0.on === "true" && bd0.others === 1 && /7\.12 W\/\(m·K\) along it, 0\.314 W\/\(m·K\) through/.test(bd0.k ?? "") && JSON.stringify(bd0.inputs) === '["2","35","40"]' && bd0.wide <= 0
+      && bd4.board.layers === 4 && /13\.9 W\/\(m·K\) along it, 0\.329 W/.test(bd4.k ?? "") && bdBad.board.layers === 4 && bd2.board.layers === 2,
       `thermal 1.656: the board of a study made from a package is marked as a circuit board: 2 layers of 35 µm copper give 7.12 W/(m·K) along it and 0.314 through it; 4 layers give more, a wrong count is refused, undo brings 2 back (${JSON.stringify({ bd0, bd4, bdBad, bd2 })})`);
     await bp.selectOption('#sim-tree select[data-k="passes"]', "1");
     await bp.click('#sim-tools [data-s="solve"]');
