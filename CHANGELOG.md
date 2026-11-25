@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.757.0] - 2026-11-25
+## [1.759.0] - 2026-11-25
 
 ### Changed
 
@@ -15,6 +15,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 
 - The **Copper from Gerber…** button of a board was cut off in the Components list.
+## [1.758.0] - 2026-11-25
+
+### Fixed
+
+- A board study no longer reads a **junction low** when a package part names the bodies its heat is made in and keeps its split. Only the part's power less its board share was made in the die, though all of it leaves the die before it reaches the leads: a TO-18 with 0.3 W, 0.18 W of it into the board, had 0.12 W in its die and read about 13 K low. All the power is now made in the heat bodies, and the share that goes into the board or a heatsink is taken from the part's surface where it meets them. The heat balance and the Heat paths table add up as before; a note under Heat paths says so. Parts without heat bodies are unchanged.
+
+## [1.757.0] - 2026-11-25
+
+### Fixed
+
+- A thermal study of an assembly reports a body's **highest temperature inside it**, not only on its faces. A body heated inside and cooled at its surface (a capacitor's core in its can, a die in its package) is hottest at its middle, and the table showed only what its surface reached: a 0.25 W core with k 1 W/(m·K) read 0.6 K over its can instead of 1.8 K. Each body is now also sampled at points inside it, for steady studies and every time of a warm-up. The Components table says "The hottest point is inside the body." on such a value; part temperatures, junctions read off named bodies, limits and capacitor life use it. The colours on the model are surface temperatures, as before.
+- Pressing **Solve** (or Find connections) while an assembly is **still being built**, as in the first half minute after opening a big one, no longer answers "The assembly has no components to analyse yet.": the status bar says *Building the assembly…* and the solve starts by itself when the build ends. Solve on change waits the same way.
+
+## [1.756.0] - 2026-11-25
+
+### Fixed
+
+- The **analysis progress line** in the status bar no longer jumps while a study runs: the per cent and the time keep one width, the stage text takes the room that is left so the bar and Stop stay put, and the snap filters step aside while a solve runs so the whole stage (for example "Pass 5 of 6: solving") fits. Hovering the stage shows it in full. Counters elsewhere (rebuild progress, drawing status, the Study tab's run line) keep their digits one width too.
+- A thermal study of an assembly no longer reports a small part as **0 °C** (it showed as the coolest part of a heated board) when none of the plot's points fell on it: it is measured on its own faces instead.
+- The assembly bar asking for the **folder of the part files** (and the isolate bar, the tool hint and the empty-part card) no longer runs off the right edge of a narrow view: it stays centred and wraps inside it.
 
 ## [1.755.0] - 2026-11-25
 
@@ -4990,8 +5010,11 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.755.0...HEAD
-[1.757.0]: https://github.com/kothf/step-viewer/compare/v1.755.0...v1.757.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.759.0...HEAD
+[1.759.0]: https://github.com/kothf/step-viewer/compare/v1.758.0...v1.759.0
+[1.758.0]: https://github.com/kothf/step-viewer/compare/v1.757.0...v1.758.0
+[1.757.0]: https://github.com/kothf/step-viewer/compare/v1.756.0...v1.757.0
+[1.756.0]: https://github.com/kothf/step-viewer/compare/v1.755.0...v1.756.0
 [1.755.0]: https://github.com/kothf/step-viewer/compare/v1.754.0...v1.755.0
 [1.754.0]: https://github.com/kothf/step-viewer/compare/v1.753.0...v1.754.0
 [1.753.0]: https://github.com/kothf/step-viewer/compare/v1.752.0...v1.753.0

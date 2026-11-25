@@ -72,6 +72,27 @@ export function contactPatch(board: ArrayLike<number>, part: ArrayLike<number>, 
   return clipFacing(board, ax, (lo[ax] + hi[ax]) / 2, box);
 }
 
+/**
+ * The triangles of `part` lying at `patch` (a piece of another body's face, where a share of the part's heat goes in):
+ * those whose box meets the patch's box grown by `grow` mm. A part with heat bodies gives the share up there
+ * (its leads, its seat), so all its power crosses from the die to the case first. Null when none lie there.
+ */
+export function nearPatch(part: ArrayLike<number>, patch: ArrayLike<number>, grow = 0.6): Float64Array | null {
+  if (part.length < 9 || patch.length < 9) return null;
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < patch.length; i++) { const a = i % 3, v = patch[i]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
+  const out: number[] = [];
+  for (let o = 0; o + 8 < part.length; o += 9) {
+    let meets = true;
+    for (let a = 0; a < 3 && meets; a++) {
+      const mn = Math.min(part[o + a], part[o + 3 + a], part[o + 6 + a]), mx = Math.max(part[o + a], part[o + 3 + a], part[o + 6 + a]);
+      if (mx < lo[a] - grow || mn > hi[a] + grow) meets = false;
+    }
+    if (meets) for (let k = 0; k < 9; k++) out.push(part[o + k]);
+  }
+  return out.length ? Float64Array.from(out) : null;
+}
+
 /** Where a package part's board share enters the board (FR-TBRD-003): a pad as a disc [x, y, r] or the air gap under
  * the body as a rectangle [x0, y0, x1, y1], mm, in the board's plane (x, y when it lies square to z), with its watts. */
 export interface HeatInto { disc?: [number, number, number]; rect?: [number, number, number, number]; w: number }

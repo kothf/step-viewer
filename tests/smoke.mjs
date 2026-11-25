@@ -17492,7 +17492,7 @@ try {
   }
 
   // --- Thermal solve on change 1.703 (FR-TSOL-020): new steady thermal studies solve by themselves after each change ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
     tp.on("pageerror", e => errors.push(e.message));
@@ -17569,7 +17569,7 @@ try {
   }
 
   // --- Transient thermal 1.661 (FRS-thermal TH4): warm-up over time with a heater switched on later ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
     tp.on("pageerror", e => errors.push(e.message));
@@ -17939,7 +17939,20 @@ try {
       components: [{ id: "c1", name: "Board<1>", part: "pcb", tf: T(0, 0, 0), fixed: true }, { id: "c2", name: "Q1<1>", part: "q1", tf: T(0, 0, 1.6), fixed: true }], studies: [study] };
     const amf = { format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-25T00:00:00Z", units: "mm" };
     const ab = zip(Object.entries({ "manifest.json": JSON.stringify(amf), "document.json": JSON.stringify(asmDoc) }));
-    await bp.evaluate(b => window.__sv.asm.openFile({ name: "Amp.mcadasm", data: new Uint8Array(b).buffer }), [...ab]);
+    // 1.757: Solve asked while the assembly is still being built waits for it, with a note in the status bar
+    const early = await bp.evaluate(async b => {
+      await window.__sv.asm.openFile({ name: "Amp.mcadasm", data: new Uint8Array(b).buffer });
+      const building = !!window.__sv.asm.building;
+      void window.__sv.sim.solve();
+      await new Promise(r => setTimeout(r, 150));
+      const s = window.__sv.sim.state(), el = document.querySelector('#st-sim [data-v="building"]');
+      return { building, waiting: s.waiting, waits: s.waits, note: el?.textContent ?? "", shown: !!el && !document.getElementById("st-sim").hidden, toasts: [...document.querySelectorAll(".toast")].map(x => x.textContent) };
+    }, [...ab]);
+    await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.waiting && !s.running && (s.done || s.error); }, null, { timeout: 300000 });
+    const after = await bp.evaluate(() => { const s = window.__sv.sim.state(), th = s.thermal; return { error: s.error, comps: th?.comps.length, building: !!window.__sv.asm.building, note: !!document.querySelector('#st-sim [data-v="building"]'), deep: th?.comps.filter(c => c.deep).length, cells: document.querySelectorAll('#tab-sim table.sim-tcomps [data-v="tcmax"][data-deep]').length }; });
+    check(early.building && early.waiting && early.waits === 1 && early.shown && /Building the assembly/.test(early.note) && !early.toasts.some(x => /no components/.test(x))
+      && !after.error && after.comps === 3 && !after.building && !after.note && after.deep === after.cells,
+      `thermal 1.757: Solve pressed while the assembly is still being built waits with "Building the assembly…" in the status bar and solves once it is ready; a body whose hottest point is inside is marked in the components table (${JSON.stringify({ early, after })})`);
     await bp.waitForFunction(() => window.__sv.viewer.parts.length === 2 && !window.__sv.asm.building, null, { timeout: 120000 });
     await bp.click("#cm-t-simulation");
     await bp.waitForTimeout(300);
@@ -17964,6 +17977,50 @@ try {
       // the junction is the die's hottest point, not the case plus 40 K/W
       && part && part.kind === "junction" && part.die && Math.abs(part.t - die.max) < 1e-6 && part.t < part.body + 20 && /bodies the heat is made in/.test(row.title),
       `thermal 1.755: a part's body materials radiate by their own emissivity as one row of the heat balance; its heat is made only in the body the load names; its junction is that body's hottest point (${JSON.stringify({ r, panel, row })})`);
+    await ctx.close();
+  }
+
+  // --- thermal 1.758: a part with heat bodies that keeps its split makes all its power in them; the board share leaves its case ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const bp = await ctx.newPage();
+    bp.on("pageerror", e => errors.push(e.message));
+    bp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await bp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await bp.goto(`${origin}/index.html?debug`);
+    await bp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const rect = (id, x0, y0, x1, y1) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(`${id}p1`, x0, y0), P(`${id}p2`, x1, y0), P(`${id}p3`, x1, y1), P(`${id}p4`, x0, y1),
+      { id: `${id}l1`, t: "line", a: `${id}p1`, b: `${id}p2` }, { id: `${id}l2`, t: "line", a: `${id}p2`, b: `${id}p3` }, { id: `${id}l3`, t: "line", a: `${id}p3`, b: `${id}p4` }, { id: `${id}l4`, t: "line", a: `${id}p4`, b: `${id}p1` }] });
+    const head = (id, name) => ({ schema: 1, kind: "part", id, name, units: { length: "mm", decimals: 2 }, props: {}, rollback: null });
+    const pcb = { ...head("pcb", "Board"), material: { name: "Board laminate", density: 1.85, k: 0.8, cp: 1100 }, features: [rect("s1", -30, -20, 30, 20), { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 1.6 } }] };
+    const q1 = { ...head("q1", "Q1"), material: { name: "Plain plastic", density: 1.2, k: 0.3, cp: 1200 },
+      bodies: { b1: { name: "Tab", material: { name: "Bright copper", density: 8.9, k: 390, cp: 385 } }, b2: { name: "Die", material: { name: "Black silicon", density: 2.33, k: 148, cp: 700 } } },
+      features: [rect("s1", -5, -5, 5, 5), { id: "b1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 4 } },
+        rect("s2", 5, -2, 9, 2), { id: "b2", type: "extrude", name: "Extrude2", sketch: "s2", op: "boss", end: "blind", depth: { v: 4 }, merge: false }] };
+    const T = (x, y, z) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z];
+    const study = { id: "st1", name: "Thermal 1", kind: "thermal", settings: { passes: 1, energyTol: 1, ambient: 25 },
+      supports: [{ id: "s2", type: "conv", faces: [], all: true, h: 8 }],
+      loads: [{ id: "l1", type: "pkgheat", faces: [], board: "c1", split: true, parts: [{ id: 1, name: "Q1", comps: ["c2"], p: 1, board: 0.4, junction: true, limit: 150, bodies: ["die"] }] }] };
+    const asmDoc = { schema: 1, kind: "assembly", id: "a_ds", name: "Amp", units: { length: "mm", decimals: 2 }, parts: { pcb: { name: "Board", file: "Board.mcadprt", doc: pcb }, q1: { name: "Q1", file: "Q1.mcadprt", doc: q1 } },
+      components: [{ id: "c1", name: "Board<1>", part: "pcb", tf: T(0, 0, 0), fixed: true }, { id: "c2", name: "Q1<1>", part: "q1", tf: T(0, 0, 1.6), fixed: true }], studies: [study] };
+    const amf = { format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-25T00:00:00Z", units: "mm" };
+    const ab = zip(Object.entries({ "manifest.json": JSON.stringify(amf), "document.json": JSON.stringify(asmDoc) }));
+    await bp.evaluate(async b => { await window.__sv.asm.openFile({ name: "Amp.mcadasm", data: new Uint8Array(b).buffer }); }, [...ab]);
+    await bp.waitForFunction(() => window.__sv.viewer.parts.length === 2 && !window.__sv.asm.building, null, { timeout: 120000 });
+    await bp.click("#cm-t-simulation");
+    await bp.waitForTimeout(300);
+    await bp.click('#sim-tools [data-s="mode-thermal"]');
+    await bp.waitForTimeout(300);
+    await bp.click('#sim-tools [data-s="solve"]');
+    await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 });
+    await bp.waitForTimeout(400);
+    const r = await bp.evaluate(() => { const s = window.__sv.sim.state(), th = s.thermal; return { error: s.error, out: th?.out, comps: th?.comps.map(c => ({ name: c.name, max: c.max, power: c.power })), paths: th?.paths, part: th?.parts?.[0], note: document.querySelector('#tab-sim [data-v="dienote"]')?.textContent ?? "" }; });
+    const board = r.comps?.find(c => /Board/.test(c.name)), tab = r.comps?.find(c => /\(1\)/.test(c.name)), die = r.comps?.find(c => /\(2\)/.test(c.name)), path = r.paths?.[0];
+    check(!r.error && board && tab && die && Math.abs(die.power - 1) < 1e-6 && Math.abs(tab.power + 0.4) < 1e-6 && Math.abs(board.power - 0.4) < 1e-6
+      && Math.abs(r.out.reduce((a, b) => a + b, 0) - 1) < 0.03 && path && Math.abs(path.board + path.air + path.other + path.sink + path.chassis - 1) < 1e-6
+      && r.part?.die && Math.abs(r.part.t - die.max) < 1e-6 && /heat is made/.test(r.note),
+      `thermal 1.758: a part with heat bodies and a split makes its whole power in the die; the board share leaves its case where it sits on the board and enters the board; the heat paths still add up (${JSON.stringify(r)})`);
     await ctx.close();
   }
 
@@ -18663,7 +18720,7 @@ try {
   }
 
   // --- radiation between faces 1.666 (FRS-thermal FR-TBC-007): heat crossing a gap only by radiation ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const ap = await ctx.newPage();
     ap.on("pageerror", e => errors.push(e.message));
@@ -19354,7 +19411,7 @@ try {
   }
 
   // --- thermal package 1.668 (FRS-thermal FR-TREP-010): a board study's result saved as a thermal package and opened again ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const kp = await ctx.newPage();
     kp.on("pageerror", e => errors.push(e.message));

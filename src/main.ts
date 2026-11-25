@@ -2743,6 +2743,7 @@ const sim = new SimController({
   faceNames: () => (asm.active ? simAsmModel()?.names ?? [] : partSim.faceNames()),
   simGeo: (lin, ang) => (asm.active ? asmSim.simGeo(lin, ang) : partSim.simGeo(lin, ang)),
   idle: () => (asm.active ? asmSim.idle() : partSim.idle()),
+  building: () => asm.active && asmSim.building(),
   redraw: () => { if (!asm.active) partSim.redraw(); },
   faceAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();
