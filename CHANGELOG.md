@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.756.0] - 2026-11-25
+
+### Fixed
+
+- The **analysis progress line** in the status bar no longer jumps while a study runs: the per cent and the time keep one width, the stage text takes the room that is left so the bar and Stop stay put, and the snap filters step aside while a solve runs so the whole stage (for example "Pass 5 of 6: solving") fits. Hovering the stage shows it in full. Counters elsewhere (rebuild progress, drawing status, the Study tab's run line) keep their digits one width too.
+- A thermal study of an assembly no longer reports a small part as **0 °C** (it showed as the coolest part of a heated board) when none of the plot's points fell on it: it is measured on its own faces instead.
+- The assembly bar asking for the **folder of the part files** (and the isolate bar, the tool hint and the empty-part card) no longer runs off the right edge of a narrow view: it stays centred and wraps inside it.
+
 ## [1.755.0] - 2026-11-25
 
 ### Added
@@ -4979,7 +4987,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.755.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.756.0...HEAD
+[1.756.0]: https://github.com/kothf/step-viewer/compare/v1.755.0...v1.756.0
 [1.755.0]: https://github.com/kothf/step-viewer/compare/v1.754.0...v1.755.0
 [1.754.0]: https://github.com/kothf/step-viewer/compare/v1.753.0...v1.754.0
 [1.753.0]: https://github.com/kothf/step-viewer/compare/v1.752.0...v1.753.0
