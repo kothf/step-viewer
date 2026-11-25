@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.757.0] - 2026-11-25
+
+### Changed
+
+- In a thermal study's Components list, **Circuit board** is now an on/off switch under each component's name (it was a small "Board" button). Its tooltip and the list's note say what it does: switched on, the component is a printed circuit board whose heat spreads through the copper layers you give, far better along it than through it. The conductivity reads "Conducts … W/(m·K) along the board, … W/(m·K) through it".
+- Switching Circuit board off says that the copper layers (and a Gerber copper map) were dropped and that Ctrl+Z brings them back.
+
+### Fixed
+
+- The **Copper from Gerber…** button of a board was cut off in the Components list.
+
 ## [1.755.0] - 2026-11-25
 
 ### Added
@@ -4980,6 +4991,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.755.0...HEAD
+[1.757.0]: https://github.com/kothf/step-viewer/compare/v1.755.0...v1.757.0
 [1.755.0]: https://github.com/kothf/step-viewer/compare/v1.754.0...v1.755.0
 [1.754.0]: https://github.com/kothf/step-viewer/compare/v1.753.0...v1.754.0
 [1.753.0]: https://github.com/kothf/step-viewer/compare/v1.752.0...v1.753.0
