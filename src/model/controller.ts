@@ -409,13 +409,15 @@ export class ModelController {
   returnTo: { label: string; back(doc: PartDoc): void } | null = null;
 
   /** Opens a component's part for editing; Return to assembly hands the edited part back. */
-  editIn(doc: PartDoc, fileName: string, ret: { label: string; back(doc: PartDoc): void }, ctx?: PartContext, handle?: FileSystemFileHandle) {
+  editIn(doc: PartDoc, fileName: string, ret: { label: string; back(doc: PartDoc): void }, ctx?: PartContext, handle?: FileSystemFileHandle, first?: PlaneRef) {
     // a part the assembly references: Save writes its own file
     this.load(doc, fileName, handle ?? null);
     this.store!.markSaved();
     this.returnTo = ret;
     this.setContext(ctx ?? null);
     this.renderReturnBar();
+    // Insert part in place (FR-ASM-031): the first sketch on the face clicked in the assembly.
+    if (first) { this.warm(); void this.createSketch(first); }
   }
 
   /**

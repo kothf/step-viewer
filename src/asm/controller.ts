@@ -18,6 +18,7 @@ import { featureLabel } from "../model/controller";
 import { askFileName, confirmModal, toast, untoast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm, unpackAsmFile } from "./file";
 import { encodeAsmPreview, placedPreview, readAsmPreview } from "./preview";
+import { BAD_FILE_CHARS, hasContent, nextPartName } from "./inPlace";
 import { IDENTITY, applyDir, applyPoint, compose, fromPose, invert, poseAngles, rotation, translation } from "./math";
 import { activateState, addState, deleteState } from "./states";
 import { stepName } from "./steps";
@@ -41,7 +42,7 @@ import { fastenerShape, shapeSvg, shapeVolume, type ToolShape } from "./toolboxS
 import { applySolved, autoExplode, expandPatterns, explodeAt, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
 import type { AsmComponentStatus, AsmDoc, AsmFeature, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
-import type { BodyProps, PartDoc, V3 } from "../model/types";
+import type { BodyProps, PartDoc, PlaneRef, V3 } from "../model/types";
 import { bodyMasses, type MassBody, type OwnBody } from "../tools/inertia";
 import type { PartData, TreeNode } from "../topology";
 import type { Viewer } from "../viewer/Viewer";
@@ -66,7 +67,7 @@ export interface AsmHost {
   /** Parts open in other document tabs, for Insert component. */
   openParts?(): { doc: PartDoc; fileName: string }[];
   /** Opens a part in the modeller (edit part in place); `back` is called with the edited part. */
-  editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void, ctx?: PartContext, handle?: FileSystemFileHandle): void;
+  editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void, ctx?: PartContext, handle?: FileSystemFileHandle, first?: PlaneRef): void;
   /** The part open in the modeller, if any (Make assembly from part). */
   openPart?(): { doc: PartDoc; fileName: string } | null;
   /** The Smart measure tool in use ("select" = the default); box selection only runs with it. */
@@ -312,7 +313,7 @@ export class AsmController {
     };
   }
   /** Clicks in the view pick mate faces (Smart measure leaves them alone). */
-  get picking() { return !!this.mating || !!this.patterning || !!this.exploding || !!this.fastening || !!this.refing || !!this.featuring; }
+  get picking() { return !!this.mating || !!this.patterning || !!this.exploding || !!this.fastening || !!this.refing || !!this.featuring || !!this.placing; }
 
   /** The document with pattern instances added (what the kernel builds and the BOM counts). */
   private expand(doc: AsmDoc): Expanded {
@@ -1534,6 +1535,7 @@ export class AsmController {
     if (this.interfere) { this.interfere = null; this.clearOverlay(); }
     if (this.refing) { this.refing = null; this.clearPicks(); }
     if (this.featuring) { this.featuring = null; this.clearOverlay(); }
+    if (this.placing) { this.placing = null; this.clearPicks(); this.host.viewer.renderer.domElement.style.cursor = ""; }
     this.fastening = null;
     this.hideGhost();
     this.moving = null;
@@ -2710,6 +2712,146 @@ export class AsmController {
     }, inContext ? this.contextOf(c.id) : undefined, ph ?? undefined));
   }
 
+  // ---------- Insert part in place (FR-ASM-031) ----------
+
+  /** New part in place: the name typed in its panel and what is wrong with it. */
+  private placing: { name: string; err?: string } | null = null;
+
+  /** A part name no part of this assembly uses: Part1, Part2… */
+  private freePartName() {
+    return nextPartName(this.usedPartNames());
+  }
+
+  private usedPartNames() {
+    const used = new Set<string>();
+    for (const p of Object.values(this.doc?.parts ?? {})) {
+      used.add(p.name.toLowerCase());
+      if (p.file) used.add(p.file.replace(/\.[^.]+$/, "").replace(/^.*\//, "").toLowerCase());
+    }
+    return used;
+  }
+
+  /** What is wrong with a new part's name (it becomes its file name), or "". */
+  private partNameProblem(name: string) {
+    const n = name.trim();
+    if (!n) return t("Type a name for the part.");
+    if (BAD_FILE_CHARS.test(n)) return t("A file name cannot hold \\ / : * ? \" < > |.");
+    if (this.usedPartNames().has(n.toLowerCase())) return t("A part of this assembly is already called {name}.", { name: n });
+    return "";
+  }
+
+  /**
+   * Insert part in place (FR-ASM-031), as in other CAD apps: a new part is made inside the assembly and opened in
+   * the context of the others. A flat face clicked first takes its first sketch (an external reference that
+   * follows the face); with none, the part starts at the assembly origin. The part's origin is the assembly's
+   * origin and the component is fixed there (the in-place mate). Nothing is added until the part comes back with
+   * something in it, so cancelling leaves the assembly as it was.
+   */
+  startPlacing() {
+    if (!this.doc) return;
+    this.closeTools();
+    this.placing = { name: this.freePartName() };
+    this.renderAll();
+    requestAnimationFrame(() => { const i = document.querySelector<HTMLInputElement>("#asm-pm [data-pn]"); i?.focus(); i?.select(); });
+  }
+
+  private renderPlacePanel() {
+    const pm = $("#asm-pm"), r = this.placing!;
+    pm.hidden = false;
+    pm.dataset.id = "placePart";
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Insert part in place"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("Place at the assembly origin (Enter)"))}" aria-label="${esc(t("Place at the assembly origin (Enter)"))}">✓</button><button class="pm-cancel" data-a="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
+      + `<fieldset class="pm-group"><legend>${esc(t("New part"))}</legend><label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-pn value="${esc(r.name)}" spellcheck="false" translate="no" aria-describedby="asm-pn-err"${r.err ? ' aria-invalid="true"' : ""} /></label>`
+      + `<p id="asm-pn-err" class="pm-err" role="alert"${r.err ? "" : " hidden"}>${esc(r.err ?? "")}</p>`
+      + `<p class="pm-help muted">${esc(this.doc?.components.length ? t("Click a flat face of a component: the first sketch goes on it and follows it.") : t("Nothing to sketch on yet: start at the assembly origin."))}</p>`
+      + `<button class="btn small" data-a="origin">${esc(t("Start at the assembly origin"))}</button>`
+      + `<p class="pm-help muted">${esc(t("Return to assembly adds it, fixed in place, and Save writes its own file beside the assembly."))}</p></fieldset>`;
+    const ni = pm.querySelector<HTMLInputElement>("[data-pn]")!;
+    ni.addEventListener("input", () => {
+      r.name = ni.value;
+      if (r.err) { r.err = this.partNameProblem(r.name) || undefined; const e = pm.querySelector<HTMLElement>("#asm-pn-err")!; e.textContent = r.err ?? ""; e.hidden = !r.err; if (r.err) ni.setAttribute("aria-invalid", "true"); else ni.removeAttribute("aria-invalid"); }
+    });
+    ni.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); this.placePart(); } else if (e.key === "Escape") { e.preventDefault(); this.closeTools(); } });
+    pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.placePart());
+    pm.querySelector("[data-a=origin]")!.addEventListener("click", () => this.placePart());
+    pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => this.closeTools());
+  }
+
+  /** While placing: the flat face under the pointer is lit, so it is clear what a click takes. */
+  private placeHover = 0;
+  private hoverPlace(x: number, y: number) {
+    if (!this.placing || this.placeHover) return;
+    this.placeHover = requestAnimationFrame(() => {
+      this.placeHover = 0;
+      if (!this.placing) return;
+      this.clearPicks();
+      const hit = this.host.partAt(x, y);
+      const sid = hit && this.shownIds[hit.idx], face = hit && this.faceNames[hit.idx]?.[hit.face], c = sid ? this.anyComp(sid) : undefined;
+      const ok = !!(c && face && this.geo.get(c.part)?.get(face)?.k === "plane");
+      this.host.viewer.renderer.domElement.style.cursor = ok ? "pointer" : "";
+      if (!ok || !hit) return;
+      const part = this.host.viewer.parts[hit.idx], f = part?.data.faces[hit.face];
+      if (!part || !f) return;
+      const P = part.data.positions, I = part.data.index, pos: number[] = [];
+      for (let tr = f.triStart; tr < f.triStart + f.triCount; tr++) for (let k = 0; k < 3; k++) { const v = I[tr * 3 + k]; pos.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x1f78ff, transparent: true, opacity: 0.45, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, depthWrite: false }));
+      mesh.userData.matePick = true;
+      mesh.userData.placeHover = true;
+      mesh.renderOrder = 5;
+      part.group.add(mesh);
+      this.host.viewer.invalidate();
+    });
+  }
+
+  /** A click while placing: a flat face of a component takes the first sketch. */
+  private pickPlaceFace(x: number, y: number) {
+    const hit = this.host.partAt(x, y);
+    if (!this.placing || !hit) return;
+    const sid = this.shownIds[hit.idx], face = this.faceNames[hit.idx]?.[hit.face], c = this.anyComp(sid);
+    const g = c && face ? this.geo.get(c.part)?.get(face) : undefined;
+    if (!c || !face || g?.k !== "plane") { toast(t("Pick a flat face: the first sketch goes on it."), true); return; }
+    const w = placeGeo(g, c.tf) as { p: V3; n: V3 };
+    this.placePart({ comp: sid, face, label: c.name, p: w.p, n: unit(w.n) });
+  }
+
+  /** Makes the new part and opens it in context; `on` = the face its first sketch goes on (world mm). */
+  private placePart(on?: { comp: string; face: string; label: string; p: V3; n: V3 }) {
+    const r = this.placing, doc = this.doc;
+    if (!r || !doc || !this.host.editPart) return;
+    const err = this.partNameProblem(r.name);
+    if (err) { r.err = err; this.renderPanel(); document.querySelector<HTMLInputElement>("#asm-pm [data-pn]")?.focus(); return; }
+    const name = r.name.trim(), file = `${name}${PART_EXT}`;
+    const pd = newPart(name), key = uid("p_"), id = uid("c_");
+    // The ghosts are taken while the view still shows this assembly.
+    const ctx = this.contextOf(id, { tf: IDENTITY, part: key });
+    this.placing = null;
+    this.clearPicks();
+    this.host.viewer.renderer.domElement.style.cursor = "";
+    this.renderAll();
+    const first: PlaneRef | undefined = on ? { ctx: { comp: on.comp, face: on.face, host: id, label: on.label, p: on.p, n: on.n } } : undefined;
+    const parked = { doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, savedAt: this.savedAt, sel: this.selected, folder: this.folder, refBase: this.refBase, missing: this.missingLinks };
+    this.host.editPart(pd, file, this.label().replace(/ •$/, ""), back => {
+      const faces = new Map(this.geo);
+      this.load(parked.doc, parked.fileName, parked.handle, parked.folder, parked.refBase);
+      this.missingLinks = parked.missing;
+      for (const [k, g] of faces) this.geo.set(k, g);
+      this.undoStack = parked.undo;
+      this.savedAt = parked.savedAt;
+      this.selected = parked.sel;
+      // An empty part is left out: Insert part in place then changes nothing.
+      if (!hasContent(back)) { this.renderAll(); toast(t("{name} has nothing in it, so it was not added.", { name: back.name || name })); return; }
+      const base = (back.name || name).trim() || name, n = this.doc!.components.filter(c => c.name.startsWith(`${base}<`)).length + 1;
+      this.change(d => {
+        d.parts[key] = { name: base, file: `${base}${PART_EXT}`, doc: back };
+        d.components.push({ id, name: `${base}<${n}>`, part: key, tf: IDENTITY, fixed: true });
+      });
+      this.selected = id;
+      this.renderTree();
+      toast(this.folder ? t("{name} added, fixed in place. Save the assembly to write {file} beside it.", { name: base, file: `${base}${PART_EXT}` }) : t("{name} added, fixed in place. It is kept in the assembly until you save it into a folder.", { name: base }));
+    }, ctx, undefined, first);
+  }
+
   /** The file a referenced part is in (Open part saves into it), when the assembly's folder is open. */
   private async partHandle(key: string): Promise<FileSystemFileHandle | null> {
     const link = this.doc?.parts[key]?.link;
@@ -2722,8 +2864,8 @@ export class AsmController {
    * their face names and the planes of their flat faces. Components that use the same part are left out
    * (a part cannot reference itself).
    */
-  private contextOf(id: string): PartContext | undefined {
-    const c = this.comp(id);
+  private contextOf(id: string, fresh?: { tf: Tf; part: string }): PartContext | undefined {
+    const c = fresh ? { id, tf: fresh.tf, part: fresh.part } : this.comp(id);
     if (!c) return undefined;
     const comps: CtxComp[] = [];
     const v = new THREE.Vector3();
@@ -3456,7 +3598,7 @@ export class AsmController {
       // An open drawing owns the keyboard: its Ctrl+Z / Delete must not reach the assembly behind it (drawings exam #1).
       if (document.getElementById("app")?.classList.contains("drawing")) return;
       if (this.doc && this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).closest("input, textarea, select, dialog[open]")) {
-        if (e.key === "Enter") { e.preventDefault(); if (this.mating) this.okMate(); else if (this.patterning) this.okPattern(); else if (this.exploding) this.okExplode(); else if (this.refing) this.okMateRef(); else if (this.featuring) this.okFeature(); else this.closeTools(); return; }
+        if (e.key === "Enter") { e.preventDefault(); if (this.mating) this.okMate(); else if (this.patterning) this.okPattern(); else if (this.exploding) this.okExplode(); else if (this.refing) this.okMateRef(); else if (this.featuring) this.okFeature(); else if (this.placing) this.placePart(); else this.closeTools(); return; }
         if (e.key === "Escape") { e.preventDefault(); this.closeTools(); return; }
       }
       // Delete removes the item selected in the tree (a mate, component, pattern, exploded view or feature) (exam #67).
@@ -3569,7 +3711,7 @@ export class AsmController {
       if (e.button !== 2 || !d0 || !this.doc || this.picking || this.moving || Math.hypot(e.clientX - d0.x, e.clientY - d0.y) > 4) return;
       this.viewMenu(e.clientX, e.clientY);
     }, true);
-    vp.addEventListener("pointermove", e => { this.pointer = e.target === canvas() ? { x: e.clientX, y: e.clientY } : null; });
+    vp.addEventListener("pointermove", e => { this.pointer = e.target === canvas() ? { x: e.clientX, y: e.clientY } : null; if (this.placing && e.buttons === 0) this.hoverPlace(e.clientX, e.clientY); });
     vp.addEventListener("pointerleave", () => { this.pointer = null; });
     vp.addEventListener("pointermove", e => {
       const d = this.drag;
@@ -3648,6 +3790,7 @@ export class AsmController {
         else if (this.fastening) this.pickHole(e.clientX, e.clientY);
         else if (this.refing) this.pickRefFace(e.clientX, e.clientY);
         else if (this.featuring) this.pickFeatureFace(e.clientX, e.clientY);
+        else if (this.placing) this.pickPlaceFace(e.clientX, e.clientY);
         return;
       }
       const d = this.drag;
@@ -3691,6 +3834,7 @@ export class AsmController {
     const sep = `<div class="mc-sep"></div>`;
     // Assembly tab of the command bar (FR-UI-010): components, mates and moves, patterns and cuts, explode and motion, checks.
     $("#asm-tools").innerHTML = g(t("Components"), b("insert", t("Insert component"), t("Insert component: a part, STEP, IGES or BREP model"))
+        + b("newpart", t("New part"), t("Insert part in place: a new part made in the assembly, sketched on a face of another component"), false, !!this.placing)
         + b("fastener", t("Toolbox"), t("Toolbox: standard screws, nuts, washers, pins, keys and bearings, placed on a hole"), false, !!this.fastening)
         + b("mcmaster", t("McMaster-Carr"), t("Open the McMaster-Carr catalogue. Download a part's 3-D STEP file there and drop it on the assembly: it comes in with its part number and a link to buy it."))) + sep
       + g(t("Mate"), b("mate", t("Mate"), t("Mate: pick two faces to position components relative to each other"), n0 < 2, !!this.mating)
@@ -3740,6 +3884,7 @@ export class AsmController {
   command(c: string) {
     const sel = this.comp(this.selected);
     if (c === "insert") this.insertComponent();
+    else if (c === "newpart") { if (this.placing) this.closeTools(); else this.startPlacing(); }
     else if (c === "afeat") { if (this.featuring) this.closeTools(); else this.startFeature(); }
     else if (c === "fastener") { if (this.fastening) this.closeTools(); else this.startFasteners(); }
     else if (c === "mcmaster") this.openMcMaster();
@@ -3970,6 +4115,7 @@ export class AsmController {
     if (this.fastening) { this.renderFastenerPanel(); return; }
     if (this.refing) { this.renderRefPanel(); return; }
     if (this.featuring) { this.renderFeaturePanel(); return; }
+    if (this.placing) { this.renderPlacePanel(); return; }
     const pm = $("#asm-pm");
     if (pm.dataset.id === "mate") delete pm.dataset.id;
     const c = this.comp(this.moving);
@@ -4372,6 +4518,7 @@ export const TOOLBOX_MIME = "application/x-mcad-toolbox";
 const AI = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const ASM_ICONS: Record<string, string> = {
   insert: AI('<path d="M2.5 5.5 8 2.5l5.5 3v5L8 13.5l-5.5-3z"/><path d="M8 7v4M6 9h4"/>'),
+  newpart: AI('<path d="M2.5 5.5 8 2.5l5.5 3v5L8 13.5l-5.5-3z" stroke-dasharray="2 1.4"/><path d="M8 5.5v5M5.5 8h5"/>'),
   fastener: AI('<path d="M5 2.5h6v3H5z"/><path d="M6.5 5.5v8M9.5 5.5v8M6.5 7.5l3 1M6.5 10l3 1"/>'),
   mcmaster: AI('<path d="M2 3h2l1.6 7.5h6.4L13.5 5H5"/><circle cx="6.5" cy="13" r="1"/><circle cx="11" cy="13" r="1"/>'),
   mate: AI('<path d="M2 10h5v4H2zM9 2h5v4H9z"/><path d="M7 10 9 6"/>'),
@@ -4395,3 +4542,4 @@ function onlyValue(a: Mate, b: Mate) {
   const norm = (m: Mate) => { const o: Record<string, unknown> = { ...m }; delete o.value; for (const k of Object.keys(o)) if (o[k] === undefined || o[k] === false) delete o[k]; return JSON.stringify(Object.keys(o).sort().map(k => [k, o[k]])); };
   return norm(a) === norm(b);
 }
+
