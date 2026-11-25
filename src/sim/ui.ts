@@ -45,7 +45,7 @@ import { compareRows, noteSummary, parseSummaries, type CompareRow, type Summary
 import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, type PathRow } from "./path";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { MEMORY_LIMIT } from "./static";
-import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardK, partTemps, plateAxis, type BoardStack, type PartTemp } from "../thermal/study";
+import { BOARD_MATERIAL, DEFAULT_STACK, boardComponent, boardConductivity, boardK, partTemps, plateAxis, type BoardStack, type PartTemp } from "../thermal/study";
 import { boardMap, gerberName, mapPicture, stackK, type CopperMap } from "../thermal/copper";
 import { copperFromGerber } from "../thermal/copperRaster";
 import { overall, type SimProgress, type SimStage } from "./progress";
@@ -1040,6 +1040,10 @@ export class SimController {
     if (!doc) return;
     const st = newStudy(doc.studies ?? [], kind);
     if (kind === "thermal" && thermalAutoDefault()) st.auto = true;
+    if (kind === "thermal" && this.host.asm()) {
+      const id = this.foundBoard();
+      if (id) { const thick = this.compThickness(id); st.comps = { ...(st.comps ?? {}), [id]: { board: { ...DEFAULT_STACK, ...(thick ? { t: thick } : {}) } } }; }
+    }
     this.setActive(st.id);
     this.edit = null;
     this.host.change(kind === "modal" ? t("New modal study") : kind === "thermal" ? t("New thermal study") : t("New study"), d => { (d.studies ??= []).push(st); });
@@ -1764,20 +1768,20 @@ export class SimController {
     if (!list.length) return "";
     const dis = this.running ? " disabled" : "", thermal = st.kind === "thermal";
     if (thermal) return `<div class="sim-sec sim-comps"><h4>${esc(t("Components"))}</h4>`
-      + `<p class="sim-note muted">${esc(t("A component is analysed with its part's material unless another is picked here: the analysis needs each one's thermal conductivity. Untick a component to leave it out of the study. Switch on Circuit board for a printed circuit board: you then give its copper layers, and it carries heat along the board far better than through it."))}</p>`
+      + `<p class="sim-note muted">${esc(t("A component is analysed with its part's material unless another is picked here: the analysis needs each one's thermal conductivity. Untick a component to leave it out of the study."))}</p>`
+      + this.boardPickHtml(st, list, dis)
       + `<ul class="sim-complist">` + list.map(c => {
         const o = st.comps?.[c.id], own = o?.material, name = own?.name ?? c.material, k = own ? own.k : c.k, bd = o?.board;
-        const brd = `<button type="button" class="sim-bswitch${bd ? " on" : ""}" data-a="compboard" data-c="${esc(c.id)}" aria-pressed="${bd ? "true" : "false"}" title="${esc(t("Switch on when this component is a printed circuit board. Its heat then spreads through the copper layers you set: far better along the board than through it. Off: an ordinary part that conducts by its material."))}"${dis || (o?.off ? " disabled" : "")}><span class="sim-sw" aria-hidden="true"></span><span>${esc(t("Circuit board"))}</span><span class="sim-swstate muted" aria-hidden="true">${esc(bd ? t("on") : t("off"))}</span></button>`;
         if (bd) {
           const mp = bd.map, bk = mp ? stackK(bd.t ?? 1.6, bd, mp.means) : boardConductivity(bd.t ?? 1.6, bd), off = dis || (o?.off ? " disabled" : "");
-          return `<li data-comp="${esc(c.id)}" class="th board ${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>${brd}`
+          return `<li data-comp="${esc(c.id)}" class="th board ${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
             + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Worked out from the copper layers below: heat spreads along a board through its copper, and must cross the glass-epoxy to go through it"))}">${esc(t("Conducts {a} W/(m·K) along the board, {b} W/(m·K) through it", { a: sig(bk.along), b: sig(bk.through) }))}</span>`
             + `<span class="sim-boardset"><label>${esc(t("Copper layers"))} <input type="text" inputmode="numeric" data-k="blayers" data-c="${esc(c.id)}" value="${bd.layers}"${off} /></label>`
             + `<label>${esc(t("Copper"))}, µm <input type="text" inputmode="decimal" data-k="bcopper" data-c="${esc(c.id)}" value="${sig(bd.copper)}"${off} /></label>`
             + (mp ? "" : `<label>${esc(t("Coverage"))}, % <input type="text" inputmode="decimal" data-k="bcover" data-c="${esc(c.id)}" value="${sig(bd.cover * 100)}"${off} /></label>`) + `</span>`
             + this.boardMapHtml(c.id, bd, off) + `</li>`;
         }
-        return `<li data-comp="${esc(c.id)}" class="th ${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>${brd}`
+        return `<li data-comp="${esc(c.id)}" class="th ${o?.off ? "off" : ""}"><label><input type="checkbox" data-k="compon" data-c="${esc(c.id)}"${o?.off ? "" : " checked"}${dis} /> <span class="sim-cname" translate="no">${esc(c.name)}</span></label>`
           + `<span class="sim-ck muted" data-v="compk" title="${esc(t("Thermal conductivity"))}">${st.k3?.[c.id] ? this.k3Text(st.k3[c.id]) : st.kt?.[c.id]?.length ? this.ktRange(st.kt[c.id]) : k ? `${sig(k)} W/(m·K)` : ""}</span>`
           + `<button class="btn small sim-crigid${st.k3?.[c.id] ? " on" : ""}" data-a="k3" data-b="${esc(c.id)}" aria-pressed="${this.k3Open === c.id ? "true" : "false"}" title="${esc(t("Conductivity by direction"))}"${dis || (o?.off ? " disabled" : "")}><span translate="no">XYZ</span></button>`
           + `<button class="btn small sim-crigid${st.kt?.[c.id]?.length ? " on" : ""}" data-a="ktab" data-b="${esc(c.id)}" aria-pressed="${this.ktOpen === c.id ? "true" : "false"}" title="${esc(t("Conductivity that changes with temperature"))}"${dis || (o?.off ? " disabled" : "")}><span translate="no">k(T)</span></button>`
@@ -1914,20 +1918,31 @@ export class SimController {
     if (!ref) toast(t("The component is analysed with its part's material again."), "info");
   }
 
-  /** A thermal study: the component is a circuit board (its conductivity from its copper), or an ordinary body again. */
-  private toggleBoard(id: string) {
+  /** A thermal study of an assembly: which component is the printed circuit board, picked once above the components. */
+  private boardPickHtml(st: Study, list: { id: string; name: string }[], dis: string): string {
+    const boards = list.filter(c => st.comps?.[c.id]?.board), cur = boards[0]?.id ?? "";
+    const opts = [`<option value=""${cur ? "" : " selected"}>${esc(t("None"))}</option>`]
+      .concat(list.map(c => `<option value="${esc(c.id)}" translate="no"${c.id === cur ? " selected" : ""}${st.comps?.[c.id]?.off ? " disabled" : ""}>${esc(c.name)}</option>`));
+    return `<div class="sim-boardpick"><label>${esc(t("Circuit board"))} <select data-k="boardpick" title="${esc(t("The component that is the printed circuit board. Its heat spreads through the copper layers you give under its name: far better along the board than through it. The other components conduct by their materials."))}"${dis}>${opts.join("")}</select></label>`
+      + (boards.length > 1 ? `<span class="muted">${esc(t("Also boards: {names}", { names: boards.slice(1).map(b => b.name).join(", ") }))}</span>` : "")
+      + `<p class="sim-note muted">${esc(cur ? t("Found by itself; its copper layers are set under its name below. Change it only if another component is the board.") : t("No circuit board found. Pick it here if the assembly has one: its copper then carries the heat along it."))}</p></div>`;
+  }
+
+  /** Makes `id` the study's circuit board ("" = none): every other component goes back to an ordinary part. */
+  private pickBoard(id: string) {
     const st = this.study();
     if (!st || this.running) return;
-    const on = !st.comps?.[id]?.board, thick = on ? this.compThickness(id) : null;
-    this.host.change(on ? t("Circuit board") : t("Ordinary component"), d => {
+    const was = Object.entries(st.comps ?? {}).filter(([k, c]) => c.board && k !== id).map(([k]) => k);
+    if (!was.length && (!id || st.comps?.[id]?.board)) return;
+    const thick = id && !st.comps?.[id]?.board ? this.compThickness(id) : null, map = was.some(k => st.comps?.[k]?.board?.map);
+    this.host.change(t("Circuit board"), d => {
       const s = d.studies?.find(x => x.id === st.id);
       if (!s) return;
-      const c = { ...(s.comps?.[id] ?? {}) };
-      if (on) c.board = { ...DEFAULT_STACK, ...(thick ? { t: thick } : {}) }; else delete c.board;
-      this.setComp(s, id, c);
+      for (const k of was) { const c = { ...(s.comps?.[k] ?? {}) }; delete c.board; this.setComp(s, k, c); }
+      if (id && !s.comps?.[id]?.board) this.setComp(s, id, { ...(s.comps?.[id] ?? {}), board: { ...DEFAULT_STACK, ...(thick ? { t: thick } : {}) } });
     });
-    if (!on) toast(t("{name} is an ordinary part again: its copper layers{map} are dropped. Undo (Ctrl+Z) brings them back.", { name: this.host.comps().find(x => x.id === id)?.name ?? "", map: st.comps?.[id]?.board?.map ? t(" and Gerber copper map") : "" }), "info");
-    if (on && !thick) toast(t("The component is not a flat plate square to an axis: it is analysed with the board's in-plane conductivity in every direction."), "info");
+    if (was.length) toast(t("{name} is an ordinary part again: its copper layers{map} are dropped. Undo (Ctrl+Z) brings them back.", { name: was.map(k => this.host.comps().find(x => x.id === k)?.name ?? k).join(", "), map: map ? t(" and Gerber copper map") : "" }), "info");
+    if (id && !thick && !st.comps?.[id]?.board) toast(t("The component is not a flat plate square to an axis: it is analysed with the board's in-plane conductivity in every direction."), "info");
   }
 
   /** The components marked as circuit boards in the active thermal study of an assembly (Gerber drops go to them). */
@@ -1989,6 +2004,20 @@ export class SimController {
     });
     if (map) toast(t("Copper read from {n} layers: the board's conductivity now follows its copper.", { n: map.labels.length }), "info");
     return true;
+  }
+
+  /** The component of the shown assembly that looks like its printed circuit board (`boardComponent`), or null. */
+  private foundBoard(): string | null {
+    const m = this.host.model() as AsmModel | null, list = this.host.comps();
+    if (!m?.names || !list.length) return null;
+    const g = m.geometry, pa = g.getAttribute("position"), idx = g.getIndex()?.array ?? null, tris = new Map<string, number[]>();
+    m.faces.forEach((f, i) => {
+      const id = compOf(m.names[i] ?? ""), out = tris.get(id) ?? [];
+      tris.set(id, out);
+      for (let q = 3 * f.triStart; q < 3 * (f.triStart + f.triCount); q++) { const v = idx ? idx[q] : q; out.push(pa.getX(v), pa.getY(v), pa.getZ(v)); }
+    });
+    const i = boardComponent(list.map(c => ({ name: c.name, material: c.material, k: c.k, tris: tris.get(c.id) ?? [] })));
+    return i >= 0 ? list[i].id : null;
   }
 
   /** The thickness of a component that is a flat plate square to an axis, mm, from the shown model. */
@@ -4921,7 +4950,6 @@ export class SimController {
       });
     }
     else if (a === "comprigid") this.toggleRigid(b.dataset.c ?? "");
-    else if (a === "compboard") this.toggleBoard(b.dataset.c ?? "");
     else if (a === "bgerber") this.pickGerber(b.dataset.c ?? "");
     else if (a === "bgerberclear") void this.readGerber(b.dataset.c ?? "", null);
     else if (a === "ktab") { const k = b.dataset.b ?? ""; this.ktOpen = this.ktOpen === k ? null : k; this.renderTree(); if (this.ktOpen != null) ($("#sim-tree").querySelector(`textarea[data-k="ktab"]`) as HTMLTextAreaElement | null)?.focus(); }
@@ -5011,6 +5039,7 @@ export class SimController {
     const st = this.study();
     if (!st) return;
     if (el.dataset.k === "study") { this.setActive(el.value); this.edit = null; this.changed(); }
+    else if (el.dataset.k === "boardpick") this.pickBoard(el.value);
     else if (el.dataset.k === "sname") {
       const st0 = this.study(), name = el.value.trim();
       this.renaming = false;

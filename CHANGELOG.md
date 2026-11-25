@@ -9,8 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 
-- In a thermal study's Components list, **Circuit board** is now an on/off switch under each component's name (it was a small "Board" button). Its tooltip and the list's note say what it does: switched on, the component is a printed circuit board whose heat spreads through the copper layers you give, far better along it than through it. The conductivity reads "Conducts … W/(m·K) along the board, … W/(m·K) through it".
-- Switching Circuit board off says that the copper layers (and a Gerber copper map) were dropped and that Ctrl+Z brings them back.
+- In a thermal study of an assembly, the small "Board" button on every component row is gone: one **Circuit board** picker above the Components list says which component is the printed circuit board, with a tooltip and a note saying what that does (its heat spreads through the copper layers you give under its name, far better along it than through it). A new thermal study of an assembly finds its board by itself: a component named board or PCB, of a board material, or a thin flat non-metal plate larger than every other component; the picker is there to correct it or to say None. The conductivity reads "Conducts … W/(m·K) along the board, … W/(m·K) through it".
+- Picking another board, or none, says that the copper layers (and a Gerber copper map) were dropped and that Ctrl+Z brings them back.
 
 ### Fixed
 

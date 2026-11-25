@@ -218,6 +218,36 @@ export function looksLikeBoard(bodies: ModelBody[]): boolean {
   return bodies.every((b, j) => j === i || foot(b) < a);
 }
 
+/** One component of an assembly as `boardComponent` sees it: its name, its material and its triangles (9 numbers each). */
+export interface CompShape { name: string; material?: string; /** Its material's conductivity, W/(m·K). */ k?: number | null; tris: ArrayLike<number> }
+
+const BOARD_NAME = /(^|[^a-z])(pcb|board|плата)([^a-z]|$)/i, BOARD_MAT = /(pcb|fr-?4|circuit board|печатн)/i;
+
+/**
+ * Which component of an assembly is its printed circuit board, so a thermal study treats it as one by itself:
+ * one named board or PCB (or of a board material), else a thin flat plate (up to 4 mm, not a metal) whose
+ * footprint is larger than every other component's. −1 when none looks like one (a heatsink and a transistor).
+ */
+export function boardComponent(comps: CompShape[]): number {
+  const named = comps.findIndex(c => BOARD_NAME.test(c.name) || BOARD_MAT.test(c.material ?? ""));
+  if (named >= 0) return named;
+  if (comps.length < 2) return -1;
+  const foot = comps.map(c => {
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < c.tris.length; i++) { const a = i % 3, v = c.tris[i]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
+    const e = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]].sort((x, y) => x - y);
+    return e[0] >= 0 ? e[1] * e[2] : 0;
+  });
+  let best = -1;
+  comps.forEach((c, i) => {
+    if ((c.k ?? 0) >= 50) return;
+    const pl = plateAxis(c.tris);
+    if (!pl || pl.t > 4) return;
+    if (best < 0 || foot[i] > foot[best]) best = i;
+  });
+  return best >= 0 && foot.every((f, j) => j === best || f < foot[best]) ? best : -1;
+}
+
 /** Library material names the guesses use. */
 export const GUESS = {
   resistor: "Alumina 99.5 %",

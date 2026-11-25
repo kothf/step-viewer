@@ -17999,8 +17999,8 @@ try {
       `thermal 1.655: Simulate on a board's thermal map makes an assembly of its bodies, named after the package's parts and with guessed materials, and a thermal study with the package's heat, its ambient and cooling of every open surface (${JSON.stringify(made)})`);
     // 1.656: the board conducts by its copper, along it far better than through it
     const brd = () => bp.evaluate(() => { const c = window.__sv.sim.state().compList.find(x => x.name === "PCB<1>"), li = document.querySelector(`#sim-tree .sim-complist li[data-comp="${c.id}"]`);
-      return { board: c.board, k: li?.querySelector('[data-v="compk"]')?.textContent, on: li?.querySelector('[data-a="compboard"]')?.getAttribute("aria-pressed"), inputs: [...(li?.querySelectorAll(".sim-boardset input") ?? [])].map(i => i.value),
-        others: [...document.querySelectorAll('#sim-tree .sim-complist [data-a="compboard"][aria-pressed="true"]')].length, wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }; });
+      return { board: c.board, k: li?.querySelector('[data-v="compk"]')?.textContent, on: document.querySelector('#sim-tree select[data-k="boardpick"]')?.value === c.id ? "true" : "false", inputs: [...(li?.querySelectorAll(".sim-boardset input") ?? [])].map(i => i.value),
+        others: window.__sv.sim.state().compList.filter(x => x.board).length, wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }; });
     const bd0 = await brd();
     await bp.fill('#sim-tree .sim-boardset input[data-k="blayers"]', "4");
     await bp.press('#sim-tree .sim-boardset input[data-k="blayers"]', "Enter");
