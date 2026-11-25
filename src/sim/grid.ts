@@ -145,7 +145,9 @@ export class Grid {
   }
   private found = new WeakMap<object, { nrm: ArrayLike<number> | undefined; n: number; cells: Int32Array }>();
   cellOf(x: number, y: number, z: number, dom = -1) {
-    const [i, j, k] = this.index(x, y, z);
+    const nn = this.n, lo = this.lo, h = this.h;
+    const i = Math.min(nn[0] - 1, Math.max(0, Math.floor((x - lo[0]) / h))), j = Math.min(nn[1] - 1, Math.max(0, Math.floor((y - lo[1]) / h))), k = Math.min(nn[2] - 1, Math.max(0, Math.floor((z - lo[2]) / h)));
+    if (dom >= 0) { const c0 = this.maps[dom][(k * nn[1] + j) * nn[0] + i]; if (c0 >= 0) return c0; }
     if (dom < 0 && this.maps.length > 1) {
       // only where two domains share the cell does the point itself have to be asked
       let only = -1, n = 0;
@@ -165,11 +167,8 @@ export class Grid {
       const o = this.at(i + di, j + dj, k + dk, dm);
       if (o < 0) continue;
       const cl = this.cells[o];
-      let d = 0;
-      for (let a = 0; a < 3; a++) {
-        const v = [x, y, z][a];
-        d += Math.max(0, cl.lo[a] - v, v - cl.hi[a]) ** 2;
-      }
+      const dx = Math.max(0, cl.lo[0] - x, x - cl.hi[0]), dy = Math.max(0, cl.lo[1] - y, y - cl.hi[1]), dz = Math.max(0, cl.lo[2] - z, z - cl.hi[2]);
+      const d = dx ** 2 + dy ** 2 + dz ** 2;
       if (d < bd) { bd = d; best = o; }
     }
     return best;

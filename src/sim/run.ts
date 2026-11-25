@@ -477,7 +477,7 @@ export interface PassResult {
   /** A frequency range was asked for and the most modes allowed were found without passing its end: more may lie in it. */
   more?: boolean;
   /** Bodies with different materials: the body (index into `RunInput.regions`) each sample point is in. */
-  dom?: Uint8Array;
+  dom?: Uint16Array;
   /**
    * Thermal studies: `vm` is then the temperature at the sample points, °C, and `u` the heat flux, W/mm². Lowest and
    * highest temperature, the heat the sources put in and what each surface condition takes away (W, in the order of
@@ -977,7 +977,7 @@ export function envelope(cases: PassResult[]): PassResult {
 }
 
 /** Reads a solution anywhere in the body: what the worker keeps of the last pass (FR-RES-030). */
-export type Sampler = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean) => { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; dom?: Uint8Array };
+export type Sampler = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean) => { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; dom?: Uint16Array };
 
 /** The solver's domains for bodies whose materials differ; undefined when one material serves the whole part. */
 export function domainsOf(inp: RunInput) {
@@ -1425,7 +1425,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const maxStep = Math.min(...prof.map(x => profileStep(x, Tr.end)));
   const frames: Float32Array[] = [], min: number[] = [], max: number[] = [], put: number[] = [], out: number[] = [];
   const comps: number[][] = [], cstats: { min: number; max: number; mean: number }[][] = [];
-  let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint8Array | undefined, flows: SinkFlow[] = [];
+  let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint16Array | undefined, flows: SinkFlow[] = [];
   const r = transientThermal(
     { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), sinks: set.sinks, sources: set.sources, ...(set.exchanges?.length ? { exchanges: exchangesOf(set, inp.body) } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
     {
