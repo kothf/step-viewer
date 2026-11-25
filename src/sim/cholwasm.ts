@@ -49,14 +49,43 @@ export function kernelBuffer(n: number, shared: boolean, extra = 0): { data: Flo
   if (off || typeof WebAssembly === "undefined") return null;
   try {
     const pages = Math.ceil((HEAD + 8 * (n + extra)) / PAGE);
+    // a memory handed back (`releaseBuffer`) that fits: a WebAssembly memory is only let go by the collector, some
+    // time later, so the next factor takes the last one's place instead of standing beside it
+    const at = spare.findIndex(f => f.shared === shared && f.pages >= pages && f.pages <= pages + Math.max(pages >> 1, 256));
+    if (at >= 0) {
+      const f = spare.splice(at, 1)[0], data = new Float64Array(f.mem.buffer, HEAD, n);
+      new Float64Array(f.mem.buffer, HEAD, n + extra).fill(0);
+      reused++;
+      made++;
+      return { data, mem: f.mem };
+    }
+    spare.length = 0;
     const mem = new WebAssembly.Memory(shared ? { initial: pages, maximum: pages, shared: true } : { initial: pages, maximum: pages });
     attach(mem, shared);
     memories.set(mem.buffer, mem);
+    sizes.set(mem, { shared, pages });
     made++;
     return { data: new Float64Array(mem.buffer, HEAD, n), mem };
   } catch { return null; }
 }
 const memories = new WeakMap<ArrayBufferLike, WebAssembly.Memory>();
+const sizes = new WeakMap<WebAssembly.Memory, { shared: boolean; pages: number }>();
+/** Memories handed back and not taken again yet (at most `SPARE`; a request none fits lets them all go). */
+const spare: { mem: WebAssembly.Memory; shared: boolean; pages: number }[] = [];
+const SPARE = 2;
+let reused = 0;
+/** Factors that took a memory handed back (tests, debug). */
+export const reusedMemories = () => reused;
+/**
+ * Hands a factor's memory back for the next `kernelBuffer` that fits it. Only for a factor nothing uses any
+ * more: the next taker zeroes and overwrites it. An ordinary array is ignored.
+ */
+export function releaseBuffer(data: Float64Array) {
+  const mem = memories.get(data.buffer), size = mem && sizes.get(mem);
+  if (!mem || !size || spare.some(f => f.mem === mem)) return;
+  spare.push({ mem, ...size });
+  if (spare.length > SPARE) spare.shift();
+}
 /** The memory a factor made by `kernelBuffer` lives in (to hand to another thread), if any. */
 export const memoryOf = (data: Float64Array): WebAssembly.Memory | undefined => memories.get(data.buffer);
 /** Another thread's side: the factor of n doubles in a shared memory it was handed. */

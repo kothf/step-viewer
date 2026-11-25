@@ -16,7 +16,7 @@ import { facePoints, fitFacePoints, fitPlanePoints, gridTrianglePoints, smallTri
 import { DIRECT_LIMIT, MEMORY_LIMIT, directFits, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
 import { exchangeResistance } from "./viewfactor";
 import { progress } from "./progress";
-import { kernel, parallelFor, sharedF64, sharedI32, worthSharing, type ParJob } from "./threads";
+import { helperCount, kernel, parallelFor, sharedF64, sharedI32, worthSharing, type ParJob } from "./threads";
 
 /** Stefan–Boltzmann constant, W/(mm²·K⁴). */
 export const SIGMA = 5.670374419e-14;
@@ -380,7 +380,7 @@ function pieceDegree(c: Ctx, nrms: ArrayLike<number>, bodyOf: (t: number) => num
 function cutPoints(c: Ctx, tris: ArrayLike<number>, q: number, own: Int8Array | null, dom: number): Float64Array {
   const g = c.grid, nrms = triNormals(tris), eps = 1e-7 * g.h;
   const { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q, pieceDegree(c, nrms, t => own ? own[t] : dom), smallOf(tris, g.h));
-  const out = new Float64Array(8 * pts.n);
+  const out = points8(8 * pts.n);
   let n = 0;
   for (let i = 0; i < pts.n; i++) {
     const o = 4 * i, t = tri[i], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
@@ -477,7 +477,7 @@ function keptPoints(c: Ctx, K: LocKept, tris: ArrayLike<number>, own: Int8Array 
   }
   let n = 0;
   for (let t = 0; t < nt; t++) n += K.count[recs[t]];
-  const L = new Float64Array(8 * n), ids = new Int32Array(n), nrms = triNormals(tris);
+  const L = points8(8 * n), ids = new Int32Array(n), nrms = triNormals(tris);
   let m = 0;
   for (let t = 0; t < nt; t++) {
     const r = recs[t], from = K.from[r], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
@@ -566,7 +566,7 @@ function fitPlanar(c: Ctx, L: Float64Array, ids?: Int32Array | null): Float64Arr
   for (let j = 0; j < nj; j++) { m += cnt[j]; if (cnt[j] !== rec[PFIT * j + 1]) fitted = true; }
   if (!fitted) return L;
   for (let k = 0; k < ng; k++) if (had[k]) m += had[k]!.length / 8;
-  const res = new Float64Array(8 * m);
+  const res = points8(8 * m);
   let to = 0;
   for (let k = 0, j = 0; k < ng; k++) {
     if (had[k]) { res.set(had[k]!, to); to += had[k]!.length; continue; }
@@ -582,7 +582,14 @@ function fitPlanar(c: Ctx, L: Float64Array, ids?: Int32Array | null): Float64Arr
 const PFIT = 7;
 interface PlaneFitJob { kind: string; n: number; L: Float64Array; idx: Int32Array; rec: Float64Array; out: Float64Array; cnt: Int32Array; tiny: number; [k: string]: unknown }
 /** A copy on shared memory. */
-function shared8(a: Float64Array): Float64Array { const s = sharedF64(a.length); s.set(a); return s; }
+function shared8(a: Float64Array): Float64Array { if (isShared(a)) return a; const s = sharedF64(a.length); s.set(a); return s; }
+const isShared = (a: Float64Array) => typeof SharedArrayBuffer !== "undefined" && a.buffer instanceof SharedArrayBuffer;
+/**
+ * Room for surface points (8 numbers each): on shared memory when there are helper threads, so the loops over
+ * them hand the list itself to the threads. A copy for the threads stood beside every list before, and the lists
+ * of a board's third pass are hundreds of megabytes each.
+ */
+const points8 = (n: number): Float64Array => (helperCount() > 0 && typeof SharedArrayBuffer !== "undefined" ? sharedF64(n) : new Float64Array(n));
 function planeFitInit(j: PlaneFitJob) {
   return { j, buf: new Float64Array(0) };
 }
@@ -1215,7 +1222,7 @@ function filmPlan(c: Ctx, L: Float64Array, per: ArrayLike<number> | null, stride
   });
   for (let i = 0; i < n; i++) { const e = L[8 * i], k = at.get(e)!; order[k] = i; at.set(e, k + 1); }
   let LL = L, pp = per ? (per as Float64Array) : null;
-  if (shared) { LL = sharedF64(L.length); LL.set(L); if (per) { pp = sharedF64(stride * n); pp.set(per as Float64Array); } }
+  if (shared) { LL = shared8(L); if (per) { pp = sharedF64(stride * n); pp.set(per as Float64Array); } }
   const plan: FilmPlan = { c, shared, work, n: els.length, L: LL, order, task, per: pp, out: f64(size), vals: keep ? f64(nv) : null, where: null };
   filmPlans.set(L, plan);
   return plan;
@@ -1342,7 +1349,7 @@ function systemSolver(c: Ctx, A: BlockMatrix): Solver {
   if (!how.direct) { const P = pcgSolver(A, { coarse: basisSize(1), tol: pb.tol ?? 1e-9 }); return { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
   const E = new BlockCholesky(A, { plan: how.plan });
   how.plan = E.plan;
-  return { solve: f => E.solve(f) };
+  return { solve: f => E.solve(f), free: () => E.release() };
 }
 
 const isDirect = (c: Ctx) => !!solverPlans.get(c)?.direct;
@@ -1388,7 +1395,9 @@ function factorSystem(c: Ctx, A: BlockMatrix): Solver {
 }
 
 function solveSystem(c: Ctx, A: BlockMatrix, f: Float64Array, x0: Float64Array | null, lr: LowRank | null = null): Float64Array {
-  return withLowRank(factorSystem(c, A), lr).solve(f, x0);
+  const s = factorSystem(c, A), y = withLowRank(s, lr).solve(f, x0);
+  s.free?.();
+  return y;
 }
 
 /** ∫ k |∇T|² and, with the pass before, the same of what this pass changed per element. */
@@ -1647,6 +1656,7 @@ function withLowRank(s: Solver, lr: LowRank | null): Solver {
       for (let j = 0; j < m; j++) { const z = Z[j], cj = c[j]; for (let i = 0; i < y.length; i++) y[i] -= cj * z[i]; }
       return y;
     },
+    free: () => s.free?.(),
   };
 }
 
@@ -1665,7 +1675,8 @@ function denseSolve(S0: Float64Array, r0: number[], m: number): number[] {
   return x;
 }
 
-interface Solver { solve(f: Float64Array, x0: Float64Array | null): Float64Array }
+/** `free` gives a direct solver's factor memory back at once (it is as big as the matrix or bigger): never call `solve` after it. */
+interface Solver { solve(f: Float64Array, x0: Float64Array | null): Float64Array; free?(): void }
 
 function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) => Float64Array) | null): Built {
   const p = pb.p;
@@ -1784,9 +1795,11 @@ function sinkLoad(c: Ctx, A: BlockMatrix | null, f: Float64Array, at: Float64Arr
 const kept = { key: "", byP: new Map<number, { b: Built; solver: Solver }>() };
 /** What the kept matrices may take, bytes (the factorisation about as much again). */
 const REUSE_BYTES = 800 * 2 ** 20;
+/** Factorisations a warm-up keeps for one linearisation (one per step size met; the step halves and doubles between two or three sizes). */
+const KEEP_STEPS = 3;
 /** Solves answered from a kept factorisation (for tests). */
 export let reusedSolves = 0;
-export function dropReuse() { kept.key = ""; kept.byP.clear(); }
+export function dropReuse() { for (const k of kept.byP.values()) k.solver.free?.(); kept.key = ""; kept.byP.clear(); }
 
 /** A kept build with this problem's loads: the sinks' load and each source's again on the same grid. */
 function reloaded(b: Built, pb: ThermalProblem): Built {
@@ -1987,8 +2000,11 @@ function solveLinked(pb: ThermalProblem): ThermalResult {
     const b = noteBuild(pb, build(pb)), solver = factorSystem(b.c, b.A);
     let bytes = 2 * b.memory;
     for (const k of kept.byP.values()) bytes += 2 * k.b.memory;
-    if (bytes <= REUSE_BYTES) { kept.key = pb.reuse; kept.byP.set(pb.p, { b, solver }); }
-    return solveOnce(pb, b, 0, solver);
+    const keep = bytes <= REUSE_BYTES;
+    if (keep) { kept.key = pb.reuse; kept.byP.set(pb.p, { b, solver }); }
+    const r = solveOnce(pb, b, 0, solver);
+    if (!keep) solver.free?.();
+    return r;
   }
   if (!tab) return solveOnce(pb, noteBuild(pb, build(pb)), 0);
   // FR-TMAT-004: solved again with each element's k at the temperatures found until no k changes by more than 0.5 %
@@ -2029,9 +2045,13 @@ function solveOnce(pb: ThermalProblem, b: Built, kSteps: number, solver?: Solver
       const y = !lr && kept0 && last ? polished(B, g, last, kept0) : null;
       if (y) x = y;
       else {
+        // the older factorisation goes before the new one is made: two of them at once is the peak of a big study's memory
+        kept0?.free?.();
+        kept0 = null;
         const s0 = factorSystem(c, B);
         kept0 = lr || !isDirect(c) ? null : s0;
         x = withLowRank(s0, lr).solve(g, last);
+        if (!kept0) s0.free?.();
       }
       iterations = it + 1;
       let d = 0, top = 0;
@@ -2040,6 +2060,7 @@ function solveOnce(pb: ThermalProblem, b: Built, kSteps: number, solver?: Solver
       last = x;
       if (settled) break;
     }
+    kept0?.free?.();
   }
   const prev = pb.prev && pb.prev.length % nel === 0 ? pb.prev : null;
   const { energy, eta } = energies(c, x, prev);
@@ -2169,6 +2190,7 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
   let y0 = new Float64Array(n), yPrev: Float64Array | null = null;
   for (let e = 0; e < nel; e++) y0[e * nb] = run.t0;
   const cache = new Map<string, Solver>();
+  const drop = (k: string) => { cache.get(k)?.free?.(); cache.delete(k); };
   let made = 0;
   let lin: Float64Array | null = b.rads.length || b.ex.some(X => Number.isFinite(X.R)) || tab ? Float64Array.from(y0) : null, linGen = 0, linG: Float64Array | null = null, linB: BlockMatrix | null = null, linLr: LowRank | null = null;
   const relinearise = (rebuild: boolean) => {
@@ -2180,13 +2202,15 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
   relinearise(false);
   const solverFor = (a: number, key: string) => {
     const k = `${key}|${linGen}`, had = cache.get(k);
-    if (had) return had;
+    if (had) { cache.delete(k); cache.set(k, had); return had; }
+    // a new linearisation makes the older matrices useless, and of this one's only the step sizes used last are kept:
+    // they go before the new factorisation is made, since each is as big as the matrix or bigger
+    for (const key2 of [...cache.keys()]) if (!key2.endsWith(`|${linGen}`)) drop(key2);
+    while (cache.size >= KEEP_STEPS) drop(cache.keys().next().value!);
     const B = copyMatrix(linB ?? b.A);
     for (let e = 0; e < nel; e++) { const K = B.block(e, e), Ce = C[e]; for (let i = 0; i < nb * nb; i++) K[i] += a * Ce[i]; }
     const s0 = systemSolver(c, B);
     const s = withLowRank(s0, linLr);
-    // a new linearisation makes the older matrices useless
-    for (const key2 of [...cache.keys()]) if (!key2.endsWith(`|${linGen}`)) cache.delete(key2);
     cache.set(k, s);
     made++;
     return s;
@@ -2250,5 +2274,6 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
     quiet = moved < allow / 4 ? quiet + 1 : 0;
     if (quiet >= 2 && k > kMin) { k--; quiet = 0; }
   }
+  for (const k of [...cache.keys()]) drop(k);
   return { grid, p: c.p, dofs: b.A.size, memory: b.memory, steps, rejected, solves: made, dt: [dtLo === Infinity ? 0 : dtLo, dtHi], volume: b.volume, capacity: total };
 }
