@@ -7,7 +7,8 @@
 
 import type { BlockMatrix } from "./sparse";
 import { progress } from "./progress";
-import { factor, factorBuffer } from "./threads";
+import { kernelOf, scratchOf, type CholKernel } from "./cholwasm";
+import { factor, factorBuffer, releaseFactor, parallelFor, sharedF64, sharedSolvePlan, worthSharing } from "./threads";
 
 /** The factor's layout: element order, each column's lower blocks and where every block lives in `data`. */
 export interface CholPlan {
@@ -129,38 +130,41 @@ export function scatter(A: BlockMatrix, P: CholPlan, data: Float64Array) {
   }
 }
 
+/**
+ * Σ data[x + q] · data[y + q] over q < n the way the kernel sums (native/chol-kernel): even and odd q apart, added
+ * at the end, then the last q of an odd n. The loops below sum every value this way, so they give the kernel's numbers.
+ */
+function dot2(data: Float64Array, x: number, y: number, n: number): number {
+  let s0 = 0, s1 = 0, q = 0;
+  for (; q + 1 < n; q += 2) { s0 += data[x + q] * data[y + q]; s1 += data[x + q + 1] * data[y + q + 1]; }
+  let s = s0 + s1;
+  if (q < n) s += data[x + q] * data[y + q];
+  return s;
+}
+
 /** Cholesky of the diagonal block of step k in place (lower triangle; the upper is left as it is). */
 export function factorDiag(P: CholPlan, data: Float64Array, k: number) {
-  const m = P.ms[k], o = P.diagAt[k];
+  const m = P.ms[k], o = P.diagAt[k], K = kernelOf(data);
+  if (K) {
+    if (K.diag(data.byteOffset, m, o)) throw new Error(`E-SIM-SINGULAR: pivot at ${P.colStart[k]}`);
+    return;
+  }
   for (let r = 0; r < m; r++) {
     const R = o + r * m;
-    for (let c = 0; c <= r; c++) {
-      const C = o + c * m;
-      let s = data[R + c], s1 = 0, t = 0;
-      for (; t + 1 < c; t += 2) { s -= data[R + t] * data[C + t]; s1 += data[R + t + 1] * data[C + t + 1]; }
-      if (t < c) s -= data[R + t] * data[C + t];
-      s -= s1;
-      if (c < r) data[R + c] = s / data[C + c];
-      else {
-        if (!(s > 0)) throw new Error(`E-SIM-SINGULAR: pivot ${s} at ${P.colStart[k]}`);
-        data[R + r] = Math.sqrt(s);
-      }
-    }
+    for (let c = 0; c < r; c++) { const C = o + c * m; data[R + c] = (data[R + c] - dot2(data, R, C, c)) / data[C + c]; }
+    const v = data[R + r] - dot2(data, R, R, r);
+    if (!(v > 0)) throw new Error(`E-SIM-SINGULAR: pivot at ${P.colStart[k]}`);
+    data[R + r] = Math.sqrt(v);
   }
 }
 
 /** Block t of column k ← block · L_kk⁻ᵀ (row by row forward substitution). */
 export function solveBlock(P: CholPlan, data: Float64Array, k: number, t: number) {
-  const mk = P.ms[k], d = P.diagAt[k], o = P.blockAt[t], mi = P.ms[P.rows[t]];
+  const mk = P.ms[k], d = P.diagAt[k], o = P.blockAt[t], mi = P.ms[P.rows[t]], K = kernelOf(data);
+  if (K) { K.solve(data.byteOffset, mk, mi, d, o); return; }
   for (let a = 0; a < mi; a++) {
     const R = o + a * mk;
-    for (let c = 0; c < mk; c++) {
-      const C = d + c * mk;
-      let s = data[R + c], s1 = 0, q = 0;
-      for (; q + 1 < c; q += 2) { s -= data[R + q] * data[C + q]; s1 += data[R + q + 1] * data[C + q + 1]; }
-      if (q < c) s -= data[R + q] * data[C + q];
-      data[R + c] = (s - s1) / data[C + c];
-    }
+    for (let c = 0; c < mk; c++) { const C = d + c * mk; data[R + c] = (data[R + c] - dot2(data, R, C, c)) / data[C + c]; }
   }
 }
 
@@ -173,42 +177,48 @@ export function targetOf(P: CholPlan, i: number, j: number): number {
 }
 
 /**
- * The update of step k on block (rows[ti], rows[tj]) (ti ≥ tj): T −= L_ik L_jkᵀ, two rows of each at a time.
- * On a diagonal block only its lower triangle is made. `a0` (even) .. `a1` = the rows of the block to make: every
- * value is its own sum, so a block made in pieces by several threads is the same as one made whole.
+ * The update of step k on block (rows[ti], rows[tj]) (ti ≥ tj): T −= L_ik L_jkᵀ. On a diagonal block only its lower
+ * triangle is made. `a0` (even) .. `a1` = the rows of the block to make: every value is its own sum, so a block made
+ * in pieces by several threads is the same as one made whole. The work is the kernel's when the factor lies in its
+ * memory (cholwasm.ts); the loops here are for a factor in an ordinary array and give the same numbers.
  */
 export function updateBlock(P: CholPlan, data: Float64Array, k: number, ti: number, tj: number, to: number, a0 = 0, a1 = -1) {
   const mk = P.ms[k], i = P.rows[ti], j = P.rows[tj], mi = a1 < 0 ? P.ms[i] : a1, mj = P.ms[j];
-  const oi = P.blockAt[ti], oj = P.blockAt[tj], diag = ti === tj;
+  const oi = P.blockAt[ti], oj = P.blockAt[tj], diag = ti === tj, K = kernelOf(data);
+  if (K) { K.update(data.byteOffset, mk, mi, mj, oi, oj, to, diag ? 1 : 0, a0); return; }
+  const even = mk & ~1;
   let a = a0;
+  // two rows against two columns: each of the four sums keeps its even and odd q apart
   for (; a + 1 < mi; a += 2) {
     const A0 = oi + a * mk, A1 = A0 + mk, T0 = to + a * mj, T1 = T0 + mj;
-    const bEnd = diag ? a + 2 : mj;
+    const bEnd = diag ? a : mj;
     let b = 0;
     for (; b + 1 < bEnd; b += 2) {
       const B0 = oj + b * mk, B1 = B0 + mk;
-      let s00 = 0, s01 = 0, s10 = 0, s11 = 0;
-      for (let q = 0; q < mk; q++) {
+      let e00 = 0, e01 = 0, e10 = 0, e11 = 0, o00 = 0, o01 = 0, o10 = 0, o11 = 0;
+      for (let q = 0; q < even; q += 2) {
         const x0 = data[A0 + q], x1 = data[A1 + q], y0 = data[B0 + q], y1 = data[B1 + q];
+        const u0 = data[A0 + q + 1], u1 = data[A1 + q + 1], v0 = data[B0 + q + 1], v1 = data[B1 + q + 1];
+        e00 += x0 * y0; e01 += x0 * y1; e10 += x1 * y0; e11 += x1 * y1;
+        o00 += u0 * v0; o01 += u0 * v1; o10 += u1 * v0; o11 += u1 * v1;
+      }
+      let s00 = e00 + o00, s01 = e01 + o01, s10 = e10 + o10, s11 = e11 + o11;
+      if (even < mk) {
+        const x0 = data[A0 + even], x1 = data[A1 + even], y0 = data[B0 + even], y1 = data[B1 + even];
         s00 += x0 * y0; s01 += x0 * y1; s10 += x1 * y0; s11 += x1 * y1;
       }
       data[T0 + b] -= s00; data[T0 + b + 1] -= s01; data[T1 + b] -= s10; data[T1 + b + 1] -= s11;
     }
-    for (; b < bEnd; b++) {
-      const B0 = oj + b * mk;
-      let s0 = 0, s1 = 0;
-      for (let q = 0; q < mk; q++) { const y = data[B0 + q]; s0 += data[A0 + q] * y; s1 += data[A1 + q] * y; }
-      data[T0 + b] -= s0; data[T1 + b] -= s1;
+    for (; b < bEnd; b++) { const B0 = oj + b * mk; data[T0 + b] -= dot2(data, A0, B0, mk); data[T1 + b] -= dot2(data, A1, B0, mk); }
+    if (diag) {
+      data[T0 + a] -= dot2(data, A0, A0, mk);
+      data[T1 + a] -= dot2(data, A1, A0, mk);
+      data[T1 + a + 1] -= dot2(data, A1, A1, mk);
     }
   }
   for (; a < mi; a++) {
     const A0 = oi + a * mk, T0 = to + a * mj, bEnd = diag ? a + 1 : mj;
-    for (let b = 0; b < bEnd; b++) {
-      const B0 = oj + b * mk;
-      let s = 0;
-      for (let q = 0; q < mk; q++) s += data[A0 + q] * data[B0 + q];
-      data[T0 + b] -= s;
-    }
+    for (let b = 0; b < bEnd; b++) data[T0 + b] -= dot2(data, A0, oj + b * mk, mk);
   }
 }
 
@@ -252,55 +262,103 @@ export class BlockCholesky {
     this.n = A.size;
     const P = (this.plan = opts.plan ?? cholPlan(A, opts.order));
     if (P.size > 2 ** 28) throw new Error(`E-SIM-MEMORY: factor of ${P.size} values`);
-    this.data = opts.data ?? factorBuffer(P.size);
+    this.data = opts.data ?? factorBuffer(P.size, this.n);
     if (!opts.factored) { scatter(A, P, this.data); factor(P, this.data); }
     this.off = A.off;
     this.poff = new Int32Array(P.nel + 1);
     for (let k = 0; k < P.nel; k++) this.poff[k + 1] = this.poff[k] + P.ms[k];
   }
   get values() { return this.data.length; }
+  /**
+   * Gives the factor's memory back for the next factor to use (`releaseBuffer`): for a caller that made this
+   * factor, is done with it and knows nothing else holds it. `solve` throws afterwards.
+   */
+  release() {
+    if (this.gone) return;
+    this.gone = true;
+    this.scratch = null;
+    releaseFactor(this.data);
+  }
+  private gone = false;
   solve(b: Float64Array): Float64Array {
-    const P = this.plan, L = this.data, nel = P.nel, ms = P.ms, poff = this.poff, off = this.off;
-    const y = new Float64Array(this.n);
-    for (let k = 0; k < nel; k++) { const e = P.perm[k]; y.set(b.subarray(off[e], off[e] + ms[k]), poff[k]); }
-    // forward: L y = b
-    for (let k = 0; k < nel; k++) {
-      const m = ms[k], d = P.diagAt[k], y0 = poff[k];
-      for (let r = 0; r < m; r++) {
-        let s = y[y0 + r];
-        const R = d + r * m;
-        for (let c = 0; c < r; c++) s -= L[R + c] * y[y0 + c];
-        y[y0 + r] = s / L[R + r];
-      }
-      for (let t = P.colStart[k]; t < P.colStart[k + 1]; t++) {
-        const i = P.rows[t], mi = ms[i], o = P.blockAt[t], yi = poff[i];
-        for (let a = 0; a < mi; a++) {
-          let s = 0;
-          const R = o + a * m;
-          for (let c = 0; c < m; c++) s += L[R + c] * y[y0 + c];
-          y[yi + a] -= s;
-        }
-      }
-    }
-    // backward: Lᵀ x = y
-    for (let k = nel - 1; k >= 0; k--) {
-      const m = ms[k], d = P.diagAt[k], y0 = poff[k];
-      for (let t = P.colStart[k]; t < P.colStart[k + 1]; t++) {
-        const i = P.rows[t], mi = ms[i], o = P.blockAt[t], yi = poff[i];
-        for (let a = 0; a < mi; a++) {
-          const v = y[yi + a];
-          if (v === 0) continue;
-          const R = o + a * m;
-          for (let c = 0; c < m; c++) y[y0 + c] -= L[R + c] * v;
-        }
-      }
-      for (let r = m - 1; r >= 0; r--) {
-        const v = (y[y0 + r] /= L[d + r * m + r]);
-        if (v !== 0) for (let c = 0; c < r; c++) y[y0 + c] -= L[d + r * m + c] * v;
-      }
-    }
-    const x = new Float64Array(this.n);
-    for (let k = 0; k < nel; k++) { const e = P.perm[k]; x.set(y.subarray(poff[k], poff[k] + ms[k]), off[e]); }
+    if (this.gone) throw new Error("E-SIM-RELEASED");
+    const x = new Float64Array(this.n), K = kernelOf(this.data), y = K && (this.scratch ??= scratchOf(this.data, this.n));
+    if (K && y) kernelSolve(K, this.solvePlan(), this.data, b, y, x);
+    else cholSolve(this.solvePlan(), this.data, b, new Float64Array(this.n), x);
     return x;
   }
+  /** Solves for several right-hand sides, on all threads when that is worth it: the same numbers as `solve` gives one by one. */
+  solveAll(bs: Float64Array[]): Float64Array[] {
+    const n = this.n, q = bs.length;
+    if (this.gone) throw new Error("E-SIM-RELEASED");
+    if (q < 2 || typeof SharedArrayBuffer === "undefined" || !(this.data.buffer instanceof SharedArrayBuffer) || !worthSharing(4 * q * this.data.length)) return bs.map(b => this.solve(b));
+    const P = (this.sharedPlan ??= sharedSolvePlan(this.solvePlan()));
+    const B = sharedF64(n * q), X = sharedF64(n * q);
+    for (let j = 0; j < q; j++) B.set(bs[j], n * j);
+    parallelFor({ kind: "cholsolve", n: q, size: n, ...P, data: this.data, B, X });
+    return bs.map((_, j) => X.slice(n * j, n * j + n));
+  }
+  private sharedPlan?: SolvePlan;
+  private scratch?: Float64Array | null;
+  private solvePlan(): SolvePlan { const P = this.plan; return { nel: P.nel, ms: P.ms, perm: P.perm, colStart: P.colStart, rows: P.rows, blockAt: P.blockAt, diagAt: P.diagAt, off: this.off, poff: this.poff }; }
+}
+
+/** The plan's arrays a solve reads (they may be shared copies). */
+export interface SolvePlan { nel: number; ms: Int32Array; perm: Int32Array; colStart: Int32Array; rows: Int32Array; blockAt: Float64Array; diagAt: Float64Array; off: Int32Array; poff: Int32Array }
+/**
+ * Solves L Lᵀ x = b with the factor `L`: `y` is scratch of the same length, `x` takes the answer (b and x may be parts
+ * of longer arrays). Sums are made the way the kernel makes them (`kernelSolve` gives the same numbers).
+ */
+export function cholSolve(P: SolvePlan, L: Float64Array, b: Float64Array, y: Float64Array, x: Float64Array) {
+  const nel = P.nel, ms = P.ms, poff = P.poff, off = P.off;
+  for (let k = 0; k < nel; k++) { const e = P.perm[k]; y.set(b.subarray(off[e], off[e] + ms[k]), poff[k]); }
+  // forward: L y = b
+  for (let k = 0; k < nel; k++) {
+    const m = ms[k], d = P.diagAt[k], y0 = poff[k];
+    for (let r = 0; r < m; r++) { const R = d + r * m; y[y0 + r] = (y[y0 + r] - dotLy(L, R, y, y0, r)) / L[R + r]; }
+    for (let t = P.colStart[k]; t < P.colStart[k + 1]; t++) {
+      const i = P.rows[t], mi = ms[i], o = P.blockAt[t], yi = poff[i];
+      for (let a = 0; a < mi; a++) y[yi + a] -= dotLy(L, o + a * m, y, y0, m);
+    }
+  }
+  // backward: Lᵀ x = y
+  for (let k = nel - 1; k >= 0; k--) {
+    const m = ms[k], d = P.diagAt[k], y0 = poff[k];
+    for (let t = P.colStart[k]; t < P.colStart[k + 1]; t++) {
+      const i = P.rows[t], mi = ms[i], o = P.blockAt[t], yi = poff[i];
+      for (let a = 0; a < mi; a++) {
+        const v = y[yi + a], R = o + a * m;
+        for (let c = 0; c < m; c++) y[y0 + c] -= L[R + c] * v;
+      }
+    }
+    for (let r = m - 1; r >= 0; r--) {
+      const v = (y[y0 + r] /= L[d + r * m + r]);
+      for (let c = 0; c < r; c++) y[y0 + c] -= L[d + r * m + c] * v;
+    }
+  }
+  for (let k = 0; k < nel; k++) { const e = P.perm[k]; x.set(y.subarray(poff[k], poff[k] + ms[k]), off[e]); }
+}
+/** Σ L[x + q] · y[at + q] over q < n, summed as `dot2` sums. */
+function dotLy(L: Float64Array, x: number, y: Float64Array, at: number, n: number): number {
+  let s0 = 0, s1 = 0, q = 0;
+  for (; q + 1 < n; q += 2) { s0 += L[x + q] * y[at + q]; s1 += L[x + q + 1] * y[at + q + 1]; }
+  let s = s0 + s1;
+  if (q < n) s += L[x + q] * y[at + q];
+  return s;
+}
+/** `cholSolve` by the kernel: `y` is scratch in the factor's own memory, right after the factor. */
+function kernelSolve(K: CholKernel, P: SolvePlan, L: Float64Array, b: Float64Array, y: Float64Array, x: Float64Array) {
+  const nel = P.nel, ms = P.ms, poff = P.poff, off = P.off, d = L.byteOffset, at = L.length;
+  for (let k = 0; k < nel; k++) { const e = P.perm[k]; y.set(b.subarray(off[e], off[e] + ms[k]), poff[k]); }
+  for (let k = 0; k < nel; k++) {
+    const m = ms[k], y0 = at + poff[k];
+    K.fdiag(d, m, P.diagAt[k], y0);
+    for (let t = P.colStart[k], t1 = P.colStart[k + 1]; t < t1; t++) { const i = P.rows[t]; K.fblock(d, m, ms[i], P.blockAt[t], y0, at + poff[i]); }
+  }
+  for (let k = nel - 1; k >= 0; k--) {
+    const m = ms[k], y0 = at + poff[k];
+    for (let t = P.colStart[k], t1 = P.colStart[k + 1]; t < t1; t++) { const i = P.rows[t]; K.bblock(d, m, ms[i], P.blockAt[t], y0, at + poff[i]); }
+    K.bdiag(d, m, P.diagAt[k], y0);
+  }
+  for (let k = 0; k < nel; k++) { const e = P.perm[k]; x.set(y.subarray(poff[k], poff[k] + ms[k]), off[e]); }
 }

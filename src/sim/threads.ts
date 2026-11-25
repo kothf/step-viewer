@@ -7,7 +7,8 @@
 // atomic add until none are left. Helpers never need to be counted or waited for: one that wakes late finds
 // nothing to claim, one that never wakes costs nothing.
 
-import { factorDiag, factorSerial, solveBlock, stepCosts, targetOf, updateBlock, type CholPlan } from "./blockchol";
+import { cholSolve, factorDiag, factorSerial, solveBlock, stepCosts, targetOf, updateBlock, type CholPlan, type SolvePlan } from "./blockchol";
+import { adoptMemory, kernelBuffer, memoryOf, releaseBuffer } from "./cholwasm";
 import { progress } from "./progress";
 
 /** What a helper needs of a factorisation: the plan's arrays and the factor, all on shared memory. */
@@ -20,6 +21,8 @@ export interface CholJob {
   blockAt: Float64Array;
   diagAt: Float64Array;
   data: Float64Array;
+  /** The WebAssembly memory the factor lives in, when it does: a helper works on it through the kernel. */
+  mem?: WebAssembly.Memory;
 }
 export interface HelperLike { postMessage(m: unknown): void; terminate(): void }
 
@@ -33,7 +36,7 @@ const PAR_STEP = 3e6, PAR_TASK = 4e5;
 
 const sharedOk = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "undefined";
 let helpers: HelperLike[] = [];
-let stats = { jobs: 0, parallelSteps: 0, joined: 0 };
+let stats = { jobs: 0, parallelSteps: 0, joined: 0, loops: 0, loopJoined: 0 };
 
 /** Whether factorisations can be shared between threads here. */
 export const canShare = () => sharedOk;
@@ -43,10 +46,15 @@ export const helperCount = () => helpers.length;
 /** Jobs shared so far, the steps shared out and the helpers that took part in the last job (tests, debug). */
 export const threadStats = () => ({ ...stats, helpers: helpers.length });
 
-/** Memory for a factor: shared when there are helpers to share it with. */
-export function factorBuffer(n: number): Float64Array {
-  return helpers.length && sharedOk ? new Float64Array(new SharedArrayBuffer(8 * n)) : new Float64Array(n);
+/** Memory for a factor: shared when there are helpers to share it with (`extra` doubles of room after it, where the kernel's memory is had). */
+export function factorBuffer(n: number, extra = 0): Float64Array {
+  const share = helpers.length > 0 && sharedOk, k = kernelBuffer(n, share, extra);
+  if (k) return k.data;
+  return share ? new Float64Array(new SharedArrayBuffer(8 * n)) : new Float64Array(n);
 }
+
+/** A factor's memory handed back: kernel memory waits for the next factor that fits it, an ordinary array is left to the collector. */
+export const releaseFactor = (data: Float64Array) => releaseBuffer(data);
 
 const planOf = (j: CholJob): CholPlan => ({ ms: j.ms, rows: j.rows, blockAt: j.blockAt, diagAt: j.diagAt } as CholPlan);
 
@@ -65,8 +73,10 @@ function work(j: CholJob, P: CholPlan) {
 }
 
 /** A helper thread's side of a job: works until the job says stop. */
-export function serve(j: CholJob) {
+export function serve(j: CholJob | ParJob) {
+  if ("kind" in j) { serveJob(j); return; }
   const P = planOf(j), ctl = j.ctl;
+  if (j.mem) j = { ...j, data: adoptMemory(j.mem, j.data.length) };
   Atomics.add(ctl, JOINED, 1);
   let seen = -1;
   for (;;) {
@@ -119,7 +129,7 @@ export function factor(P: CholPlan, data: Float64Array) {
   if (!most || most > IDX_MASK) { factorSerial(P, data); return; }
   const job: CholJob = {
     ctl: new Int32Array(new SharedArrayBuffer(4 * 8)), nOf: new Int32Array(new SharedArrayBuffer(4 * GENS)), tasks: new Float64Array(new SharedArrayBuffer(8 * TASK * most)),
-    ms: shared(P.ms), rows: shared(P.rows), blockAt: shared(P.blockAt), diagAt: shared(P.diagAt), data,
+    ms: shared(P.ms), rows: shared(P.rows), blockAt: shared(P.blockAt), diagAt: shared(P.diagAt), data, mem: memoryOf(data),
   };
   const { ctl, nOf, tasks } = job, Q = { ...P, ms: job.ms, rows: job.rows, blockAt: job.blockAt, diagAt: job.diagAt };
   let gen = 0;
@@ -158,4 +168,67 @@ export function factor(P: CholPlan, data: Float64Array) {
     Atomics.store(ctl, GEN, (gen + 1) % GENS);
     Atomics.notify(ctl, GEN);
   }
+}
+
+// Loops over independent tasks (building the equations: one task per cell or element), shared the same way. A kind
+// of loop is registered once by the module that owns it (`kernel`), on every thread, since each thread imports
+// the same modules; a job names its kind and carries its arrays on shared memory. Every task writes only its own
+// part of the output and is worked through in the same order whoever runs it, so the numbers do not depend on the
+// number of threads.
+
+export interface ParJob { kind: string; ctl: Int32Array; n: number; [k: string]: unknown }
+interface Kernel<J, S> { init(job: J): S; run(state: S, i: number): void }
+const kernels = new Map<string, Kernel<never, unknown>>();
+/** Registers a kind of loop: `init` once per thread and job, `run` per task. */
+export function kernel<J, S>(kind: string, k: Kernel<J, S>) { kernels.set(kind, k as unknown as Kernel<never, unknown>); }
+
+const P_NEXT = 0, P_DONE = 1, P_FAIL = 2, P_JOINED = 3;
+function claim(j: ParJob, k: Kernel<never, unknown>, tick?: (done: number) => void) {
+  const ctl = j.ctl, n = j.n;
+  let st: unknown;
+  for (;;) {
+    const i = Atomics.add(ctl, P_NEXT, 1);
+    if (i >= n) return;
+    try { st ??= k.init(j as never); k.run(st, i); } catch { Atomics.store(ctl, P_FAIL, 1); }
+    const d = Atomics.add(ctl, P_DONE, 1) + 1;
+    if (d === n) Atomics.notify(ctl, P_DONE);
+    tick?.(d);
+  }
+}
+function serveJob(j: ParJob) {
+  const k = kernels.get(j.kind);
+  if (!k) return;
+  Atomics.add(j.ctl, P_JOINED, 1);
+  claim(j, k);
+}
+/** Whether a loop of about `work` multiplications is worth sharing between threads here. */
+export const worthSharing = (work: number) => sharedOk && helpers.length > 0 && work >= loopFloor;
+let loopFloor = 2e7;
+/** The least work a loop is shared from (tests share small ones). */
+export function setLoopFloor(n: number) { loopFloor = n; }
+/** A shared copy's memory: n doubles or 32-bit integers. */
+export const sharedF64 = (n: number) => new Float64Array(new SharedArrayBuffer(8 * n));
+export const sharedI32 = (n: number) => new Int32Array(new SharedArrayBuffer(4 * n));
+/** Runs the job's `n` tasks on all threads and returns when every one is done (`tick`: tasks done so far). */
+export function parallelFor(job: { kind: string; n: number; [k: string]: unknown }, tick?: (done: number) => void) {
+  const k = kernels.get(job.kind);
+  if (!k) throw new Error(`no loop "${job.kind}"`);
+  const j = { ...job, ctl: sharedI32(4) } as ParJob;
+  for (const h of helpers) h.postMessage(j);
+  stats.loops++;
+  claim(j, k, tick);
+  for (;;) { const d = Atomics.load(j.ctl, P_DONE); if (d >= j.n) break; Atomics.wait(j.ctl, P_DONE, d, 50); }
+  stats.loopJoined = Atomics.load(j.ctl, P_JOINED);
+  if (Atomics.load(j.ctl, P_FAIL)) throw new Error("E-SIM-THREADS");
+}
+
+// Solves with one factorisation for several right-hand sides: one task per right-hand side (blockchol.ts `solveAll`).
+interface SolveJob extends ParJob, SolvePlan { size: number; data: Float64Array; B: Float64Array; X: Float64Array }
+kernel<SolveJob, { j: SolveJob; y: Float64Array }>("cholsolve", {
+  init: j => ({ j, y: new Float64Array(j.size) }),
+  run({ j, y }, i) { const n = j.size; cholSolve(j, j.data, j.B.subarray(n * i, n * i + n), y, j.X.subarray(n * i, n * i + n)); },
+});
+/** A solve plan with its arrays on shared memory, so a job does not copy them to every thread. */
+export function sharedSolvePlan(P: SolvePlan): SolvePlan {
+  return { nel: P.nel, ms: shared(P.ms), perm: shared(P.perm), colStart: shared(P.colStart), rows: shared(P.rows), blockAt: shared(P.blockAt), diagAt: shared(P.diagAt), off: shared(P.off), poff: shared(P.poff) };
 }

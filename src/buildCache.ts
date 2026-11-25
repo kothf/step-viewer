@@ -2,8 +2,9 @@
 // analysed mesh, a drawing's loaded model and its exact views. Reopening a document then reads them instead of
 // running the kernel again.
 //
-// Correctness first: every key is a SHA-256 of the app version, the build id (a hash of the sources and the locked
-// packages, so a new kernel or any code change misses), the kind of entry and everything the result is made from
+// Correctness first: every key is a SHA-256 of the build id of its kind (scripts/build-ids.mjs: a hash of the code
+// that builds such an entry and the locked packages, so a new kernel misses while a release that changes only other
+// code keeps the entries), the kind of entry and everything the result is made from
 // (the whole document JSON or the file's bytes, the request). A failed read or write only costs the speed-up:
 // every call here swallows its errors. `?nocache` turns it off; it is off in the dev server (whose sources change
 // under a fixed build id) unless `?diskcache`.
@@ -59,7 +60,7 @@ function done(tx: IDBTransaction): Promise<boolean> {
 
 const enc = new TextEncoder();
 /**
- * The key of an entry: SHA-256 (hex) of the app version, the build id, `kind` and `parts` (JSON; byte arrays as
+ * The key of an entry: SHA-256 (hex) of the build id of `kind`, `kind` and `parts` (JSON; byte arrays as
  * their own hash, so a file is keyed by its content). Null when the cache is off.
  */
 export async function cacheKey(kind: string, ...parts: unknown[]): Promise<string | null> {
@@ -67,9 +68,15 @@ export async function cacheKey(kind: string, ...parts: unknown[]): Promise<strin
   try {
     const bins: string[] = [];
     for (const p of parts) if (p instanceof Uint8Array || p instanceof ArrayBuffer) bins.push(hex(await crypto.subtle.digest("SHA-256", p)));
-    const text = JSON.stringify([__APP_VERSION__, typeof __BUILD_ID__ === "undefined" ? "" : __BUILD_ID__, kind, bins, parts.map(p => (p instanceof Uint8Array || p instanceof ArrayBuffer ? null : p))]);
+    const text = JSON.stringify([buildIdOf(kind), kind, bins, parts.map(p => (p instanceof Uint8Array || p instanceof ArrayBuffer ? null : p))]);
     return `${kind}:${hex(await crypto.subtle.digest("SHA-256", enc.encode(text)))}`;
   } catch { cacheStats.errors++; return null; }
+}
+
+/** The build id that keys entries of `kind`: its own when scripts/build-ids.mjs lists it, else every source's. */
+export function buildIdOf(kind: string): string {
+  if (typeof __BUILD_IDS__ === "undefined") return "";
+  return __BUILD_IDS__[kind] ?? __BUILD_IDS__.all ?? "";
 }
 
 function hex(b: ArrayBuffer): string {

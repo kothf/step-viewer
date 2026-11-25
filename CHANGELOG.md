@@ -5,12 +5,239 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.754.0] - 2026-11-25
+
+### Changed
+
+- A thermal study of an assembly with many bodies finds which surfaces are open to the air on all processor cores, and cuts its cells with shorter look-ups along a board. On a board with 240 bodies three passes take 72 s instead of 77 s, with the same temperatures.
+
+## [1.753.0] - 2026-11-25
+
+### Fixed
+
+- A thermal study of an assembly with more than 127 bodies (a board with all its parts) lost track of which body a surface belongs to for every body past the 127th: those surfaces were looked up point by point, which was slow, and a point on a face shared by two bodies could read the neighbour's temperature. Temperatures on such a board move by up to 0.2 K. Thermal and structural studies of more than 255 bodies no longer mix up the bodies' materials.
+
+### Changed
+
+- The terms that join touching bodies in a thermal study are summed on all cores. Building the equations of a board study with 240 bodies takes 27 s instead of 31 s in the third pass.
+
+## [1.752.0] - 2026-11-25
+
+### Changed
+
+- A thermal study with radiation or natural convection on many surfaces finishes sooner. The loop that settles the surface temperatures now stops when the change between two steps is small and no longer shrinking (rounding in a few badly conditioned elements kept it just above the old limit, so the third pass of a board went round 17 steps of two seconds each instead of 3). A board of 130,000 unknowns: 127 s to 95 s on four cores, same temperatures.
+
+## [1.751.0] - 2026-11-25
+
+### Changed
+
+- A thermal study of a big assembly holds less memory. The memory of a factorisation goes to the next one as soon as it is done with (before, it waited for the garbage collector, so two or three stood side by side in a warm-up, each as big as the matrix or bigger), the cell loop's buffers are let go in full once the fine points are (fitted points that still pointed into them kept 1.1 GB), and the lists of surface points are made on shared memory once instead of being copied for the threads. Same temperatures.
+
+## [1.750.0] - 2026-11-25
+
+### Changed
+
+- An analysis of a model with many cut cells needs far less memory: the fine integration points of the cut cells were kept twice while the cells were made and then for the whole solve. Now they stay in the memory they were made in, the cells' moments are summed to the highest degree in one go, and the points are let go after that. A real board (43 components, 246 bodies): the peak of a three-pass thermal study 6.0 GB → 4.4 GB, the same temperatures in the same time. A browser tab that ran out of memory on such a board was closed by the system.
+
+## [1.749.0] - 2026-11-24
+
+### Changed
+
+- A thermal study reads its geometry several times faster on models with many small holes: small round faces are no longer cut finer than the chord deviation asks. A real board (300 holes, 43 components): reading the geometry 37 s → 4 s, three passes 171 s → 110 s in node on four cores, the same temperatures (hottest 157.5 °C before and after). Structural studies keep their finer facets.
+
+## [1.748.0] - 2026-11-24
+
+### Fixed
+
+- A thermal study of a board with many small parts (a real board export: 43 components, 246 bodies, wire leads 0.6 mm thick) stopped with "nothing holds these bodies" or with a singular matrix in its third pass. A body lying wholly inside another, or touching it over an area far smaller than the cells, is now joined to it from its own surface, and a lead thinner than a quarter of its cell no longer makes the equations singular at the higher degrees. Contacts between a wire end and a big body are found the same way in every pass, so the result settles from pass to pass (the change between passes was 68 %, now 5 to 7 %).
+
+### Changed
+
+- The same study is several times faster: each body is looked for only where its box reaches, the inside test of a body runs along the axis its box is shortest on and rejects points beyond the box at once, small facets get fewer integration points, and the terms between touching bodies are summed per pair of elements. Three passes of that board take about 3 minutes in Chrome, where the first pass alone took longer before.
+- A study with **Solve on change** is no longer started by itself right after its file opens: it waits for the first change or for Solve. Opening a big assembly no longer goes straight into a long solve.
+
+## [1.747.0] - 2026-11-24
+
+### Changed
+
+- The energy and error estimate at the end of each pass of a thermal study are summed on all cores, where one core did them: about half a second less in the last pass of a board study. Same numbers.
+
+## [1.746.0] - 2026-11-24
+
+### Changed
+
+- A warm-up (transient thermal study) starts its time steps on the cells and equations its last steady pass has just made, where it made them a second time, and the heat leaving through the surfaces at each output time is summed on all cores. A warm-up of a board over an hour takes about 16 s in place of 17 to 20 s in Chrome on four cores; a steady study gains a little too. Temperatures are the same numbers; heat flows are the same to rounding.
+
+## [1.745.0] - 2026-11-24
+
+### Changed
+
+- A warm-up (transient thermal study) with radiation or natural convection works out its surface terms and its matrix again about half as often: after a part has moved 4 K since the last time, where it was 2 K. Those terms are taken by their tangent, so the temperatures of a board over an hour moved by less than 0.01 K, and the warm-up takes 17 to 20 s in place of 22.5 s in Chrome on four cores. A study whose conductivity depends on temperature keeps the 2 K.
+
+## [1.744.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies with radiation or natural convection no longer copy the whole system of equations each time the surface terms are worked out again, and a warm-up no longer copies it at every time step: only the part those terms change is copied. A warm-up of a board over an hour takes 22.5 s in place of 23.7 s in Chrome on four cores, a steady study about a second less, and both need less memory. The results are the same numbers.
+
+## [1.743.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies put fewer points on curved faces. Each small piece of a face now gets as many points as the accuracy of its own place in the model needs, where every piece used to get what the most refined place needs (16 points instead of 49 in the third pass of a board study), and the points come from rules that need fewer of them for the same exactness. The steady study of the amplifier board takes about 30 s instead of about 32 s in Chrome on four cores, its warm-up over an hour about 23.5 s instead of about 24.5 s. Temperatures did not change in the digits shown.
+
+## [1.742.0] - 2026-11-24
+
+### Added
+
+- Simulation results are saved with the model and come back when it is opened. Every solved structural, modal and thermal study of a part or assembly is written to a results file (`.mcadres`): beside the assembly file when the assembly is saved into its folder, and as its own file beside the model in Pack and Go; a part or assembly saved as a single file (and every file in a vault) carries it inside. Opening the model shows the last results of the active study at once, with the date they were solved; results solved for an earlier state of the model or study open marked out of date, with Solve beside them. A `.mcadres` file can also be opened together with its model, or on its own over that model. A steady thermal study also goes into the results file as a thermal package (the board design app's format: `.vtu` surface temperatures, heat-source table, manifest). The study set-ups stay in the part or assembly file as before; files from older versions open as before.
+
+## [1.741.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies with radiation or natural convection spend less time on their surfaces, most of all a warm-up over time, which works those conditions out again at nearly every time step. What a surface point gives whatever the temperatures are is now made once and kept; the fourth powers of radiation are plain multiplications; natural convection no longer makes a temporary list per point. The warm-up of the amplifier board over an hour takes about 24.5 s instead of about 27 s in Chrome on four cores, its steady study about 32 s instead of about 34 s. Results agree to the last digits shown.
+
+## [1.740.0] - 2026-11-24
+
+### Changed
+
+- Structural, modal and thermal studies fit their cut cells faster. The many sample points of a cell cut by the surface lie on lines; their sums are now made once per line instead of once per point, and the fitted points of a flat face are worked out one direction at a time. The amplifier board thermal study takes about 34 s instead of about 36.5 s in Chrome on four cores, the bracket static study with five passes about 13 s instead of about 15 s. Results agree to the last digits shown.
+
+## [1.739.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies of assemblies and boards build their equations faster. The points on the surfaces were found again for every cooling condition: convection face by face, radiation from all open surfaces and each body's own surface asked for the same triangles two or three times. Now a triangle's points, the answer to "is this point open to the air" and the fitted points of each flat patch are made once while the equations are built and shared. The heat that leaves through each condition is summed without the gradients it never used. The amplifier board study takes about 36 s instead of about 39 s in Chrome on four cores; the temperatures are the same numbers.
+
+## [1.738.0] - 2026-11-24
+
+### Changed
+
+- Structural, modal and thermal studies cut their cells faster: the tests "does this triangle meet this cube" and "is this point inside the body", which run for every cube and every sample point, no longer make temporary lists. The first cutting of the cells of the amplifier board thermal study takes 2.9 s instead of 5.9 s in Chrome on four cores, of the bracket static study 1.3 s instead of 2.3 s, with the same results.
+
+## [1.737.0] - 2026-11-24
+
+### Changed
+
+- Structural and thermal studies spend less time between passes. The moments of the integration points of each cut cell are kept, so a later pass adds only the higher ones instead of summing all of them again, and the cell of every point of the result plot is found once per study instead of in every pass. Bracket static study, five passes, Chrome on four cores: 16.6 s to 14.8 s; amplifier board thermal study, three passes: 42.5 s to 41.4 s, with the same results.
+
+## [1.736.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies build their equations faster. The terms on the faces between elements are summed as two products per entry instead of three, with the symmetric blocks summed once; the penalty measuring sums one triangle of its matrix; whole-body heat sources and the energy of a pass come from the moments of the integration points; the fitting of points on flat faces runs on all cores. Amplifier board study, three passes, Chrome on four cores: 48 s to 42 s with the same temperatures (results differ from 1.735.0 in the last digits).
+
+## [1.735.0] - 2026-11-24
+
+### Changed
+
+- The factorisation of structural, modal and thermal studies, and the solves with it, run their inner loops in WebAssembly with SIMD. The factor now lives in a WebAssembly memory that every thread works on in place; each value is still one sum made the same way on every thread, so results do not depend on the number of threads (they differ from 1.734.0 in the last digits). Amplifier board thermal study, three passes, Chrome on four cores: 66 s to 48 s (factorising the third pass 17.6 s to 4.3 s) with the same temperatures; bracket static study, five passes: 24 s to 17 s.
+
+## [1.734.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies build their conduction, film and radiation matrices from moments. A product of two of an element's functions is a fixed sum of Legendre products, so its integral is a sum of a few hundred moments of the element's integration points instead of a pass over every pair of functions at every point; the matrices are the same to rounding. Amplifier board study, three passes, Chrome on four cores: 72 s to 66 s with the same temperatures (building the equations of the third pass 17 s to 12 s).
+
+## [1.733.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies take fewer points on flat faces and factor bigger systems directly. The points a film, radiation or held temperature uses on one element's part of a flat face are replaced by a few fitted points that integrate the same (a board's open surfaces: 1.08 million points to 0.31 million), and convection and radiation on the same faces share their points. A thermal system is now solved directly up to 1.5 × 10¹¹ multiplications and 7.5 × 10⁷ stored values, since conjugate gradients converge slowly between a board and its copper parts and a radiating study solves several times. The amplifier board's own study, three passes in Chrome on four cores: 97 s to 72 s, with the same temperatures.
+
+## [1.732.0] - 2026-11-24
+
+### Changed
+- Static and modal studies with flat held or loaded faces build their equations faster. A flat face is many triangles, each with its own integration points; inside every cell they are now replaced by a few points that integrate the same. The bracket held on the underside of its foot had 240,000 points there on its fifth pass and now has 7,000. Five passes in Chrome on four cores: 32 s before, 24 s now. Results agree to twelve digits.
+
+## [1.731.0] - 2026-11-24
+
+### Fixed
+- Analysis used one thread fewer than it started: in Chrome one helper thread got its jobs only after the solve had ended, so on a four-core computer two threads worked instead of three. Every helper now takes its jobs through a channel of its own and joins at once. The bracket study of 1.730.0, five passes, in Chrome on four cores: 42 s before, 32 s now. Results are unchanged.
+
+## [1.730.0] - 2026-11-24
+
+### Changed
+- Static and modal studies with a large held face solve faster: the support's terms are summed per element and written once instead of point by point. A bracket held on the underside of its foot, five passes, in Chrome on four cores: 51 s before, 31 s now. Results agree to about ten digits.
+
+## [1.729.0] - 2026-11-24
+
+### Changed
+
+- A static study solved again with other loads only (the next load case, or a force changed with Solve on change) reuses the factorised matrix of the solve before in its whole-body passes. A bracket, three passes: a second load case took 6.2 s before, 4.2 s now on four cores; 16.8 s before, 13.4 s now on one. Results are the same bit for bit.
+
+## [1.728.0] - 2026-11-24
+
+### Changed
+
+- Structural, modal and thermal studies factor their matrix faster: the inner loop of the direct solver now works on four rows at a time. A bracket, five passes: 51.6 s before, 46.4 s now on one core; 16.7 s before, 16.0 s now on four. Results are the same bit for bit.
+
+## [1.727.0] - 2026-11-24
+
+### Changed
+
+- Modal studies solve for all their mode shapes at once on all processor cores: each step of the search needs one solve per vector, and these now go out together. A bracket, three passes on four cores: 10.6 s before, 8.0 s now. Results are the same bit for bit.
+
+## [1.726.0] - 2026-11-24
+
+### Changed
+
+- Static and modal studies measure the penalty of cut elements on all processor cores (it was the largest step still on one thread). A bracket, five passes on four cores: 20 s before, 16.6 s now. Results are the same bit for bit whatever the number of threads.
+
+## [1.725.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies share two more steps between the processor cores: the films, radiation and natural convection on the surfaces (made again at every step of the radiation loop) and the measuring of the penalty of cut elements. The board with five parts, four passes: 14 s before, 12.5 s on four cores. Temperatures are the same bit for bit whatever the number of threads.
+
+## [1.724.0] - 2026-11-24
+
+### Changed
+
+- Thermal studies use all processor cores as well. Their equations (conduction in each element and the terms of the faces between elements) are built on every thread, and they are solved by the direct solver that shares its work between threads, wherever it is the cheaper one (as structural studies decide). With radiation or natural convection a pass now factors its matrix once: the later steps of the loop are solved with that factorisation in a few iterations instead of a new one each. A board with five parts, four passes: 30 s before, 16 s on four cores. Temperatures agree with before to the solver's tolerance, and are the same bit for bit whatever the number of threads.
+- The first pass of every study finds its cells on all cores (the cubes the body fills or cuts, and the points inside the cut ones): the longest step of a first pass. A bracket's first pass took 7.5 s and takes 2.7 s on four cores; five passes 24 s → 19 s, the board above 16 s → 14 s.
+
+## [1.723.0] - 2026-11-24
+
+### Changed
+
+- STEP, IGES and BREP files get their exact values sooner on 4-core computers: the exact geometry is read alongside the display mesh, as it already was with 6 or more cores. A 3.9 MB assembly STEP had exact measurements after 5.7 s instead of 8.4 s; its first picture comes 0.2 s later.
+
+## [1.722.0] - 2026-11-24
+
+### Changed
+
+- Assemblies open faster: each part's mass properties are measured once in its own axes and moved with its components (or taken from the part's analysis that the parallel build or the disk cache already holds), where every component was measured again on each build, exact box included. Opening the steam engine assembly again (parts from the disk cache) takes 0.6 s instead of 1.5 s; the first open 5.9 s instead of 6.6 s. The part files beside an assembly are read at the same time instead of one after another.
+
+### Fixed
+
+- The analysis progress line in the status bar goes away as soon as a solve ends, instead of up to half a second later.
+
+## [1.721.0] - 2026-11-24
+
+### Changed
+
+- Saved drawings show their views at once when opened: the drawing file now keeps the lines each view was last drawn with, shown while the model loads and the views are projected again. The steam engine assembly drawing showed its views after 8.9 s and now after 0.3 s. Older versions skip the kept lines.
+
+## [1.720.0] - 2026-11-24
+
+### Changed
+
+- Saved parts and assemblies appear on screen at once when opened, even the first time on a computer: the file now keeps the model's display mesh, which is drawn while the features and parts are built; the built model then takes its place and faces can be picked. The model steam engine assembly showed after 7.2 s and now after about 1 s (its file grows from 44 KB to 540 KB). Files saved this way still open in older versions, which skip the mesh.
+
+## [1.719.0] - 2026-11-23
+
+### Changed
+
+- Parts, assemblies, STEP files and drawings opened before now open from the disk cache after the app updates too. The cache used to be thrown away with every new version (several a day); it is now kept until the modelling kernel itself changes, which none of the last 49 releases did.
+
 ## [1.718.0] - 2026-11-23
 
 ### Changed
 
-- Thermal studies use more than one processor core for the first time: before a steady thermal solve starts, the cells of the grid are cut against the bodies by helper workers on the other cores (the device's threads less two, at most 8; none on a device with fewer than four threads). The grid is the same as before, so the results are too. On a 100 × 60 mm board with three parts this step went from 78 s to 27 s on four cores. `?simthreads=N` in the address sets the number of helpers (0 = none).
-- The cooling terms of a thermal study with radiation or natural convection (made again at every step of the solve) take about half the time: the surface points are gone through element by element and each block is summed once. Results are the same. With both changes the same board study went from 5 min 50 s to 4 min 10 s on four cores.
+- Building the equations of a structural or modal study uses all processor cores too: fitting the points of the cells the body cuts (thermal studies share this part), each element's stiffness and the terms of the faces between elements. A bracket with five passes took 50 s on one thread and takes 24 s on four; the numbers are the same bit for bit whatever the number of threads.
+
 ## [1.717.0] - 2026-11-23
 
 ### Added
@@ -4744,7 +4971,43 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.718.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.754.0...HEAD
+[1.754.0]: https://github.com/kothf/step-viewer/compare/v1.753.0...v1.754.0
+[1.753.0]: https://github.com/kothf/step-viewer/compare/v1.752.0...v1.753.0
+[1.752.0]: https://github.com/kothf/step-viewer/compare/v1.751.0...v1.752.0
+[1.751.0]: https://github.com/kothf/step-viewer/compare/v1.750.0...v1.751.0
+[1.750.0]: https://github.com/kothf/step-viewer/compare/v1.749.0...v1.750.0
+[1.749.0]: https://github.com/kothf/step-viewer/compare/v1.748.0...v1.749.0
+[1.748.0]: https://github.com/kothf/step-viewer/compare/v1.747.0...v1.748.0
+[1.747.0]: https://github.com/kothf/step-viewer/compare/v1.746.0...v1.747.0
+[1.746.0]: https://github.com/kothf/step-viewer/compare/v1.745.0...v1.746.0
+[1.745.0]: https://github.com/kothf/step-viewer/compare/v1.744.0...v1.745.0
+[1.744.0]: https://github.com/kothf/step-viewer/compare/v1.743.0...v1.744.0
+[1.743.0]: https://github.com/kothf/step-viewer/compare/v1.742.0...v1.743.0
+[1.742.0]: https://github.com/kothf/step-viewer/compare/v1.741.0...v1.742.0
+[1.741.0]: https://github.com/kothf/step-viewer/compare/v1.740.0...v1.741.0
+[1.740.0]: https://github.com/kothf/step-viewer/compare/v1.739.0...v1.740.0
+[1.739.0]: https://github.com/kothf/step-viewer/compare/v1.738.0...v1.739.0
+[1.738.0]: https://github.com/kothf/step-viewer/compare/v1.737.0...v1.738.0
+[1.737.0]: https://github.com/kothf/step-viewer/compare/v1.736.0...v1.737.0
+[1.736.0]: https://github.com/kothf/step-viewer/compare/v1.735.0...v1.736.0
+[1.735.0]: https://github.com/kothf/step-viewer/compare/v1.734.0...v1.735.0
+[1.734.0]: https://github.com/kothf/step-viewer/compare/v1.733.0...v1.734.0
+[1.733.0]: https://github.com/kothf/step-viewer/compare/v1.732.0...v1.733.0
+[1.732.0]: https://github.com/kothf/step-viewer/compare/v1.731.0...v1.732.0
+[1.731.0]: https://github.com/kothf/step-viewer/compare/v1.730.0...v1.731.0
+[1.730.0]: https://github.com/kothf/step-viewer/compare/v1.729.0...v1.730.0
+[1.729.0]: https://github.com/kothf/step-viewer/compare/v1.728.0...v1.729.0
+[1.728.0]: https://github.com/kothf/step-viewer/compare/v1.727.0...v1.728.0
+[1.727.0]: https://github.com/kothf/step-viewer/compare/v1.726.0...v1.727.0
+[1.726.0]: https://github.com/kothf/step-viewer/compare/v1.725.0...v1.726.0
+[1.725.0]: https://github.com/kothf/step-viewer/compare/v1.724.0...v1.725.0
+[1.724.0]: https://github.com/kothf/step-viewer/compare/v1.723.0...v1.724.0
+[1.723.0]: https://github.com/kothf/step-viewer/compare/v1.722.0...v1.723.0
+[1.722.0]: https://github.com/kothf/step-viewer/compare/v1.721.0...v1.722.0
+[1.721.0]: https://github.com/kothf/step-viewer/compare/v1.720.0...v1.721.0
+[1.720.0]: https://github.com/kothf/step-viewer/compare/v1.719.0...v1.720.0
+[1.719.0]: https://github.com/kothf/step-viewer/compare/v1.718.0...v1.719.0
 [1.718.0]: https://github.com/kothf/step-viewer/compare/v1.717.0...v1.718.0
 [1.717.0]: https://github.com/kothf/step-viewer/compare/v1.716.0...v1.717.0
 [1.716.0]: https://github.com/kothf/step-viewer/compare/v1.715.0...v1.716.0

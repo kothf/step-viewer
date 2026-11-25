@@ -8,7 +8,7 @@ import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { DEFAULT_AMBIENT, DEFAULT_REF, keepsSplit, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch, facingPatch, intoPatch } from "../thermal/study";
-import { forcedH, kmapMean, ktFactor, solveThermal, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
+import { forcedH, keepBuild, kmapMean, ktFactor, solveThermal, takeBuild, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
 import { viewFactor } from "./viewfactor";
 import { progress, progressPass } from "./progress";
 
@@ -477,7 +477,7 @@ export interface PassResult {
   /** A frequency range was asked for and the most modes allowed were found without passing its end: more may lie in it. */
   more?: boolean;
   /** Bodies with different materials: the body (index into `RunInput.regions`) each sample point is in. */
-  dom?: Uint8Array;
+  dom?: Uint16Array;
   /**
    * Thermal studies: `vm` is then the temperature at the sample points, °C, and `u` the heat flux, W/mm². Lowest and
    * highest temperature, the heat the sources put in and what each surface condition takes away (W, in the order of
@@ -609,9 +609,14 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
     for (let i = 0; i < b.face.length; i++) if (!gone[b.face[i]]) keep.push(i);
     return keep;
   };
+  // the same triangles give the same array, so items on one set of faces (convection and radiation from all open surfaces) share their points in the solver
+  const gathered: { idx: number[]; tris: Float64Array }[] = [];
   const gather = (idx: number[]) => {
+    const had = gathered.find(g => g.idx.length === idx.length && g.idx.every((t, k) => t === idx[k]));
+    if (had) return had.tris;
     const tris = new Float64Array(9 * idx.length);
     idx.forEach((t, k) => { for (let j = 0; j < 9; j++) tris[9 * k + j] = b.tris[9 * t + j]; });
+    gathered.push({ idx, tris });
     return tris;
   };
   const facesOf = (it: { id: string; faces: { name: string }[] }) => { const idx = idxOf(it); return idx ? gather(idx) : null; };
@@ -818,8 +823,6 @@ export interface RunInput {
   nrm: Float32Array;
   /** Cells aimed for (default 150). */
   cells?: number;
-  /** Helper workers for the work that can be shared out (`parPool.ts`): 0 = none, absent = by the device. */
-  threads?: number;
   /** A thermal study: conductivity W/(mm·K) and its set-up. `mat`, `problem` and the structural parts are not used. */
   /**
    * Assemblies: `ks` = each region's conductivity (the regions are then solved as bodies joined where they
@@ -974,7 +977,7 @@ export function envelope(cases: PassResult[]): PassResult {
 }
 
 /** Reads a solution anywhere in the body: what the worker keeps of the last pass (FR-RES-030). */
-export type Sampler = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean) => { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; dom?: Uint8Array };
+export type Sampler = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean) => { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; dom?: Uint16Array };
 
 /** The solver's domains for bodies whose materials differ; undefined when one material serves the whole part. */
 export function domainsOf(inp: RunInput) {
@@ -1268,14 +1271,6 @@ export function thermalBoost(inp: RunInput, h: number, inside: (x: number, y: nu
   }
   return { grid, level: near };
 }
-/** A steady thermal study's cell size and the bodies its grid is cut against (`runThermal` and the helpers that cut the cells ahead). */
-export function thermalFrame(inp: RunInput): { h: number; tris: Float64Array[] } {
-  const T = inp.thermal!, R = T.ks && inp.regions && inp.regions.length > 1 ? inp.regions : null;
-  const pads = T.setup.sources.some(q => q.tris && (q.fine ?? 0) > 0);
-  const h = inp.cells || !R ? cellSize(inp.body, inp.cells) : thermalCellSize(inp.body, R.map(r => r.tris), pads);
-  return { h, tris: R ? R.map(r => r.tris) : [inp.body.tris] };
-}
-
 
 export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: number, y: number, z: number) => boolean) => void): Generator<PassResult> {
   const T = inp.thermal!, set = T.setup, exchanges = exchangesOf(set, inp.body);
@@ -1288,7 +1283,8 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!set.sources.some(s => (s.power ?? 0) !== 0 || (s.flux ?? 0) !== 0 || (s.density ?? 0) !== 0) && temps.size < 2) throw new Error("E-TH-NOHEAT");
   const inside = insideOf(new MeshBody(inp.body.tris));
-  const h = thermalFrame(inp).h;
+  const pads = set.sources.some(q => q.tris && (q.fine ?? 0) > 0);
+  const h = inp.cells || !R ? cellSize(inp.body, inp.cells) : thermalCellSize(inp.body, R.map(r => r.tris), pads);
   const passes = Math.max(1, Math.min(MAX_PASSES, Math.round(inp.passes)));
   let grid: Grid | undefined, prev: Float64Array | undefined, before: Float32Array | null = null;
   const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
@@ -1407,11 +1403,17 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const temps = new Set(set.sinks.map(s => s.temp ?? s.ambient ?? 0));
   if (!heat && temps.size < 2 && temps.has(Tr.t0)) throw new Error("E-TH-NOHEAT");
   let p = 2, pass = 0, steady: number | null = null, powers: number[] = [];
+  // the last steady pass's cells, matrix and surface points are the warm-up's own: kept for it instead of made again
+  let built: unknown;
   if (heat) {
-    for (const r of runThermal({ ...inp, cells: inp.cells ?? 150, passes: Math.min(2, Math.max(1, Math.round(inp.passes))) })) {
-      pass = r.pass; p = r.p; steady = r.thermal?.max ?? null; powers = (r.thermal?.comps ?? []).map(c => c.power);
-      yield { ...r, done: false, converged: false };
-    }
+    keepBuild(true);
+    try {
+      for (const r of runThermal({ ...inp, cells: inp.cells ?? 150, passes: Math.min(2, Math.max(1, Math.round(inp.passes))) })) {
+        pass = r.pass; p = r.p; steady = r.thermal?.max ?? null; powers = (r.thermal?.comps ?? []).map(c => c.power);
+        yield { ...r, done: false, converged: false };
+      }
+      built = takeBuild();
+    } finally { keepBuild(false); }
   }
   progressPass(0, 0);
   const t0 = Date.now();
@@ -1423,11 +1425,11 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const maxStep = Math.min(...prof.map(x => profileStep(x, Tr.end)));
   const frames: Float32Array[] = [], min: number[] = [], max: number[] = [], put: number[] = [], out: number[] = [];
   const comps: number[][] = [], cstats: { min: number; max: number; mean: number }[][] = [];
-  let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint8Array | undefined, flows: SinkFlow[] = [];
+  let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint16Array | undefined, flows: SinkFlow[] = [];
   const r = transientThermal(
     { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), sinks: set.sinks, sources: set.sources, ...(set.exchanges?.length ? { exchanges: exchangesOf(set, inp.body) } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
     {
-      rc: R ? Tr.rcs! : [Tr.rc], t0: Tr.t0, times, ...(Number.isFinite(maxStep) ? { maxStep } : {}), breaks: prof.flatMap(profileBreaks),
+      rc: R ? Tr.rcs! : [Tr.rc], t0: Tr.t0, times, built, ...(Number.isFinite(maxStep) ? { maxStep } : {}), breaks: prof.flatMap(profileBreaks),
       factor: (i, t) => profileFactor(prof[i], t),
       frame: (k, _t, sample, fl, applied) => {
         const s = sample(inp.pos, inp.nrm);

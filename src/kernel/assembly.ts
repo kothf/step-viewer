@@ -5,6 +5,7 @@ import { Modeller, type ModelMesh, type Named } from "./model";
 import type { AsmComponentStatus, AsmDoc, AsmFeature, Tf } from "../asm/types";
 import type { BodyProps, V3 } from "../model/types";
 import type { OwnBody } from "../tools/inertia";
+import { areaOf, massOf } from "./memo";
 
 interface Source { json: string; modeller: Modeller; body: Named | null; error?: string; mesh?: ModelMesh; quality?: number; own?: OwnBody[] | null }
 
@@ -273,15 +274,44 @@ export class Assembler {
 
   props(placed: Placed[]): BodyProps | null {
     if (!placed.length) return null;
-    const m = new Modeller(this.oc);
     let V = 0, A = 0, n = 0;
     const c: V3 = [0, 0, 0];
     for (const p of placed) {
-      const q = m.props(p.body);
-      V += q.volume; A += q.area; n += q.bodies ?? 1;
-      for (let k = 0; k < 3; k++) c[k] += q.com[k] * q.volume;
+      // Measured once per part, in its own axes, and moved (volume and area do not change): the engine's 42
+      // components took 0.9 s here on every open, mostly for exact boxes nobody read.
+      const s = p.src as Partial<Source>, own = !!s.body;
+      let q = this.massMemo.get(p.src);
+      if (!q) {
+        const shape = own ? s.body!.shape : p.body.shape, mass = massOf(this.oc, shape);
+        q = { volume: mass.volume, area: areaOf(this.oc, shape), com: [...mass.com] as V3, bodies: this.solidCount(shape) };
+        this.massMemo.set(p.src, q);
+      }
+      const t = p.tf, [x, y, z] = q.com;
+      const w: V3 = own ? [t[0] * x + t[1] * y + t[2] * z + t[3], t[4] * x + t[5] * y + t[6] * z + t[7], t[8] * x + t[9] * y + t[10] * z + t[11]] : q.com;
+      V += q.volume; A += q.area; n += q.bodies;
+      for (let k = 0; k < 3; k++) c[k] += w[k] * q.volume;
     }
     return { volume: V, area: A, com: V ? (c.map(x => x / V) as V3) : [0, 0, 0], bodies: n };
+  }
+
+  /**
+   * A source's exact volume, area and centre of mass already measured elsewhere (a helper's or the disk cache's
+   * analysed part, in part axes), so `props` need not measure it again.
+   */
+  knownMass(src: object, d: { volume: number; area: number; com: V3; exact?: boolean; closed?: boolean }) {
+    const body = (src as Partial<Source>).body;
+    if (!body || !d.exact || !d.closed || this.massMemo.has(src)) return;
+    this.massMemo.set(src, { volume: d.volume, area: d.area, com: [...d.com] as V3, bodies: this.solidCount(body.shape) });
+  }
+
+  /** Volume, area, centre of mass (in the source's axes) and solid count per evaluated source. */
+  private massMemo = new WeakMap<object, { volume: number; area: number; com: V3; bodies: number }>();
+
+  private solidCount(shape: any) {
+    const oc = this.oc;
+    let n = 0;
+    for (const ex = new oc.TopExp_Explorer_2(shape, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) n++;
+    return n;
   }
 }
 

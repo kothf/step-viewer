@@ -32,7 +32,8 @@ export const basisSize = (p: number) => ((p + 1) * (p + 2) * (p + 3)) / 6;
 /** Scalar basis of one cell: values and gradients (in model mm) at a point. */
 export class Basis {
   readonly n: number;
-  private readonly ex: Int32Array;
+  /** The degrees (i, j, k) of each function's Legendre product, three per function. */
+  readonly ex: Int32Array;
   private readonly lx = new Float64Array(18);
   private readonly ly = new Float64Array(18);
   private readonly lz = new Float64Array(18);
@@ -62,5 +63,13 @@ export class Basis {
       this.g[3 * b + 1] = X * ly[2 * j + 1] * Z * inv;
       this.g[3 * b + 2] = X * Y * lz[2 * k + 1] * inv;
     }
+  }
+  /** The values alone at x (the same numbers `eval` gives), for sums that need no gradients. */
+  values(x: number, y: number, z: number, c: ArrayLike<number>, s: number, n = this.n) {
+    const p = this.p, ex = this.ex, lx = this.lx, ly = this.ly, lz = this.lz, v = this.v;
+    legendre(p, (x - c[0]) / s, lx);
+    legendre(p, (y - c[1]) / s, ly);
+    legendre(p, (z - c[2]) / s, lz);
+    for (let b = 0; b < n; b++) v[b] = lx[2 * ex[3 * b]] * ly[2 * ex[3 * b + 1]] * lz[2 * ex[3 * b + 2]];
   }
 }

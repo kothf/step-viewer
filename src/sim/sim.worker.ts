@@ -8,10 +8,7 @@ import { canShare, setHelpers, threadStats } from "./threads";
 import { findConnections, type Connection } from "./connect";
 import { findBolts, type FastenerBody } from "./bolts";
 import { progress, progressTo, type SimProgress } from "./progress";
-import { runModal, runStatic, runThermal, runTransient, sampleAt, thermalFrame, type PassResult, type RunInput, type SampleResult, type Sampler } from "./run";
-import { usePrepared } from "./grid";
-import { prepareCells } from "./par";
-import { parPool } from "./parPool";
+import { runModal, runStatic, runThermal, runTransient, sampleAt, type PassResult, type RunInput, type SampleResult, type Sampler } from "./run";
 
 export type SimRequest =
   | { id: number; type: "threads"; n: number }
@@ -22,7 +19,7 @@ export type SimRequest =
 export type SimReply =
   | { id: number; pass: PassResult }
   | { id: number; progress: SimProgress }
-  | { id: number; done: true; threads: ReturnType<typeof threadStats>; cut?: { helpers: number; ms: number } | null }
+  | { id: number; done: true; threads: ReturnType<typeof threadStats> }
   | { id: number; sample: SampleResult | null }
   | { id: number; found: Connection[] }
   | { id: number; bolts: ReturnType<typeof findBolts> }
@@ -37,7 +34,12 @@ function useThreads(n: number) {
   if (!canShare() || !(self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated) return;
   try {
     const list = Array.from({ length: Math.max(0, Math.min(16, n) - 1) }, () => new CholWorker());
-    setHelpers(list);
+    // each helper gets its jobs on a port of its own (see chol.worker.ts)
+    setHelpers(list.map(w => {
+      const ch = new MessageChannel();
+      w.postMessage({ port: ch.port2 }, [ch.port2]);
+      return { postMessage: (m: unknown) => ch.port1.postMessage(m), terminate: () => { ch.port1.close(); w.terminate(); } };
+    }));
     // A helper made just before this thread starts a long solve would not start until the solve ends (a worker's
     // own workers are started through its event loop), so a solve waits for them to report in, 3 s at most.
     const up = Promise.all(list.map(w => new Promise<void>(res => { w.onmessage = () => res(); w.onerror = () => res(); })));
@@ -47,9 +49,6 @@ function useThreads(n: number) {
 
 const post = (m: SimReply, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(m, transfer);
 const kept = new Map<number, { sample: Sampler; inside: (x: number, y: number, z: number) => boolean }>();
-
-/** What the last solve's cells took, for the page's debug state: helpers used and ms. */
-let cut: { helpers: number; ms: number } | null = null;
 
 self.onmessage = async (e: MessageEvent<SimRequest>) => {
   const r = e.data;
@@ -75,27 +74,12 @@ self.onmessage = async (e: MessageEvent<SimRequest>) => {
     if (!r.more) kept.clear();
     progressTo(p => post({ id: r.id, progress: p }));
     progress("geometry", 0, 1);
-    // a steady thermal study's cells are cut against the bodies by the helpers, all at once; the solver then finds them made
-    cut = null;
-    if (r.type === "thermal" && r.input.thermal && !r.input.thermal.transient) {
-      const pool = r.input.threads === 0 ? null : parPool(r.input.threads);
-      if (pool) {
-        try {
-          const t0 = Date.now(), F = thermalFrame(r.input);
-          progress("cells", -1);
-          usePrepared(await prepareCells(pool, F.tris, r.input.body.lo, r.input.body.hi, F.h));
-          cut = { helpers: pool.size, ms: Date.now() - t0 };
-        } catch { usePrepared(null); }
-      }
-    }
     const passes = r.type === "modal" ? runModal(r.input) : r.type === "thermal" && r.input.thermal?.transient ? runTransient(r.input) : r.type === "thermal" ? runThermal(r.input, (s, inside) => { kept.set(r.id, { sample: s, inside }); }) : runStatic(r.input, (s, inside) => { kept.set(r.id, { sample: s, inside }); });
     for (const pass of passes) post({ id: r.id, pass }, [pass.u.buffer, pass.vm.buffer, pass.err.buffer, ...(pass.shapes ?? []).map(s => s.buffer), ...(pass.transient?.frames ?? []).map(f => f.buffer)]);
     progressTo(null);
-    post({ id: r.id, done: true, threads: threadStats(), cut });
+    post({ id: r.id, done: true, threads: threadStats() });
   } catch (err) {
     progressTo(null);
     post({ id: r.id, error: err instanceof Error ? err.message : String(err) });
-  } finally {
-    usePrepared(null);
   }
 };

@@ -67,13 +67,16 @@ export async function resolveRefs(doc: AsmDoc, dir: RefDir, base: RefBase, at = 
 }
 
 async function resolveInto(doc: AsmDoc, dir: RefDir, base: RefBase, at: string, out: ResolveResult, top: boolean, seen: Set<string>) {
+  // Every file of this level is read and hashed at once (a folder of many parts was read one file after another).
+  const reads = new Map(Object.entries(doc.parts).filter(([, e]) => e.link && !seen.has(keyOf(joinPath(at, e.link.path))))
+    .map(([key, e]) => [key, dir.read(joinPath(at, e.link!.path)).then(async b => (b ? { bytes: b, hash: await hashBytes(b) } : null), () => null)]));
   for (const [key, e] of Object.entries(doc.parts)) {
     if (!e.link) continue;
     const path = joinPath(at, e.link.path), k = keyOf(path);
     if (seen.has(k)) continue;
-    const bytes = await dir.read(path);
-    if (!bytes) { if (top) out.missing.push(key); continue; }
-    const hash = await hashBytes(bytes);
+    const got0 = await (reads.get(key) ?? dir.read(path).then(async b => (b ? { bytes: b, hash: await hashBytes(b) } : null)));
+    if (!got0) { if (top) out.missing.push(key); continue; }
+    const { bytes, hash } = got0;
     if (hash !== e.link.hash) {
       const got = await readEntry(bytes, !!e.asm);
       if (!got) { if (top) out.missing.push(key); continue; }

@@ -1,13 +1,14 @@
 // A static study of a part file, solved in node (to time the static solver on real parts):
 //   node bench/run.mjs bench/simstatic.bench.ts <file.mcadprt>
 // Held: the flat face lowest along the longest axis; loaded: 1 kN across on the highest flat face there.
-// SIMSTATIC_PASSES (4), SIMTHREADS (1). Prints each pass's time and energy, so runs can be compared for speed and sameness.
+// SIMSTATIC_PASSES (4), SIMTHREADS (1), PROF=1 for a CPU profile, SIMSTATIC_AGAIN=1 solves once more with another load. Prints each pass's time and energy, so runs can be compared for speed and sameness.
 import { readFileSync } from "node:fs";
 import { Modeller } from "../src/kernel/model";
 import { simGeometry } from "../src/kernel/simgeo";
 import { unpackPart } from "../src/model/file";
 import { studyProblem, runStatic } from "../src/sim/run";
 import { newStudy } from "../src/sim/types";
+import * as factors from "../src/sim/static";
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import { serve, setHelpers, threadStats } from "../src/sim/threads";
@@ -51,6 +52,8 @@ const mat = pm?.E ? { name: pm.name, E: pm.E * (pm.E < 1000 ? 1000 : 1), nu: pm.
 const problem = studyProblem(st, geo);
 if (problem.problems.length) throw new Error(JSON.stringify(problem.problems));
 console.log(`held F${lo}, loaded F${hi}, ${geo.face.length} triangles`);
+let session: any = null;
+if (process.env.PROF) { const { Session } = await import("node:inspector"); session = new Session(); session.connect(); session.post("Profiler.enable"); session.post("Profiler.start"); }
 let t0 = performance.now(), all = 0;
 for (const p of runStatic({ body: geo, mat, problem, passes: Number(process.env.SIMSTATIC_PASSES ?? 4), energyTol: 0, pos: new Float32Array(3), nrm: new Float32Array(3) } as any)) {
   const t = performance.now();
@@ -59,4 +62,18 @@ for (const p of runStatic({ body: geo, mat, problem, passes: Number(process.env.
   t0 = t;
 }
 console.log(`total ${(all / 1000).toFixed(2)} s ${JSON.stringify(threadStats())}`);
+// SIMSTATIC_AGAIN=1: the same study once more with another load (a second load case): its kept factorisations are used
+if (process.env.SIMSTATIC_AGAIN) {
+  const r0 = factors.reusedFactors;
+  st.loads[0] = { id: "l1", type: "force", faces: [{ name: `F${hi}` }], comp: dir.map((_v, k) => ({ v: k === (ax + 2) % 3 ? 700 : 0 })) } as any;
+  const t1 = performance.now();
+  const again = [...runStatic({ body: geo, mat, problem: studyProblem(st, geo), passes: Number(process.env.SIMSTATIC_PASSES ?? 4), energyTol: 0, pos: new Float32Array(3), nrm: new Float32Array(3) } as any)];
+  console.log(`again with another load: ${((performance.now() - t1) / 1000).toFixed(2)} s, ${factors.reusedFactors - r0} of ${again.length} passes took a kept factorisation`);
+}
+if (session) await new Promise<void>(done => session.post("Profiler.stop", (_e: unknown, { profile }: any) => {
+  const self = new Map<string, number>(), dt = profile.timeDeltas as number[], byId = new Map<number, any>(profile.nodes.map((n: any) => [n.id, n]));
+  profile.samples.forEach((id: number, i: number) => { const f = byId.get(id).callFrame, k = `${f.functionName || "(anon)"} ${f.url.split("/").pop()}:${f.lineNumber}`; self.set(k, (self.get(k) ?? 0) + dt[i]); });
+  for (const [k, v] of [...self].sort((a, b) => b[1] - a[1]).slice(0, 25)) console.log(`${(v / 1e6).toFixed(2)} s  ${k}`);
+  done();
+}));
 setHelpers([]);

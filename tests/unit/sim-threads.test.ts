@@ -1,4 +1,4 @@
-// The block factorisation (blockchol.ts) and its sharing between threads (threads.ts): the same numbers as the
+// The block factorisation (blockchol.ts), its solves and its sharing between threads (threads.ts): the same numbers as the
 // envelope solver within round-off, and bit for bit the same with one thread or several.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -6,7 +6,12 @@ import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import { BlockMatrix, Envelope } from "../../src/sim/sparse";
 import { BlockCholesky, cholPlan, minDegreeOrder } from "../../src/sim/blockchol";
-import { serve, setHelpers, threadStats, type CholJob } from "../../src/sim/threads";
+import { serve, setHelpers, setLoopFloor, threadStats, type CholJob } from "../../src/sim/threads";
+import { kernelMemories, reusedMemories, setKernel } from "../../src/sim/cholwasm";
+import { solveStatic } from "../../src/sim/static";
+import { solveThermal } from "../../src/sim/thermal";
+import { makeGrid, refit, setDropPoints } from "../../src/sim/grid";
+import { MeshBody, insideOf } from "../../src/sim/body";
 
 if (!isMainThread) parentPort!.on("message", (j: CholJob) => serve(j));
 
@@ -60,6 +65,44 @@ test("block Cholesky: not positive definite is reported", () => {
   assert.throws(() => new BlockCholesky(A), /E-SIM-SINGULAR/);
 });
 
+test("block Cholesky: a released factor's memory is taken by the next factor, with the same numbers", () => {
+  const { A, b } = grid(5, 4, 3, e => 5 + (e % 6) * 3);
+  const F = new BlockCholesky(A), x = F.solve(b);
+  const again = reusedMemories();
+  F.release();
+  assert.throws(() => F.solve(b), /E-SIM-RELEASED/);
+  // a smaller matrix that fits the memory handed back: it is zeroed first, so nothing of the old factor shows
+  const { A: B, b: c } = grid(5, 4, 3, e => 5 + (e % 5) * 3);
+  setKernel(false);
+  let y0: Float64Array;
+  try { y0 = new BlockCholesky(B).solve(c); } finally { setKernel(true); }
+  const G = new BlockCholesky(B), y = G.solve(c);
+  assert.equal(reusedMemories(), again + 1);
+  assert.deepEqual(y, y0);
+  // the first matrix again does not fit a much smaller one's memory... but fits its own size: same answer as before
+  G.release();
+  const H = new BlockCholesky(A);
+  assert.deepEqual(H.solve(b), x);
+  H.release();
+  H.release();
+});
+
+test("block Cholesky: the WebAssembly kernel and the plain loops give the same numbers bit for bit", () => {
+  // odd and even block sizes, so both the paired and the last column of every sum are used
+  const { A, b } = grid(5, 4, 3, e => 5 + (e % 6) * 3);
+  const before = kernelMemories(), x = new BlockCholesky(A).solve(b);
+  assert.equal(kernelMemories(), before + 1, "the factor is in kernel memory");
+  setKernel(false);
+  let x0: Float64Array;
+  try { x0 = new BlockCholesky(A).solve(b); } finally { setKernel(true); }
+  assert.equal(kernelMemories(), before + 1);
+  assert.deepEqual(x, x0);
+  const { A: B } = grid(2, 2, 1, () => 4);
+  B.block(3, 3).fill(0);
+  setKernel(false);
+  try { assert.throws(() => new BlockCholesky(B), /E-SIM-SINGULAR/); } finally { setKernel(true); }
+});
+
 test("threads: several threads give the same numbers bit for bit", async () => {
   const { A, b } = grid(6, 5, 4, e => 30 + (e % 3) * 12);
   const one = new BlockCholesky(A).solve(b);
@@ -78,4 +121,172 @@ test("threads: several threads give the same numbers bit for bit", async () => {
     assert.ok(threadStats().joined >= 1, JSON.stringify(threadStats()));
   } finally { setHelpers([]); }
 });
+
+test("threads: several right-hand sides solved on several threads are the same bit for bit", async () => {
+  const { A, b } = grid(5, 4, 3, e => 12 + (e % 4) * 6);
+  const bs = [b, b.map((v, i) => v * Math.cos(i)), b.map((v, i) => v + (i % 7)), b.map(v => -2 * v), b.map((_, i) => 1 / (1 + i))];
+  const one = bs.map(v => new BlockCholesky(A).solve(v));
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const before = threadStats().loops;
+    const many = new BlockCholesky(A).solveAll(bs);
+    assert.equal(threadStats().loops - before, 1);
+    assert.deepEqual(many, one);
+  } finally { setHelpers([]); setLoopFloor(2e7); }
+  // a page that is not cross-origin isolated has no SharedArrayBuffer at all
+  const g = globalThis as { SharedArrayBuffer?: unknown }, kept = g.SharedArrayBuffer;
+  const F = new BlockCholesky(A);
+  g.SharedArrayBuffer = undefined;
+  try { assert.deepEqual(F.solveAll(bs), one); } finally { g.SharedArrayBuffer = kept; }
+});
+
+test("threads: the equations built on several threads are the same bit for bit", async () => {
+  // a bar the grid does not fit, so its cells are cut and their points are fitted for each degree
+  const L = 120, W = 20, lo = [0, -W / 2, -W / 2], hi = [L, W / 2, W / 2];
+  const inside = (x: number, y: number, z: number) => x >= -1e-12 && x <= L + 1e-12 && Math.abs(y) <= W / 2 + 1e-12 && Math.abs(z) <= W / 2 + 1e-12;
+  const end = (x: number, out: boolean) => { const q = [x, -W / 2, -W / 2, x, W / 2, -W / 2, x, W / 2, W / 2, x, -W / 2, -W / 2, x, W / 2, W / 2, x, -W / 2, W / 2]; return out ? q : [...q.slice(0, 3), ...q.slice(6, 9), ...q.slice(3, 6), ...q.slice(9, 12), ...q.slice(15, 18), ...q.slice(12, 15)]; };
+  const run = () => {
+    const pb = { lo, hi, inside, h: 13, mat: { E: 210000, nu: 0.3 }, fixed: [{ tris: end(0, false) }], loads: [{ tris: end(L, true), force: [0, 0, -500] }] };
+    const a = solveStatic({ ...pb, p: 2 });
+    const b = solveStatic({ ...pb, p: 3, grid: a.grid });
+    return [a.x, b.x];
+  };
+  const one = run();
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const before = threadStats().loops;
+    const many = run();
+    const st = threadStats();
+    // each solve shares its element stiffness, faces and penalty measuring, the second also the fitting of the cut cells' points
+    assert.ok(st.loops - before >= 7 && st.loopJoined >= 1, JSON.stringify(st));
+    assert.deepEqual(many, one);
+  } finally { setHelpers([]); setLoopFloor(2e7); }
+});
+test("threads: a thermal study's equations built on several threads are the same bit for bit", async () => {
+  // the same bar: held at 20 °C at one end, a film and radiation at the other, heat made throughout
+  const L = 120, W = 20, lo = [0, -W / 2, -W / 2], hi = [L, W / 2, W / 2];
+  const inside = (x: number, y: number, z: number) => x >= -1e-12 && x <= L + 1e-12 && Math.abs(y) <= W / 2 + 1e-12 && Math.abs(z) <= W / 2 + 1e-12;
+  const end = (x: number, out: boolean) => { const q = [x, -W / 2, -W / 2, x, W / 2, -W / 2, x, W / 2, W / 2, x, -W / 2, -W / 2, x, W / 2, W / 2, x, -W / 2, W / 2]; return out ? q : [...q.slice(0, 3), ...q.slice(6, 9), ...q.slice(3, 6), ...q.slice(9, 12), ...q.slice(15, 18), ...q.slice(12, 15)]; };
+  const run = () => {
+    const pb = { lo, hi, inside, h: 13, k: 0.05, sinks: [{ tris: end(0, false), temp: 20 }, { tris: end(L, true), h: 2e-5, ambient: 25 }, { tris: end(L, true), emissivity: 0.9, ambient: 25 }], sources: [{ power: 3 }] };
+    const a = solveThermal({ ...pb, p: 2 });
+    const b = solveThermal({ ...pb, p: 3, grid: a.grid, prev: a.x });
+    // and with natural convection in place of the film
+    const nat = { factor: 1, down: [0, 0, -1], lv: [W, W], lh: [W / 4, W / 4] };
+    const n = solveThermal({ ...pb, sinks: [pb.sinks[0], { tris: end(L, true), ambient: 25, natural: nat }, pb.sinks[2]], p: 2 });
+    return [a.x, b.x, a.iterations, b.iterations, n.x, a.energy, b.energy, b.eta, b.prevError];
+  };
+  const one = run();
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const before = threadStats().loops;
+    const many = run();
+    // conduction and the faces between elements of the solves, the films, radiation and natural convection of every step,
+    // and the energies at the end of each solve
+    assert.ok(threadStats().loops - before >= 12, JSON.stringify(threadStats()));
+    assert.deepEqual(many, one);
+    // radiation settles in a few steps, and the answer is the one a fresh factorisation per step gives
+    assert.ok((one[2] as number) > 1 && (one[2] as number) < 12);
+  } finally { setHelpers([]); setLoopFloor(2e7); }
+});
+
+test("threads: the cells of a mesh body found on several threads are the same", async () => {
+  // a tetrahedron leaning in its box: most cubes are cut, some hold nothing
+  const P = [[0, 0, 0], [40, 3, 2], [5, 37, 4], [8, 6, 33]];
+  const tris = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]].flatMap(f => f.flatMap(v => P[v]));
+  const body = new MeshBody(tris);
+  const make = () => {
+    const g = makeGrid(body.lo, body.hi, 9, insideOf(body), { q: 3, depth: 3, fit: 5 });
+    return g.cells.map(c => ({ ijk: c.ijk, state: c.state, frac: c.frac, el: c.el, pts: Array.from(c.pts.a.subarray(0, 4 * c.pts.n)), fine: c.fine ? Array.from(c.fine.a.subarray(0, 4 * c.fine.n)) : null }));
+  };
+  const one = make();
+  assert.ok(one.length > 20 && one.some(c => c.fine));
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const before = threadStats().loops;
+    const many = make();
+    assert.ok(threadStats().loops > before, JSON.stringify(threadStats()));
+    assert.deepEqual(many, one);
+  } finally { setHelpers([]); setLoopFloor(2e7); }
+});
+
+test("threads: the open surfaces of many bodies found on several threads are the same", async () => {
+  // nine blocks in a row, touching: the faces between them are covered, the rest is open to the air
+  const n = 9, W = 10, tri = (lo: number[], hi: number[]) => {
+    const f: number[] = [];
+    for (let a = 0; a < 3; a++) for (const out of [false, true]) {
+      const a1 = (a + 1) % 3, a2 = (a + 2) % 3, at = out ? hi[a] : lo[a];
+      const P = (u: number, v: number) => { const q = [0, 0, 0]; q[a] = at; q[a1] = u; q[a2] = v; return q; };
+      const A = P(lo[a1], lo[a2]), B = P(hi[a1], lo[a2]), C = P(hi[a1], hi[a2]), D = P(lo[a1], hi[a2]);
+      f.push(...(out ? [...A, ...B, ...C, ...A, ...C, ...D] : [...A, ...C, ...B, ...A, ...D, ...C]));
+    }
+    return f;
+  };
+  const boxes = Array.from({ length: n }, (_v, i) => tri([i * W, 0, 0], [(i + 1) * W, W, W]));
+  const all = boxes.flat();
+  const run = () => {
+    const domains = boxes.map((t, i) => ({ inside: insideOf(new MeshBody(t)), k: 0.05 + 0.01 * i, tris: t }));
+    const r = solveThermal({ lo: [0, 0, 0], hi: [n * W, W, W], inside: (x, y, z) => domains.some(d => d.inside(x, y, z)), h: 7, p: 2, k: 0, domains,
+      sinks: [{ tris: all, free: true, h: 2e-5, ambient: 25 }, { tris: all, free: true, emissivity: 0.8, ambient: 25 }], sources: [{ power: 1.5, doms: [4] }] });
+    return [r.x, r.flows.map(f => [f.out, f.area]), !!r.grid.bodies];
+  };
+  const one = run();
+  assert.equal(one[2], false);
+  // the open area: the row's outside, without the eight faces between blocks
+  assert.ok(Math.abs((one[1] as number[][])[0][1] - (4 * n * W * W + 2 * W * W)) < 1e-6, JSON.stringify(one[1]));
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const many = run();
+    assert.equal(many[2], true);
+    assert.deepEqual(many.slice(0, 2), one.slice(0, 2));
+  } finally { setHelpers([]); setLoopFloor(2e7); }
+});
+
 }
+
+// the helpers load this file too: a long test must not run in them, or they are busy when a job arrives
+if (isMainThread) test("threads: a big model lets its fine points go after the first fit, with the same fitted points", async () => {
+  const P = [[0, 0, 0], [40, 3, 2], [5, 37, 4], [8, 6, 33]];
+  const tris = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]].flatMap(f => f.flatMap(v => P[v]));
+  const body = new MeshBody(tris);
+  const make = (drop: number) => {
+    setDropPoints(drop);
+    try {
+      const g = makeGrid(body.lo, body.hi, 5, insideOf(body), { q: 3, depth: 4, fit: 5 });
+      const out: number[][][] = [];
+      for (const [q, fit] of [[5, 9], [6, 11], [7, 13], [6, 11]]) { refit(g, q, fit); out.push(g.cells.map(c => Array.from(c.pts.a.subarray(0, 4 * c.pts.n)))); }
+      return { out, gone: g.cells.filter(c => c.fine && c.fine.n && !c.fine.a.length).length, big: g.cells.filter(c => c.fine && c.fine.n > 13 ** 3).length };
+    } finally { setDropPoints(); }
+  };
+  const kept = make(Infinity), dropped = make(0);
+  assert.equal(kept.gone, 0);
+  assert.ok(dropped.big > 3 && dropped.gone === dropped.big, JSON.stringify([dropped.gone, dropped.big]));
+  assert.deepEqual(dropped.out, kept.out);
+  const ws = Array.from({ length: 3 }, () => new Worker(fileURLToPath(import.meta.url)));
+  await Promise.all(ws.map(w => new Promise(r => w.once("online", r))));
+  setHelpers(ws);
+  setLoopFloor(0);
+  try {
+    const before = threadStats().loops;
+    const many = make(0);
+    assert.ok(threadStats().loops > before);
+    assert.equal(many.gone, many.big);
+    assert.deepEqual(many.out, kept.out);
+    assert.deepEqual(make(Infinity).out, kept.out);
+  } finally { setHelpers([]); setLoopFloor(2e7); for (const w of ws) await w.terminate(); }
+});

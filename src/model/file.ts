@@ -4,6 +4,8 @@
 import { SCHEMA, type PartDoc } from "./types";
 import { unzipLimited, zip } from "./zip";
 import { FEATURE_TYPES } from "./doc";
+import { PREVIEW_FILE } from "./preview";
+import { RESULTS_ENTRY } from "../sim/resultsFile";
 
 export const PART_EXT = ".mcadprt";
 export const FORMAT = "mobiuscad";
@@ -18,13 +20,17 @@ function stable(v: unknown): unknown {
 }
 export const toJson = (v: unknown) => `${JSON.stringify(stable(v), null, 2)}\n`;
 
-export async function packPart(doc: PartDoc, app: string, thumbnail?: Uint8Array): Promise<Uint8Array> {
+export async function packPart(doc: PartDoc, app: string, thumbnail?: Uint8Array, preview?: Uint8Array | null, results?: Uint8Array | null): Promise<Uint8Array> {
   const manifest: Manifest = { format: FORMAT, schema: SCHEMA, kind: "part", app, modified: new Date().toISOString(), units: doc.units.length };
   const files: { name: string; data: Uint8Array | string }[] = [
     { name: "manifest.json", data: toJson(manifest) },
     { name: "document.json", data: toJson(doc) },
   ];
   if (thumbnail) files.push({ name: "thumbnail.png", data: thumbnail });
+  // The display mesh (src/model/preview.ts), shown while the next open rebuilds; older versions ignore it.
+  if (preview) files.push({ name: PREVIEW_FILE, data: preview });
+  // Simulation results (src/sim/resultsFile.ts) when the part is saved on its own; older versions ignore them.
+  if (results) files.push({ name: RESULTS_ENTRY, data: results });
   return zip(files);
 }
 
@@ -34,6 +40,11 @@ export class FileError extends Error {}
 const MIGRATIONS: Record<number, (d: Record<string, unknown>) => Record<string, unknown>> = {};
 
 export async function unpackPart(buf: ArrayBuffer): Promise<PartDoc> {
+  return (await unpackPartFile(buf)).doc;
+}
+
+/** The document and, when the file keeps one, its display mesh (`preview.bin`). */
+export async function unpackPartFile(buf: ArrayBuffer): Promise<{ doc: PartDoc; preview: Uint8Array | null; results: Uint8Array | null }> {
   const files = await unzipLimited(buf, 512 * 1024 ** 2);
   const dec = new TextDecoder();
   const mf = files.get("manifest.json"), dj = files.get("document.json");
@@ -44,7 +55,7 @@ export async function unpackPart(buf: ArrayBuffer): Promise<PartDoc> {
   if (manifest.schema > SCHEMA) throw new FileError(`This file was made by a newer MöbiusCAD (schema ${manifest.schema}). Update the app to open it.`);
   let doc = JSON.parse(dec.decode(dj)) as Record<string, unknown>;
   for (let s = Number(doc.schema ?? 1); s < SCHEMA; s++) doc = MIGRATIONS[s](doc);
-  return validate(doc);
+  return { doc: validate(doc), preview: files.get(PREVIEW_FILE) ?? null, results: files.get(RESULTS_ENTRY) ?? null };
 }
 
 /** Checks the shape of a document read from a file or the journal. */

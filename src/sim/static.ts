@@ -5,13 +5,14 @@
 // Units: mm, N, MPa (so E in MPa, density in t/mm³).
 
 import { Basis, basisSize } from "./basis";
-import { gauss, gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
+import { gauss, gridTrianglePoints, facePoints, fitFacePoints, fitPlanePoints, type Inside } from "./quad";
 import { makeGrid, memoryBytes, refit, type Grid } from "./grid";
-import { BlockMatrix } from "./sparse";
+import { BlockMatrix, matrixKey } from "./sparse";
 import { BlockCholesky, cholPlan, type CholPlan } from "./blockchol";
 import { pcgSolver, cholesky } from "./pcg";
 import { subspace } from "./eigen";
 import { progress } from "./progress";
+import { kernel, parallelFor, sharedF64, sharedI32, worthSharing, type ParJob } from "./threads";
 
 export interface Material {
   /** Young's modulus, MPa. */
@@ -311,7 +312,7 @@ export interface StaticResult {
    * error were every element like the one the point is in) at points; `nrm` = outward normals, so a point on
    * the surface is read from the cell the material is in. */
   /** `hit` (asked for with `hits`): 1 where the point lies in a cell of the grid, so the values there mean something. */
-  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; /** With `domains`: the one each point is in. */ dom?: Uint8Array };
+  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; /** With `domains`: the one each point is in. */ dom?: Uint16Array };
   /** Displacement at a point, mm. */
   disp(x: number, y: number, z: number): [number, number, number];
   /** Modal: the modes, lowest first; `use(k)` makes `sample`/`disp`/`stress` read mode k (the first to begin with). */
@@ -344,10 +345,10 @@ export const MODAL_DIRECT = 9000;
  */
 export const DIRECT_FLOPS = 4e10, MODAL_FLOPS = 2e11, DIRECT_VALUES = 5e7;
 /** Whether the direct solver is the one to use for A (and the element order it found, to factor with). */
-function directFits(A: BlockMatrix, limit: number, flops: number): { direct: boolean; plan?: CholPlan } {
+export function directFits(A: BlockMatrix, limit: number, flops: number, values = DIRECT_VALUES): { direct: boolean; plan?: CholPlan } {
   const plan = cholPlan(A);
   if (A.size <= limit) return { direct: true, plan };
-  return { direct: plan.flops <= flops && plan.size <= DIRECT_VALUES, plan };
+  return { direct: plan.flops <= flops && plan.size <= values, plan };
 }
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
@@ -423,71 +424,138 @@ export function topEigen(T: Float64Array, K: Float64Array, n: number): number {
 }
 
 /**
+ * The quadrature points of boundary triangles, cut at the grid planes and located: 8 numbers per point (element, x, y,
+ * z, weight, normal). The points of one cell that lie in one plane (a flat face is many triangles, each with its own
+ * points) are replaced by the (2p + 1)² fitted points of `fitPlanePoints`, which integrate what a degree-p basis
+ * puts there the same: a bracket held on its foot had 240 000 points at degree 6 where 20 000 do. Kept per grid, so
+ * the penalty measuring, the support terms and the reactions of a pass locate a face once.
+ */
+const surfaceKept = new WeakMap<Grid, Map<ArrayLike<number>, { tq: number; L: Float64Array }>>();
+function surfacePoints(grid: Grid, tris: ArrayLike<number>, tq: number, q: number): Float64Array {
+  let kept = surfaceKept.get(grid);
+  if (!kept) surfaceKept.set(grid, (kept = new Map()));
+  const had = kept.get(tris);
+  if (had && had.tq === tq) return had.L;
+  const { pts, tri } = gridTrianglePoints(tris, grid.lo, grid.h, tq), nrms = triNormals(tris);
+  const eps = 1e-7 * grid.h, tol = 1e-7;
+  // groups: the points of one cell in one plane, in the order they are first met
+  type Group = { c: number; n: number[]; d: number; idx: number[] };
+  const groups: Group[] = [], byCell = new Map<number, Group[]>();
+  for (let k = 0; k < pts.n; k++) {
+    const o = 4 * k, t = tri[k], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
+    const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
+    // nudge inwards so a point on a cell face lands in the cell the body is on
+    const c = grid.cellOf(x - eps * nx, y - eps * ny, z - eps * nz);
+    if (c < 0) continue;
+    const d = nx * x + ny * y + nz * z;
+    let list = byCell.get(c), G: Group | undefined;
+    if (!list) byCell.set(c, (list = []));
+    for (const g of list) if (Math.abs(g.n[0] - nx) < tol && Math.abs(g.n[1] - ny) < tol && Math.abs(g.n[2] - nz) < tol && Math.abs(g.d - d) < tol * grid.h) { G = g; break; }
+    if (!G) { G = { c, n: [nx, ny, nz], d, idx: [] }; list.push(G); groups.push(G); }
+    G.idx.push(k);
+  }
+  const out: number[] = [];
+  for (const G of groups) {
+    const e = grid.cells[G.c].el, F = fitPlanePoints(pts, G.idx, G.n, q, 1e-9 * grid.h);
+    if (F) for (let k = 0; k < F.n; k++) out.push(e, F.a[4 * k], F.a[4 * k + 1], F.a[4 * k + 2], F.a[4 * k + 3], G.n[0], G.n[1], G.n[2]);
+    else for (const k of G.idx) { const t = tri[k]; out.push(e, pts.a[4 * k], pts.a[4 * k + 1], pts.a[4 * k + 2], pts.a[4 * k + 3], nrms[3 * t], nrms[3 * t + 1], nrms[3 * t + 2]); }
+  }
+  const L = Float64Array.from(out);
+  kept.set(tris, { tq, L });
+  return L;
+}
+
+/**
  * Raises the penalty of the elements the body cuts to what their tractions need (see `solveStatic`): kept out of
  * `solveStatic`, which must stay small enough for the browser's compiler to optimise its loops.
  */
 function measurePenalty(grid: Grid, nel: number, nbs: ArrayLike<number>, gam: Float64Array, p: number, rigid: (e: number) => boolean,
   facePts: (c: number, ea: number, eb: number, axis: number) => { n: number; a: ArrayLike<number> },
-  tractions: (e: number, x: number, y: number, z: number, nrm: ArrayLike<number>) => Float64Array, block: (e: number) => Float64Array, surf: ArrayLike<number>[]) {
-
-    const TT: (Float64Array | undefined)[] = new Array(nel);
-    const cutE = new Uint8Array(nel);
-    for (let e = 0; e < nel; e++) cutE[e] = !rigid(e) && grid.elems[e].cells.some(c => grid.cells[c].frac < 1 - 1e-9) ? 1 : 0;
-    const acc = (e: number, M: Float64Array, w: number) => {
-      const n = nbs[e], mm = 3 * n;
-      const T = TT[e] ?? (TT[e] = new Float64Array(mm * mm));
-      for (let a = 0; a < n; a++) for (let c = 0; c < 3; c++) {
-        const s0 = w * M[9 * a + c], s1 = w * M[9 * a + 3 + c], s2 = w * M[9 * a + 6 + c], row = (3 * a + c) * mm;
-        for (let b2 = 0; b2 <= a; b2++) {
-          const o = 9 * b2, r = row + 3 * b2;
-          T[r] += s0 * M[o] + s1 * M[o + 3] + s2 * M[o + 6];
-          T[r + 1] += s0 * M[o + 1] + s1 * M[o + 4] + s2 * M[o + 7];
-          T[r + 2] += s0 * M[o + 2] + s1 * M[o + 5] + s2 * M[o + 8];
-        }
-      }
-    };
-    const at = (e: number, x: number, y: number, z: number, w: number, nrm: ArrayLike<number>) => acc(e, tractions(e, x, y, z, nrm), w);
-    if (cutE.some(Boolean)) {
-      for (let c = 0; c < grid.cells.length; c++) {
-        const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom, ea = grid.cells[c].el;
-        for (let axis = 0; axis < 3; axis++) {
-          const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), k + (axis === 2 ? 1 : 0), d);
-          if (o < 0) continue;
-          const eb = grid.cells[o].el;
-          if (ea === eb || !(cutE[ea] || cutE[eb])) continue;
-          const pts = facePts(c, ea, eb, axis), nrm = [0, 0, 0];
-          nrm[axis] = 1;
-          for (let q2 = 0; q2 < pts.n; q2++) {
-            const o4 = 4 * q2, w = pts.a[o4 + 3];
-            if (cutE[ea]) at(ea, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], w, nrm);
-            if (cutE[eb]) at(eb, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], w, nrm);
-          }
-        }
-      }
-      // the supports' faces and the domains' surfaces
-      const tq0 = Math.max(2, p + 1), eps = 1e-7 * grid.h;
-      for (const tris of surf) {
-        const { pts, tri } = gridTrianglePoints(tris, grid.lo, grid.h, tq0), nrms = triNormals(tris);
+  lameOf: (e: number) => { lam: number; mu: number }, A: BlockMatrix, bas: Basis, surf: ArrayLike<number>[]) {
+  const cutE = new Uint8Array(nel);
+  let any = false;
+  for (let e = 0; e < nel; e++) if (!rigid(e) && grid.elems[e].cells.some(c => grid.cells[c].frac < 1 - 1e-9)) { cutE[e] = 1; any = true; }
+  if (!any) return;
+  // the supports' faces and the domains' surfaces, located once
+  const held: Float64Array[] = surf.map(tris => surfacePoints(grid, tris, Math.max(2, p + 1), 2 * p + 1));
+  // the samples of each cut element (place, weight, normal), in the order they are met: one task per element
+  const faces = (each: (e: number, x: number, y: number, z: number, w: number, nx: number, ny: number, nz: number) => void) => {
+    for (let c = 0; c < grid.cells.length; c++) {
+      const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom, ea = grid.cells[c].el;
+      for (let axis = 0; axis < 3; axis++) {
+        const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), k + (axis === 2 ? 1 : 0), d);
+        if (o < 0) continue;
+        const eb = grid.cells[o].el;
+        if (ea === eb || !(cutE[ea] || cutE[eb])) continue;
+        const pts = facePts(c, ea, eb, axis), nx = axis === 0 ? 1 : 0, ny = axis === 1 ? 1 : 0, nz = axis === 2 ? 1 : 0;
         for (let q2 = 0; q2 < pts.n; q2++) {
-          const o4 = 4 * q2, t = tri[q2], nrm = [nrms[3 * t], nrms[3 * t + 1], nrms[3 * t + 2]];
-          const x = pts.a[o4], y = pts.a[o4 + 1], z = pts.a[o4 + 2];
-          const c = grid.cellOf(x - eps * nrm[0], y - eps * nrm[1], z - eps * nrm[2]);
-          if (c < 0 || !cutE[grid.cells[c].el]) continue;
-          at(grid.cells[c].el, x, y, z, pts.a[o4 + 3], nrm);
+          const o4 = 4 * q2;
+          if (cutE[ea]) each(ea, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], nx, ny, nz);
+          if (cutE[eb]) each(eb, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], nx, ny, nz);
         }
-      }
-      for (let e = 0; e < nel; e++) {
-        const T = TT[e];
-        if (!T) continue;
-        const mm = 3 * nbs[e];
-        for (let r = 0; r < mm; r++) for (let c = 0; c < r; c++) T[c * mm + r] = T[r * mm + c];
-        const lmax = topEigen(T, block(e), mm);
-        // never under the formula, and not without bound: a cell that keeps almost none of some function
-        const need = Math.min(PENALTY_CAP * gam[e], PENALTY_SAFE * 2 * lmax);
-        if (need > gam[e]) gam[e] = need;
       }
     }
+    for (const L of held) for (let o = 0; o < L.length; o += 8) if (cutE[L[o]]) each(L[o], L[o + 1], L[o + 2], L[o + 3], L[o + 4], L[o + 5], L[o + 6], L[o + 7]);
+  };
+  const count = new Int32Array(nel);
+  faces(e => { count[e]++; });
+  const els: number[] = [];
+  let total = 0, work = 0, size = 0;
+  for (let e = 0; e < nel; e++) if (count[e]) { const mm = 3 * nbs[e]; els.push(e); total += count[e]; work += count[e] * mm * mm * 2 + 60 * mm ** 3; size += mm * mm; }
+  if (!els.length) return;
+  const shared = worthSharing(work), f64 = (m: number) => (shared ? sharedF64(m) : new Float64Array(m));
+  const sam = f64(7 * total), task = f64(SMEAS * els.length), blocks = f64(size), out = f64(els.length), fill = new Int32Array(nel);
+  let from = 0, bo = 0;
+  els.forEach((e, t) => {
+    const E = grid.elems[e], mm = 3 * nbs[e], L = lameOf(e);
+    task.set([from, from + count[e], bo, E.c[0], E.c[1], E.c[2], E.s, nbs[e], L.lam, L.mu], SMEAS * t);
+    blocks.set(A.block(e, e).subarray(0, mm * mm), bo);
+    fill[e] = from;
+    from += count[e];
+    bo += mm * mm;
+  });
+  faces((e, x, y, z, w, nx, ny, nz) => { const o = 7 * fill[e]++; sam[o] = x; sam[o + 1] = y; sam[o + 2] = z; sam[o + 3] = w; sam[o + 4] = nx; sam[o + 5] = ny; sam[o + 6] = nz; });
+  if (shared) parallelFor({ kind: "smeasure", n: els.length, p: bas.p, sam, task, blocks, out } satisfies Omit<SMeasureJob, "ctl">);
+  else {
+    const nb = bas.v.length, T = new Float64Array(9 * nb * nb), M = new Float64Array(9 * nb);
+    for (let t = 0; t < els.length; t++) out[t] = measureCell(t, sam, task, blocks, bas, T, M);
+  }
+  els.forEach((e, t) => {
+    // never under the formula, and not without bound: a cell that keeps almost none of some function
+    const need = Math.min(PENALTY_CAP * gam[e], PENALTY_SAFE * 2 * out[t]);
+    if (need > gam[e]) gam[e] = need;
+  });
 }
+/** Numbers per element of a penalty loop: first and end sample, place of its block, centre, half size, functions, λ, μ. */
+const SMEAS = 10;
+/** The largest λ of T x = λ K x of one cut element: T = Σ w (σ n)ᵀ(σ n) over its samples, K its stiffness block. */
+function measureCell(t: number, sam: ArrayLike<number>, task: ArrayLike<number>, blocks: Float64Array, bas: Basis, TT: Float64Array, M: Float64Array): number {
+  const o = SMEAS * t, n = task[o + 7], mm = 3 * n, cc = [task[o + 3], task[o + 4], task[o + 5]], sz = task[o + 6], lam = task[o + 8], mu = task[o + 9];
+  const T = TT.subarray(0, mm * mm), nrm = [0, 0, 0];
+  T.fill(0);
+  for (let q = task[o]; q < task[o + 1]; q++) {
+    const s = 7 * q, w = sam[s + 3];
+    nrm[0] = sam[s + 4]; nrm[1] = sam[s + 5]; nrm[2] = sam[s + 6];
+    bas.eval(sam[s], sam[s + 1], sam[s + 2], cc, sz, n);
+    for (let b2 = 0; b2 < n; b2++) traction(bas.g, 3 * b2, nrm, lam, mu, M, 9 * b2);
+    for (let a = 0; a < n; a++) for (let c = 0; c < 3; c++) {
+      const s0 = w * M[9 * a + c], s1 = w * M[9 * a + 3 + c], s2 = w * M[9 * a + 6 + c], row = (3 * a + c) * mm;
+      for (let b2 = 0; b2 <= a; b2++) {
+        const o9 = 9 * b2, r = row + 3 * b2;
+        T[r] += s0 * M[o9] + s1 * M[o9 + 3] + s2 * M[o9 + 6];
+        T[r + 1] += s0 * M[o9 + 1] + s1 * M[o9 + 4] + s2 * M[o9 + 7];
+        T[r + 2] += s0 * M[o9 + 2] + s1 * M[o9 + 5] + s2 * M[o9 + 8];
+      }
+    }
+  }
+  for (let r = 0; r < mm; r++) for (let c = 0; c < r; c++) T[c * mm + r] = T[r * mm + c];
+  return topEigen(T, blocks.subarray(task[o + 2], task[o + 2] + mm * mm), mm);
+}
+interface SMeasureJob extends ParJob { p: number; sam: Float64Array; task: Float64Array; blocks: Float64Array; out: Float64Array }
+kernel<SMeasureJob, { j: SMeasureJob; bas: Basis; T: Float64Array; M: Float64Array }>("smeasure", {
+  init: j => { const bas = new Basis(j.p), nb = bas.v.length; return { j, bas, T: new Float64Array(9 * nb * nb), M: new Float64Array(9 * nb) }; },
+  run({ j, bas, T, M }, t) { j.out[t] = measureCell(t, j.sam, j.task, j.blocks, bas, T, M); },
+});
 
 /** A rigid domain's stiffness beside the stiffest material of the model. */
 const RIGID_STIFF = 1e3;
@@ -518,6 +586,125 @@ function volumeCell(K: Float64Array, P: { a: ArrayLike<number>; n: number }, bas
     }
   }
 }
+
+/** Every element's stiffness from its cells' quadrature points: on all threads when there are several and the work is worth it. */
+function volumeTerms(A: BlockMatrix, grid: Grid, nbs: Int32Array, bas: Basis, lameOf: (e: number) => { lam: number; mu: number }) {
+  const nel = grid.elems.length;
+  let work = 0, npt = 0;
+  for (let e = 0; e < nel; e++) for (const ci of grid.elems[e].cells) { const n = grid.cells[ci].pts.n; npt += n; work += n * nbs[e] * nbs[e] * 5; }
+  if (!worthSharing(work)) {
+    for (let e = 0; e < nel; e++) {
+      progress("assemble", e, 2 * nel);
+      const E = grid.elems[e], K = A.block(e, e), nb = nbs[e], L = lameOf(e);
+      for (const ci of E.cells) volumeCell(K, grid.cells[ci].pts, bas, E.c, E.s, nb, L.lam, L.mu);
+      mirrorBlocks(K, nb);
+    }
+    return;
+  }
+  // the points, the elements and the blocks they fill, on shared memory: one task per element
+  const pts = sharedF64(4 * npt), at = sharedF64(VOL_TASK * nel + 1), nb = sharedI32(nel);
+  let n = 0, size = 0;
+  for (let e = 0; e < nel; e++) {
+    const E = grid.elems[e], o = VOL_TASK * e, L = lameOf(e);
+    at[o] = n;
+    for (const ci of E.cells) { const P = grid.cells[ci].pts; pts.set(P.a.subarray(0, 4 * P.n), 4 * n); n += P.n; }
+    at[o + 1] = n; at[o + 2] = size; at[o + 3] = E.c[0]; at[o + 4] = E.c[1]; at[o + 5] = E.c[2]; at[o + 6] = E.s; at[o + 7] = L.lam; at[o + 8] = L.mu;
+    nb[e] = nbs[e];
+    size += 9 * nbs[e] * nbs[e];
+  }
+  const out = sharedF64(size);
+  parallelFor({ kind: "volume", n: nel, p: bas.p, pts, at, nb, out } satisfies Omit<VolumeJob, "ctl">, d => progress("assemble", d, 2 * nel));
+  for (let e = 0; e < nel; e++) { const o = at[VOL_TASK * e + 2]; A.adopt(e, out.subarray(o, o + 9 * nbs[e] * nbs[e])); }
+}
+/**
+ * The terms of the faces between cells of different elements. On one thread each face goes through `one`. On
+ * several, the faces are worked through in batches: every thread sums faces' blocks into its own part of a shared
+ * scratch, and this thread adds them to the matrix in the faces' order, so the sums are the same either way.
+ */
+function faceTerms(A: BlockMatrix, grid: Grid, nbs: Int32Array, gam: Float64Array, p: number, lameOf: (e: number) => { lam: number; mu: number },
+  facePts: (ca: number, ea: number, eb: number, axis: number) => { a: ArrayLike<number>; n: number }, one: (ca: number, cb: number, axis: number) => void) {
+  const faces: number[] = [];
+  let work = 0;
+  for (let c = 0; c < grid.cells.length; c++) {
+    const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom, ea = grid.cells[c].el;
+    const nx = [grid.at(i + 1, j, k, d), grid.at(i, j + 1, k, d), grid.at(i, j, k + 1, d)];
+    for (let axis = 0; axis < 3; axis++) {
+      const cb = nx[axis];
+      if (cb < 0 || grid.cells[cb].el === ea) continue;
+      faces.push(c, cb, axis);
+      work += (p + 1) ** 2 * (nbs[ea] + nbs[grid.cells[cb].el]) ** 2 * 6;
+    }
+  }
+  const nf = faces.length / 3, nel = grid.elems.length;
+  if (!worthSharing(work)) {
+    for (let f = 0; f < nf; f++) { if (!(f & 15)) progress("assemble", nel + (f * nel) / nf, 2 * nel); one(faces[3 * f], faces[3 * f + 1], faces[3 * f + 2]); }
+    return;
+  }
+  const nb = basisSize(p), slot = 3 * 9 * nb * nb;
+  const B = Math.max(1, Math.min(nf, 512, Math.floor(FACE_SCRATCH / (8 * slot))));
+  const out = sharedF64(B * slot), task = sharedF64(FACE_TASK * B);
+  let pts = sharedF64(4 * B * (2 * p + 1) ** 2);
+  for (let f0 = 0; f0 < nf; f0 += B) {
+    const n = Math.min(B, nf - f0);
+    let np = 0;
+    for (let t = 0; t < n; t++) {
+      const ca = faces[3 * (f0 + t)], cb = faces[3 * (f0 + t) + 1], axis = faces[3 * (f0 + t) + 2];
+      const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb], L = lameOf(ea);
+      const P = facePts(ca, ea, eb, axis);
+      if (4 * (np + P.n) > pts.length) { const more = sharedF64(Math.max(2 * pts.length, 4 * (np + P.n))); more.set(pts.subarray(0, 4 * np)); pts = more; }
+      pts.set((P.a as Float64Array).subarray(0, 4 * P.n), 4 * np);
+      task.set([np, P.n, axis, EA.c[0], EA.c[1], EA.c[2], EA.s, EB.c[0], EB.c[1], EB.c[2], EB.s, nbs[ea], nbs[eb], L.lam, L.mu, Math.max(gam[ea], gam[eb])], FACE_TASK * t);
+      np += P.n;
+    }
+    parallelFor({ kind: "faces", n, p, slot, pts, task, out } satisfies Omit<FaceJob, "ctl">);
+    progress("assemble", nel + ((f0 + n) * nel) / nf, 2 * nel);
+    for (let t = 0; t < n; t++) {
+      const ea = grid.cells[faces[3 * (f0 + t)]].el, eb = grid.cells[faces[3 * (f0 + t) + 1]].el, na = nbs[ea], nc = nbs[eb], ma = 3 * na, mc = 3 * nc;
+      const o = slot * t, q = slot / 3;
+      const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
+      addSym(Kaa, out.subarray(o, o + ma * ma), na); addSym(Kbb, out.subarray(o + 2 * q, o + 2 * q + mc * mc), nc);
+      const Sab = out.subarray(o + q, o + q + ma * mc);
+      for (let i = 0; i < ma; i++) for (let j = 0; j < mc; j++) { const v = Sab[i * mc + j]; Kab[i * mc + j] += v; Kba[j * ma + i] += v; }
+    }
+  }
+}
+/** Bytes of scratch a batch of faces may take, and the numbers per face of a shared face loop: first point, points,
+ * axis, the two elements' centres and half sizes, their function counts, λ, μ, penalty. */
+const FACE_SCRATCH = 96e6, FACE_TASK = 16;
+interface FaceJob extends ParJob { p: number; slot: number; pts: Float64Array; task: Float64Array; out: Float64Array }
+kernel<FaceJob, { j: FaceJob; bas: Basis; bas2: Basis; MA: Float64Array; MB: Float64Array }>("faces", {
+  init: j => { const bas = new Basis(j.p); return { j, bas, bas2: new Basis(j.p), MA: new Float64Array(9 * bas.n), MB: new Float64Array(9 * bas.n) }; },
+  run({ j, bas, bas2, MA, MB }, t) {
+    const k = j.task, o = FACE_TASK * t, a = j.pts, nb = bas.n, na = k[o + 11], nc = k[o + 12], lam = k[o + 13], mu = k[o + 14], gamma = k[o + 15];
+    const ma = 3 * na, mc = 3 * nc, q = j.slot / 3, so = j.slot * t;
+    const Saa = j.out.subarray(so, so + ma * ma), Sab = j.out.subarray(so + q, so + q + ma * mc), Sbb = j.out.subarray(so + 2 * q, so + 2 * q + mc * mc);
+    Saa.fill(0); Sab.fill(0); Sbb.fill(0);
+    const nrm = [0, 0, 0], ca = [k[o + 3], k[o + 4], k[o + 5]], cb = [k[o + 7], k[o + 8], k[o + 9]], sa = k[o + 6], sb = k[o + 10];
+    nrm[k[o + 2]] = 1;
+    for (let i = k[o], end = k[o] + k[o + 1]; i < end; i++) {
+      const x = a[4 * i], y = a[4 * i + 1], z = a[4 * i + 2], w = a[4 * i + 3];
+      bas.eval(x, y, z, ca, sa);
+      bas2.eval(x, y, z, cb, sb);
+      for (let b = 0; b < nb; b++) { traction(bas.g, 3 * b, nrm, lam, mu, MA, 9 * b); traction(bas2.g, 3 * b, nrm, lam, mu, MB, 9 * b); }
+      facePair(Saa, bas.v, MA, 1, na, bas.v, MA, 1, na, w, gamma, true);
+      facePair(Sab, bas.v, MA, 1, na, bas2.v, MB, -1, nc, w, gamma, false);
+      facePair(Sbb, bas2.v, MB, -1, nc, bas2.v, MB, -1, nc, w, gamma, true);
+    }
+  },
+});
+
+/** Numbers per element of a shared volume loop: first point, end point, block offset, centre, half size, λ, μ. */
+const VOL_TASK = 9;
+interface VolumeJob extends ParJob { p: number; pts: Float64Array; at: Float64Array; nb: Int32Array; out: Float64Array }
+kernel<VolumeJob, { j: VolumeJob; bas: Basis }>("volume", {
+  init: j => ({ j, bas: new Basis(j.p) }),
+  run({ j, bas }, e) {
+    const a = j.at, o = VOL_TASK * e, nb = j.nb[e], m2 = 9 * nb * nb;
+    const K = j.out.subarray(a[o + 2], a[o + 2] + m2);
+    volumeCell(K, { a: j.pts.subarray(4 * a[o], 4 * a[o + 1]), n: a[o + 1] - a[o] }, bas, [a[o + 3], a[o + 4], a[o + 5]], a[o + 6], nb, a[o + 7], a[o + 8]);
+    mirrorBlocks(K, nb);
+  },
+});
 
 /** The mass of one cell's quadrature points into its element's mass matrix M and sums S; returns the cell's mass. */
 function massCell(M: Float64Array, S: Float64Array, Q: { a: ArrayLike<number>; n: number }, bas: Basis, c: number[], sz: number, ne: number, rho: number): number {
@@ -576,6 +763,88 @@ function facePair(K: Float64Array, Ni: Float64Array, Mi: Float64Array, si: numbe
   }
 }
 
+/**
+ * Factorisations kept between solves: a study solved again with other loads only (the next load case, a changed
+ * force) puts the same matrix together, bit for bit, and then takes its factor from here. Newest last.
+ */
+const keptFactors = new Map<string, BlockCholesky>();
+/** Values the kept factors may hold together (8 bytes each). */
+const KEEP_VALUES = 6e7;
+/** Solves that took a kept factorisation (for tests). */
+export let reusedFactors = 0;
+export function dropFactors() { keptFactors.clear(); }
+function factorOf(A: BlockMatrix, plan?: CholPlan): BlockCholesky {
+  const key = matrixKey(A), hit = keptFactors.get(key);
+  if (hit) { reusedFactors++; keptFactors.delete(key); keptFactors.set(key, hit); return hit; }
+  const L = new BlockCholesky(A, { plan });
+  if (L.values <= KEEP_VALUES) {
+    let sum = L.values;
+    for (const v of keptFactors.values()) sum += v.values;
+    for (const [k, v] of keptFactors) { if (sum <= KEEP_VALUES) break; keptFactors.delete(k); sum -= v.values; }
+    keptFactors.set(key, L);
+  }
+  return L;
+}
+
+// Support terms of one boundary point, as functions of their own: inside solveStatic Chrome ran these loops
+// unoptimised (a bracket's fifth pass spent 7 s here in the browser against 0.07 s in node).
+// K += w N_a N_b P
+function penaltyBlock(K: Float64Array, ne: number, v: ArrayLike<number>, w: number, P: Float64Array) {
+  const m = 3 * ne;
+  for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
+    const q = w * v[a] * v[b];
+    for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) K[(3 * a + c) * m + 3 * b + d] += q * P[3 * c + d];
+  }
+}
+// PM = P M per function, then K += −w (N_a (P M_b) + N_b (P M_a)ᵀ) + gw N_a N_b P
+function heldBlock(K: Float64Array, ne: number, nb: number, v: ArrayLike<number>, w: number, gw: number, P: Float64Array, MA: Float64Array, PM: Float64Array) {
+  for (let b = 0; b < nb; b++) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++)
+    PM[9 * b + 3 * c + d] = P[3 * c] * MA[9 * b + d] + P[3 * c + 1] * MA[9 * b + 3 + d] + P[3 * c + 2] * MA[9 * b + 6 + d];
+  const m = 3 * ne;
+  for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
+    const pen = gw * v[a] * v[b];
+    for (let c = 0; c < 3; c++) {
+      const row = (3 * a + c) * m + 3 * b;
+      for (let d = 0; d < 3; d++)
+        K[row + d] += -w * (v[a] * PM[9 * b + 3 * c + d] + v[b] * PM[9 * a + 3 * d + c]) + pen * P[3 * c + d];
+    }
+  }
+}
+// A held face without an enforced displacement: the points of one element under one support and one normal share
+// P and the material, so only S = Σ w N_a N_b and G = Σ w N_a ∂N_b are summed per point (4 products per pair of
+// functions instead of some 50) and the block is written once from them: with M_b[r][d] = Σ_k C[r][d][k] ∂_k N_b,
+// C = λ n_r δ_dk + μ (δ_rd n_k + n_d δ_rk) and D = P C,
+// K[3a+c][3b+d] += −Σ_k (D[c][d][k] G[a][b][k] + D[d][c][k] G[b][a][k]) + 2γ S[a][b] P[c][d].
+function heldSum(S: Float64Array, G: Float64Array, ne: number, v: ArrayLike<number>, g: ArrayLike<number>, w: number) {
+  for (let a = 0; a < ne; a++) {
+    const wa = w * v[a];
+    for (let b = 0, o = a * ne; b < ne; b++, o++) {
+      S[o] += wa * v[b];
+      G[3 * o] += wa * g[3 * b]; G[3 * o + 1] += wa * g[3 * b + 1]; G[3 * o + 2] += wa * g[3 * b + 2];
+    }
+  }
+}
+const heldD = new Float64Array(27);
+function heldWrite(K: Float64Array, ne: number, S: Float64Array, G: Float64Array, P: Float64Array, n: ArrayLike<number>, lam: number, mu: number, gam2: number) {
+  const D = heldD, m = 3 * ne;
+  for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) for (let k = 0; k < 3; k++) {
+    let q = 0;
+    for (let r = 0; r < 3; r++) q += P[3 * c + r] * (lam * n[r] * (d === k ? 1 : 0) + mu * ((r === d ? n[k] : 0) + (r === k ? n[d] : 0)));
+    D[9 * c + 3 * d + k] = q;
+  }
+  for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
+    const ab = a * ne + b, ba = b * ne + a, pen = gam2 * S[ab];
+    const g0 = G[3 * ab], g1 = G[3 * ab + 1], g2 = G[3 * ab + 2], h0 = G[3 * ba], h1 = G[3 * ba + 1], h2 = G[3 * ba + 2];
+    for (let c = 0; c < 3; c++) {
+      const row = (3 * a + c) * m + 3 * b;
+      for (let d = 0; d < 3; d++) {
+        const o = 9 * c + 3 * d, t = 9 * d + 3 * c;
+        K[row + d] += pen * P[3 * c + d] - (D[o] * g0 + D[o + 1] * g1 + D[o + 2] * g2 + D[t] * h0 + D[t + 1] * h1 + D[t + 2] * h2);
+      }
+    }
+  }
+  S.fill(0, 0, ne * ne); G.fill(0, 0, 3 * ne * ne);
+}
 export function solveStatic(pb: StaticProblem): StaticResult {
   const t0 = now();
   const p = pb.p, q = p + 1;
@@ -592,7 +861,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const stiffest = doms ? Math.max(...doms.map(d => (d.rigid ? 0 : d.mat.E))) || Math.max(...doms.map(d => d.mat.E)) || 1 : pb.mat.E;
   const mats = doms ? doms.map(d => (d.rigid ? { ...d.mat, E: RIGID_STIFF * stiffest, nu: 0.3 } : d.mat)) : [pb.mat], lames = mats.map(lame);
   let { lam, mu } = lames[0];
-  const domE = Uint8Array.from(grid.elems, E => (doms ? grid!.cells[E.cells[0]].dom : 0));
+  const domE = Uint16Array.from(grid.elems, E => (doms ? grid!.cells[E.cells[0]].dom : 0));
   const setMat = (e: number) => { const L = lames[domE[e]]; lam = L.lam; mu = L.mu; };
   const rhoOf = (e: number) => mats[domE[e]].rho ?? 0;
   const rigidE = (e: number) => rigidD[domE[e]];
@@ -627,15 +896,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const el = (c: number) => grid.elems[grid.cells[c].el];
 
   // volume terms
-  for (let e = 0; e < nel; e++) {
-    progress("assemble", e, 2 * nel);
-    const E = grid.elems[e];
-    const K = A.block(e, e);
-    const nb = nbs[e];
-    setMat(e);
-    for (const ci of E.cells) volumeCell(K, grid.cells[ci].pts, bas, E.c, E.s, nb, lam, mu);
-    mirrorBlocks(K, nb);
-  }
+  volumeTerms(A, grid, nbs, bas, e => lames[domE[e]]);
 
   // interior faces between cells of different elements
   const MA = new Float64Array(9 * nb), MB = new Float64Array(9 * nb);
@@ -716,21 +977,9 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const surf: ArrayLike<number>[] = [];
     for (const s of pb.fixed) if (!s.spring && s.tris?.length) surf.push(s.tris);
     if (doms && doms.length > 1) for (const d of doms) if (!d.rigid) surf.push(d.tris);
-    measurePenalty(grid, nel, nbs, gam, p, rigidE, facePts, (e, x, y, z, nrm) => {
-      const E = grid!.elems[e], n = nbs[e];
-      setMat(e);
-      bas.eval(x, y, z, E.c, E.s);
-      for (let b2 = 0; b2 < n; b2++) traction(bas.g, 3 * b2, nrm, lam, mu, MA, 9 * b2);
-      return MA;
-    }, e => A.block(e, e), surf);
+    measurePenalty(grid, nel, nbs, gam, p, rigidE, facePts, e => lames[domE[e]], A, bas, surf);
   }
-  for (let c = 0; c < grid.cells.length; c++) {
-    const [i, j, k] = grid.cells[c].ijk, d = grid.cells[c].dom;
-    const nx = grid.at(i + 1, j, k, d), ny = grid.at(i, j + 1, k, d), nz = grid.at(i, j, k + 1, d);
-    if (nx >= 0) face(c, nx, 0);
-    if (ny >= 0) face(c, ny, 1);
-    if (nz >= 0) face(c, nz, 2);
-  }
+  faceTerms(A, grid, nbs, gam, p, e => lames[domE[e]], facePts, face);
 
   // boundary quadrature located in cells
   const tq = Math.max(2, p + 1);
@@ -841,18 +1090,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     }
   }
   const located = (tris: ArrayLike<number>, fn: (e: number, x: number, y: number, z: number, w: number, nrm: number[]) => void) => {
-    const { pts, tri } = gridTrianglePoints(tris, grid.lo, grid.h, tq);
-    const nrms = triNormals(tris);
-    for (let k = 0; k < pts.n; k++) {
-      const o = 4 * k, t = tri[k];
-      const nrm = [nrms[3 * t], nrms[3 * t + 1], nrms[3 * t + 2]];
-      const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
-      // nudge inwards so a point on a cell face lands in the cell the body is on
-      const eps = 1e-7 * grid.h;
-      const c = grid.cellOf(x - eps * nrm[0], y - eps * nrm[1], z - eps * nrm[2]);
-      if (c < 0) continue;
-      fn(grid.cells[c].el, x, y, z, pts.a[o + 3], nrm);
-    }
+    const L = surfacePoints(grid, tris, tq, 2 * p + 1);
+    for (let o = 0; o < L.length; o += 8) fn(L[o], L[o + 1], L[o + 2], L[o + 3], L[o + 4], [L[o + 5], L[o + 6], L[o + 7]]);
   };
   // the cell a boundary point belongs to: nudged into the body, further when the first try lands outside
   const cellNear = (x: number, y: number, z: number, d: ArrayLike<number>, o: number) => {
@@ -1198,53 +1437,51 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const k = s.spring!;
     for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) P[3 * c + d] = (c === d ? k.kt : 0) + (k.kn - k.kt) * nrm[c] * nrm[d];
   };
+  const HS = new Float64Array(nb * nb), HG = new Float64Array(3 * nb * nb), hN = [0, 0, 0];
+  let hE = -1, hS: Support | null = null;
+  const heldDone = () => {
+    if (hE < 0) return;
+    setMat(hE);
+    holdMatrix(hS!, hN, P);
+    heldWrite(A.block(hE, hE), nbs[hE], HS, HG, P, hN, lam, mu, 2 * gam[hE]);
+    hE = -1;
+  };
   for (const s of pb.fixed) located(s.tris, (e, x, y, z, w, nrm) => {
     const E = grid.elems[e];
     bas.eval(x, y, z, E.c, E.s);
     setMat(e);
     if (s.spring) {
       springAt(s, nrm);
-      const K = A.block(e, e), v = bas.v, ne = nbs[e], m = 3 * ne;
-      for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
-        const q = w * v[a] * v[b];
-        for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) K[(3 * a + c) * m + 3 * b + d] += q * P[3 * c + d];
-      }
+      penaltyBlock(A.block(e, e), nbs[e], bas.v, w, P);
+      return;
+    }
+    const v = bas.v, ne = nbs[e];
+    const g = s.value;
+    if (!g) {
+      // sums over the points of one element, support and normal; the block is written when one of them changes
+      if (e !== hE || s !== hS || nrm[0] !== hN[0] || nrm[1] !== hN[1] || nrm[2] !== hN[2]) { heldDone(); hE = e; hS = s; hN[0] = nrm[0]; hN[1] = nrm[1]; hN[2] = nrm[2]; }
+      heldSum(HS, HG, ne, v, bas.g, w);
       return;
     }
     for (let b = 0; b < nb; b++) traction(bas.g, 3 * b, nrm, lam, mu, MA, 9 * b);
     holdMatrix(s, nrm, P);
-    for (let b = 0; b < nb; b++) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++)
-      PM[9 * b + 3 * c + d] = P[3 * c] * MA[9 * b + d] + P[3 * c + 1] * MA[9 * b + 3 + d] + P[3 * c + 2] * MA[9 * b + 6 + d];
-    const K = A.block(e, e), v = bas.v;
-    const ne = nbs[e], m = 3 * ne;
-    const gw = 2 * gam[e] * w;
-    for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
-      const pen = gw * v[a] * v[b];
-      for (let c = 0; c < 3; c++) {
-        const row = (3 * a + c) * m + 3 * b;
-        for (let d = 0; d < 3; d++)
-          K[row + d] += -w * (v[a] * PM[9 * b + 3 * c + d] + v[b] * PM[9 * a + 3 * d + c]) + pen * P[3 * c + d];
-      }
-    }
+    heldBlock(A.block(e, e), ne, nb, v, w, 2 * gam[e] * w, P, MA, PM);
     // an enforced displacement g: −(P σ(v) n)·g + 2γ (P g)·v on the right-hand side
-    const g = s.value;
-    if (g) {
+    {
       for (let c = 0; c < 3; c++) Pg[c] = P[3 * c] * g[0] + P[3 * c + 1] * g[1] + P[3 * c + 2] * g[2];
       for (let a = 0, o = off[e]; a < ne; a++) for (let c = 0; c < 3; c++)
         f[o + 3 * a + c] += w * (-(PM[9 * a + c] * g[0] + PM[9 * a + 3 + c] * g[1] + PM[9 * a + 6 + c] * g[2]) + 2 * gam[e] * v[a] * Pg[c]);
     }
   });
+  heldDone();
   // edges and points: a penalty on P u there (no flux terms: a line carries no traction integral)
   const N0 = [0, 0, 0];
   for (const s of pb.fixed) heldAt(s, (c, x, y, z, w) => {
     const e = grid.cells[c].el, E = grid.elems[e];
     bas.eval(x, y, z, E.c, E.s);
     holdMatrix(s, N0, P);
-    const K = A.block(e, e), v = bas.v, ne = nbs[e], m = 3 * ne;
-    for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
-      const pen = w * v[a] * v[b];
-      for (let c2 = 0; c2 < 3; c2++) for (let d = 0; d < 3; d++) K[(3 * a + c2) * m + 3 * b + d] += pen * P[3 * c2 + d];
-    }
+    const v = bas.v, ne = nbs[e];
+    penaltyBlock(A.block(e, e), ne, v, w, P);
     const g = s.value;
     if (g) for (let a = 0, o = off[e]; a < ne; a++) for (let c2 = 0; c2 < 3; c2++)
       f[o + 3 * a + c2] += w * v[a] * (P[3 * c2] * g[0] + P[3 * c2 + 1] * g[1] + P[3 * c2 + 2] * g[2]);
@@ -1470,8 +1707,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       const n = A.size;
       const fits = pb.solver ? { direct: pb.solver === "direct" } as ReturnType<typeof directFits> : directFits(A, MODAL_DIRECT, MODAL_FLOPS);
       const direct = fits.direct;
-      let solve: (b: Float64Array, g?: Float64Array) => Float64Array;
-      if (direct) { const F = new BlockCholesky(A, { plan: fits.plan }); solve = b => F.solve(b); }
+      let solve: (b: Float64Array, g?: Float64Array) => Float64Array, solveAll: ((bs: Float64Array[]) => Float64Array[]) | undefined;
+      if (direct) { const F = new BlockCholesky(A, { plan: fits.plan }); solve = b => F.solve(b); solveAll = bs => F.solveAll(bs); }
       else { const S = pcgSolver(A, { coarse: 3 * basisSize(1), tol: 1e-6, maxIt: 300 }); solve = (b, g) => { const r = S.solve(b, g); iterations += r.iterations; return r.x; }; }
       // an earlier pass's vectors in this pass's layout (zeros for the functions it did not have)
       const start = (modal.start ?? []).map(v => {
@@ -1480,7 +1717,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         for (let e = 0; e < nel; e++) w.set(v.subarray(e * pm, e * pm + Math.min(pm, m)), e * m);
         return w;
       });
-      const r = subspace(n, solve, (v, y) => { A.mul(v, y); }, mulM, { count: modal.count, start, tol: modal.tol ?? (direct ? 1e-8 : 1e-6), exact: direct });
+      const r = subspace(n, solve, (v, y) => { A.mul(v, y); }, mulM, { count: modal.count, start, tol: modal.tol ?? (direct ? 1e-8 : 1e-6), exact: direct, solveAll });
       space = r.space;
       modes = r.values.map((th, k) => {
         const v = r.vectors[k], lambda = th - sigma, rigid = lambda < 1e-5 * (sigma || scale * 1e-4) ;
@@ -1578,7 +1815,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       xs = r2.x; iterations += r2.iterations;
     }
   } else {
-    const L = new BlockCholesky(A, { plan: fitsS?.plan });
+    const L = factorOf(A, fitsS?.plan);
     t3 = now();
     progress("solve", 0, 1);
     tighten(b => L.solve(b));
@@ -1786,8 +2023,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const local = new Float32Array(nel);
   for (let e = 0; e < nel; e++) local[e] = strain > 0 ? 100 * Math.sqrt((eta[e] * nel) / strain) : 0;
 
-  const at = (px: number, py: number, pz: number) => {
-    const c = grid.cellOf(px, py, pz);
+  const at = (px: number, py: number, pz: number, known = -2) => {
+    const c = known > -2 ? known : grid.cellOf(px, py, pz);
     if (c < 0) return -1;
     const E = el(c);
     bas.eval(px, py, pz, E.c, E.s);
@@ -1806,15 +2043,16 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     use(k) { const v = modes?.[k]; if (v) x = v.x; },
     sample(pos, nrm, hits) {
       const n = pos.length / 3, u = new Float32Array(3 * n), vm = new Float32Array(n), err = new Float32Array(n);
-      const hit = hits ? new Uint8Array(n) : undefined, dom = doms ? new Uint8Array(n) : undefined;
+      const hit = hits ? new Uint8Array(n) : undefined, dom = doms ? new Uint16Array(n) : undefined;
       const eps = 1e-6 * grid.h, G = new Float64Array(9);
       const thT = th ? th.field(Float64Array.from(pos), false).t : null;
+      const cells = typeof pos === "object" ? grid.cellsOf(pos, nrm, eps) : null;
       for (let i = 0; i < n; i++) {
         let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
         if (nrm) { px -= eps * nrm[3 * i]; py -= eps * nrm[3 * i + 1]; pz -= eps * nrm[3 * i + 2]; }
         // asked with `hits`: a point outside the grid's box has no value (the nearest cell's would be an extrapolation)
         if (hit && (px < grid.lo[0] - eps || py < grid.lo[1] - eps || pz < grid.lo[2] - eps || px > grid.lo[0] + grid.n[0] * grid.h + eps || py > grid.lo[1] + grid.n[1] * grid.h + eps || pz > grid.lo[2] + grid.n[2] * grid.h + eps)) continue;
-        const e = at(px, py, pz);
+        const e = cells ? at(px, py, pz, cells[i]) : at(px, py, pz);
         if (e < 0) continue;
         if (hit) hit[i] = 1;
         if (dom) dom[i] = domE[e];
@@ -2047,10 +2285,15 @@ function relative(C: Float64Array, F: Float64Array, ridge: number) {
 
 /** The box of a triangle soup: [lo x, y, z, hi x, y, z]. */
 export function triBox(T: ArrayLike<number>) {
+  const had = typeof T === "object" ? triBoxes.get(T as object) : undefined;
+  if (had) return had;
   const B = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < T.length; i++) { const a = i % 3; if (T[i] < B[a]) B[a] = T[i]; if (T[i] > B[3 + a]) B[3 + a] = T[i]; }
+  for (let i = 0; i < T.length; i += 3) for (let a = 0; a < 3; a++) { const v = T[i + a]; if (v < B[a]) B[a] = v; if (v > B[3 + a]) B[3 + a] = v; }
+  if (typeof T === "object") triBoxes.set(T as object, B);
   return B;
 }
+/** The box of each triangle list, found once (the lists are not changed after they are made). */
+const triBoxes = new WeakMap<object, number[]>();
 
 /**
  * What one support holds of a domain (`b` = −1), or what a joint shares between two: sums over its points of

@@ -59,9 +59,6 @@ export class SimClient {
   /** Whether the worker holds the solution of this solve. */
   holds(of: number) { return !this.job && this.all.has(of); }
 
-  /** The last finished solve's cells, when helper workers cut them: how many helpers and the time, ms. */
-  cut: { helpers: number; ms: number } | null = null;
-
   /** Runs the passes; `onPass` gets each as it finishes. Resolves with them all; rejects with an E-SIM code. */
   solve(input: RunInput, onPass: (p: PassResult) => void, more = false, onProgress?: (p: SimProgress) => void): Promise<PassResult[]> {
     this.cancel();
@@ -69,9 +66,6 @@ export class SimClient {
     if (!more) this.all.clear();
     const w = (this.worker ??= this.start());
     const id = ++this.seq;
-    // `?simthreads=N` in the address sets the helper workers (0 = none); else by the device
-    const th = typeof location !== "undefined" ? new URLSearchParams(location.search).get("simthreads") : null;
-    if (th !== null && th !== "" && Number(th) >= 0) input = { ...input, threads: Math.round(Number(th)) };
     return new Promise<PassResult[]>((resolve, reject) => {
       const passes: PassResult[] = [];
       this.job = { id, reject };
@@ -83,7 +77,7 @@ export class SimClient {
         if (d.id !== id) return;
         if ("progress" in d) { onProgress?.(d.progress); return; }
         if ("pass" in d) { passes.push(d.pass); onPass(d.pass); }
-        else if ("done" in d) { end(); this.cut = d.cut ?? null; this.threads = d.threads; if (!input.modal && passes.length) { this.held = id; this.all.add(id); } resolve(passes); }
+        else if ("done" in d) { end(); this.threads = d.threads; if (!input.modal && passes.length) { this.held = id; this.all.add(id); } resolve(passes); }
         else { end(); reject(new Error(d.error)); }
       };
       // a crashed worker (out of memory) is replaced at the next solve

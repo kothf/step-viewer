@@ -28,8 +28,8 @@ test("elements of different degrees on one grid: a linear field is still exact a
   assert.equal(r.dofs, dofs);
   assert.equal(r.x.length, nel * basisSize(4));
   for (const x of [0, 7, 25, 33, 50, 60]) {
-    const t = r.temp(Math.min(x, 60 - 1e-6), 10, 10);
-    assert.ok(Math.abs(t - (20 + x)) < 1e-6, `T(${x}) = ${t}`);
+    const at = Math.min(x, 60 - 1e-6), t = r.temp(at, 10, 10);
+    assert.ok(Math.abs(t - (20 + at)) < 1e-6, `T(${x}) = ${t}`);
   }
   assert.ok(Math.abs(r.flows[1].out + r.flows[0].out) < 1e-9 * Math.abs(r.flows[0].out));
 });

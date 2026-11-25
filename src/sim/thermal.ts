@@ -8,13 +8,15 @@
 
 import { Basis, basisSize } from "./basis";
 import { BlockMatrix } from "./sparse";
-import { BlockCholesky } from "./blockchol";
+import { BlockCholesky, type CholPlan } from "./blockchol";
 import { pcgSolver } from "./pcg";
-import { makeGrid, refit, memoryBytes, type Grid } from "./grid";
-import { facePoints, fitFacePoints, gridTrianglePoints, type Inside, type Points } from "./quad";
-import { DIRECT_LIMIT, MEMORY_LIMIT, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
+import { makeGrid, refit, memoryBytes, elementReach, threadBodies, type Grid } from "./grid";
+import { type MomentTables, conductFromMoments, degreeOf, massFromMoments, momentTables, momentsAdd, momentsClear, momentsKept, momentsPoint, legendrePoint } from "./moments";
+import { facePoints, fitFacePoints, fitPlanePoints, gridTrianglePoints, smallTriangleDegrees, type Inside, type Points } from "./quad";
+import { DIRECT_LIMIT, MEMORY_LIMIT, directFits, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
 import { exchangeResistance } from "./viewfactor";
 import { progress } from "./progress";
+import { helperCount, kernel, parallelFor, sharedF64, sharedI32, worthSharing, type ParJob } from "./threads";
 
 /** Stefan–Boltzmann constant, W/(mm²·K⁴). */
 export const SIGMA = 5.670374419e-14;
@@ -67,7 +69,8 @@ export function forcedH(speed: number, len: number): number {
  */
 export function naturalH(up: number, dt: number, lv: number, lh: number): number {
   const d = Math.max(Math.abs(dt), 0.05), u = dt >= 0 ? up : -up;
-  const [C, L] = u > Math.SQRT1_2 ? [1.32, lh] : u < -Math.SQRT1_2 ? [0.59, lh] : [1.42, lv];
+  // (no array here: this runs for every surface point of every step)
+  const C = u > Math.SQRT1_2 ? 1.32 : u < -Math.SQRT1_2 ? 0.59 : 1.42, L = u > Math.SQRT1_2 || u < -Math.SQRT1_2 ? lh : lv;
   return 1e-6 * C * Math.sqrt(Math.sqrt(d / (Math.max(L, 1) * 1e-3)));
 }
 
@@ -269,7 +272,7 @@ export interface ThermalSample {
   err: Float32Array;
   hit?: Uint8Array;
   /** With `domains`: the one each point is in. */
-  dom?: Uint8Array;
+  dom?: Uint16Array;
 }
 
 export interface ThermalResult {
@@ -305,6 +308,8 @@ export interface ThermalResult {
 
 interface Ctx {
   pb: ThermalProblem;
+  /** Elements much thinner than their cells whose higher functions are held at zero (`holdThin`). */
+  held?: number;
   grid: Grid;
   p: number;
   /** Functions of degree `p`; each element's own count and where its unknowns start (nel + 1 entries). */
@@ -316,47 +321,322 @@ interface Ctx {
   /** Conductivity (the largest of the three directions) and domain of each element; `k3` = along X, Y, Z, 3 each. */
   ke: Float64Array;
   k3: Float64Array;
-  dom: Uint8Array;
+  dom: Uint16Array;
   doms: ThermalDomain[] | null;
   bas: Basis;
   bas2: Basis;
   gam: Float64Array;
   fitted: Map<number, Points>;
+  /** While the equations are built with several bodies: the located points of the triangles met so far. */
+  loc?: LocKept;
 }
 
 /** The body each triangle of a set lies on (−1 = none found), asked once per set and kept. */
-const triBodies = new WeakMap<object, { doms: ThermalDomain[]; of: Int8Array }>();
-function bodiesOf(c: Ctx, tris: ArrayLike<number>): Int8Array | null {
-  const doms = c.doms;
-  if (!doms || typeof tris !== "object") return null;
-  const had = triBodies.get(tris as object);
-  if (had && had.doms === doms) return had.of;
-  const n = Math.floor(tris.length / 9), nrms = triNormals(tris), of = new Int8Array(n).fill(-1), eps = 1e-4 * c.grid.h;
+const triBodies = new WeakMap<object, { doms: ThermalDomain[]; of: Int32Array }>();
+/** The body each triangle is the surface of (the first one holding its middle stepped `eps` inwards), −1 = none.
+ * A 32-bit list: an 8-bit one lost every body past the 127th (a board with all its parts has hundreds). */
+export function triangleBodies(doms: ArrayLike<{ inside(x: number, y: number, z: number): boolean }>, tris: ArrayLike<number>, eps: number): Int32Array {
+  const n = Math.floor(tris.length / 9), nrms = triNormals(tris), of = new Int32Array(n).fill(-1);
   for (let t = 0; t < n; t++) {
     const o = 9 * t, x = (tris[o] + tris[o + 3] + tris[o + 6]) / 3 - eps * nrms[3 * t], y = (tris[o + 1] + tris[o + 4] + tris[o + 7]) / 3 - eps * nrms[3 * t + 1], z = (tris[o + 2] + tris[o + 5] + tris[o + 8]) / 3 - eps * nrms[3 * t + 2];
     for (let d = 0; d < doms.length; d++) if (doms[d].inside(x, y, z)) { of[t] = d; break; }
   }
+  return of;
+}
+function bodiesOf(c: Ctx, tris: ArrayLike<number>): Int32Array | null {
+  const doms = c.doms;
+  if (!doms || typeof tris !== "object") return null;
+  const had = triBodies.get(tris as object);
+  if (had && had.doms === doms) return had.of;
+  const of = triangleBodies(doms, tris, 1e-4 * c.grid.h);
   triBodies.set(tris as object, { doms, of });
   return of;
 }
 
-/** Boundary points of some triangles with the element each lies in: e, x, y, z, w, nx, ny, nz per point. */
-function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1): Float64Array {
-  const g = c.grid, { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q), nrms = triNormals(tris), eps = 1e-7 * g.h;
-  // with several bodies each point is read in its triangle's body (asked once per triangle, not per point)
+/**
+ * Boundary points of some triangles with the element each lies in: e, x, y, z, w, nx, ny, nz per point. The points of
+ * one element in one plane are replaced by the few fitted points that integrate its functions' products the same
+ * (`fitPlanar`), unless `fit` is false.
+ */
+function located(c: Ctx, tris: ArrayLike<number>, q: number, dom = -1, fit = true): Float64Array {
   const own = dom < 0 ? bodiesOf(c, tris) : null;
-  const out = new Float64Array(8 * pts.n);
+  if (c.loc && c.loc.q === q) { const r = keptPoints(c, c.loc, tris, own, dom); return fit ? fitPlanar(c, r.L, r.ids) : r.L; }
+  const L = cutPoints(c, tris, q, own, dom);
+  return fit ? fitPlanar(c, L) : L;
+}
+
+let pieceRules = true;
+/** Tests: off = every piece of a surface triangle gets the rule of the highest degree, as before 1.743.0. */
+export const setPieceRules = (on: boolean) => { pieceRules = on; };
+/** What a piece of a surface triangle has to integrate: twice the degree of the element it lies in (products of two
+ * of its functions), which with local degrees is well below twice the highest. −1 = not known, the full rule. */
+/** `smallTriangleDegrees` with the piece rules on (off = the full rule everywhere, tests). */
+const smallOf = (tris: ArrayLike<number>, h: number) => (pieceRules ? smallTriangleDegrees(tris, h) : undefined);
+
+function pieceDegree(c: Ctx, nrms: ArrayLike<number>, bodyOf: (t: number) => number): ((t: number, x: number, y: number, z: number) => number) | undefined {
+  if (!pieceRules) return undefined;
+  const g = c.grid, eps = 1e-7 * g.h, deg = c.deg;
+  return (t, x, y, z) => {
+    const cl = g.cellOf(x - eps * nrms[3 * t], y - eps * nrms[3 * t + 1], z - eps * nrms[3 * t + 2], bodyOf(t));
+    return cl < 0 ? -1 : 2 * deg[g.cells[cl].el];
+  };
+}
+
+/** The points of some triangles cut at the grid planes, each with its element: 8 numbers per point, triangle by triangle. */
+function cutPoints(c: Ctx, tris: ArrayLike<number>, q: number, own: Int32Array | null, dom: number): Float64Array {
+  const g = c.grid, nrms = triNormals(tris), eps = 1e-7 * g.h;
+  const { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q, pieceDegree(c, nrms, t => own ? own[t] : dom), smallOf(tris, g.h));
+  const out = points8(8 * pts.n);
   let n = 0;
   for (let i = 0; i < pts.n; i++) {
     const o = 4 * i, t = tri[i], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
     const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
-    // nudged inwards so a point on a cell face lands in the cell the body is on
+    // nudged inwards so a point on a cell face lands in the cell the body is on;
+    // with several bodies each point is read in its triangle's body (asked once per triangle, not per point)
     const cl = g.cellOf(x - eps * nx, y - eps * ny, z - eps * nz, own ? own[t] : dom);
     if (cl < 0) continue;
-    out.set([g.cells[cl].el, x, y, z, pts.a[o + 3], nx, ny, nz], 8 * n++);
+    const w = 8 * n++;
+    out[w] = g.cells[cl].el; out[w + 1] = x; out[w + 2] = y; out[w + 3] = z; out[w + 4] = pts.a[o + 3]; out[w + 5] = nx; out[w + 6] = ny; out[w + 7] = nz;
   }
   return out.subarray(0, 8 * n);
 }
+
+/**
+ * The located points of every triangle met while one set of equations is built, kept by the triangle's corners and
+ * body: the sinks of a board study (convection face by face, radiation from all open surfaces) and the domains'
+ * surfaces ask for the same triangles two or three times. `free` remembers what `freePoints` found for a point.
+ */
+interface LocKept {
+  q: number;
+  /** Hash of a triangle → its first record; records chained through `next`. */
+  first: Map<number, number>;
+  next: number[];
+  /** Per record: where its nine corner numbers start in `key`, its body, its first point and its number of points. */
+  body: number[]; from: number[]; count: number[];
+  key: Float64Array; nk: number;
+  /** Per point: element, x, y, z, weight. */
+  pts: Float64Array; n: number;
+  /** Per point: 0 not asked, 1 open, 2 on another body. */
+  free: Uint8Array;
+  /** Fitted plane groups by their first kept point: the group's kept points and what `fitPlanar` made of them. */
+  fits: Map<number, { ids: Int32Array; out: Float64Array }[]>;
+}
+let keepPoints = true;
+/** Tests: off = every sink and surface locates and fits its points itself, as before 1.739.0. */
+export const setKeptPoints = (on: boolean) => { keepPoints = on; };
+const newLoc = (q: number): LocKept => ({ q, first: new Map(), next: [], body: [], from: [], count: [], key: new Float64Array(9 * 1024), nk: 0, pts: new Float64Array(5 * 4096), n: 0, free: new Uint8Array(4096), fits: new Map() });
+const hashWords = new Float64Array(9), hashBits = new Uint32Array(hashWords.buffer);
+function triHash(tris: ArrayLike<number>, o: number, body: number): number {
+  for (let j = 0; j < 9; j++) hashWords[j] = tris[o + j];
+  let h = (body + 0x9e3779b9) | 0;
+  for (let j = 0; j < 18; j++) h = (Math.imul(h ^ hashBits[j], 0x85ebca6b) + 0xc2b2ae35) | 0;
+  return h;
+}
+/** The record of a triangle in `K`, or −1. */
+function locFind(K: LocKept, tris: ArrayLike<number>, o: number, body: number, h: number): number {
+  for (let r = K.first.get(h) ?? -1; r >= 0; r = K.next[r]) {
+    if (K.body[r] !== body) continue;
+    const k = 9 * r;
+    let same = true;
+    for (let j = 0; j < 9 && same; j++) same = K.key[k + j] === tris[o + j];
+    if (same) return r;
+  }
+  return -1;
+}
+/** As `cutPoints`, through the kept triangles; `ids` = each point's place in `K` (for `K.free`). */
+function keptPoints(c: Ctx, K: LocKept, tris: ArrayLike<number>, own: Int32Array | null, dom: number): { L: Float64Array; ids: Int32Array } {
+  const nt = Math.floor(tris.length / 9), recs = new Int32Array(nt), miss: number[] = [];
+  for (let t = 0; t < nt; t++) {
+    const body = own ? own[t] : dom, h = triHash(tris, 9 * t, body);
+    let r = locFind(K, tris, 9 * t, body, h);
+    if (r < 0) {
+      // a new record, its points made below with the other new ones
+      r = K.body.length;
+      if (9 * (r + 1) > K.key.length) { const a = new Float64Array(2 * K.key.length); a.set(K.key); K.key = a; }
+      for (let j = 0; j < 9; j++) K.key[9 * r + j] = tris[9 * t + j];
+      K.body.push(body); K.from.push(-1); K.count.push(0);
+      K.next.push(K.first.get(h) ?? -1);
+      K.first.set(h, r);
+      miss.push(t);
+    }
+    recs[t] = r;
+  }
+  if (miss.length) {
+    const sub = new Float64Array(9 * miss.length), g = c.grid, eps = 1e-7 * g.h;
+    miss.forEach((t, k) => { for (let j = 0; j < 9; j++) sub[9 * k + j] = tris[9 * t + j]; });
+    const nrms = triNormals(sub), { pts, tri } = gridTrianglePoints(sub, g.lo, g.h, K.q, pieceDegree(c, nrms, k => K.body[recs[miss[k]]]), smallOf(sub, g.h));
+    if (K.n + pts.n > K.free.length) {
+      const room = Math.max(2 * K.free.length, K.n + pts.n), a = new Float64Array(5 * room), f = new Uint8Array(room);
+      a.set(K.pts.subarray(0, 5 * K.n)); f.set(K.free.subarray(0, K.n));
+      K.pts = a; K.free = f;
+    }
+    const els = Int32Array.from(g.cells, cl => cl.el), maps = g.maps, n0 = g.n[0], n1 = g.n[1], n2 = g.n[2], lo0 = g.lo[0], lo1 = g.lo[1], lo2 = g.lo[2], gh = g.h;
+    const P = pts.a, np = pts.n, KP = K.pts, bodyOf = K.body, from = K.from, count = K.count;
+    let kn = K.n, kLast = -1, r = -1, bd = -1, nx = 0, ny = 0, nz = 0, map: Int32Array | null = null, cnt = 0;
+    for (let i = 0; i < np; i++) {
+      const o = 4 * i, k = tri[i];
+      if (k !== kLast) {
+        if (r >= 0) count[r] += cnt;
+        kLast = k; r = recs[miss[k]]; bd = bodyOf[r]; cnt = 0;
+        nx = nrms[3 * k]; ny = nrms[3 * k + 1]; nz = nrms[3 * k + 2];
+        map = bd >= 0 && bd < maps.length ? maps[bd] : null;
+      }
+      const x = P[o], y = P[o + 1], z = P[o + 2];
+      // the cube's cell of the triangle's body straight from the grid's map (`cellOf` only where it has none there)
+      const px = x - eps * nx, py = y - eps * ny, pz = z - eps * nz;
+      let cl = -1;
+      if (map) {
+        const ci = Math.min(n0 - 1, Math.max(0, Math.floor((px - lo0) / gh))), cj = Math.min(n1 - 1, Math.max(0, Math.floor((py - lo1) / gh))), ck = Math.min(n2 - 1, Math.max(0, Math.floor((pz - lo2) / gh)));
+        cl = map[(ck * n1 + cj) * n0 + ci];
+      }
+      if (cl < 0) cl = g.cellOf(px, py, pz, bd);
+      if (cl < 0) continue;
+      if (from[r] < 0) from[r] = kn;
+      const w = 5 * kn++;
+      KP[w] = els[cl]; KP[w + 1] = x; KP[w + 2] = y; KP[w + 3] = z; KP[w + 4] = P[o + 3];
+      cnt++;
+    }
+    if (r >= 0) count[r] += cnt;
+    K.n = kn;
+  }
+  let n = 0;
+  for (let t = 0; t < nt; t++) n += K.count[recs[t]];
+  const L = points8(8 * n), ids = new Int32Array(n), nrms = triNormals(tris);
+  let m = 0;
+  for (let t = 0; t < nt; t++) {
+    const r = recs[t], from = K.from[r], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
+    for (let i = 0; i < K.count[r]; i++, m++) {
+      const s = 5 * (from + i), w = 8 * m;
+      L[w] = K.pts[s]; L[w + 1] = K.pts[s + 1]; L[w + 2] = K.pts[s + 2]; L[w + 3] = K.pts[s + 3]; L[w + 4] = K.pts[s + 4]; L[w + 5] = nx; L[w + 6] = ny; L[w + 7] = nz;
+      ids[m] = from + i;
+    }
+  }
+  return { L, ids };
+}
+
+/** The fitted points kept for the group whose kept points are `ids[idx[…]]`, or null. */
+function fitKept(K: LocKept, ids: Int32Array, idx: number[]): Float64Array | null {
+  const list = K.fits.get(ids[idx[0]]);
+  if (!list) return null;
+  for (const F of list) {
+    if (F.ids.length !== idx.length) continue;
+    let same = true;
+    for (let i = 0; i < idx.length && same; i++) same = F.ids[i] === ids[idx[i]];
+    if (same) return F.out;
+  }
+  return null;
+}
+function fitKeep(K: LocKept, ids: Int32Array, idx: number[], out: Float64Array) {
+  const own = new Int32Array(idx.length);
+  for (let i = 0; i < idx.length; i++) own[i] = ids[idx[i]];
+  const list = K.fits.get(own[0]);
+  if (list) list.push({ ids: own, out });
+  else K.fits.set(own[0], [{ ids: own, out }]);
+}
+
+/**
+ * The points of `L` (8 numbers each) with those of one element lying in one plane replaced by the (2d + 1)² points
+ * of `fitPlanePoints` (d = the element's degree), which integrate every product of its functions as they did: a
+ * flat face made of many triangles, each cut at the grid planes, otherwise gives each element hundreds of points.
+ * Groups keep the order they are first met; groups too small to gain keep their own points.
+ */
+function fitPlanar(c: Ctx, L: Float64Array, ids?: Int32Array | null): Float64Array {
+  const n = L.length / 8, h = c.grid.h, tol = 1e-7;
+  if (n < 2) return L;
+  type Group = { e: number; nx: number; ny: number; nz: number; d: number; idx: number[] };
+  const groups: Group[] = [], byEl = new Map<number, Group[]>();
+  let G: Group | undefined;
+  for (let i = 0; i < n; i++) {
+    const o = 8 * i, e = L[o], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], d = nx * L[o + 1] + ny * L[o + 2] + nz * L[o + 3];
+    // points come triangle by triangle, so the group of the point before is usually this one's
+    if (!G || G.e !== e || !(Math.abs(G.nx - nx) < tol && Math.abs(G.ny - ny) < tol && Math.abs(G.nz - nz) < tol && Math.abs(G.d - d) < tol * h)) {
+      G = undefined;
+      let list = byEl.get(e);
+      if (!list) byEl.set(e, (list = []));
+      for (const g of list) if (Math.abs(g.nx - nx) < tol && Math.abs(g.ny - ny) < tol && Math.abs(g.nz - nz) < tol && Math.abs(g.d - d) < tol * h) { G = g; break; }
+      if (!G) { G = { e, nx, ny, nz, d, idx: [] }; list.push(G); groups.push(G); }
+    }
+    G.idx.push(i);
+  }
+  if (groups.length === n) return L;
+  // groups fitted before from the same kept points (another sink on the same faces, the body's own surface) are taken as they were
+  const K = ids && c.loc ? c.loc : null, ng = groups.length;
+  const had: (Float64Array | null)[] = new Array(ng).fill(null), todo: number[] = [];
+  for (let k = 0; k < ng; k++) {
+    const g = groups[k], q = 2 * c.deg[g.e] + 1;
+    if (K && g.idx.length > q * q) had[k] = fitKept(K, ids!, g.idx);
+    if (!had[k]) todo.push(k);
+  }
+  // every other group as a task: its points' numbers, its normal and degree, and room for as many points as it has
+  const nj = todo.length;
+  let work = 0, room = 0;
+  for (const k of todo) { const g = groups[k], q = 2 * c.deg[g.e] + 1; room += g.idx.length; if (g.idx.length > q * q) work += g.idx.length * (q * q / 2 + 4 * q); }
+  const share = nj > 0 && worthSharing(work);
+  const idx = share ? sharedI32(room) : new Int32Array(room), rec = share ? sharedF64(PFIT * nj) : new Float64Array(PFIT * nj);
+  const out = share ? sharedF64(8 * room) : new Float64Array(8 * room), cnt = share ? sharedI32(nj) : new Int32Array(nj);
+  let at = 0;
+  for (let j = 0; j < nj; j++) {
+    const g = groups[todo[j]], o = PFIT * j;
+    rec[o] = at; rec[o + 1] = g.idx.length; rec[o + 2] = g.e; rec[o + 3] = g.nx; rec[o + 4] = g.ny; rec[o + 5] = g.nz; rec[o + 6] = 2 * c.deg[g.e] + 1;
+    idx.set(g.idx, at);
+    at += g.idx.length;
+  }
+  if (nj) {
+    const job: PlaneFitJob = { kind: "tplanefit", n: nj, L: share ? shared8(L) : L, idx, rec, out, cnt, tiny: 1e-9 * h };
+    if (share) parallelFor(job);
+    else { const st = planeFitInit(job); for (let j = 0; j < nj; j++) planeFitGroup(st, j); }
+  }
+  let m = 0, fitted = nj < ng;
+  for (let j = 0; j < nj; j++) { m += cnt[j]; if (cnt[j] !== rec[PFIT * j + 1]) fitted = true; }
+  if (!fitted) return L;
+  for (let k = 0; k < ng; k++) if (had[k]) m += had[k]!.length / 8;
+  const res = points8(8 * m);
+  let to = 0;
+  for (let k = 0, j = 0; k < ng; k++) {
+    if (had[k]) { res.set(had[k]!, to); to += had[k]!.length; continue; }
+    const from = 8 * rec[PFIT * j], len = 8 * cnt[j];
+    res.set(out.subarray(from, from + len), to);
+    if (K && cnt[j] !== rec[PFIT * j + 1]) fitKeep(K, ids!, groups[k].idx, res.slice(to, to + len));
+    to += len;
+    j++;
+  }
+  return res;
+}
+/** Numbers per group of `fitPlanar`: first index, count, element, normal, points per direction. */
+const PFIT = 7;
+interface PlaneFitJob { kind: string; n: number; L: Float64Array; idx: Int32Array; rec: Float64Array; out: Float64Array; cnt: Int32Array; tiny: number; [k: string]: unknown }
+/** A copy on shared memory. */
+function shared8(a: Float64Array): Float64Array { if (isShared(a)) return a; const s = sharedF64(a.length); s.set(a); return s; }
+const isShared = (a: Float64Array) => typeof SharedArrayBuffer !== "undefined" && a.buffer instanceof SharedArrayBuffer;
+/**
+ * Room for surface points (8 numbers each): on shared memory when there are helper threads, so the loops over
+ * them hand the list itself to the threads. A copy for the threads stood beside every list before, and the lists
+ * of a board's third pass are hundreds of megabytes each.
+ */
+const points8 = (n: number): Float64Array => (helperCount() > 0 && typeof SharedArrayBuffer !== "undefined" ? sharedF64(n) : new Float64Array(n));
+function planeFitInit(j: PlaneFitJob) {
+  return { j, buf: new Float64Array(0) };
+}
+/** One group of `fitPlanar`: its points fitted (or kept) into its room of `out`, their number into `cnt`. */
+function planeFitGroup(st: ReturnType<typeof planeFitInit>, k: number) {
+  const j = st.j, o = PFIT * k, from = j.rec[o], n = j.rec[o + 1], e = j.rec[o + 2], nx = j.rec[o + 3], ny = j.rec[o + 4], nz = j.rec[o + 5], q = j.rec[o + 6];
+  const L = j.L, out = j.out, to = 8 * from;
+  let F: Points | null = null;
+  if (n > q * q) {
+    if (st.buf.length < 4 * n) st.buf = new Float64Array(4 * n);
+    const a = st.buf, own = new Int32Array(n);
+    for (let t = 0; t < n; t++) { const s = 8 * j.idx[from + t] + 1; a[4 * t] = L[s]; a[4 * t + 1] = L[s + 1]; a[4 * t + 2] = L[s + 2]; a[4 * t + 3] = L[s + 3]; own[t] = t; }
+    F = fitPlanePoints({ a, n } as unknown as Points, own, [nx, ny, nz], q, j.tiny);
+  }
+  if (F) {
+    for (let t = 0; t < F.n; t++) { const w = to + 8 * t; out[w] = e; out[w + 1] = F.a[4 * t]; out[w + 2] = F.a[4 * t + 1]; out[w + 3] = F.a[4 * t + 2]; out[w + 4] = F.a[4 * t + 3]; out[w + 5] = nx; out[w + 6] = ny; out[w + 7] = nz; }
+    j.cnt[k] = F.n;
+  } else {
+    for (let t = 0; t < n; t++) { const s = 8 * j.idx[from + t], w = to + 8 * t; for (let i = 0; i < 8; i++) out[w + i] = L[s + i]; }
+    j.cnt[k] = n;
+  }
+}
+kernel<PlaneFitJob, ReturnType<typeof planeFitInit>>("tplanefit", { init: planeFitInit, run: planeFitGroup });
 
 /** The points of the face between cell `ca` and the next one along `axis`, for degree `d` (the higher side's). */
 function facePts(c: Ctx, ca: number, axis: number, d = c.p): Points {
@@ -374,25 +654,57 @@ function facePts(c: Ctx, ca: number, axis: number, d = c.p): Points {
   return out;
 }
 
-/** Conduction inside the elements: K += k w ∇N_a · ∇N_b. */
-function volumeTerms(c: Ctx, A: BlockMatrix) {
-  const { grid, nbs, bas } = c;
-  for (let e = 0; e < c.nel; e++) {
-    const nb = nbs[e], E = grid.elems[e], K = A.block(e, e), kx = c.k3[3 * e], ky = c.k3[3 * e + 1], kz = c.k3[3 * e + 2];
-    for (const ci of E.cells) {
-      const P = grid.cells[ci].pts;
-      for (let q = 0; q < P.n; q++) {
-        const o = 4 * q, w = P.a[o + 3];
-        bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], E.c, E.s, c.nbs[e]);
-        const g = bas.g;
-        for (let a = 0; a < nb; a++) {
-          const ax = g[3 * a] * w * kx, ay = g[3 * a + 1] * w * ky, az = g[3 * a + 2] * w * kz, r = a * nb;
-          for (let b = 0; b < nb; b++) K[r + b] += ax * g[3 * b] + ay * g[3 * b + 1] + az * g[3 * b + 2];
-        }
-      }
-    }
-  }
+/**
+ * Conduction of an element into its matrix, K += ∫ k ∇N_a · ∇N_b, from the moments of its integration points
+ * (`moments.ts`): the points are `n` runs of four numbers from `from`; `deg` is the element's degree.
+ */
+function conductElement(K: Float64Array, T: MomentTables, pts: ArrayLike<number>, from: number, n: number, c: ArrayLike<number>, sz: number, nb: number, deg: number, kx: number, ky: number, kz: number) {
+  momentsAdd(T, pts, from, n, c, sz, Math.max(0, 2 * deg - 2));
+  conductFromMoments(T, K, nb, sz, kx, ky, kz);
+  momentsClear(T);
 }
+
+/** Conduction inside the elements, on all threads when there are several and the work is worth it. */
+function volumeTerms(c: Ctx, A: BlockMatrix) {
+  const { grid, nbs, bas, nel, k3 } = c;
+  let work = 0, npt = 0;
+  for (let e = 0; e < nel; e++) for (const ci of grid.elems[e].cells) { const n = grid.cells[ci].pts.n; npt += n; work += n * 300; }
+  if (!worthSharing(work)) {
+    const T = momentTables(bas.p);
+    momentsClear(T);
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e], K = A.block(e, e), top = Math.max(0, 2 * c.deg[e] - 2);
+      for (const ci of E.cells) { const P = grid.cells[ci].pts; momentsAdd(T, P.a, 0, P.n, E.c, E.s, top); }
+      conductFromMoments(T, K, nbs[e], E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]);
+      momentsClear(T);
+    }
+    return;
+  }
+  // the points, the elements and the blocks they fill, on shared memory: one task per element
+  const pts = sharedF64(4 * npt), at = sharedF64(TVOL * nel), nb = sharedI32(nel);
+  let n = 0, size = 0;
+  for (let e = 0; e < nel; e++) {
+    const E = grid.elems[e], o = TVOL * e;
+    at[o] = n;
+    for (const ci of E.cells) { const P = grid.cells[ci].pts; pts.set((P.a as Float64Array).subarray(0, 4 * P.n), 4 * n); n += P.n; }
+    at.set([n, size, E.c[0], E.c[1], E.c[2], E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2], c.deg[e]], o + 1);
+    nb[e] = nbs[e];
+    size += nbs[e] * nbs[e];
+  }
+  const out = sharedF64(size);
+  parallelFor({ kind: "tvolume", n: nel, p: bas.p, pts, at, nb, out } satisfies Omit<TVolumeJob, "ctl">, d => progress("assemble", d, 2 * nel));
+  for (let e = 0; e < nel; e++) { const o = at[TVOL * e + 2]; A.adopt(e, out.subarray(o, o + nbs[e] * nbs[e])); }
+}
+/** Numbers per element of a shared conduction loop: first point, end point, block offset, centre, half size, k along X, Y, Z, degree. */
+const TVOL = 11;
+interface TVolumeJob extends ParJob { p: number; pts: Float64Array; at: Float64Array; nb: Int32Array; out: Float64Array }
+kernel<TVolumeJob, { j: TVolumeJob; T: MomentTables }>("tvolume", {
+  init: j => { const T = momentTables(j.p); momentsClear(T); return { j, T }; },
+  run({ j, T }, e) {
+    const a = j.at, o = TVOL * e, nb = j.nb[e];
+    conductElement(j.out.subarray(a[o + 2], a[o + 2] + nb * nb), T, j.pts, 4 * a[o], a[o + 1] - a[o], [a[o + 3], a[o + 4], a[o + 5]], a[o + 6], nb, a[o + 10], a[o + 7], a[o + 8], a[o + 9]);
+  },
+});
 
 /**
  * The penalty the cut elements need: γ = 2 λmax(T, K) with T = ∫ (k ∂N/∂n)² over the element's interior faces
@@ -404,37 +716,75 @@ function measure(c: Ctx, A: BlockMatrix, held: Float64Array[]) {
   let any = false;
   for (let e = 0; e < nel; e++) if (grid.elems[e].cells.some(ci => grid.cells[ci].frac < 1 - 1e-9)) { cut[e] = 1; any = true; }
   if (!any) return;
-  const TT: (Float64Array | undefined)[] = new Array(nel), M = new Float64Array(c.nb);
-  const at = (e: number, x: number, y: number, z: number, w: number, nx: number, ny: number, nz: number) => {
-    const nb = nbs[e], E = grid.elems[e], T = TT[e] ?? (TT[e] = new Float64Array(nb * nb));
-    bas.eval(x, y, z, E.c, E.s, c.nbs[e]);
-    const kx = k3[3 * e] * nx, ky = k3[3 * e + 1] * ny, kz = k3[3 * e + 2] * nz;
-    for (let a = 0; a < nb; a++) M[a] = bas.g[3 * a] * kx + bas.g[3 * a + 1] * ky + bas.g[3 * a + 2] * kz;
-    for (let a = 0; a < nb; a++) { const s = w * M[a], r = a * nb; for (let b = 0; b < nb; b++) T[r + b] += s * M[b]; }
-  };
-  for (let ci = 0; ci < grid.cells.length; ci++) {
-    const [i, j, kk] = grid.cells[ci].ijk, ea = grid.cells[ci].el;
-    for (let axis = 0; axis < 3; axis++) {
-      const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), kk + (axis === 2 ? 1 : 0), grid.cells[ci].dom);
-      if (o < 0) continue;
-      const eb = grid.cells[o].el;
-      if (ea === eb || !(cut[ea] || cut[eb])) continue;
-      const pts = facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb])), n = [axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0];
-      for (let q = 0; q < pts.n; q++) {
-        const o4 = 4 * q;
-        if (cut[ea]) at(ea, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], n[0], n[1], n[2]);
-        if (cut[eb]) at(eb, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], n[0], n[1], n[2]);
+  // the samples of each cut element (place, weight, normal), in the order they are met: one task per element
+  const count = new Int32Array(nel);
+  const faces = (each: (e: number, x: number, y: number, z: number, w: number, nx: number, ny: number, nz: number) => void) => {
+    for (let ci = 0; ci < grid.cells.length; ci++) {
+      const [i, j, kk] = grid.cells[ci].ijk, ea = grid.cells[ci].el;
+      for (let axis = 0; axis < 3; axis++) {
+        const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), kk + (axis === 2 ? 1 : 0), grid.cells[ci].dom);
+        if (o < 0) continue;
+        const eb = grid.cells[o].el;
+        if (ea === eb || !(cut[ea] || cut[eb])) continue;
+        const pts = facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb])), nx = axis === 0 ? 1 : 0, ny = axis === 1 ? 1 : 0, nz = axis === 2 ? 1 : 0;
+        for (let q = 0; q < pts.n; q++) {
+          const o4 = 4 * q;
+          if (cut[ea]) each(ea, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], nx, ny, nz);
+          if (cut[eb]) each(eb, pts.a[o4], pts.a[o4 + 1], pts.a[o4 + 2], pts.a[o4 + 3], nx, ny, nz);
+        }
       }
     }
+    for (const L of held) for (let o = 0; o < L.length; o += 8) if (cut[L[o]]) each(L[o], L[o + 1], L[o + 2], L[o + 3], L[o + 4], L[o + 5], L[o + 6], L[o + 7]);
+  };
+  faces(e => { count[e]++; });
+  const els: number[] = [];
+  let total = 0, work = 0, size = 0;
+  for (let e = 0; e < nel; e++) if (count[e]) { els.push(e); total += count[e]; work += count[e] * nbs[e] * nbs[e] * 2 + 60 * nbs[e] ** 3; size += nbs[e] * nbs[e]; }
+  if (!els.length) return;
+  const shared = worthSharing(work), f64 = (m: number) => (shared ? sharedF64(m) : new Float64Array(m));
+  const sam = f64(7 * total), task = f64(TMEAS * els.length), blocks = f64(size), out = f64(els.length), fill = new Int32Array(nel);
+  let from = 0, bo = 0;
+  els.forEach((e, t) => {
+    const E = grid.elems[e], nb = nbs[e];
+    task.set([from, from + count[e], bo, E.c[0], E.c[1], E.c[2], E.s, nb, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2]], TMEAS * t);
+    blocks.set(A.block(e, e).subarray(0, nb * nb), bo);
+    fill[e] = from;
+    from += count[e];
+    bo += nb * nb;
+  });
+  faces((e, x, y, z, w, nx, ny, nz) => { const o = 7 * fill[e]++; sam[o] = x; sam[o + 1] = y; sam[o + 2] = z; sam[o + 3] = w; sam[o + 4] = nx; sam[o + 5] = ny; sam[o + 6] = nz; });
+  if (shared) parallelFor({ kind: "tmeasure", n: els.length, p: bas.p, sam, task, blocks, out } satisfies Omit<TMeasureJob, "ctl">);
+  else {
+    const T = new Float64Array(c.nb * c.nb), M = new Float64Array(c.nb);
+    for (let t = 0; t < els.length; t++) out[t] = measureCell(t, sam, task, blocks, bas, T, M);
   }
-  for (const L of held) for (let o = 0; o < L.length; o += 8) if (cut[L[o]]) at(L[o], L[o + 1], L[o + 2], L[o + 3], L[o + 4], L[o + 5], L[o + 6], L[o + 7]);
-  for (let e = 0; e < nel; e++) {
-    const T = TT[e];
-    if (!T) continue;
-    const need = Math.min(40 * gam[e], 1.15 * 2 * topEigen(T, A.block(e, e), nbs[e]));
+  els.forEach((e, t) => {
+    const need = Math.min(40 * gam[e], 1.15 * 2 * out[t]);
     if (need > gam[e]) gam[e] = need;
-  }
+  });
 }
+/** Numbers per element of a penalty loop: first and end sample, place of its block, centre, half size, functions, k along X, Y, Z. */
+const TMEAS = 11;
+/** The largest λ of T x = λ K x of one cut element: T = Σ w (k ∂N/∂n)² over its samples, K its conduction block. */
+function measureCell(t: number, sam: ArrayLike<number>, task: ArrayLike<number>, blocks: Float64Array, bas: Basis, T: Float64Array, M: Float64Array): number {
+  const o = TMEAS * t, nb = task[o + 7], cc = [task[o + 3], task[o + 4], task[o + 5]], sz = task[o + 6], g = bas.g;
+  T.fill(0, 0, nb * nb);
+  for (let q = task[o]; q < task[o + 1]; q++) {
+    const s = 7 * q, w = sam[s + 3];
+    bas.eval(sam[s], sam[s + 1], sam[s + 2], cc, sz, nb);
+    const kx = task[o + 8] * sam[s + 4], ky = task[o + 9] * sam[s + 5], kz = task[o + 10] * sam[s + 6];
+    for (let a = 0; a < nb; a++) M[a] = g[3 * a] * kx + g[3 * a + 1] * ky + g[3 * a + 2] * kz;
+    for (let a = 0; a < nb; a++) { const m = w * M[a], r = a * nb; for (let b = 0; b <= a; b++) T[r + b] += m * M[b]; }
+  }
+  for (let a = 0; a < nb; a++) for (let b = 0; b < a; b++) T[b * nb + a] = T[a * nb + b];
+  return topEigen(T.subarray(0, nb * nb), blocks.subarray(task[o + 2], task[o + 2] + nb * nb), nb);
+}
+interface TMeasureJob extends ParJob { p: number; sam: Float64Array; task: Float64Array; blocks: Float64Array; out: Float64Array }
+kernel<TMeasureJob, { j: TMeasureJob; bas: Basis; T: Float64Array; M: Float64Array }>("tmeasure", {
+  init: j => { const bas = new Basis(j.p), nb = bas.v.length; return { j, bas, T: new Float64Array(nb * nb), M: new Float64Array(nb) }; },
+  run({ j, bas, T, M }, t) { j.out[t] = measureCell(t, j.sam, j.task, j.blocks, bas, T, M); },
+});
+
 
 function pair(ni: number, nb: number, K: Float64Array, Ni: Float64Array, Mi: Float64Array, si: number, Nj: Float64Array, Mj: Float64Array, sj: number, w: number, gamma: number) {
   const hw = 0.5 * w, gw = gamma * w * si * sj;
@@ -444,6 +794,49 @@ function pair(ni: number, nb: number, K: Float64Array, Ni: Float64Array, Mi: Flo
   }
 }
 
+/** `pair` of an element with itself (a symmetric block): its lower triangle only. */
+function pairLower(n: number, K: Float64Array, N: Float64Array, M: Float64Array, s: number, w: number, gamma: number) {
+  const hw = 0.5 * w * s, gw = gamma * w;
+  for (let a = 0; a < n; a++) {
+    const na = N[a] * hw, ma = M[a] * hw, ga = gw * N[a], r = a * n;
+    for (let b = 0; b <= a; b++) K[r + b] += -na * M[b] - ma * N[b] + ga * N[b];
+  }
+}
+
+/** Numbers per point of a perfect contact kept for `joinBlocks`: x, y, z, w, γ, then each side's weight and its
+ * conductivity times the normal; and per run of a shared loop: first point, end, the two elements' centres and half
+ * sizes, their function counts. */
+const JPT = 13, TJOIN = 12;
+
+/**
+ * One run of joining points between two elements: the blocks aa, ab, bb (each in a third of the slot; aa and bb by
+ * their lower triangles) summed from zero. The same sums on one thread and on several.
+ */
+function joinBlocks(S: Float64Array, q: number, P: Float64Array, from: number, end: number, bas: Basis, bas2: Basis,
+  ca: ArrayLike<number>, sa: number, cb: ArrayLike<number>, sb: number, ma: number, mb: number, MA: Float64Array, MB: Float64Array) {
+  const Saa = S.subarray(0, ma * ma), Sab = S.subarray(q, q + ma * mb), Sbb = S.subarray(2 * q, 2 * q + mb * mb);
+  Saa.fill(0); Sab.fill(0); Sbb.fill(0);
+  for (let i = from; i < end; i++) {
+    const o = JPT * i, w = P[o + 3], gamma = P[o + 4], wa = P[o + 5], ax = P[o + 6], ay = P[o + 7], az = P[o + 8], wb = P[o + 9], bx = P[o + 10], by = P[o + 11], bz = P[o + 12];
+    bas.eval(P[o], P[o + 1], P[o + 2], ca, sa, ma);
+    bas2.eval(P[o], P[o + 1], P[o + 2], cb, sb, mb);
+    // pair() takes half of each side's flux: the weights make it wa·(A's) + wb·(B's)
+    for (let k = 0; k < ma; k++) MA[k] = 2 * wa * (bas.g[3 * k] * ax + bas.g[3 * k + 1] * ay + bas.g[3 * k + 2] * az);
+    for (let k = 0; k < mb; k++) MB[k] = 2 * wb * (bas2.g[3 * k] * bx + bas2.g[3 * k + 1] * by + bas2.g[3 * k + 2] * bz);
+    pairLower(ma, Saa, bas.v, MA, 1, w, gamma);
+    pair(ma, mb, Sab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
+    pairLower(mb, Sbb, bas2.v, MB, -1, w, gamma);
+  }
+}
+kernel<TFaceJob, { j: TFaceJob; bas: Basis; bas2: Basis; MA: Float64Array; MB: Float64Array }>("tjoin", {
+  init: j => { const bas = new Basis(j.p); return { j, bas, bas2: new Basis(j.p), MA: new Float64Array(bas.n), MB: new Float64Array(bas.n) }; },
+  run({ j, bas, bas2, MA, MB }, t) {
+    const k = j.task, o = TJOIN * t;
+    joinBlocks(j.out.subarray(j.slot * t, j.slot * (t + 1)), j.slot / 3, j.pts, k[o], k[o + 1],
+      bas, bas2, [k[o + 2], k[o + 3], k[o + 4]], k[o + 5], [k[o + 6], k[o + 7], k[o + 8]], k[o + 9], k[o + 10], k[o + 11], MA, MB);
+  },
+});
+
 /** Numbers kept per joining point: contact, elements a and b, x, y, z, w, normal, γ (0 with a conductance), conductance. */
 const JOIN = 12;
 
@@ -452,6 +845,16 @@ const JOIN = 12;
  * step along the normal (or the gap) ends inside B. Perfect contact = the terms between elements, each side
  * with its own conductivity; a resistance = a conductance between the two temperatures.
  */
+/** The area of a triangle list (nine numbers each). */
+function surfaceArea(T: ArrayLike<number>): number {
+  let s = 0;
+  for (let i = 0; i + 8 < T.length; i += 9) {
+    const ux = T[i + 3] - T[i], uy = T[i + 4] - T[i + 1], uz = T[i + 5] - T[i + 2], vx = T[i + 6] - T[i], vy = T[i + 7] - T[i + 1], vz = T[i + 8] - T[i + 2];
+    s += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+  }
+  return s;
+}
+
 function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalContact[]; joins: number[] } {
   const { grid, nb, nbs, bas, bas2, gam, k3, pb } = c, doms = c.doms!, nd = doms.length;
   const contacts: ThermalContact[] = [], joins: number[] = [];
@@ -462,25 +865,40 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
     how.set(Math.min(l.a, l.b) * nd + Math.max(l.a, l.b), l);
   }
   const boxes = doms.map(d => triBox(d.tris)), found = new Map<number, number>();
-  const MA = new Float64Array(nb), MB = new Float64Array(nb);
-  for (let a = 0; a + 1 < nd; a++) {
+  // the points of perfect contacts are kept (JPT numbers each) and summed afterwards by runs of one pair of elements
+  // (`joinBlocks`), on all threads when the work is worth it
+  let jp = new Float64Array(JPT * 4096), np = 0, runA = -1, runB = -1;
+  const runs: number[] = [];
+  // a pair of bodies is joined where the surface of the one with less surface lies on the other: the points on a big
+  // face are too far apart to find a wire's end on it (a resistor's lead was joined in one pass and not in the next),
+  // and a body wholly inside another has only its own surface there
+  const isNear = new Uint8Array(nd), N = grid.domsNear(far), steps = gap > 0 ? [eps, far] : [eps];
+  const areas = doms.map(d => surfaceArea(d.tris));
+  for (let a = 0; a < nd; a++) {
     const near: number[] = [];
-    for (let d = a + 1; d < nd; d++) {
-      if (how.get(a * nd + d)?.type === "none") continue;
+    isNear.fill(0);
+    for (let d = 0; d < nd; d++) {
+      if (d === a || areas[d] < areas[a] || (areas[d] === areas[a] && d < a)) continue;
+      if (how.get(Math.min(a, d) * nd + Math.max(a, d))?.type === "none") continue;
       let apart = false;
       for (let k = 0; k < 3; k++) if (boxes[a][k] > boxes[d][3 + k] + far || boxes[d][k] > boxes[a][3 + k] + far) apart = true;
-      if (!apart) near.push(d);
+      if (!apart) { near.push(d); isNear[d] = 1; }
     }
     if (!near.length) continue;
-    const T = doms[a].tris, { pts, tri } = gridTrianglePoints(T, grid.lo, grid.h, tq), nrms = triNormals(T);
+    const T = doms[a].tris, { pts, tri } = gridTrianglePoints(T, grid.lo, grid.h, tq, undefined, smallTriangleDegrees(T, grid.h)), nrms = triNormals(T);
     for (let q = 0; q < pts.n; q++) {
       const o = 4 * q, t = tri[q], w = pts.a[o + 3], nx = nrms[3 * t], ny = nrms[3 * t + 1], nz = nrms[3 * t + 2];
       const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
       let b = -1, bx = 0, by = 0, bz = 0;
-      for (const d of near) {
+      // with many bodies only those whose box reaches the point's cube are gone through (in the same order)
+      let from = 0, to = near.length;
+      if (N) { const [i, j, k] = grid.index(x, y, z), cu = (k * grid.n[1] + j) * grid.n[0] + i; from = N.start[cu]; to = N.start[cu + 1]; }
+      for (let qd = from; qd < to; qd++) {
+        const d = N ? N.idx[qd] : near[qd];
+        if (N && !isNear[d]) continue;
         const B = boxes[d];
         if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
-        for (const st of gap > 0 ? [eps, far] : [eps]) {
+        for (const st of steps) {
           bx = x + st * nx; by = y + st * ny; bz = z + st * nz;
           if (doms[d].inside(bx, by, bz)) { b = d; break; }
         }
@@ -489,16 +907,16 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
       if (b < 0) continue;
       const ca = grid.cellOf(x - eps * nx, y - eps * ny, z - eps * nz, a), cb = grid.cellOf(bx, by, bz, b);
       if (ca < 0 || cb < 0) continue;
-      const link = how.get(a * nd + b), hc = link?.type === "resistance" ? link.h! : 0;
+      const link = how.get(Math.min(a, b) * nd + Math.max(a, b)), hc = link?.type === "resistance" ? link.h! : 0;
       let ci = found.get(a * nd + b);
       if (ci === undefined) { ci = contacts.length; found.set(a * nd + b, ci); contacts.push({ a, b, area: 0, type: hc ? "resistance" : "perfect", heat: 0, ta: 0, tb: 0 }); }
       contacts[ci].area += w;
       const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb];
-      bas.eval(x, y, z, EA.c, EA.s, c.nbs[ea]);
-      bas2.eval(x, y, z, EB.c, EB.s, c.nbs[eb]);
-      const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
       const ma = nbs[ea], mb = nbs[eb];
       if (hc) {
+        bas.eval(x, y, z, EA.c, EA.s, ma);
+        bas2.eval(x, y, z, EB.c, EB.s, mb);
+        const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
         const s = w * hc;
         for (let i = 0; i < ma; i++) {
           const na = s * bas.v[i];
@@ -515,16 +933,47 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
       }
       const oa = 3 * ea, ob = 3 * eb, [wa, wb] = joinWeights(k3, ea, eb, nx, ny, nz);
       const gamma = wa * gam[ea] + wb * gam[eb];
-      const ax = k3[oa] * nx, ay = k3[oa + 1] * ny, az = k3[oa + 2] * nz, bx2 = k3[ob] * nx, by2 = k3[ob + 1] * ny, bz2 = k3[ob + 2] * nz;
-      // pair() takes half of each side's flux: the weights make it wa·(A's) + wb·(B's)
-      for (let i = 0; i < ma; i++) MA[i] = 2 * wa * (bas.g[3 * i] * ax + bas.g[3 * i + 1] * ay + bas.g[3 * i + 2] * az);
-      for (let i = 0; i < mb; i++) MB[i] = 2 * wb * (bas2.g[3 * i] * bx2 + bas2.g[3 * i + 1] * by2 + bas2.g[3 * i + 2] * bz2);
-      pair(ma, ma, Kaa, bas.v, MA, 1, bas.v, MA, 1, w, gamma);
-      pair(ma, mb, Kab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
-      pair(mb, ma, Kba, bas2.v, MB, -1, bas.v, MA, 1, w, gamma);
-      pair(mb, mb, Kbb, bas2.v, MB, -1, bas2.v, MB, -1, w, gamma);
+      if (ea !== runA || eb !== runB) { runs.push(np, ea, eb); runA = ea; runB = eb; }
+      if (JPT * (np + 1) > jp.length) { const more = new Float64Array(2 * jp.length); more.set(jp); jp = more; }
+      const o2 = JPT * np++;
+      jp[o2] = x; jp[o2 + 1] = y; jp[o2 + 2] = z; jp[o2 + 3] = w; jp[o2 + 4] = gamma;
+      jp[o2 + 5] = wa; jp[o2 + 6] = k3[oa] * nx; jp[o2 + 7] = k3[oa + 1] * ny; jp[o2 + 8] = k3[oa + 2] * nz;
+      jp[o2 + 9] = wb; jp[o2 + 10] = k3[ob] * nx; jp[o2 + 11] = k3[ob + 1] * ny; jp[o2 + 12] = k3[ob + 2] * nz;
       joins.push(ci, ea, eb, x, y, z, w, nx, ny, nz, gamma, 0);
     }
+    runA = runB = -1;
+  }
+  // the runs: each summed from zero into a slot (aa, ab, bb), added in the runs' order
+  const nr = runs.length / 3, q = nb * nb, slot = 3 * q;
+  const endOf = (r: number) => (r + 1 < nr ? runs[3 * (r + 1)] : np);
+  const add = (S: Float64Array, ea: number, eb: number) => {
+    const ma = nbs[ea], mb = nbs[eb];
+    const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
+    for (let i = 0; i < ma; i++) for (let j = 0; j <= i; j++) { const v = S[i * ma + j]; Kaa[i * ma + j] += v; if (j < i) Kaa[j * ma + i] += v; }
+    for (let i = 0; i < mb; i++) for (let j = 0; j <= i; j++) { const v = S[2 * q + i * mb + j]; Kbb[i * mb + j] += v; if (j < i) Kbb[j * mb + i] += v; }
+    for (let i = 0; i < ma; i++) for (let j = 0; j < mb; j++) { const v = S[q + i * mb + j]; Kab[i * mb + j] += v; Kba[j * ma + i] += v; }
+  };
+  if (!nr) return { contacts, joins };
+  if (!worthSharing(np * nb * nb * 6)) {
+    const S = new Float64Array(slot), MA = new Float64Array(nb), MB = new Float64Array(nb);
+    for (let r = 0; r < nr; r++) {
+      const ea = runs[3 * r + 1], eb = runs[3 * r + 2], EA = grid.elems[ea], EB = grid.elems[eb];
+      joinBlocks(S, q, jp, runs[3 * r], endOf(r), bas, bas2, EA.c, EA.s, EB.c, EB.s, nbs[ea], nbs[eb], MA, MB);
+      add(S, ea, eb);
+    }
+    return { contacts, joins };
+  }
+  const B = Math.max(1, Math.min(nr, 512, Math.floor(TFACE_SCRATCH / (8 * slot))));
+  const pts = sharedF64(JPT * np), out = sharedF64(B * slot), task = sharedF64(TJOIN * B);
+  pts.set(jp.subarray(0, JPT * np));
+  for (let r0 = 0; r0 < nr; r0 += B) {
+    const n = Math.min(B, nr - r0);
+    for (let t = 0; t < n; t++) {
+      const r = r0 + t, ea = runs[3 * r + 1], eb = runs[3 * r + 2], EA = grid.elems[ea], EB = grid.elems[eb];
+      task.set([runs[3 * r], endOf(r), EA.c[0], EA.c[1], EA.c[2], EA.s, EB.c[0], EB.c[1], EB.c[2], EB.s, nbs[ea], nbs[eb]], TJOIN * t);
+    }
+    parallelFor({ kind: "tjoin", n, p: c.p, slot, pts, task, out } satisfies Omit<TFaceJob, "ctl">);
+    for (let t = 0; t < n; t++) add(out.subarray(slot * t, slot * (t + 1)), runs[3 * (r0 + t) + 1], runs[3 * (r0 + t) + 2]);
   }
   return { contacts, joins };
 }
@@ -569,26 +1018,71 @@ function contactFlows(c: Ctx, contacts: ThermalContact[], joins: number[], x: Fl
   for (const C of contacts) if (C.area > 0) { C.ta /= C.area; C.tb /= C.area; }
 }
 
+/** Numbers per point asked by the shared open-surface test: place, normal, own body. */
+const TFREE = 7, TFREE_CHUNK = 2048;
+interface TFreeJob extends ParJob { key: number; tris: Float64Array[]; U: Float64Array; res: Int32Array; boxes: Float64Array; start: Int32Array; idx: Int32Array; lo: number[]; h: number; dims: number[]; eps: number; far: number }
+/** Does a surface point (stepped `eps`, or `far`, along its normal) lie in a body other than its own, among the bodies near its cube? */
+function coveredAt(doms: ArrayLike<(x: number, y: number, z: number) => boolean>, boxes: ArrayLike<number>, start: Int32Array | null, idx: Int32Array | null, lo: number[], h: number, n: number[],
+  x: number, y: number, z: number, nx: number, ny: number, nz: number, own: number, eps: number, far: number): boolean {
+  let from = 0, to = doms.length;
+  if (start) {
+    const i = Math.min(n[0] - 1, Math.max(0, Math.floor((x - lo[0]) / h))), j = Math.min(n[1] - 1, Math.max(0, Math.floor((y - lo[1]) / h))), k = Math.min(n[2] - 1, Math.max(0, Math.floor((z - lo[2]) / h)));
+    const cu = (k * n[1] + j) * n[0] + i;
+    from = start[cu]; to = start[cu + 1];
+  }
+  for (let q = from; q < to; q++) {
+    const d = idx ? idx[q] : q;
+    if (d === own) continue;
+    const b = 6 * d;
+    if (x < boxes[b] - far || y < boxes[b + 1] - far || z < boxes[b + 2] - far || x > boxes[b + 3] + far || y > boxes[b + 4] + far || z > boxes[b + 5] + far) continue;
+    if (doms[d](x + eps * nx, y + eps * ny, z + eps * nz) || (far > eps && doms[d](x + far * nx, y + far * ny, z + far * nz))) return true;
+  }
+  return false;
+}
+kernel<TFreeJob, { j: TFreeJob; doms: Inside[] }>("tfree", {
+  init(j) { return { j, doms: threadBodies(j) }; },
+  run({ j, doms }, t) {
+    const U = j.U, end = Math.min(j.res.length, (t + 1) * TFREE_CHUNK);
+    for (let i = t * TFREE_CHUNK; i < end; i++) {
+      const o = TFREE * i;
+      j.res[i] = coveredAt(doms, j.boxes, j.start, j.idx, j.lo, j.h, j.dims, U[o], U[o + 1], U[o + 2], U[o + 3], U[o + 4], U[o + 5], U[o + 6], j.eps, j.far) ? 2 : 1;
+    }
+  },
+});
+
 /** The points of some surface triangles that lie on no other domain: what the air around an assembly touches. */
 function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
   const { grid, pb } = c, doms = c.doms!;
   const eps = 2e-3 * grid.h, far = Math.max(0, pb.gap ?? 0) + eps;
-  const boxes = doms.map(d => triBox(d.tris)), L = located(c, tris, q);
+  const boxes = new Float64Array(6 * doms.length), N = grid.domsNear(far);
+  doms.forEach((d, i) => boxes.set(triBox(d.tris), 6 * i));
+  // through the kept triangles each point is asked once however many sinks hold it
+  const K = c.loc && c.loc.q === q ? c.loc : null, kept = K ? keptPoints(c, K, tris, bodiesOf(c, tris), -1) : null;
+  const L = kept ? kept.L : located(c, tris, q, -1, false), ids = kept ? kept.ids : null;
+  // the points not asked before: on all threads when the grid's bodies are there too (the same tests either way)
+  const np = L.length / 8, ask: number[] = [];
+  for (let i = 0; i < np; i++) if (!(ids && K!.free[ids[i]])) ask.push(i);
+  const ins = doms.map(d => d.inside), B = grid.bodies;
+  let res: Int32Array;
+  if (B && N && B.tris.length === doms.length && worthSharing(ask.length * 2000)) {
+    const U = sharedF64(TFREE * ask.length);
+    res = sharedI32(ask.length);
+    ask.forEach((i, a) => { const o = 8 * i, u = TFREE * a; U[u] = L[o + 1]; U[u + 1] = L[o + 2]; U[u + 2] = L[o + 3]; U[u + 3] = L[o + 5]; U[u + 4] = L[o + 6]; U[u + 5] = L[o + 7]; U[u + 6] = c.dom[L[o]]; });
+    parallelFor({ kind: "tfree", n: Math.ceil(ask.length / TFREE_CHUNK), key: B.key, tris: B.tris, U, res, boxes, start: N.start, idx: N.idx, lo: grid.lo, h: grid.h, dims: grid.n, eps, far } satisfies Omit<TFreeJob, "ctl">);
+  } else {
+    res = new Int32Array(ask.length);
+    ask.forEach((i, a) => { const o = 8 * i; res[a] = coveredAt(ins, boxes, N ? N.start : null, N ? N.idx : null, grid.lo, grid.h, grid.n, L[o + 1], L[o + 2], L[o + 3], L[o + 5], L[o + 6], L[o + 7], c.dom[L[o]], eps, far) ? 2 : 1; });
+  }
+  const on = new Uint8Array(np);
+  if (ids) for (let i = 0; i < np; i++) on[i] = K!.free[ids[i]];
+  ask.forEach((i, a) => { on[i] = res[a]; if (ids) K!.free[ids[i]] = res[a]; });
   let m = 0;
   for (let o = 0; o < L.length; o += 8) {
-    const x = L[o + 1], y = L[o + 2], z = L[o + 3], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], own = c.dom[L[o]];
-    let on = false;
-    for (let d = 0; d < doms.length && !on; d++) {
-      if (d === own) continue;
-      const B = boxes[d];
-      if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
-      on = doms[d].inside(x + eps * nx, y + eps * ny, z + eps * nz) || (far > eps && doms[d].inside(x + far * nx, y + far * ny, z + far * nz));
-    }
-    if (on) continue;
-    if (m !== o) L.copyWithin(m, o, o + 8);
+    if (on[o / 8] === 2) continue;
+    if (m !== o) { L.copyWithin(m, o, o + 8); if (ids) ids[m / 8] = ids[o / 8]; }
     m += 8;
   }
-  return L.subarray(0, m);
+  return fitPlanar(c, L.subarray(0, m), ids ? ids.subarray(0, m / 8) : null);
 }
 
 /** The domains nothing takes heat from: no sink on them and none on anything they pass heat to. */
@@ -610,33 +1104,105 @@ function looseDomains(c: Ctx, contacts: ThermalContact[], at: Float64Array[], ex
 }
 
 /** Elements joined across the faces between their cells: −½ [N]{k ∂N/∂n} − ½ {k ∂N/∂n}[N] + γ [N][N]. */
+/**
+ * One face between two elements: its four blocks summed over the face's points into S (aa, ab, ba, bb, each in a
+ * quarter of the slot), from zero. The same sums on one thread and on several.
+ */
+function faceBlocks(S: Float64Array, q: number, a: ArrayLike<number>, from: number, end: number, axis: number, k: number, gamma: number,
+  bas: Basis, bas2: Basis, ca: ArrayLike<number>, sa: number, cb: ArrayLike<number>, sb: number, ma: number, mb: number, MA: Float64Array, MB: Float64Array) {
+  const Saa = S.subarray(0, ma * ma), Sab = S.subarray(q, q + ma * mb), Sba = S.subarray(2 * q, 2 * q + mb * ma), Sbb = S.subarray(3 * q, 3 * q + mb * mb);
+  Saa.fill(0); Sab.fill(0); Sba.fill(0); Sbb.fill(0);
+  // per point the four blocks are N c' + c N' with c = (γw/2) N ∓ (w/2) k ∂N/∂n of each side: aa and bb are
+  // symmetric (their lower triangles are summed and mirrored), ba is ab turned over
+  const NA = bas.v, NB = bas2.v;
+  for (let i = from; i < end; i++) {
+    const o4 = 4 * i, w = a[o4 + 3], x = a[o4], y = a[o4 + 1], z = a[o4 + 2];
+    bas.eval(x, y, z, ca, sa, ma);
+    bas2.eval(x, y, z, cb, sb, mb);
+    const hw = 0.5 * w * k, gh = 0.5 * gamma * w;
+    for (let b = 0; b < ma; b++) MA[b] = gh * NA[b] - hw * bas.g[3 * b + axis];
+    for (let b = 0; b < mb; b++) MB[b] = gh * NB[b] + hw * bas2.g[3 * b + axis];
+    for (let r = 0; r < ma; r++) {
+      const n = NA[r], cc = MA[r], row = r * ma, rb = r * mb;
+      for (let b = 0; b <= r; b++) Saa[row + b] += n * MA[b] + cc * NA[b];
+      for (let b = 0; b < mb; b++) Sab[rb + b] -= n * MB[b] + cc * NB[b];
+    }
+    for (let r = 0; r < mb; r++) {
+      const n = NB[r], cc = MB[r], row = r * mb;
+      for (let b = 0; b <= r; b++) Sbb[row + b] += n * MB[b] + cc * NB[b];
+    }
+  }
+  for (let r = 0; r < ma; r++) for (let b = 0; b < r; b++) Saa[b * ma + r] = Saa[r * ma + b];
+  for (let r = 0; r < mb; r++) for (let b = 0; b < r; b++) Sbb[b * mb + r] = Sbb[r * mb + b];
+  for (let r = 0; r < ma; r++) for (let b = 0; b < mb; b++) Sba[b * ma + r] = Sab[r * mb + b];
+}
+/** Adds a face's blocks to the matrix. */
+function addFace(A: BlockMatrix, S: Float64Array, q: number, ea: number, eb: number, ma: number, mb: number) {
+  const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
+  for (let i = 0, n = ma * ma; i < n; i++) Kaa[i] += S[i];
+  for (let i = 0, n = ma * mb; i < n; i++) { Kab[i] += S[q + i]; Kba[i] += S[2 * q + i]; }
+  for (let i = 0, n = mb * mb; i < n; i++) Kbb[i] += S[3 * q + i];
+}
+
+/** The interior-penalty terms of the faces between cells of different elements, on all threads when the work is worth it. */
 function faceTerms(c: Ctx, A: BlockMatrix) {
-  const { grid, nb, nbs, bas, bas2, gam } = c;
-  const MA = new Float64Array(nb), MB = new Float64Array(nb);
+  const { grid, nb, nbs, bas, bas2, gam, nel } = c;
+  const faces: number[] = [];
+  let work = 0;
   for (let ci = 0; ci < grid.cells.length; ci++) {
     const [i, j, kk] = grid.cells[ci].ijk, ea = grid.cells[ci].el;
     for (let axis = 0; axis < 3; axis++) {
       const o = grid.at(i + (axis === 0 ? 1 : 0), j + (axis === 1 ? 1 : 0), kk + (axis === 2 ? 1 : 0), grid.cells[ci].dom);
-      if (o < 0) continue;
-      const eb = grid.cells[o].el;
-      if (ea === eb) continue;
-      const k = c.k3[3 * ea + axis];
-      const EA = grid.elems[ea], EB = grid.elems[eb], pts = facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb])), gamma = Math.max(gam[ea], gam[eb]);
-      const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb), ma = nbs[ea], mb = nbs[eb];
-      for (let q = 0; q < pts.n; q++) {
-        const o4 = 4 * q, w = pts.a[o4 + 3], x = pts.a[o4], y = pts.a[o4 + 1], z = pts.a[o4 + 2];
-        bas.eval(x, y, z, EA.c, EA.s, c.nbs[ea]);
-        bas2.eval(x, y, z, EB.c, EB.s, c.nbs[eb]);
-        for (let b = 0; b < ma; b++) MA[b] = k * bas.g[3 * b + axis];
-        for (let b = 0; b < mb; b++) MB[b] = k * bas2.g[3 * b + axis];
-        pair(ma, ma, Kaa, bas.v, MA, 1, bas.v, MA, 1, w, gamma);
-        pair(ma, mb, Kab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
-        pair(mb, ma, Kba, bas2.v, MB, -1, bas.v, MA, 1, w, gamma);
-        pair(mb, mb, Kbb, bas2.v, MB, -1, bas2.v, MB, -1, w, gamma);
-      }
+      if (o < 0 || grid.cells[o].el === ea) continue;
+      faces.push(ci, o, axis);
+      work += (c.p + 1) ** 2 * (nbs[ea] + nbs[grid.cells[o].el]) ** 2 * 2;
     }
   }
+  const nf = faces.length / 3, q = nb * nb, slot = 4 * q;
+  const taskOf = (f: number) => {
+    const ci = faces[3 * f], axis = faces[3 * f + 2], ea = grid.cells[ci].el, eb = grid.cells[faces[3 * f + 1]].el;
+    return { axis, ea, eb, pts: facePts(c, ci, axis, Math.max(c.deg[ea], c.deg[eb])), k: c.k3[3 * ea + axis], gamma: Math.max(gam[ea], gam[eb]) };
+  };
+  if (!worthSharing(work)) {
+    const S = new Float64Array(slot), MA = new Float64Array(nb), MB = new Float64Array(nb);
+    for (let f = 0; f < nf; f++) {
+      const t = taskOf(f), EA = grid.elems[t.ea], EB = grid.elems[t.eb];
+      faceBlocks(S, q, t.pts.a, 0, t.pts.n, t.axis, t.k, t.gamma, bas, bas2, EA.c, EA.s, EB.c, EB.s, nbs[t.ea], nbs[t.eb], MA, MB);
+      addFace(A, S, q, t.ea, t.eb, nbs[t.ea], nbs[t.eb]);
+    }
+    return;
+  }
+  const B = Math.max(1, Math.min(nf, 512, Math.floor(TFACE_SCRATCH / (8 * slot))));
+  const out = sharedF64(B * slot), task = sharedF64(TFACE * B);
+  let pts = sharedF64(4 * B * (2 * c.p + 1) ** 2);
+  for (let f0 = 0; f0 < nf; f0 += B) {
+    const n = Math.min(B, nf - f0), els: number[] = [];
+    let np = 0;
+    for (let t = 0; t < n; t++) {
+      const T = taskOf(f0 + t), EA = grid.elems[T.ea], EB = grid.elems[T.eb], P = T.pts;
+      if (4 * (np + P.n) > pts.length) { const more = sharedF64(Math.max(2 * pts.length, 4 * (np + P.n))); more.set(pts.subarray(0, 4 * np)); pts = more; }
+      pts.set((P.a as Float64Array).subarray(0, 4 * P.n), 4 * np);
+      task.set([np, P.n, T.axis, EA.c[0], EA.c[1], EA.c[2], EA.s, EB.c[0], EB.c[1], EB.c[2], EB.s, nbs[T.ea], nbs[T.eb], T.k, T.gamma], TFACE * t);
+      els.push(T.ea, T.eb);
+      np += P.n;
+    }
+    parallelFor({ kind: "tfaces", n, p: c.p, slot, pts, task, out } satisfies Omit<TFaceJob, "ctl">);
+    progress("assemble", nel + ((f0 + n) * nel) / nf, 2 * nel);
+    for (let t = 0; t < n; t++) addFace(A, out.subarray(slot * t, slot * (t + 1)), q, els[2 * t], els[2 * t + 1], nbs[els[2 * t]], nbs[els[2 * t + 1]]);
+  }
 }
+/** Bytes of scratch a batch of faces may take, and the numbers per face of a shared face loop: first point, points,
+ * axis, the two elements' centres and half sizes, their function counts, conductivity across, penalty. */
+const TFACE_SCRATCH = 96e6, TFACE = 15;
+interface TFaceJob extends ParJob { p: number; slot: number; pts: Float64Array; task: Float64Array; out: Float64Array }
+kernel<TFaceJob, { j: TFaceJob; bas: Basis; bas2: Basis; MA: Float64Array; MB: Float64Array }>("tfaces", {
+  init: j => { const bas = new Basis(j.p); return { j, bas, bas2: new Basis(j.p), MA: new Float64Array(bas.n), MB: new Float64Array(bas.n) }; },
+  run({ j, bas, bas2, MA, MB }, t) {
+    const k = j.task, o = TFACE * t;
+    faceBlocks(j.out.subarray(j.slot * t, j.slot * (t + 1)), j.slot / 4, j.pts, k[o], k[o] + k[o + 1], k[o + 2], k[o + 13], k[o + 14],
+      bas, bas2, [k[o + 3], k[o + 4], k[o + 5]], k[o + 6], [k[o + 7], k[o + 8], k[o + 9]], k[o + 10], k[o + 11], k[o + 12], MA, MB);
+  },
+});
 
 /** A fixed temperature g on boundary points (Nitsche): K += −N_a M_b − M_a N_b + 2γ N_a N_b, f += (−M_a + 2γ N_a) g. */
 function heldTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Array, g: number) {
@@ -658,72 +1224,170 @@ function heldTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Arr
  * A film on boundary points: K += h w N_a N_b, f += h w T∞ N_a. `rad` > 0 makes it radiation of that emissivity,
  * linearised about the temperatures `x` (°C): q = εσ(T⁴ − Ts⁴) ≈ q(T₀) + 4εσT₀³ (T − T₀).
  */
-/**
- * The points of a list in element order (kept per list): the film terms then sum each element's points into one
- * block, the upper triangle only, and add it to the matrix both ways, which is half the work of point by point.
- */
-const byElement = new WeakMap<Float64Array, Int32Array>();
-function elementOrder(L: Float64Array): Int32Array {
-  let o = byElement.get(L);
-  if (!o) { o = Int32Array.from({ length: L.length / 8 }, (_, i) => i).sort((a, b) => L[8 * a] - L[8 * b] || a - b); byElement.set(L, o); }
-  return o;
-}
-/** Σ s·v vᵀ over an element's points, upper triangle; `flush` adds it to the element's block, mirrored. */
-class BlockSum {
-  private e = -1; private nb = 0; private a = new Float64Array(0); private K: Float64Array | null = null;
-  at(e: number, nb: number, K: Float64Array) {
-    if (e === this.e) return;
-    this.flush();
-    this.e = e; this.nb = nb; this.K = K;
-    if (this.a.length < nb * nb) this.a = new Float64Array(nb * nb); else this.a.fill(0, 0, nb * nb);
-  }
-  add(v: Float64Array, s: number) {
-    const { a, nb } = this;
-    for (let i = 0; i < nb; i++) { const si = s * v[i], r = i * nb; for (let j = i; j < nb; j++) a[r + j] += si * v[j]; }
-  }
-  flush() {
-    const { a, nb, K } = this;
-    if (K) for (let i = 0; i < nb; i++) { const r = i * nb; K[r + i] += a[r + i]; for (let j = i + 1; j < nb; j++) { const t = a[r + j]; K[r + j] += t; K[j * nb + i] += t; } }
-    this.e = -1; this.K = null;
-  }
-}
 function filmTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Array, h: number | ArrayLike<number>, amb: number, rad: number, x: Float64Array | null) {
-  const { grid, nbs, off, bas } = c, order = elementOrder(L), sum = new BlockSum();
-  for (let k = 0; k < order.length; k++) {
-    const o = 8 * order[k];
-    const e = L[o], nb = nbs[e], E = grid.elems[e], w = L[o + 4], fo = off[e], hp = typeof h === "number" ? h : h[o / 8];
-    bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
-    let hh = hp, rhs = hp * amb;
-    if (rad > 0) {
-      let t0 = amb;
-      if (x) { t0 = 0; for (let a = 0; a < nb; a++) t0 += bas.v[a] * x[fo + a]; }
-      const T0 = Math.max(1, t0 + KELVIN), Ts = amb + KELVIN, es = rad * SIGMA;
-      hh = 4 * es * T0 ** 3;
-      rhs = hh * t0 - es * (T0 ** 4 - Ts ** 4);
+  const per = typeof h === "number" ? null : h;
+  surfaceTerms(c, A, f, L, per, per ? 1 : 0, [0, per ? 0 : (h as number), amb, rad, x ? 1 : 0, 0, 0, 0, 0], x);
+}
+
+/**
+ * Natural convection on boundary points: q = h(T)(T − T∞) with h ∝ |T − T∞|^¼, linearised about the temperatures
+ * in `x` (dq/dT = 1.25 h); none yet = a plain film taken 10 K hotter than the air.
+ */
+function naturalTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, s: ThermalSink, lens: Float64Array, x: Float64Array | null) {
+  const nat = s.natural!;
+  surfaceTerms(c, A, f, L, lens, 2, [2, 0, s.ambient ?? 0, 0, x ? 1 : 0, nat.factor, nat.down[0], nat.down[1], nat.down[2]], x);
+}
+
+/**
+ * One element's share of a film, radiation or natural convection, summed from zero into `S` (its nb × nb matrix,
+ * then its nb load values) over the points `order[from..end)` of `L`. `par` = kind (0 film or radiation, 2 natural),
+ * film coefficient, ambient, emissivity, whether `x` holds temperatures, natural factor, down (3).
+ */
+function filmCell(S: Float64Array, nb: number, mat: boolean, L: ArrayLike<number>, order: ArrayLike<number>, from: number, end: number, bas: Basis,
+  cc: ArrayLike<number>, sz: number, par: ArrayLike<number>, per: ArrayLike<number> | null, stride: number, x: ArrayLike<number> | null, fo: number,
+  vals: Float64Array | null, task: Float64Array, slot: number) {
+  const f0 = nb * nb, amb = par[2], rad = par[3], hasX = par[4] > 0 && !!x;
+  // what a point gives whatever the temperatures are, the functions' values and the Legendre values its moments
+  // are made of, is kept with the plan (`vals`, `filmRecord` numbers per point): made by the first loop over this element
+  const top2 = 2 * degreeOf(nb), rs = nb + 3 * (top2 + 1);
+  let vb = 0;
+  if (vals) {
+    vb = task[slot];
+    if (vb < 0) {
+      vb = -vb - 1;
+      for (let q = from, b = vb; q < end; q++, b += rs) {
+        const o = 8 * order[q];
+        bas.values(L[o + 1], L[o + 2], L[o + 3], cc, sz, nb);
+        for (let a = 0; a < nb; a++) vals[b + a] = bas.v[a];
+        legendrePoint(top2, L[o + 1], L[o + 2], L[o + 3], cc, sz, vals, b + nb);
+      }
+      task[slot] = vb;
+    }
+  }
+  const v = vals ?? bas.v;
+  // the matrix Σ w h N_a N_b comes from the points' moments weighted by w h (`moments.ts`)
+  const T = mat ? momentTables(bas.p) : null, top = mat ? 2 * degreeOf(nb) : 0;
+  S.fill(0, 0, f0 + nb);
+  for (let q = from; q < end; q++) {
+    const i = order[q], o = 8 * i, w = L[o + 4], vo = vals ? vb + (q - from) * rs : 0;
+    if (!vals) bas.values(L[o + 1], L[o + 2], L[o + 3], cc, sz, nb);
+    let hh: number, rhs: number;
+    if (par[0] === 2) {
+      let t0 = amb + 10;
+      if (hasX) { t0 = 0; for (let a = 0; a < nb; a++) t0 += v[vo + a] * x![fo + a]; }
+      const up = -(L[o + 5] * par[6] + L[o + 6] * par[7] + L[o + 7] * par[8]);
+      const h = par[5] * naturalH(up, t0 - amb, per![2 * i], per![2 * i + 1]);
+      hh = hasX ? 1.25 * h : h;
+      rhs = hasX ? hh * t0 - h * (t0 - amb) : h * amb;
+    } else {
+      const hp = stride ? per![i] : par[1];
+      hh = hp;
+      rhs = hp * amb;
+      if (rad > 0) {
+        let t0 = amb;
+        if (hasX) { t0 = 0; for (let a = 0; a < nb; a++) t0 += v[vo + a] * x![fo + a]; }
+        const T0 = Math.max(1, t0 + KELVIN), Ts = amb + KELVIN, es = rad * SIGMA;
+        const T2 = T0 * T0, S2 = Ts * Ts;
+        hh = 4 * es * (T2 * T0);
+        rhs = hh * t0 - es * (T2 * T2 - S2 * S2);
+      }
     }
     const wr = w * rhs;
-    for (let a = 0; a < nb; a++) f[fo + a] += wr * bas.v[a];
-    if (A) { sum.at(e, nb, A.block(e, e)); sum.add(bas.v, hh * w); }
+    for (let a = 0; a < nb; a++) S[f0 + a] += wr * v[vo + a];
+    if (T) { if (vals) momentsKept(T, vals, vo + nb, w * hh, top); else momentsPoint(T, L[o + 1], L[o + 2], L[o + 3], w * hh, cc, sz, top); }
   }
-  sum.flush();
+  if (T) { massFromMoments(T, S, nb); momentsClear(T); }
 }
-function naturalTerms(c: Ctx, A: BlockMatrix, f: Float64Array, L: Float64Array, s: ThermalSink, lens: Float64Array, x: Float64Array | null) {
-  const { grid, nbs, off, bas } = c, nat = s.natural!, amb = s.ambient ?? 0, dn = nat.down, order = elementOrder(L), sum = new BlockSum();
-  for (let k = 0; k < order.length; k++) {
-    const o = 8 * order[k], i = 2 * order[k];
-    const e = L[o], nb = nbs[e], E = grid.elems[e], w = L[o + 4], fo = off[e];
-    bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
-    let t0 = amb + 10;
-    if (x) { t0 = 0; for (let a = 0; a < nb; a++) t0 += bas.v[a] * x[fo + a]; }
-    const up = -(L[o + 5] * dn[0] + L[o + 6] * dn[1] + L[o + 7] * dn[2]);
-    const h = nat.factor * naturalH(up, t0 - amb, lens[i], lens[i + 1]);
-    const hh = x ? 1.25 * h : h, wr = w * (x ? hh * t0 - h * (t0 - amb) : h * amb);
-    for (let a = 0; a < nb; a++) f[fo + a] += wr * bas.v[a];
-    sum.at(e, nb, A.block(e, e));
-    sum.add(bas.v, hh * w);
+
+/** The points of one surface item by element, kept with the item's points: what a loop over its elements needs. */
+interface FilmPlan { c: Ctx; shared: boolean; work: number; n: number; L: Float64Array; order: Int32Array; task: Float64Array; per: Float64Array | null; out: Float64Array; vals: Float64Array | null; where: Int32Array | null }
+/** Numbers per element of a surface loop: element, first and end place in `order`, place in `out`, centre, half size, functions, first unknown,
+ * place of its points' function values in `vals` (−place − 1 until they are made). */
+const TFILM = 11;
+/** Function values kept at surface points (`FilmPlan.vals`), numbers per build at most: beyond it they are evaluated every time. */
+let FILM_VALUES = 24e6;
+/** Tests: how many numbers may be kept at surface points (0 = evaluate every time). */
+export const setFilmValues = (n: number) => { FILM_VALUES = n; };
+const filmKept = new WeakMap<Int32Array, number>();
+const filmRecord = (nb: number) => nb + 3 * (2 * degreeOf(nb) + 1);
+const filmPlans = new WeakMap<Float64Array, FilmPlan>();
+function filmPlan(c: Ctx, L: Float64Array, per: ArrayLike<number> | null, stride: number): FilmPlan {
+  const had = filmPlans.get(L);
+  if (had && had.c === c) return had;
+  const { grid, nbs, off } = c, n = L.length / 8, count = new Map<number, number>();
+  let work = 0;
+  for (let i = 0; i < n; i++) { const e = L[8 * i]; count.set(e, (count.get(e) ?? 0) + 1); work += 4 * nbs[e] * nbs[e]; }
+  const shared = worthSharing(work), f64 = (m: number) => (shared ? sharedF64(m) : new Float64Array(m));
+  const els = [...count.keys()].sort((a, b) => a - b), task = f64(TFILM * els.length), order = shared ? sharedI32(n) : new Int32Array(n), at = new Map<number, number>();
+  let from = 0, size = 0, nv = 0;
+  for (const e of els) nv += count.get(e)! * filmRecord(nbs[e]);
+  const used = filmKept.get(off) ?? 0, keep = used + nv <= FILM_VALUES;
+  if (keep) filmKept.set(off, used + nv);
+  nv = 0;
+  els.forEach((e, t) => {
+    const E = grid.elems[e], m = count.get(e)!;
+    task.set([e, from, from + m, size, E.c[0], E.c[1], E.c[2], E.s, nbs[e], off[e], -nv - 1], TFILM * t);
+    nv += m * filmRecord(nbs[e]);
+    at.set(e, from);
+    from += m;
+    size += nbs[e] * nbs[e] + nbs[e];
+  });
+  for (let i = 0; i < n; i++) { const e = L[8 * i], k = at.get(e)!; order[k] = i; at.set(e, k + 1); }
+  let LL = L, pp = per ? (per as Float64Array) : null;
+  if (shared) { LL = shared8(L); if (per) { pp = sharedF64(stride * n); pp.set(per as Float64Array); } }
+  const plan: FilmPlan = { c, shared, work, n: els.length, L: LL, order, task, per: pp, out: f64(size), vals: keep ? f64(nv) : null, where: null };
+  filmPlans.set(L, plan);
+  return plan;
+}
+
+/**
+ * Films, radiation and natural convection on the points `L`: each element's terms are summed from zero (on all
+ * threads when the work is worth it) and then added to its block and load in the elements' order, so the result
+ * does not depend on the number of threads.
+ */
+function surfaceTerms(c: Ctx, A: BlockMatrix | null, f: Float64Array, L: Float64Array, per: ArrayLike<number> | null, stride: number, par: number[], x: Float64Array | null) {
+  if (!L.length) return;
+  const P = filmPlan(c, L, per, stride), { task, out } = P, mat = !!A;
+  if (P.shared && worthSharing(P.work)) {
+    parallelFor({ kind: "tfilm", n: P.n, p: c.bas.p, L: P.L, order: P.order, task, per: P.per, stride, x, par: Float64Array.from(par), mat, out, vals: P.vals } satisfies Omit<TFilmJob, "ctl">);
+  } else {
+    for (let t = 0; t < P.n; t++) {
+      const o = TFILM * t, nb = task[o + 8];
+      filmCell(out.subarray(task[o + 3], task[o + 3] + nb * nb + nb), nb, mat, P.L, P.order, task[o + 1], task[o + 2], c.bas, [task[o + 4], task[o + 5], task[o + 6]], task[o + 7], par, P.per, stride, x, task[o + 9], P.vals, task, o + 10);
+    }
   }
-  sum.flush();
+  for (let t = 0; t < P.n; t++) {
+    const o = TFILM * t, e = task[o], nb = task[o + 8], so = task[o + 3], fo = task[o + 9], f0 = so + nb * nb;
+    for (let a = 0; a < nb; a++) f[fo + a] += out[f0 + a];
+    if (A) { const K = A.block(e, e); for (let i = 0; i < nb * nb; i++) K[i] += out[so + i]; }
+  }
 }
+interface TFilmJob extends ParJob { p: number; L: Float64Array; order: Int32Array; task: Float64Array; per: Float64Array | null; stride: number; x: Float64Array | null; par: Float64Array; mat: boolean; out: Float64Array; vals: Float64Array | null }
+kernel<TFilmJob, { j: TFilmJob; bas: Basis }>("tfilm", {
+  init: j => ({ j, bas: new Basis(j.p) }),
+  run({ j, bas }, t) {
+    const k = j.task, o = TFILM * t, nb = k[o + 8];
+    filmCell(j.out.subarray(k[o + 3], k[o + 3] + nb * nb + nb), nb, j.mat, j.L, j.order, k[o + 1], k[o + 2], bas, [k[o + 4], k[o + 5], k[o + 6]], k[o + 7], j.par, j.per, j.stride, j.x, k[o + 9], j.vals, k, o + 10);
+  },
+});
+
+/** Where each point of `L` has its function values in the plan's `vals` (null until every element's are made). */
+function filmValues(c: Ctx, L: Float64Array): { vals: Float64Array; where: Int32Array } | null {
+  const P = filmPlans.get(L);
+  if (!P || !P.vals || P.c.grid !== c.grid || P.c.off !== c.off) return null;
+  if (!P.where) {
+    const { task, order } = P, where = new Int32Array(L.length / 8);
+    for (let t = 0; t < P.n; t++) {
+      const o = TFILM * t, vb = task[o + 10], nb = task[o + 8];
+      if (vb < 0) return null;
+      for (let q = task[o + 1], b = vb, rs = filmRecord(nb); q < task[o + 2]; q++, b += rs) where[order[q]] = b;
+    }
+    P.where = where;
+  }
+  return { vals: P.vals, where: P.where };
+}
+
+/** The points of a natural convection sink, located face by face so each keeps its face's sizes (2 numbers per point). */
 function naturalPoints(c: Ctx, s: ThermalSink, q: number): { L: Float64Array; lens: Float64Array } {
   return groupedPoints(c, s, q, [s.natural!.lv, s.natural!.lh]);
 }
@@ -759,68 +1423,259 @@ function startFrom(c: Ctx, prev: Float64Array | null | undefined): Float64Array 
   for (let e = 0; e < nel; e++) for (let a = 0, n = Math.min(pm, nbs[e]); a < n; a++) x[off[e] + a] = prev[e * pm + a];
   return x;
 }
+/**
+ * A matrix to add surface and time terms to: its own copy of each element's diagonal block, the blocks between
+ * elements shared with `A` (those terms never touch them, and copying a whole matrix at every linearisation and
+ * time step was hundreds of megabytes a time). Never write an off-diagonal block of the result.
+ */
 function copyMatrix(A: BlockMatrix): BlockMatrix {
-  const B = new BlockMatrix(A.nel, A.ms);
-  for (const [key, blk] of A.blocks) { const a = Math.floor(key / A.nel); B.block(a, key - a * A.nel).set(blk); }
+  const B = new BlockMatrix(A.nel, A.ms), nel = A.nel;
+  for (const [key, blk] of A.blocks) {
+    const a = Math.floor(key / nel), b = key - a * nel;
+    if (a === b) B.block(a, a).set(blk);
+    else { B.blocks.set(key, blk); B.adj[a].add(b); B.adj[b].add(a); }
+  }
   return B;
 }
 
+/**
+ * How a study's matrices are solved: directly while the factorisation is cheap (as the structural solver decides),
+ * else by the iterative solver. Asked once per set of equations: the linearised and time-step matrices of one
+ * `Ctx` have the same blocks, so they share the answer and the factorisation's plan.
+ */
+const solverPlans = new WeakMap<Ctx, { blocks: number; direct: boolean; plan?: CholPlan }>();
+/**
+ * How big a factorisation thermal solves still take directly: more than a static solve, since conjugate gradients
+ * converge slowly across bodies whose conductivities differ by a thousand times (a board and its copper parts) and
+ * a radiating study solves several times on one factorisation. A board's third pass (84,000 unknowns, 4.6e10
+ * multiplications, 6.3e7 values) took 70 s by conjugate gradients and 42 s directly on three threads.
+ */
+export const THERMAL_FLOPS = 1.5e11, THERMAL_VALUES = 7.5e7;
+function systemSolver(c: Ctx, A: BlockMatrix): Solver {
+  const pb = c.pb;
+  let how = solverPlans.get(c);
+  if (!how || how.blocks !== A.blocks.size) {
+    const fits = pb.solver ? { direct: pb.solver === "direct" } as ReturnType<typeof directFits> : directFits(A, DIRECT_LIMIT, THERMAL_FLOPS, THERMAL_VALUES);
+    solverPlans.set(c, (how = { blocks: A.blocks.size, direct: fits.direct, plan: fits.plan }));
+  }
+  if (!how.direct) { const P = pcgSolver(A, { coarse: basisSize(1), tol: pb.tol ?? 1e-9 }); return { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
+  const E = new BlockCholesky(A, { plan: how.plan });
+  how.plan = E.plan;
+  return { solve: f => E.solve(f), free: () => E.release() };
+}
+
+const isDirect = (c: Ctx) => !!solverPlans.get(c)?.direct;
+
+/**
+ * A x = f by conjugate gradients from `x0`, preconditioned by the solver of a matrix close to A (the same
+ * equations linearised a step earlier). Null when it has not converged in `POLISH_STEPS` iterations.
+ */
+const POLISH_STEPS = 40, POLISH_TOL = 1e-11;
+function polished(A: BlockMatrix, f: Float64Array, x0: Float64Array, pre: Solver): Float64Array | null {
+  const n = f.length, x = Float64Array.from(x0), r = new Float64Array(n), q = new Float64Array(n);
+  A.mul(x, q);
+  let f2 = 0, r2 = 0;
+  for (let i = 0; i < n; i++) { r[i] = f[i] - q[i]; f2 += f[i] * f[i]; r2 += r[i] * r[i]; }
+  const stop = POLISH_TOL * POLISH_TOL * f2;
+  if (r2 <= stop) return x;
+  let z = pre.solve(r, null), rz = 0;
+  const d = Float64Array.from(z);
+  for (let i = 0; i < n; i++) rz += r[i] * z[i];
+  for (let it = 0; it < POLISH_STEPS; it++) {
+    A.mul(d, q);
+    let dq = 0;
+    for (let i = 0; i < n; i++) dq += d[i] * q[i];
+    if (!(dq > 0)) return null;
+    const a = rz / dq;
+    r2 = 0;
+    for (let i = 0; i < n; i++) { x[i] += a * d[i]; r[i] -= a * q[i]; r2 += r[i] * r[i]; }
+    if (r2 <= stop) return x;
+    z = pre.solve(r, null);
+    let rz1 = 0;
+    for (let i = 0; i < n; i++) rz1 += r[i] * z[i];
+    const beta = rz1 / rz;
+    rz = rz1;
+    for (let i = 0; i < n; i++) d[i] = z[i] + beta * d[i];
+  }
+  return null;
+}
+
 function factorSystem(c: Ctx, A: BlockMatrix): Solver {
-  const pb = c.pb, useCg = pb.solver === "pcg" || (pb.solver !== "direct" && A.size > DIRECT_LIMIT);
-  if (useCg) { const P = pcgSolver(A, { coarse: basisSize(1), tol: pb.tol ?? 1e-9 }); return { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
-  const E = new BlockCholesky(A);
+  const s = systemSolver(c, A);
   progress("solve", 0, 1);
-  return { solve: f => E.solve(f) };
+  return s;
 }
 
 function solveSystem(c: Ctx, A: BlockMatrix, f: Float64Array, x0: Float64Array | null, lr: LowRank | null = null): Float64Array {
-  return withLowRank(factorSystem(c, A), lr).solve(f, x0);
+  const s = factorSystem(c, A), y = withLowRank(s, lr).solve(f, x0);
+  s.free?.();
+  return y;
 }
 
 /** ∫ k |∇T|² and, with the pass before, the same of what this pass changed per element. */
+/**
+ * One element's xᵀ K x and (x − prev)ᵀ K (x − prev) into `out[2e]`, `out[2e + 1]`, with its conduction matrix made
+ * from the moments already summed in `T` (cleared here). `K` and `d` are scratch.
+ */
+function energyCell(T: MomentTables, K: Float64Array, d: Float64Array, nb: number, sz: number, kx: number, ky: number, kz: number,
+  x: ArrayLike<number>, o: number, prev: ArrayLike<number> | null, pm: number, e: number, out: Float64Array) {
+  K.fill(0, 0, nb * nb);
+  conductFromMoments(T, K, nb, sz, kx, ky, kz);
+  momentsClear(T);
+  if (prev) for (let a = 0; a < nb; a++) d[a] = x[o + a] - (a < pm ? prev[e * pm + a] : 0);
+  let en = 0, et = 0;
+  for (let a = 0; a < nb; a++) {
+    const r = a * nb;
+    let s1 = 0, s2 = 0;
+    for (let b = 0; b < nb; b++) { s1 += K[r + b] * x[o + b]; if (prev) s2 += K[r + b] * d[b]; }
+    en += x[o + a] * s1;
+    if (prev) et += d[a] * s2;
+  }
+  out[2 * e] = en; out[2 * e + 1] = et;
+}
+
 function energies(c: Ctx, x: Float64Array, prev: Float64Array | null) {
   const { grid, nbs, off, nel, bas, k3 } = c, eta = new Float64Array(nel), pm = prev ? prev.length / nel : 0;
+  // xᵀ K x with each element's conduction matrix made from the moments of its points (as `volumeTerms` makes it)
+  let npt = 0;
+  for (let e = 0; e < nel; e++) for (const ci of grid.elems[e].cells) npt += grid.cells[ci].pts.n;
+  let out: Float64Array;
+  if (!worthSharing(npt * 300 + nel * c.nb * c.nb * 40)) {
+    out = new Float64Array(2 * nel);
+    const T = momentTables(bas.p), K = new Float64Array(c.nb * c.nb), d = new Float64Array(c.nb);
+    momentsClear(T);
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e], top = Math.max(0, 2 * c.deg[e] - 2);
+      for (const ci of E.cells) { const P = grid.cells[ci].pts; momentsAdd(T, P.a, 0, P.n, E.c, E.s, top); }
+      energyCell(T, K, d, nbs[e], E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2], x, off[e], prev, pm, e, out);
+    }
+  } else {
+    // the points, the elements and the answer on shared memory: one task per element, the same sums
+    const pts = sharedF64(4 * npt), at = sharedF64(TVOL * nel), nb = sharedI32(nel), xs = sharedF64(x.length), ps = sharedF64(prev ? prev.length : 0);
+    xs.set(x); if (prev) ps.set(prev);
+    let n = 0;
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e], o = TVOL * e;
+      at[o] = n;
+      for (const ci of E.cells) { const P = grid.cells[ci].pts; pts.set((P.a as Float64Array).subarray(0, 4 * P.n), 4 * n); n += P.n; }
+      at.set([n, off[e], E.c[0], E.c[1], E.c[2], E.s, k3[3 * e], k3[3 * e + 1], k3[3 * e + 2], c.deg[e]], o + 1);
+      nb[e] = nbs[e];
+    }
+    out = sharedF64(2 * nel);
+    parallelFor({ kind: "tenergy", n: nel, p: bas.p, nbMax: c.nb, pts, at, nb, x: xs, prev: ps, pm, out } satisfies Omit<TEnergyJob, "ctl">);
+  }
   let energy = 0;
-  for (let e = 0; e < nel; e++) {
-    const nb = nbs[e], E = grid.elems[e], kx = k3[3 * e], ky = k3[3 * e + 1], kz = k3[3 * e + 2];
-    for (const ci of E.cells) {
-      const Q = grid.cells[ci].pts;
-      for (let q = 0; q < Q.n; q++) {
-        const o = 4 * q, w = Q.a[o + 3];
-        bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s, c.nbs[e]);
-        let gx = 0, gy = 0, gz = 0, hx = 0, hy = 0, hz = 0;
-        for (let a = 0; a < nb; a++) {
-          const v = x[off[e] + a], dv = prev ? v - (a < pm ? prev[e * pm + a] : 0) : 0;
-          gx += v * bas.g[3 * a]; gy += v * bas.g[3 * a + 1]; gz += v * bas.g[3 * a + 2];
-          hx += dv * bas.g[3 * a]; hy += dv * bas.g[3 * a + 1]; hz += dv * bas.g[3 * a + 2];
-        }
-        energy += w * (kx * gx * gx + ky * gy * gy + kz * gz * gz);
-        eta[e] += w * (kx * hx * hx + ky * hy * hy + kz * hz * hz);
-      }
+  for (let e = 0; e < nel; e++) { energy += out[2 * e]; const et = out[2 * e + 1]; eta[e] = et > 0 ? et : 0; }
+  return { energy, eta };
+}
+/** The energies' loop: `at` as in the conduction loop, with the element's place in `x` instead of a block offset. */
+interface TEnergyJob extends ParJob { p: number; nbMax: number; pts: Float64Array; at: Float64Array; nb: Int32Array; x: Float64Array; prev: Float64Array; pm: number; out: Float64Array }
+kernel<TEnergyJob, { j: TEnergyJob; T: MomentTables; K: Float64Array; d: Float64Array }>("tenergy", {
+  init: j => { const T = momentTables(j.p); momentsClear(T); return { j, T, K: new Float64Array(j.nbMax * j.nbMax), d: new Float64Array(j.nbMax) }; },
+  run({ j, T, K, d }, e) {
+    const a = j.at, o = TVOL * e;
+    momentsAdd(T, j.pts, 4 * a[o], a[o + 1] - a[o], [a[o + 3], a[o + 4], a[o + 5]], a[o + 6], Math.max(0, 2 * a[o + 10] - 2));
+    energyCell(T, K, d, j.nb[e], a[o + 6], a[o + 7], a[o + 8], a[o + 9], j.x, a[o + 2], j.prev.length ? j.prev : null, j.pm, e, j.out);
+  },
+});
+
+/**
+ * One element's share of what a film, radiating or natural convection sink takes at the temperatures `x`, summed from
+ * zero into `S[so…]` (film heat, radiated heat, area, ∫T, ∫h: the element's room in the plan's `out` holds more) over its points (`vals` = the functions' values kept at them). `par` = ambient, emissivity, film
+ * coefficient, kind (0 that coefficient, 1 one per point in `per`, 2 natural with two sizes per point), natural factor, down (3).
+ */
+function flowCell(S: Float64Array, so: number, L: ArrayLike<number>, order: ArrayLike<number>, from: number, end: number, nb: number, fo: number,
+  x: ArrayLike<number>, vals: Float64Array, vb: number, rs: number, par: ArrayLike<number>, per: ArrayLike<number> | null) {
+  const amb = par[0], emis = par[1], h0 = par[2], kind = par[3], ambK = amb + KELVIN, amb4 = ambK * ambK * (ambK * ambK);
+  let conv = 0, rad = 0, area = 0, sum = 0, hs = 0;
+  for (let q = from, b = vb; q < end; q++, b += rs) {
+    const i = order[q], o = 8 * i, w = L[o + 4];
+    let t = 0;
+    for (let a = 0; a < nb; a++) t += x[fo + a] * vals[b + a];
+    area += w; sum += w * t;
+    if (emis) { const T2 = (t + KELVIN) * (t + KELVIN); rad += w * emis * SIGMA * (T2 * T2 - amb4); }
+    if (kind === 2) {
+      const up = -(L[o + 5] * par[5] + L[o + 6] * par[6] + L[o + 7] * par[7]);
+      const h = par[4] * naturalH(up, t - amb, per![2 * i], per![2 * i + 1]);
+      hs += w * h;
+      conv += w * h * (t - amb);
+    } else if (kind === 1) { const h = per![i]; hs += w * h; conv += w * h * (t - amb); }
+    else conv += w * h0 * (t - amb);
+  }
+  S[so] = conv; S[so + 1] = rad; S[so + 2] = area; S[so + 3] = sum; S[so + 4] = hs;
+}
+interface TFlowJob extends ParJob { L: Float64Array; order: Int32Array; task: Float64Array; per: Float64Array | null; x: Float64Array; par: Float64Array; out: Float64Array; vals: Float64Array }
+kernel<TFlowJob, TFlowJob>("tflow", {
+  init: j => j,
+  run(j, t) {
+    const k = j.task, o = TFILM * t, nb = k[o + 8];
+    flowCell(j.out, k[o + 3], j.L, j.order, k[o + 1], k[o + 2], nb, k[o + 9], j.x, j.vals, k[o + 10], filmRecord(nb), j.par, j.per);
+  },
+});
+
+/**
+ * A sink that holds no temperature, through its plan (the points by element, the functions' values kept at them):
+ * each element's sums are made from zero, on all threads when there are enough points (a warm-up asks at every
+ * output time), and added in the elements' order. Null = no kept values: the caller goes point by point.
+ */
+function planFlow(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?: Float64Array): SinkFlow | null {
+  const P = filmPlans.get(L), nat = s.natural, forced = !!s.forced && !!lens;
+  if (!P || !P.vals || P.c.grid !== c.grid || P.c.off !== c.off) return null;
+  const kind = nat && lens ? 2 : forced ? 1 : 0;
+  // the plan holds the per-point numbers of the terms it was made for: the same ones here, or none are needed
+  if (kind && (!P.per || P.per.length !== (kind === 2 ? 2 : 1) * (L.length / 8))) return null;
+  const { task, out } = P;
+  for (let t = 0; t < P.n; t++) if (task[TFILM * t + 10] < 0) return null;
+  const par = Float64Array.of(s.ambient ?? 0, s.emissivity ?? 0, s.h ?? 0, kind, nat?.factor ?? 0, nat?.down[0] ?? 0, nat?.down[1] ?? 0, nat?.down[2] ?? 0);
+  if (P.shared && worthSharing(8 * c.nb * (L.length / 8))) {
+    parallelFor({ kind: "tflow", n: P.n, L: P.L, order: P.order, task, per: P.per, x, par, out, vals: P.vals } satisfies Omit<TFlowJob, "ctl">);
+  } else {
+    for (let t = 0; t < P.n; t++) {
+      const o = TFILM * t, nb = task[o + 8];
+      flowCell(out, task[o + 3], P.L, P.order, task[o + 1], task[o + 2], nb, task[o + 9], x, P.vals, task[o + 10], filmRecord(nb), par, P.per);
     }
   }
-  return { energy, eta };
+  const by = c.doms ? new Float64Array(3 * c.doms.length) : null;
+  let conv = 0, rad = 0, area = 0, sum = 0, hs = 0;
+  for (let t = 0; t < P.n; t++) {
+    const o = TFILM * t, so = task[o + 3];
+    conv += out[so]; rad += out[so + 1]; area += out[so + 2]; sum += out[so + 3]; hs += out[so + 4];
+    if (by) { const d = 3 * c.dom[task[o]]; by[d] += out[so]; by[d + 1] += out[so + 1]; }
+  }
+  return { out: conv + rad, area, mean: area > 0 ? sum / area : 0, ...(nat || forced ? { h: area > 0 ? hs / area : 0 } : {}), ...(by ? { doms: by } : {}) };
 }
 
 /** What a sink takes, W: the flux the terms above carry through its points. */
 function flowOf(c: Ctx, s: ThermalSink, L: Float64Array, x: Float64Array, lens?: Float64Array): SinkFlow {
   const { grid, nbs, off, bas, k3, gam } = c, nat = s.natural, amb = s.ambient ?? 0;
   const forced = s.forced && s.temp === undefined && lens ? lens : null;
+  const held = s.temp !== undefined;
+  if (!held) { const r = planFlow(c, s, L, x, lens); if (r) return r; }
   let out = 0, area = 0, sum = 0, hs = 0;
+  const kept = held ? null : filmValues(c, L), ambK = (s.ambient ?? 0) + KELVIN, amb4 = ambK * ambK * (ambK * ambK);
   const by = c.doms ? new Float64Array(3 * c.doms.length) : null;
   for (let o = 0; o < L.length; o += 8) {
     const e = L[o], E = grid.elems[e], w = L[o + 4], was = out;
-    let rad = 0;
-    bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
-    let t = 0, dn = 0;
-    for (let a = 0; a < nbs[e]; a++) {
-      const v = x[off[e] + a];
-      t += v * bas.v[a];
-      dn += v * (bas.g[3 * a] * k3[3 * e] * L[o + 5] + bas.g[3 * a + 1] * k3[3 * e + 1] * L[o + 6] + bas.g[3 * a + 2] * k3[3 * e + 2] * L[o + 7]);
+    let rad = 0, t = 0, dn = 0;
+    const nb = nbs[e], fo = off[e];
+    if (held) {
+      bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, nb);
+      for (let a = 0; a < nb; a++) {
+        const v = x[fo + a];
+        t += v * bas.v[a];
+        dn += v * (bas.g[3 * a] * k3[3 * e] * L[o + 5] + bas.g[3 * a + 1] * k3[3 * e + 1] * L[o + 6] + bas.g[3 * a + 2] * k3[3 * e + 2] * L[o + 7]);
+      }
+    } else if (kept) {
+      const b = kept.where[o / 8], V = kept.vals;
+      for (let a = 0; a < nb; a++) t += x[fo + a] * V[b + a];
+    } else {
+      // only a held face's flow needs the gradients
+      bas.values(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, nb);
+      for (let a = 0; a < nb; a++) t += x[fo + a] * bas.v[a];
     }
     area += w; sum += w * t;
     if (s.temp !== undefined) out += w * (-dn + 2 * gam[e] * (t - s.temp));
-    if (s.temp === undefined && s.emissivity) { rad = w * s.emissivity * SIGMA * ((t + KELVIN) ** 4 - ((s.ambient ?? 0) + KELVIN) ** 4); out += rad; }
+    if (s.temp === undefined && s.emissivity) { const T2 = (t + KELVIN) * (t + KELVIN); rad = w * s.emissivity * SIGMA * (T2 * T2 - amb4); out += rad; }
     if (s.temp === undefined && nat && lens) {
       const o2 = o / 4, up = -(L[o + 5] * nat.down[0] + L[o + 6] * nat.down[1] + L[o + 7] * nat.down[2]);
       const h = nat.factor * naturalH(up, t - amb, lens[o2], lens[o2 + 1]);
@@ -837,6 +1692,18 @@ export const thermalMemory = (grid: Grid, p: number, degrees?: ArrayLike<number>
 
 /** Most solves of a problem with radiation or natural convection. */
 const RAD_STEPS = 40;
+/**
+ * Whether the radiation / natural convection loop is done after step `it`: the largest change `d` of an element's
+ * mean since the step before is under 1e-4 of the largest mean `top`, or it has stopped shrinking while already
+ * under 1e-3 of it. The loop is Newton's method, whose steps shrink quadratically; a change that small and no
+ * smaller than half the one before (`dBefore`) is what the solves leave in a few badly conditioned elements (a
+ * sliver of a body in a cell), and a big board's third pass went round all forty steps on it, two seconds each.
+ */
+export function radSettled(d: number, dBefore: number, top: number, it: number): boolean {
+  const scale = Math.max(1, top);
+  if (d <= 1e-4 * scale) return true;
+  return it >= 2 && d <= 1e-3 * scale && d > 0.5 * dBefore;
+}
 
 /** A problem set up for solving: the constant matrix and load, each source's load at full power, the sink points. */
 interface Built {
@@ -882,7 +1749,7 @@ function exchangeOf(c: Ctx, X: ThermalExchange, tq: number): ExBuilt {
     let area = 0;
     for (let o = 0; o < L.length; o += 8) {
       const e = L[o], E = c.grid.elems[e], w = L[o + 4];
-      c.bas.eval(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
+      c.bas.values(L[o + 1], L[o + 2], L[o + 3], E.c, E.s, c.nbs[e]);
       for (let a = 0; a < c.nbs[e]; a++) u[c.off[e] + a] += w * c.bas.v[a];
       area += w;
       by[c.dom[e]] += w;
@@ -913,6 +1780,7 @@ function withLowRank(s: Solver, lr: LowRank | null): Solver {
       for (let j = 0; j < m; j++) { const z = Z[j], cj = c[j]; for (let i = 0; i < y.length; i++) y[i] -= cj * z[i]; }
       return y;
     },
+    free: () => s.free?.(),
   };
 }
 
@@ -931,9 +1799,10 @@ function denseSolve(S0: Float64Array, r0: number[], m: number): number[] {
   return x;
 }
 
-interface Solver { solve(f: Float64Array, x0: Float64Array | null): Float64Array }
+/** `free` gives a direct solver's factor memory back at once (it is as big as the matrix or bigger): never call `solve` after it. */
+interface Solver { solve(f: Float64Array, x0: Float64Array | null): Float64Array; free?(): void }
 
-function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) => Float64Array) | null): Built {
+function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint16Array) => Float64Array) | null): Built {
   const p = pb.p;
   const doms = pb.domains && pb.domains.length > 1 ? pb.domains : null;
   if (doms ? doms.some(d => !(d.k > 0) || (d.k3 && !(d.k3.length === 3 && d.k3.every(v => v > 0)))) : !(pb.k > 0) || (pb.k3 && !(pb.k3.length === 3 && pb.k3.every(v => v > 0)))) throw new Error("E-TH-NOK");
@@ -948,7 +1817,7 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   for (let e = 0; e < nel; e++) off[e + 1] = off[e] + nbs[e];
   const memory = thermalMemory(grid, p, deg0);
   if (memory > (pb.memory ?? MEMORY_LIMIT)) throw new Error(`E-SIM-MEMORY: ${memoryMb(memory)}`);
-  const g1 = grid, dom = Uint8Array.from(grid.elems, E => (doms ? g1.cells[E.cells[0]].dom : 0));
+  const g1 = grid, dom = Uint16Array.from(grid.elems, E => (doms ? g1.cells[E.cells[0]].dom : 0));
   const k3 = new Float64Array(3 * nel), ke = new Float64Array(nel);
   const scale = typeof scaleBy === "function" ? scaleBy(dom) : scaleBy;
   for (let e = 0; e < nel; e++) {
@@ -970,11 +1839,18 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   const tq = Math.max(2, p + 1);
   const A = new BlockMatrix(nel, nbs), f = new Float64Array(A.size);
   volumeTerms(c, A);
+  if (doms && keepPoints) c.loc = newLoc(tq);
   const lens: (Float64Array | undefined)[] = [];
+  // sinks on the same triangles (convection and radiation from all open surfaces) share their points
+  const seen = [new Map<object, Float64Array>(), new Map<object, Float64Array>()];
   const at = pb.sinks.map((s, i) => {
     if (s.natural && s.temp === undefined) { const r = naturalPoints(c, s, tq); lens[i] = r.lens; return r.L; }
     if (s.forced && s.temp === undefined) { const r = groupedPoints(c, s, tq, [s.forced.h]); lens[i] = r.lens; return r.L; }
-    return s.free && doms ? freePoints(c, s.tris, tq) : located(c, s.tris, tq);
+    const free = !!(s.free && doms), kept = seen[free ? 1 : 0], key = s.tris as object, had = kept.get(key);
+    if (had) return had;
+    const L = free ? freePoints(c, s.tris, tq) : located(c, s.tris, tq);
+    kept.set(key, L);
+    return L;
   });
   // the penalty is measured on the fixed-temperature faces and, with several domains, on every domain's surface
   const surf = at.filter((_L, i) => pb.sinks[i].temp !== undefined);
@@ -993,8 +1869,36 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   for (const cl of grid.cells) { const v = cl.pts.weight(); volume += v; volumes[doms ? cl.dom : 0] += v; }
   const fs: Float64Array[] = [], put: number[] = [];
   for (const s of pb.sources) { const r = sourceLoad(c, s, tq, volume, volumes); fs.push(r.f); put.push(r.put); }
+  c.loc = undefined;
+  holdThin(c, A);
   const rads = pb.sinks.map((s, i) => (s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural) ? i : -1)).filter(i => i >= 0);
   return { c, A, f, fs, put, at, lens, rads, contacts, joins, volume, volumes, memory, ex, t0: meanTemp(pb) };
+}
+
+/** A reach below this fraction of the element's box counts as thin along that axis. */
+const THIN_REACH = 0.25;
+/** The functions kept on a thin element: the sum over its thin axes of degree × lg(1 / reach) up to this. */
+const THIN_DIGITS = 3;
+/**
+ * A body far thinner than its cells (a lead, a foil, an anode plate): across it the higher powers of the coordinate
+ * differ from the lower ones by (reach)^degree, so from some degree on the element's matrix is singular to the
+ * digits kept (a board with leads a tenth of a cell across was solved at degree 4, gave coefficients in the
+ * thousands at 5 and failed at 6). Those functions are held at zero by a large diagonal term: the ones whose
+ * degrees along the thin axes, each times lg(1 / reach), add up to more than `THIN_DIGITS`.
+ */
+function holdThin(c: Ctx, A: BlockMatrix) {
+  const { grid, nbs, bas } = c, ex = bas.ex;
+  for (let e = 0; e < c.nel; e++) {
+    if (grid.elems[e].cells.every(ci => !grid.cells[ci].box)) continue;
+    const r = elementReach(grid, e);
+    if (r[0] >= THIN_REACH && r[1] >= THIN_REACH && r[2] >= THIN_REACH) continue;
+    const w = r.map(v => (v >= THIN_REACH ? 0 : Math.log10(1 / Math.max(v, 1e-6))));
+    const m = nbs[e], K = A.block(e, e);
+    let top = 0, any = false;
+    for (let b = 0; b < m; b++) top = Math.max(top, Math.abs(K[b * m + b]));
+    for (let b = 0; b < m; b++) if (ex[3 * b] * w[0] + ex[3 * b + 1] * w[1] + ex[3 * b + 2] * w[2] > THIN_DIGITS) { K[b * m + b] += 1e6 * top; any = true; }
+    if (any) c.held = (c.held ?? 0) + 1;
+  }
 }
 
 const meanTemp = (pb: ThermalProblem) => { const temps = pb.sinks.map(s => s.temp ?? s.ambient ?? 0); return temps.reduce((a, v) => a + v, 0) / Math.max(1, temps.length); };
@@ -1015,9 +1919,11 @@ function sinkLoad(c: Ctx, A: BlockMatrix | null, f: Float64Array, at: Float64Arr
 const kept = { key: "", byP: new Map<number, { b: Built; solver: Solver }>() };
 /** What the kept matrices may take, bytes (the factorisation about as much again). */
 const REUSE_BYTES = 800 * 2 ** 20;
+/** Factorisations a warm-up keeps for one linearisation (one per step size met; the step halves and doubles between two or three sizes). */
+const KEEP_STEPS = 3;
 /** Solves answered from a kept factorisation (for tests). */
 export let reusedSolves = 0;
-export function dropReuse() { kept.key = ""; kept.byP.clear(); }
+export function dropReuse() { for (const k of kept.byP.values()) k.solver.free?.(); kept.key = ""; kept.byP.clear(); }
 
 /** A kept build with this problem's loads: the sinks' load and each source's again on the same grid. */
 function reloaded(b: Built, pb: ThermalProblem): Built {
@@ -1047,18 +1953,15 @@ function sourceLoad(c: Ctx, s: ThermalSource, tq: number, volume: number, volume
     if (only) { vol = 0; for (const d of only) vol += volumes[d] ?? 0; }
     if (!(vol > 0)) return { f, put };
     const power = s.density !== undefined ? s.density * vol : s.power!;
-    const q = power / vol;
+    const q = power / vol, T = momentTables(c.bas.p), ex = c.bas.ex;
+    momentsClear(T);
     for (let e = 0; e < nel; e++) {
       if (only && !only.has(dom[e])) continue;
       const E = grid.elems[e];
-      for (const ci of E.cells) {
-        const P = grid.cells[ci].pts;
-        for (let i = 0; i < P.n; i++) {
-          const o = 4 * i, w = q * P.a[o + 3];
-          c.bas.eval(P.a[o], P.a[o + 1], P.a[o + 2], E.c, E.s, c.nbs[e]);
-          for (let a = 0; a < nbs[e]; a++) f[off[e] + a] += w * c.bas.v[a];
-        }
-      }
+      // Σ w N_a over the element's points = the moment of N_a's three degrees
+      for (const ci of E.cells) { const P = grid.cells[ci].pts; momentsAdd(T, P.a, 0, P.n, E.c, E.s, c.deg[e]); }
+      for (let a = 0; a < nbs[e]; a++) f[off[e] + a] += q * T.mom[(ex[3 * a] * T.m + ex[3 * a + 1]) * T.m + ex[3 * a + 2]];
+      momentsClear(T);
     }
     put = power;
   }
@@ -1103,14 +2006,21 @@ function samplerOf(c: Ctx, x: Float64Array, local: Float32Array | null) {
     bas.eval(px, py, pz, E.c, E.s, c.nbs[e]);
     return e;
   };
+  const elIn = (cl: number, px: number, py: number, pz: number) => {
+    if (cl < 0) return -1;
+    const e = g0.cells[cl].el, E = g0.elems[e];
+    bas.eval(px, py, pz, E.c, E.s, c.nbs[e]);
+    return e;
+  };
   const sample = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): ThermalSample => {
     const n = pos.length / 3, temp = new Float32Array(n), flux = new Float32Array(3 * n), err = new Float32Array(n);
-    const hit = hits ? new Uint8Array(n) : undefined, eps = 1e-6 * g0.h, where = doms ? new Uint8Array(n) : undefined;
+    const hit = hits ? new Uint8Array(n) : undefined, eps = 1e-6 * g0.h, where = doms ? new Uint16Array(n) : undefined;
+    const cells = typeof pos === "object" ? g0.cellsOf(pos, nrm, eps) : null;
     for (let i = 0; i < n; i++) {
       let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
       if (nrm) { px -= eps * nrm[3 * i]; py -= eps * nrm[3 * i + 1]; pz -= eps * nrm[3 * i + 2]; }
       if (hit && (px < g0.lo[0] - eps || py < g0.lo[1] - eps || pz < g0.lo[2] - eps || px > g0.lo[0] + g0.n[0] * g0.h + eps || py > g0.lo[1] + g0.n[1] * g0.h + eps || pz > g0.lo[2] + g0.n[2] * g0.h + eps)) continue;
-      const e = elAt(px, py, pz);
+      const e = cells ? elIn(cells[i], px, py, pz) : elAt(px, py, pz);
       if (e < 0) continue;
       if (hit) hit[i] = 1;
       let t = 0, gx = 0, gy = 0, gz = 0;
@@ -1150,7 +2060,7 @@ function ktOf(pb: ThermalProblem): ((dom: number) => number[] | undefined) | nul
 }
 
 /** Each element's conductivity factor at its mean temperature in `x` (its constant coefficient). */
-function ktScale(dom: Uint8Array, nb: number, tab: (dom: number) => number[] | undefined, x: Float64Array | null, t0: number): Float64Array {
+function ktScale(dom: Uint16Array, nb: number, tab: (dom: number) => number[] | undefined, x: Float64Array | null, t0: number): Float64Array {
   const s = new Float64Array(dom.length);
   for (let e = 0; e < dom.length; e++) { const kt = tab(dom[e]); s[e] = kt ? ktFactor(kt, x ? x[e * nb] : t0) : 1; }
   return s;
@@ -1178,20 +2088,49 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   return { ...r, airSteps: steps };
 }
 
+/**
+ * The set-up of the last steady solve, kept for the warm-up that follows it (`keepBuild(true)` before the steady passes,
+ * `takeBuild` after): a warm-up steps on the cells, matrix and surface points its last steady pass has just made, so
+ * making them again was the same work twice. Only a plain set-up is kept (one degree everywhere, no conductivity table,
+ * no air layer: those are made at the warm-up's own temperatures).
+ */
+interface KeptBuild { b: Built; pb: ThermalProblem }
+let keepBuilds = false, lastBuild: KeptBuild | null = null;
+export function keepBuild(on: boolean) { keepBuilds = on; lastBuild = null; }
+/** The kept set-up (given once: the next call has none), to pass as `TransientRun.built`. */
+export function takeBuild(): unknown { const k = lastBuild; lastBuild = null; return k; }
+const noteBuild = (pb: ThermalProblem, b: Built): Built => {
+  if (keepBuilds) lastBuild = !pb.degrees && !ktOf(pb) && !(pb.links ?? []).some(l => l.air !== undefined) ? { b, pb } : null;
+  return b;
+};
+/** Whether a kept set-up is the one `build(pb)` would make. */
+function sameBuild(k: KeptBuild | null | undefined, pb: ThermalProblem): k is KeptBuild {
+  if (!k) return false;
+  const q = k.pb, same = (x: ArrayLike<number>, y: ArrayLike<number>) => x.length === y.length && Array.prototype.every.call(x, (v: number, i: number) => v === y[i]);
+  return q.p === pb.p && q.h === pb.h && same(q.lo, pb.lo) && same(q.hi, pb.hi) && (q.inside === pb.inside || (!!q.inside.tris && !!pb.inside.tris && same(q.inside.tris, pb.inside.tris))) && q.k === pb.k && q.k3 === pb.k3
+    && q.sinks === pb.sinks && q.sources === pb.sources && q.links === pb.links && q.gap === pb.gap && (q.depth ?? 3) === (pb.depth ?? 3)
+    && (q.exchanges?.length ?? 0) === (pb.exchanges?.length ?? 0) && (q.exchanges ?? []).every((X, i) => X.a === pb.exchanges![i].a && X.b === pb.exchanges![i].b && X.f === pb.exchanges![i].f && X.ea === pb.exchanges![i].ea && X.eb === pb.exchanges![i].eb)
+    && (q.domains?.length ?? 0) === (pb.domains?.length ?? 0)
+    && (q.domains ?? []).every((d, i) => { const e = pb.domains![i]; return d.tris === e.tris && d.k === e.k && d.k3 === e.k3 && d.kmap === e.kmap; });
+}
+
 function solveLinked(pb: ThermalProblem): ThermalResult {
   const tab = ktOf(pb);
   const linear = !tab && !(pb.exchanges ?? []).length && !pb.sinks.some(s => s.temp === undefined && ((s.emissivity ?? 0) > 0 || s.natural));
   if (pb.reuse && linear && !pb.degrees) {
     if (kept.key !== pb.reuse) dropReuse();
     const hit = kept.byP.get(pb.p);
-    if (hit && (!pb.grid || pb.grid === hit.b.c.grid)) { reusedSolves++; return { ...solveOnce(pb, reloaded(hit.b, pb), 0, hit.solver), reused: true }; }
-    const b = build(pb), solver = factorSystem(b.c, b.A);
+    if (hit && (!pb.grid || pb.grid === hit.b.c.grid)) { reusedSolves++; return { ...solveOnce(pb, noteBuild(pb, reloaded(hit.b, pb)), 0, hit.solver), reused: true }; }
+    const b = noteBuild(pb, build(pb)), solver = factorSystem(b.c, b.A);
     let bytes = 2 * b.memory;
     for (const k of kept.byP.values()) bytes += 2 * k.b.memory;
-    if (bytes <= REUSE_BYTES) { kept.key = pb.reuse; kept.byP.set(pb.p, { b, solver }); }
-    return solveOnce(pb, b, 0, solver);
+    const keep = bytes <= REUSE_BYTES;
+    if (keep) { kept.key = pb.reuse; kept.byP.set(pb.p, { b, solver }); }
+    const r = solveOnce(pb, b, 0, solver);
+    if (!keep) solver.free?.();
+    return r;
   }
-  if (!tab) return solveOnce(pb, build(pb), 0);
+  if (!tab) return solveOnce(pb, noteBuild(pb, build(pb)), 0);
   // FR-TMAT-004: solved again with each element's k at the temperatures found until no k changes by more than 0.5 %
   const t0 = startTemp(pb);
   let scale = new Float64Array(0);
@@ -1220,19 +2159,33 @@ function solveOnce(pb: ThermalProblem, b: Built, kSteps: number, solver?: Solver
   else {
     // the pass before's answer on these cells is where the loop starts (hierarchical basis: its coefficients lead each
     // element's), so a later pass settles in two or three steps instead of starting from the ambient again
-    let last: Float64Array | null = startFrom(c, pb.prev);
+    let last: Float64Array | null = startFrom(c, pb.prev), kept0: Solver | null = null, dBefore = Infinity;
     x = f;
     for (let it = 0; it < RAD_STEPS; it++) {
       const { B, g, lr } = linearised(b, last);
       for (let i = 0; i < g.length; i++) g[i] += f[i];
-      x = solveSystem(c, B, g, last, lr);
+      // the films move little from one step to the next: the first step's factorisation, kept, solves the later
+      // steps' equations in a few conjugate-gradient iterations (a new one only when that stalls)
+      const y = !lr && kept0 && last ? polished(B, g, last, kept0) : null;
+      if (y) x = y;
+      else {
+        // the older factorisation goes before the new one is made: two of them at once is the peak of a big study's memory
+        kept0?.free?.();
+        kept0 = null;
+        const s0 = factorSystem(c, B);
+        kept0 = lr || !isDirect(c) ? null : s0;
+        x = withLowRank(s0, lr).solve(g, last);
+        if (!kept0) s0.free?.();
+      }
       iterations = it + 1;
       let d = 0, top = 0;
       if (last) for (let e = 0; e < nel; e++) { d = Math.max(d, Math.abs(x[off[e]] - last[off[e]])); top = Math.max(top, Math.abs(x[off[e]])); }
-      const settled = !!last && d <= 1e-4 * Math.max(1, top);
+      const settled = !!last && radSettled(d, dBefore, top, it);
+      dBefore = last ? d : Infinity;
       last = x;
       if (settled) break;
     }
+    kept0?.free?.();
   }
   const prev = pb.prev && pb.prev.length % nel === 0 ? pb.prev : null;
   const { energy, eta } = energies(c, x, prev);
@@ -1270,6 +2223,8 @@ export interface TransientRun {
   t0: number;
   times: number[];
   factor(i: number, t: number): number;
+  /** The last steady pass's set-up (`takeBuild()`), used when it is this problem's. */
+  built?: unknown;
   /** Each output time's solution (the steps are interpolated to it): read the temperatures, what the sinks take and the heat put in. */
   frame(k: number, t: number, sample: (pos: ArrayLike<number>, nrm?: ArrayLike<number>) => ThermalSample, flows: SinkFlow[], applied: number): void;
   /** Allowed temperature change per step, K (at least 2 K). */
@@ -1328,6 +2283,9 @@ function capMul(C: Float64Array[], nb: number, y: Float64Array, s: number, out: 
 /** The finest step allowed is the end time over this, the coarsest the end time over `MIN_STEPS`. */
 const MAX_STEPS = 2000, MIN_STEPS = 20;
 
+/** A warm-up linearises its films again once an element has moved this many step allowances from the last time. */
+const RELIN = 2;
+
 /**
  * Steps a problem in time from a uniform temperature `t0` (FR-TSOL-006): backward Euler for the first step, BDF2 with
  * variable steps after it, on the consistent capacity matrix. The step is chosen from the temperature change per step
@@ -1338,11 +2296,13 @@ const MAX_STEPS = 2000, MIN_STEPS = 20;
 export function transientThermal(pb: ThermalProblem, run: TransientRun): TransientResult {
   // a conductivity that changes with temperature is taken at the element temperatures, again whenever they moved more than the step allowance
   const tab = ktOf(pb);
+  // the steady pass before it has made this very set-up
+  const had = run.built as KeptBuild | undefined, ready = !tab && !pb.degrees && !(pb.links ?? []).some(l => l.air !== undefined) && sameBuild(had, pb) ? had.b : null;
   // an air layer is taken at the run's starting temperature
   if ((pb.links ?? []).some(l => l.air !== undefined)) pb = { ...pb, links: airLinks(pb.links!, () => run.t0) };
   // steps on one degree everywhere
   if (pb.degrees) pb = { ...pb, degrees: undefined };
-  let b = build(pb, tab ? dom => ktScale(dom, basisSize(pb.p), tab, null, run.t0) : null), c = b.c;
+  let b = ready ?? build(pb, tab ? dom => ktScale(dom, basisSize(pb.p), tab, null, run.t0) : null), c = b.c;
   const { nb, nel, grid } = c;
   const { C, total } = capacity(c, run.rc);
   if (!(total > 0)) throw new Error("E-TH-NOCP");
@@ -1355,6 +2315,7 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
   let y0 = new Float64Array(n), yPrev: Float64Array | null = null;
   for (let e = 0; e < nel; e++) y0[e * nb] = run.t0;
   const cache = new Map<string, Solver>();
+  const drop = (k: string) => { cache.get(k)?.free?.(); cache.delete(k); };
   let made = 0;
   let lin: Float64Array | null = b.rads.length || b.ex.some(X => Number.isFinite(X.R)) || tab ? Float64Array.from(y0) : null, linGen = 0, linG: Float64Array | null = null, linB: BlockMatrix | null = null, linLr: LowRank | null = null;
   const relinearise = (rebuild: boolean) => {
@@ -1366,16 +2327,15 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
   relinearise(false);
   const solverFor = (a: number, key: string) => {
     const k = `${key}|${linGen}`, had = cache.get(k);
-    if (had) return had;
+    if (had) { cache.delete(k); cache.set(k, had); return had; }
+    // a new linearisation makes the older matrices useless, and of this one's only the step sizes used last are kept:
+    // they go before the new factorisation is made, since each is as big as the matrix or bigger
+    for (const key2 of [...cache.keys()]) if (!key2.endsWith(`|${linGen}`)) drop(key2);
+    while (cache.size >= KEEP_STEPS) drop(cache.keys().next().value!);
     const B = copyMatrix(linB ?? b.A);
     for (let e = 0; e < nel; e++) { const K = B.block(e, e), Ce = C[e]; for (let i = 0; i < nb * nb; i++) K[i] += a * Ce[i]; }
-    const pbx = c.pb, useCg = pbx.solver === "pcg" || (pbx.solver !== "direct" && B.size > DIRECT_LIMIT);
-    let s0: Solver;
-    if (useCg) { const P = pcgSolver(B, { coarse: basisSize(1), tol: pbx.tol ?? 1e-9 }); s0 = { solve: (f, x0) => P.solve(f, x0 ?? undefined).x }; }
-    else { const E = new BlockCholesky(B); s0 = { solve: f => E.solve(f) }; }
+    const s0 = systemSolver(c, B);
     const s = withLowRank(s0, linLr);
-    // a new linearisation makes the older matrices useless
-    for (const key2 of [...cache.keys()]) if (!key2.endsWith(`|${linGen}`)) cache.delete(key2);
     cache.set(k, s);
     made++;
     return s;
@@ -1430,10 +2390,15 @@ export function transientThermal(pb: ThermalProblem, run: TransientRun): Transie
     if (lin) {
       let d = 0;
       for (let e = 0; e < nel; e++) d = Math.max(d, Math.abs(mean(y0, e) - mean(lin, e)));
-      if (d > allow) { lin = Float64Array.from(y0); relinearise(true); }
+      // the films are linearised by their tangent, so what a move of d leaves out goes with d²: at twice the
+      // step allowance a board's temperatures moved by under 0.01 K, with nearly half the linearisations and
+      // factorisations of a warm-up (at the allowance itself it linearised after almost every step)
+      // (a conductivity table is read at the last linearisation as it is, so it keeps the allowance)
+      if (d > (tab ? 1 : RELIN) * allow) { lin = Float64Array.from(y0); relinearise(true); }
     }
     quiet = moved < allow / 4 ? quiet + 1 : 0;
     if (quiet >= 2 && k > kMin) { k--; quiet = 0; }
   }
+  for (const k of [...cache.keys()]) drop(k);
   return { grid, p: c.p, dofs: b.A.size, memory: b.memory, steps, rejected, solves: made, dt: [dtLo === Infinity ? 0 : dtLo, dtHi], volume: b.volume, capacity: total };
 }
