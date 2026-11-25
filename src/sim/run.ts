@@ -7,7 +7,7 @@ import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNorma
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { DEFAULT_AMBIENT, DEFAULT_REF, keepsSplit, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
-import { contactPatch, facingPatch, intoPatch } from "../thermal/study";
+import { contactPatch, facingPatch, intoPatch, nearPatch } from "../thermal/study";
 import { forcedH, keepBuild, kmapMean, ktFactor, solveThermal, takeBuild, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
 import { viewFactor } from "./viewfactor";
 import { progress, progressPass } from "./progress";
@@ -789,25 +789,40 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[], bodies?:
         const comps = new Set(part.comps), doms: number[] = [];
         (regions ?? []).forEach((k, i) => { if (comps.has(compOf(k))) doms.push(i); });
         if (!doms.length) continue;
+        // the part's own heat is made in the bodies the package names (die, wound core, plate), else in all of them
+        const hot = new Set((part.hot ?? []).filter(c => comps.has(c)));
+        const named = new Set((part.bodies ?? []).map(sameName));
+        const core = doms.filter(i => hot.has(compOf(regions![i])) || (named.size > 0 && !!names?.[i]?.some(n => named.has(sameName(n)))));
+        // with heat bodies beside others, all the power is made in them and a share that goes into the board or a
+        // heatsink is given up by the part's surface there (leads, seat): the whole power crosses die to case
+        const caseDom = core.length && core.length < doms.length ? doms.find(i => !core.includes(i))! : -1;
+        let mine: Float64Array | null = null;
+        const giveUp = (patch: Float64Array, w: number) => {
+          if (caseDom < 0 || !(w > 0)) return 0;
+          const at = nearPatch(mine ??= compTris(b, comps), patch);
+          if (!at) return 0;
+          out.sources.push({ tris: at, power: -w, dom: caseDom, id: l.id });
+          return w;
+        };
         let own = part.p;
         if (boardTris) {
           const share = Math.min(own, Math.max(0, part.board ?? 0)), partTris = share > 0 ? compTris(b, comps) : null;
           // through the pads and the air gap under the body when the package says where (`into`), each region's
           // watts scaled to the share; what lands off the board goes in under the whole part as before
-          let rest = share;
+          let rest = share, kept = 0;
           const into = (part.into ?? []).filter(x => x.w > 0), sum = into.reduce((a, x) => a + x.w, 0);
           if (partTris && sum > 0) for (const x of into) {
             const patch = intoPatch(boardTris, partTris, x);
-            if (patch) { const w = (share * x.w) / sum; out.sources.push({ tris: patch, power: w, dom: boardDom, id: l.id, fine: PAD_FINE }); rest -= w; }
+            if (patch) { const w = (share * x.w) / sum; out.sources.push({ tris: patch, power: w, dom: boardDom, id: l.id, fine: PAD_FINE }); rest -= w; kept += giveUp(patch, w); }
           }
           const patch = partTris && rest > 1e-12 ? contactPatch(boardTris, partTris) : null;
-          if (patch) { out.sources.push({ tris: patch, power: rest, dom: boardDom, id: l.id, fine: PAD_FINE }); rest = 0; }
-          own -= share - rest;
+          if (patch) { out.sources.push({ tris: patch, power: rest, dom: boardDom, id: l.id, fine: PAD_FINE }); kept += giveUp(patch, rest); rest = 0; }
+          own -= share - rest - kept;
           if (part.path === "heatsink") {
             // the heatsink share enters the body the part sits on that makes no heat itself, where it touches the part
             const w = Math.min(own, Math.max(0, part.sink ?? 0));
             const hs = w > 0 ? sinkFor(comps) : null;
-            if (hs) { out.sources.push({ tris: hs.patch, power: w, dom: hs.dom, id: l.id, fine: PAD_FINE }); own -= w; (out.heatsinks ??= {})[part.id] = { comp: hs.comp, w }; }
+            if (hs) { out.sources.push({ tris: hs.patch, power: w, dom: hs.dom, id: l.id, fine: PAD_FINE }); own -= w - giveUp(hs.patch, w); (out.heatsinks ??= {})[part.id] = { comp: hs.comp, w }; }
           }
           if (part.path === "chassis") {
             // the chassis share leaves through the chassis walls, shared by area; with none it leaves the model
@@ -816,10 +831,6 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[], bodies?:
             own -= share;
           }
         }
-        // the part's own heat is made in the bodies the package names (die, wound core, plate), else in all of them
-        const hot = new Set((part.hot ?? []).filter(c => comps.has(c)));
-        const named = new Set((part.bodies ?? []).map(sameName));
-        const core = doms.filter(i => hot.has(compOf(regions![i])) || (named.size > 0 && !!names?.[i]?.some(n => named.has(sameName(n)))));
         if (own > 0) out.sources.push({ power: own, doms: core.length ? core : doms, id: l.id });
         any = true;
       }
