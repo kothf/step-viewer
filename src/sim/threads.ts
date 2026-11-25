@@ -8,7 +8,7 @@
 // nothing to claim, one that never wakes costs nothing.
 
 import { cholSolve, factorDiag, factorSerial, solveBlock, stepCosts, targetOf, updateBlock, type CholPlan, type SolvePlan } from "./blockchol";
-import { adoptMemory, kernelBuffer, memoryOf } from "./cholwasm";
+import { adoptMemory, kernelBuffer, memoryOf, releaseBuffer } from "./cholwasm";
 import { progress } from "./progress";
 
 /** What a helper needs of a factorisation: the plan's arrays and the factor, all on shared memory. */
@@ -52,6 +52,9 @@ export function factorBuffer(n: number, extra = 0): Float64Array {
   if (k) return k.data;
   return share ? new Float64Array(new SharedArrayBuffer(8 * n)) : new Float64Array(n);
 }
+
+/** A factor's memory handed back: kernel memory waits for the next factor that fits it, an ordinary array is left to the collector. */
+export const releaseFactor = (data: Float64Array) => releaseBuffer(data);
 
 const planOf = (j: CholJob): CholPlan => ({ ms: j.ms, rows: j.rows, blockAt: j.blockAt, diagAt: j.diagAt } as CholPlan);
 

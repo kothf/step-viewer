@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { BlockMatrix, Envelope } from "../../src/sim/sparse";
 import { BlockCholesky, cholPlan, minDegreeOrder } from "../../src/sim/blockchol";
 import { serve, setHelpers, setLoopFloor, threadStats, type CholJob } from "../../src/sim/threads";
-import { kernelMemories, setKernel } from "../../src/sim/cholwasm";
+import { kernelMemories, reusedMemories, setKernel } from "../../src/sim/cholwasm";
 import { solveStatic } from "../../src/sim/static";
 import { solveThermal } from "../../src/sim/thermal";
 import { makeGrid, refit, setDropPoints } from "../../src/sim/grid";
@@ -63,6 +63,28 @@ test("block Cholesky: not positive definite is reported", () => {
   const { A } = grid(2, 2, 1, () => 4);
   A.block(3, 3).fill(0);
   assert.throws(() => new BlockCholesky(A), /E-SIM-SINGULAR/);
+});
+
+test("block Cholesky: a released factor's memory is taken by the next factor, with the same numbers", () => {
+  const { A, b } = grid(5, 4, 3, e => 5 + (e % 6) * 3);
+  const F = new BlockCholesky(A), x = F.solve(b);
+  const again = reusedMemories();
+  F.release();
+  assert.throws(() => F.solve(b), /E-SIM-RELEASED/);
+  // a smaller matrix that fits the memory handed back: it is zeroed first, so nothing of the old factor shows
+  const { A: B, b: c } = grid(5, 4, 3, e => 5 + (e % 5) * 3);
+  setKernel(false);
+  let y0: Float64Array;
+  try { y0 = new BlockCholesky(B).solve(c); } finally { setKernel(true); }
+  const G = new BlockCholesky(B), y = G.solve(c);
+  assert.equal(reusedMemories(), again + 1);
+  assert.deepEqual(y, y0);
+  // the first matrix again does not fit a much smaller one's memory... but fits its own size: same answer as before
+  G.release();
+  const H = new BlockCholesky(A);
+  assert.deepEqual(H.solve(b), x);
+  H.release();
+  H.release();
 });
 
 test("block Cholesky: the WebAssembly kernel and the plain loops give the same numbers bit for bit", () => {

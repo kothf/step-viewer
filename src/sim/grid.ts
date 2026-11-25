@@ -398,12 +398,13 @@ export function refit(g: Grid, q: number, fit: number, degree?: (c: Cell) => num
     const bufs: Float64Array[] = [], known = new Map<ArrayBufferLike, number>();
     const at = new Float64Array(g.cells.length), buf = new Int32Array(g.cells.length);
     let n = 0;
-    for (const c of g.cells) if (c.fine && !(c.fine.a.buffer instanceof SharedArrayBuffer)) n += c.fine.n;
+    // (a cell whose fine points were let go keeps only their count: nothing of it moves)
+    for (const c of g.cells) if (c.fine && c.fine.a.length && !(c.fine.a.buffer instanceof SharedArrayBuffer)) n += c.fine.n;
     const a = n ? sharedF64(4 * n) : null;
     if (a) bufs.push(a);
     n = 0;
     g.cells.forEach((c, i) => {
-      if (!c.fine) return;
+      if (!c.fine || !c.fine.a.length) return;
       const b = c.fine.a.buffer;
       if (b instanceof SharedArrayBuffer) {
         let k = known.get(b);
@@ -456,11 +457,13 @@ function dropFine(g: Grid, have: Int32Array) {
     any = true;
   });
   if (!any) return;
+  // what is left moves out of the cell loop's rounds, so the rounds are freed: the other cells' fine points, and
+  // fitted points that are still views of a round (one such view keeps the whole round)
+  const rounds = new Set<ArrayBufferLike>(g.shared?.bufs.map(b => b.buffer));
   for (const c of g.cells) {
-    if (!c.fine || !c.fine.a.length) continue;
-    const own = c.pts === c.fine, a = c.fine.a.slice(0, 4 * c.fine.n);
-    c.fine.a = a;
-    if (own) c.pts = c.fine;
+    const own = c.pts === c.fine;
+    if (c.fine && c.fine.a.length) { c.fine.a = c.fine.a.slice(0, 4 * c.fine.n); if (own) c.pts = c.fine; }
+    if (c.pts && !own && rounds.has(c.pts.a.buffer)) { const P = new Points(); P.a = c.pts.a.slice(0, 4 * c.pts.n); P.n = c.pts.n; c.pts = P; }
   }
   g.shared = null;
 }

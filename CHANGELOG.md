@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.751.0] - 2026-11-25
+
+### Changed
+
+- A thermal study of a big assembly holds less memory. The memory of a factorisation goes to the next one as soon as it is done with (before, it waited for the garbage collector, so two or three stood side by side in a warm-up, each as big as the matrix or bigger), the cell loop's buffers are let go in full once the fine points are (fitted points that still pointed into them kept 1.1 GB), and the lists of surface points are made on shared memory once instead of being copied for the threads. Same temperatures.
+
 ## [1.750.0] - 2026-11-25
 
 ### Changed
@@ -4943,7 +4949,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.750.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.751.0...HEAD
+[1.751.0]: https://github.com/kothf/step-viewer/compare/v1.750.0...v1.751.0
 [1.750.0]: https://github.com/kothf/step-viewer/compare/v1.749.0...v1.750.0
 [1.749.0]: https://github.com/kothf/step-viewer/compare/v1.748.0...v1.749.0
 [1.748.0]: https://github.com/kothf/step-viewer/compare/v1.747.0...v1.748.0

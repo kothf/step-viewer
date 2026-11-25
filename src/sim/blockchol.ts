@@ -8,7 +8,7 @@
 import type { BlockMatrix } from "./sparse";
 import { progress } from "./progress";
 import { kernelOf, scratchOf, type CholKernel } from "./cholwasm";
-import { factor, factorBuffer, parallelFor, sharedF64, sharedSolvePlan, worthSharing } from "./threads";
+import { factor, factorBuffer, releaseFactor, parallelFor, sharedF64, sharedSolvePlan, worthSharing } from "./threads";
 
 /** The factor's layout: element order, each column's lower blocks and where every block lives in `data`. */
 export interface CholPlan {
@@ -269,7 +269,19 @@ export class BlockCholesky {
     for (let k = 0; k < P.nel; k++) this.poff[k + 1] = this.poff[k] + P.ms[k];
   }
   get values() { return this.data.length; }
+  /**
+   * Gives the factor's memory back for the next factor to use (`releaseBuffer`): for a caller that made this
+   * factor, is done with it and knows nothing else holds it. `solve` throws afterwards.
+   */
+  release() {
+    if (this.gone) return;
+    this.gone = true;
+    this.scratch = null;
+    releaseFactor(this.data);
+  }
+  private gone = false;
   solve(b: Float64Array): Float64Array {
+    if (this.gone) throw new Error("E-SIM-RELEASED");
     const x = new Float64Array(this.n), K = kernelOf(this.data), y = K && (this.scratch ??= scratchOf(this.data, this.n));
     if (K && y) kernelSolve(K, this.solvePlan(), this.data, b, y, x);
     else cholSolve(this.solvePlan(), this.data, b, new Float64Array(this.n), x);
@@ -278,6 +290,7 @@ export class BlockCholesky {
   /** Solves for several right-hand sides, on all threads when that is worth it: the same numbers as `solve` gives one by one. */
   solveAll(bs: Float64Array[]): Float64Array[] {
     const n = this.n, q = bs.length;
+    if (this.gone) throw new Error("E-SIM-RELEASED");
     if (q < 2 || typeof SharedArrayBuffer === "undefined" || !(this.data.buffer instanceof SharedArrayBuffer) || !worthSharing(4 * q * this.data.length)) return bs.map(b => this.solve(b));
     const P = (this.sharedPlan ??= sharedSolvePlan(this.solvePlan()));
     const B = sharedF64(n * q), X = sharedF64(n * q);
