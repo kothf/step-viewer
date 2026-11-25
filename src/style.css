@@ -354,7 +354,7 @@ details > :last-child { margin-bottom: 12px; }
 .snap-marker[data-kind="onFace"] .glyph { width: 9px; height: 9px; left: -4.5px; top: -4.5px; border: 0; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); background: #2f6fed99; }
 .snap-tag { position: absolute; left: 12px; top: 10px; font: 600 10px system-ui; color: #b06f00; background: #fff8e6; border-radius: 3px; padding: 0 3px; white-space: nowrap; }
 .tool-hint {
-  position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 3;
+  position: absolute; left: 16px; right: 16px; margin-inline: auto; width: fit-content; max-width: calc(100% - 32px); top: 10px; z-index: 3;
   background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow);
   border-radius: 8px; padding: 6px 12px; font-size: 12px;
 }
@@ -432,6 +432,8 @@ details > :last-child { margin-bottom: 12px; }
 .status {
   grid-area: status; display: flex; align-items: center; gap: 14px; padding: 0 10px;
   background: var(--panel); border-top: 1px solid var(--line); font-size: 12px; white-space: nowrap; overflow: hidden;
+  /* every digit one width, so counters and timers do not shake the line */
+  font-variant-numeric: tabular-nums;
 }
 .snaps { display: flex; gap: 8px; align-items: center; color: var(--muted); }
 .st-snap { color: var(--warn-text); font-weight: 600; min-width: 70px; }
@@ -443,11 +445,15 @@ details > :last-child { margin-bottom: 12px; }
 .st-thermal { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; flex: 0 0 auto; }
 .st-thermal[hidden] { display: none; }
 /* a running analysis: stage, bar, per cent, time, Stop (FR-SOL-022) */
-.st-sim { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; flex: 0 0 auto; min-width: 0; max-width: 100%; }
-/* a solve's line needs the room of the tool prompt and the model statistics */
-.status:has(.st-sim:not([hidden])) :is(.st-hint, #st-stats, #st-fps) { display: none; }
+.st-sim { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; flex: 1 1 0; min-width: 0; max-width: 100%; }
+/* a solve's line needs the room of the tool prompt, the snap filters and the model statistics */
+.status:has(.st-sim:not([hidden])) :is(.st-hint, .snaps, .spacer, #st-stats, #st-fps) { display: none; }
 .st-sim[hidden] { display: none; }
-.st-sim .st-sim-t { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* the stage text takes the room that is left, so a longer or shorter stage never moves the bar, the per cent or Stop */
+.st-sim .st-sim-t { flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.st-sim .st-sim-p, .st-sim .st-sim-s { text-align: right; font-variant-numeric: tabular-nums; }
+.st-sim .st-sim-p { min-width: 5ch; }
+.st-sim .st-sim-s { min-width: 5ch; }
 .st-sim > :not(.st-sim-t) { flex-shrink: 0; }
 .st-sim .st-sim-bar { flex: 0 0 120px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .st-sim .st-sim-bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .25s linear; }
@@ -766,7 +772,7 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .mc-l { font-size: 11px; white-space: nowrap; }
 .mc-line { display: flex; gap: 8px; align-items: center; }
 .mc-status:not(:empty), .mc-busy { pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 3px 9px; font-size: 12px; box-shadow: var(--shadow); }
-.mc-busy { color: var(--muted); position: relative; overflow: hidden; }
+.mc-busy { color: var(--muted); position: relative; overflow: hidden; font-variant-numeric: tabular-nums; }
 .mc-busy[style*="--p"]::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: var(--p); background: var(--accent); transition: width .2s; }
 canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; }
 /* Confirmation corner (a CAD app): ✓/✕ at the top right of the view, left of the nav cube, whenever a command is open. */
@@ -961,7 +967,7 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 #pack-dlg .pm-field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 #drw-pick-dlg .drw-pick-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; max-height: 50vh; overflow-y: auto; }
 #drw-pick-dlg .drw-pick-list .btn { justify-content: space-between; text-align: left; gap: 12px; }
-.mc-empty { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 14px 18px; text-align: center; }
+.mc-empty { position: absolute; left: 16px; right: 16px; margin-inline: auto; width: fit-content; max-width: calc(100% - 32px); top: 42%; transform: translateY(-50%); z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 14px 18px; text-align: center; }
 .mc-empty p { margin: 0 0 10px; font-weight: 600; }
 .mc-empty .row { gap: 6px; }
 .mc-handle { position: absolute; transform: translate(12px, -50%); pointer-events: auto; background: var(--panel); border: 1px solid #f08c00; color: var(--text); font: 600 12px var(--mono); padding: 1px 6px; border-radius: 5px; white-space: nowrap; cursor: pointer; }
@@ -1677,10 +1683,11 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .hud-items-all { display: flex; gap: 6px; margin-top: 4px; }
 .hud-items-all button { flex: 1; font-size: 11px; }
 /* Isolate in assemblies (gap list A1/A2): a small bar at the bottom of the view while isolated. */
-.asm-iso { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 8px; align-items: center; padding: 5px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); font-size: 12px; }
+.asm-iso { position: absolute; bottom: 12px; left: 16px; right: 16px; margin-inline: auto; width: fit-content; max-width: calc(100% - 32px); z-index: 6; display: flex; gap: 8px; align-items: center; padding: 5px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); font-size: 12px; }
 .asm-iso select, .asm-iso button { font-size: 12px; }
 .asm-refs { bottom: 54px; max-width: min(720px, calc(100% - 32px)); }
 .asm-refs span { min-width: 0; }
+.asm-refs button { flex: none; }
 
 /* Selection list (gap list U2): the Ctrl+click picks in the part view's lower left. */
 .mc-sellist { position: absolute; left: 8px; bottom: 8px; z-index: 6; min-width: 190px; max-width: 280px; max-height: 40%; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.18); font-size: 12px; }
@@ -1787,7 +1794,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-note { margin: 4px 0 0; font-size: 11px; }
 .sim-prob { grid-column: 1 / -1; margin: 4px 0 0; color: var(--danger); font-size: 12px; }
 .sim-warn { border-color: var(--danger); }
-.sim-run { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+.sim-run { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-variant-numeric: tabular-nums; }
+.sim-run .sim-run-t { flex: 1 1 auto; min-width: 0; }
 .sim-run .spin { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex: none; }
 /* the analysis switch keeps its words when the bar falls back to icons */
 .cm.cm-icons .sim-mode .sim-mode-b .mc-l { display: block; }

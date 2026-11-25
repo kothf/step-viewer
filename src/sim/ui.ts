@@ -1306,7 +1306,8 @@ export class SimController {
     el.hidden = false;
     const text = this.statusText(), f = this.prog ? overall(this.prog) : 0, pc = Math.round(100 * f);
     const s = Math.floor((performance.now() - this.progT0) / 1000);
-    (el.querySelector(".st-sim-t") as HTMLElement).textContent = text;
+    const tl = el.querySelector(".st-sim-t") as HTMLElement;
+    tl.textContent = text; tl.title = text;
     const bar = el.querySelector(".st-sim-bar") as HTMLElement;
     bar.setAttribute("aria-valuenow", String(pc));
     bar.setAttribute("aria-label", text);

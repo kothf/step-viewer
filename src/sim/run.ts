@@ -1059,6 +1059,55 @@ export function envelope(cases: PassResult[]): PassResult {
 }
 
 /** Reads a solution anywhere in the body: what the worker keeps of the last pass (FR-RES-030). */
+/** Most points a component with no plot point is sampled at, on its own triangles. */
+const OWN_POINTS = 256;
+
+/**
+ * Fills the temperatures of components that no plot point was given to (a small body whose
+ * surface points all fell in a neighbour's cells): sampled at the middles of its own triangles,
+ * nudged inwards, instead of reporting 0 °C. A component with no triangles keeps the nearest
+ * known values of the whole result (never 0).
+ */
+export function ownTemps(domains: { tris: ArrayLike<number> }[], counts: ArrayLike<number>, sample: (pos: Float32Array, nrm: Float32Array) => ArrayLike<number>, out: { min: number; max: number; mean: number }[]): void {
+  const miss: number[] = [];
+  for (let d = 0; d < domains.length; d++) if (!counts[d]) miss.push(d);
+  if (!miss.length) return;
+  const pos: number[] = [], nrm: number[] = [], of: number[] = [];
+  for (const d of miss) {
+    const t = domains[d].tris, n = Math.floor(t.length / 9), step = Math.max(1, Math.ceil(n / OWN_POINTS));
+    for (let i = 0; i < n; i += step) {
+      const o = 9 * i;
+      const ux = t[o + 3] - t[o], uy = t[o + 4] - t[o + 1], uz = t[o + 5] - t[o + 2];
+      const vx = t[o + 6] - t[o], vy = t[o + 7] - t[o + 1], vz = t[o + 8] - t[o + 2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz);
+      if (!(l > 0)) continue;
+      nx /= l; ny /= l; nz /= l;
+      pos.push((t[o] + t[o + 3] + t[o + 6]) / 3, (t[o + 1] + t[o + 4] + t[o + 7]) / 3, (t[o + 2] + t[o + 5] + t[o + 8]) / 3);
+      nrm.push(nx, ny, nz);
+      of.push(d);
+    }
+  }
+  const T = of.length ? sample(Float32Array.from(pos), Float32Array.from(nrm)) : [];
+  const sum = new Map<number, number>(), cnt = new Map<number, number>();
+  for (let i = 0; i < of.length; i++) {
+    const d = of[i], v = T[i];
+    if (!Number.isFinite(v)) continue;
+    const c = out[d];
+    if (v < c.min) c.min = v;
+    if (v > c.max) c.max = v;
+    sum.set(d, (sum.get(d) ?? 0) + v); cnt.set(d, (cnt.get(d) ?? 0) + 1);
+  }
+  // still nothing: the mean of the components that were found, so no one reads 0 °C
+  let all = 0, k = 0;
+  out.forEach((c, d) => { if (counts[d]) { all += c.mean; k++; } });
+  for (const d of miss) {
+    const c = out[d], m = cnt.get(d);
+    if (m) c.mean = sum.get(d)! / m;
+    else { const v = k ? all / k : 0; c.min = v; c.max = v; c.mean = v; }
+  }
+}
+
 export type Sampler = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean) => { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; dom?: Uint16Array };
 
 /** The solver's domains for bodies whose materials differ; undefined when one material serves the whole part. */
@@ -1417,7 +1466,8 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       comps = domains.map(() => ({ min: Infinity, max: -Infinity, mean: 0, power: 0 }));
       const cnt = new Float64Array(domains.length);
       for (let i = 0; i < s.temp.length; i++) { const c = comps[s.dom[i]], v = s.temp[i]; if (v < c.min) c.min = v; if (v > c.max) c.max = v; c.mean += v; cnt[s.dom[i]]++; }
-      comps.forEach((c, i) => { if (cnt[i]) c.mean /= cnt[i]; else { c.min = 0; c.max = 0; } });
+      comps.forEach((c, i) => { if (cnt[i]) c.mean /= cnt[i]; });
+      ownTemps(domains, cnt, (pos, nrm) => r.sample(pos, nrm).temp, comps);
       for (const q of set.sources) {
         if (q.tris && q.dom !== undefined && q.power && comps[q.dom]) comps[q.dom].power += q.power;
         if (q.tris || !(q.power || q.density)) continue;
@@ -1522,8 +1572,10 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
         if (domains && s.dom) {
           const m = domains.map(() => -Infinity), lo = domains.map(() => Infinity), sum = domains.map(() => 0), n = domains.map(() => 0);
           for (let i = 0; i < s.temp.length; i++) { const d = s.dom[i], v = s.temp[i]; if (v > m[d]) m[d] = v; if (v < lo[d]) lo[d] = v; sum[d] += v; n[d]++; }
-          comps[k] = m.map(v => (v === -Infinity ? 0 : v));
-          cstats[k] = m.map((v, d) => (n[d] ? { min: lo[d], max: v, mean: sum[d] / n[d] } : { min: 0, max: 0, mean: 0 }));
+          const st = m.map((v, d) => (n[d] ? { min: lo[d], max: v, mean: sum[d] / n[d] } : { min: Infinity, max: -Infinity, mean: 0 }));
+          ownTemps(domains, n, (pos, nrm) => sample(pos, nrm).temp, st);
+          cstats[k] = st;
+          comps[k] = st.map(x => x.max);
           dom = s.dom;
         }
         if (k === times.length - 1) { flux = s.flux; flows = mergeFlows(fl, set.sinkRow); }
