@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.752.0] - 2026-11-25
+
+### Changed
+
+- A thermal study with radiation or natural convection on many surfaces finishes sooner. The loop that settles the surface temperatures now stops when the change between two steps is small and no longer shrinking (rounding in a few badly conditioned elements kept it just above the old limit, so the third pass of a board went round 17 steps of two seconds each instead of 3). A board of 130,000 unknowns: 127 s to 95 s on four cores, same temperatures.
+
 ## [1.751.0] - 2026-11-25
 
 ### Changed
@@ -4949,7 +4955,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.751.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.752.0...HEAD
+[1.752.0]: https://github.com/kothf/step-viewer/compare/v1.751.0...v1.752.0
 [1.751.0]: https://github.com/kothf/step-viewer/compare/v1.750.0...v1.751.0
 [1.750.0]: https://github.com/kothf/step-viewer/compare/v1.749.0...v1.750.0
 [1.749.0]: https://github.com/kothf/step-viewer/compare/v1.748.0...v1.749.0
