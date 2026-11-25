@@ -1,7 +1,7 @@
 // Thermal analysis (FRS-thermal TH0/TH2, AT-TH0-1..4): steady conduction against closed-form answers.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { solveThermal, naturalH, SIGMA, KELVIN } from "../../src/sim/thermal";
+import { solveThermal, naturalH, radSettled, SIGMA, KELVIN } from "../../src/sim/thermal";
 import { MeshBody, insideOf } from "../../src/sim/body";
 
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
@@ -117,4 +117,20 @@ test("tube: heat through the wall follows the logarithm, passes converge (AT-TH0
       assert.ok(r.prevError !== null && r.prevError < 10);
     }
   }
+});
+
+test("radiation loop: done when the change is tiny, or small and no longer shrinking", () => {
+  // under 1e-4 of the largest mean: done at any step
+  assert.equal(radSettled(0.03, 50, 387, 1), true);
+  // Newton's steps still shrinking: go on
+  assert.equal(radSettled(0.2, 16, 387, 2), false);
+  assert.equal(radSettled(0.06, 260, 387, 1), false);
+  // small and stalled (what a few badly conditioned elements leave): done from the third step on
+  assert.equal(radSettled(0.042, 0.065, 387, 2), true);
+  assert.equal(radSettled(0.042, 0.065, 387, 1), false);
+  // stalled but not small: go on
+  assert.equal(radSettled(0.5, 0.6, 387, 5), false);
+  // the scale is never under one degree
+  assert.equal(radSettled(5e-5, 1, 0.2, 1), true);
+  assert.equal(radSettled(2e-4, 1, 0.2, 1), false);
 });

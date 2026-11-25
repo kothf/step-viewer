@@ -1580,6 +1580,18 @@ export const thermalMemory = (grid: Grid, p: number, degrees?: ArrayLike<number>
 
 /** Most solves of a problem with radiation or natural convection. */
 const RAD_STEPS = 40;
+/**
+ * Whether the radiation / natural convection loop is done after step `it`: the largest change `d` of an element's
+ * mean since the step before is under 1e-4 of the largest mean `top`, or it has stopped shrinking while already
+ * under 1e-3 of it. The loop is Newton's method, whose steps shrink quadratically; a change that small and no
+ * smaller than half the one before (`dBefore`) is what the solves leave in a few badly conditioned elements (a
+ * sliver of a body in a cell), and a big board's third pass went round all forty steps on it, two seconds each.
+ */
+export function radSettled(d: number, dBefore: number, top: number, it: number): boolean {
+  const scale = Math.max(1, top);
+  if (d <= 1e-4 * scale) return true;
+  return it >= 2 && d <= 1e-3 * scale && d > 0.5 * dBefore;
+}
 
 /** A problem set up for solving: the constant matrix and load, each source's load at full power, the sink points. */
 interface Built {
@@ -2035,7 +2047,7 @@ function solveOnce(pb: ThermalProblem, b: Built, kSteps: number, solver?: Solver
   else {
     // the pass before's answer on these cells is where the loop starts (hierarchical basis: its coefficients lead each
     // element's), so a later pass settles in two or three steps instead of starting from the ambient again
-    let last: Float64Array | null = startFrom(c, pb.prev), kept0: Solver | null = null;
+    let last: Float64Array | null = startFrom(c, pb.prev), kept0: Solver | null = null, dBefore = Infinity;
     x = f;
     for (let it = 0; it < RAD_STEPS; it++) {
       const { B, g, lr } = linearised(b, last);
@@ -2056,7 +2068,8 @@ function solveOnce(pb: ThermalProblem, b: Built, kSteps: number, solver?: Solver
       iterations = it + 1;
       let d = 0, top = 0;
       if (last) for (let e = 0; e < nel; e++) { d = Math.max(d, Math.abs(x[off[e]] - last[off[e]])); top = Math.max(top, Math.abs(x[off[e]])); }
-      const settled = !!last && d <= 1e-4 * Math.max(1, top);
+      const settled = !!last && radSettled(d, dBefore, top, it);
+      dBefore = last ? d : Infinity;
       last = x;
       if (settled) break;
     }
