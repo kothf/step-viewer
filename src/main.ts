@@ -129,14 +129,21 @@ async function simulateBoard(pkg: ThermalPackage, match: PartMatch, bodies: Mode
   const plan = boardPlan(pkg.manifest, match, bodies, stand);
   const bk = boardConductivity(plan.thickness || 1.6, { ...DEFAULT_STACK, ...plan.stack });
   const boardMat: MatRef = { name: BOARD_MATERIAL, density: Math.round(bk.density * 1000) / 1000, k: Math.round(bk.along * 100) / 100, cp: Math.round(bk.cp) };
-  const mats = plan.mats.map((name, i) => { if (i === plan.board) return boardMat; const m = findMaterial(name); return m ? toRef(m) : null; });
+  if (plan.boardEmis !== undefined) boardMat.emis = plan.boardEmis;
+  // what the package says a body is made of wins over the guess: its own material table, else a library name
+  const mats = plan.mats.map((name, i) => {
+    if (i === plan.board) return boardMat;
+    const g = plan.given?.[i], lib = findMaterial(typeof g === "string" ? g : name) ?? findMaterial(name);
+    if (g && typeof g !== "string") return { name: g.name, density: g.density !== undefined ? g.density / 1000 : 1, k: g.k, ...(g.cp !== undefined ? { cp: g.cp } : {}), ...(g.emis !== undefined ? { emis: g.emis } : {}) } as MatRef;
+    return lib ? toRef(lib) : null;
+  });
   const gerbers = boardGerbers.get(`sv:m:${src.name}:${src.data.byteLength || ""}`);
   const extra = stand.map((x, j) => { const m = findMaterial(plan.standMats?.[j] ?? ""); return { ...standInPart(x), name: x.name, mat: m ? toRef(m) : null, color: [0.62, 0.64, 0.68] as [number, number, number] }; });
   const got = await asm.fromModel(src.data.slice(0), src.name, mats, plan.names, extra);
   if (!got) return;
   // the file's bodies first, then the stand-ins
   const made = got.length - extra.length, ids = (i: number) => (i >= bodies.length ? got[made + i - bodies.length] : got[i]);
-  const heat = plan.heat.map(h => ({ id: h.id, name: h.name, comps: h.bodies.map(ids).filter((x): x is string => !!x), p: h.p, ...(h.limit !== undefined ? { limit: h.limit } : {}), ...(h.life !== undefined ? { life: h.life } : {}), ...(h.board !== undefined ? { board: h.board } : {}), ...(h.sink !== undefined ? { sink: h.sink } : {}), ...(h.path ? { path: h.path } : {}), ...(h.elyt ? { elyt: true } : {}), ...(h.junction ? { junction: true } : {}), ...(h.rjc !== undefined ? { rjc: h.rjc } : {}) }));
+  const heat = plan.heat.map(h => ({ id: h.id, name: h.name, comps: h.bodies.map(ids).filter((x): x is string => !!x), p: h.p, ...(h.limit !== undefined ? { limit: h.limit } : {}), ...(h.life !== undefined ? { life: h.life } : {}), ...(h.board !== undefined ? { board: h.board } : {}), ...(h.sink !== undefined ? { sink: h.sink } : {}), ...(h.path ? { path: h.path } : {}), ...(h.elyt ? { elyt: true } : {}), ...(h.junction ? { junction: true } : {}), ...(h.rjc !== undefined ? { rjc: h.rjc } : {}), ...(h.hot?.length ? { hot: h.hot.map(ids).filter((x): x is string => !!x) } : {}) }));
   const boardId = plan.board >= 0 ? ids(plan.board) : null;
   // the package's board share of each part's heat goes into the board under it (always: parts are soldered, never in the air)
   sim.boardStudy({ map: { pkg, name: pkg.manifest.design || src.name.replace(/\.(step|stp)$/i, ""), shift: match.shift }, ambient: plan.ambient, emissivity: plan.emissivity, enclosure: plan.enclosure, down: plan.down, heat, ...(boardId ? { board: { comp: boardId, t: plan.thickness, ...(plan.stack ? { stack: plan.stack } : {}) } } : {}) });

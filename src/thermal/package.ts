@@ -32,7 +32,15 @@ export interface ThermalPart {
   /** Rated life (h) at the limit temperature, when the package gives it. */
   ratedLife?: number;
   source?: string;
+  /** A material key (of the manifest's `materials`, else a library name) per STEP solid name, and for the bodies not listed. */
+  mats?: Record<string, string>;
+  mat?: string;
+  /** STEP solid names the part's own heat is made in (`heat_bodies`): die, wound core, plate. Absent = all its bodies. */
+  heat?: string[];
 }
+
+/** A material the package gives for bodies (`materials`): conductivity at least; SI units as written, density in kg/m³. */
+export interface PackageMaterial { name: string; k: number; cp?: number; density?: number; emis?: number }
 
 export interface ThermalSettings {
   ambient?: number;
@@ -53,8 +61,10 @@ export interface ThermalManifest {
   design: string;
   files: { mesh?: string; sources?: string; picture?: string; step?: string; gerber?: string };
   settings: ThermalSettings;
-  /** The board's copper stack, when the writer gives it (`board` {layers, copper_um, coverage}). */
-  board?: { layers?: number; copper?: number; cover?: number };
+  /** The board's copper stack, when the writer gives it (`board` {layers, copper_um, coverage}), and its surface emissivity. */
+  board?: { layers?: number; copper?: number; cover?: number; emis?: number };
+  /** Materials by key (`materials`), which parts name per body in `body_materials` / `material`. */
+  materials?: Record<string, PackageMaterial>;
   /** ± °C the writer states. */
   accuracy?: number;
   range?: [number, number];
@@ -103,6 +113,16 @@ function partOf(r: Record<string, unknown>): ThermalPart | null {
     t: num(r.t_body_C), tKind: str(r.t_kind) || undefined, limit: num(r.t_limit_C), margin: num(r.margin_C), rjc: num(r.rjc_KW),
     life: num(r.life_h), ratedLife: num(r.life_rated_h), source: str(r.source) || undefined,
   };
+  const list = (v: unknown) => (Array.isArray(v) ? v.map(str) : str(v).split(";")).map(x => x.trim()).filter(Boolean);
+  const heat = list(r.heat_bodies);
+  if (heat.length) p.heat = heat;
+  if (str(r.material).trim()) p.mat = str(r.material).trim();
+  const bm = r.body_materials;
+  if (bm && typeof bm === "object" && !Array.isArray(bm)) {
+    const m: Record<string, string> = {};
+    for (const [k, v] of Object.entries(bm as Record<string, unknown>)) if (k.trim() && str(v).trim()) m[k.trim()] = str(v).trim();
+    if (Object.keys(m).length) p.mats = m;
+  }
   return finishPart(p);
 }
 
@@ -148,11 +168,20 @@ export function readManifest(text: string): ThermalManifest {
     ...(layers !== undefined && layers >= 1 && layers <= 64 ? { layers: Math.round(layers) } : {}),
     ...(copper !== undefined && copper > 0 && copper <= 500 ? { copper } : {}),
     ...(cover !== undefined && cover >= 0 && cover <= 1 ? { cover } : {}),
+    ...(num(b.emissivity) !== undefined && num(b.emissivity)! > 0 && num(b.emissivity)! <= 1 ? { emis: num(b.emissivity)! } : {}),
   };
+  // materials by key: an entry needs a conductivity; emissivity in (0, 1]
+  const materials: Record<string, PackageMaterial> = {};
+  if (j.materials && typeof j.materials === "object" && !Array.isArray(j.materials)) for (const [key, v] of Object.entries(j.materials as Record<string, unknown>)) {
+    if (!v || typeof v !== "object") continue;
+    const m = v as Record<string, unknown>, k = num(m.k_WmK), cp = num(m.cp_JkgK), rho = num(m.density_kgm3), e = num(m.emissivity);
+    if (!(k !== undefined && k > 0)) continue;
+    materials[key] = { name: str(m.name).trim() || key, k, ...(cp !== undefined && cp > 0 ? { cp } : {}), ...(rho !== undefined && rho > 0 ? { density: rho } : {}), ...(e !== undefined && e > 0 && e <= 1 ? { emis: e } : {}) };
+  }
   return {
     format, version, newer: version > VERSION, app: str(j.app), created: str(j.created), design: str(j.design),
     files: { mesh: str(files.mesh) || undefined, sources: str(files.sources) || undefined, picture: str(files.picture) || undefined, step: str(files.step) || undefined, gerber: str(files.gerber) || undefined },
-    settings, accuracy: num(j.accuracy_C), range, parts, ...(Object.keys(board).length ? { board } : {}),
+    settings, accuracy: num(j.accuracy_C), range, parts, ...(Object.keys(board).length ? { board } : {}), ...(Object.keys(materials).length ? { materials } : {}),
   };
 }
 

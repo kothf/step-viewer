@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.755.0] - 2026-11-25
+
+### Added
+
+- Materials can carry a **surface emissivity** (0 to 1; a field of its own in My materials). Radiation from all open surfaces in a thermal study of an assembly then uses each body's own emissivity, and the value typed for the study on bodies whose material has none. The heat balance still shows one row for it.
+- A board's parts can say **where their heat is made**. A Heat from package row may name bodies of its part (a die, a wound core, a valve's plate): the part's own heat is then made only there, not throughout the part. A junction part with such bodies reports their hottest point as its junction, and its Rjc is no longer used. The load's panel marks these parts with ◆.
+- A thermal package may bring its own materials (`materials`, `body_materials`, `material`), the bodies the heat is made in (`heat_bodies`) and the board's emissivity (`board.emissivity`); Simulate then uses them instead of guessing. Written up in `docs/thermal-package-export.md`, together with the same for an assembly written by a design app.
+
 ## [1.754.0] - 2026-11-25
 
 ### Changed
@@ -4971,7 +4979,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.754.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.755.0...HEAD
+[1.755.0]: https://github.com/kothf/step-viewer/compare/v1.754.0...v1.755.0
 [1.754.0]: https://github.com/kothf/step-viewer/compare/v1.753.0...v1.754.0
 [1.753.0]: https://github.com/kothf/step-viewer/compare/v1.752.0...v1.753.0
 [1.752.0]: https://github.com/kothf/step-viewer/compare/v1.751.0...v1.752.0

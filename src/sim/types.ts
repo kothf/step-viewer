@@ -95,6 +95,16 @@ export interface PackageHeat {
   /** The package's temperature of the part is a junction's (FR-TBRD-021); `rjc` K/W junction to case, typed or from the package. */
   junction?: boolean;
   rjc?: number;
+  /**
+   * The components (of `comps`) the part's own heat is made in, from the package's `heat_bodies`: a die, a wound
+   * core, a valve's plate. Absent = all of them. A junction part with them reports their hottest point, not case + Rjc.
+   */
+  hot?: string[];
+  /**
+   * The same by body name inside the part's own document (a part of several bodies, as the design app writes them:
+   * "Die", "Core", "Plate"): the bodies its own heat is made in. Names are compared without case.
+   */
+  bodies?: string[];
 }
 /** Package parts under this power are left out, as the package does (FR-TBRD-002), W. */
 export const PACKAGE_MIN_POWER = 0.01;

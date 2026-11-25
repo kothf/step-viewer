@@ -302,7 +302,9 @@ export class AsmController {
           regions: r.regions.map(q => {
             const pd = ex.parts[q.part]?.doc, own = q.mat ? Object.values(pd?.bodies ?? {}).find(b => b.material?.name === q.mat)?.material : null;
             const name = ex.components.find(c => c.id === q.comp)?.name ?? q.comp, n = many.get(q.comp)!;
-            return { key: n > 1 ? `${q.comp}#${q.solid}` : q.comp, tris: q.tris, mat: own ?? pd?.material ?? null, name: n > 1 ? `${name} (${q.solid + 1})` : name };
+            // the names a package may call the body by: the one typed in the Bodies folder, its key, the feature that made it
+            const fid = q.body?.split("#")[0], body = q.body ? [pd?.bodies?.[q.body]?.name, q.body, pd?.features.find(f => f.id === fid)?.name].filter((x): x is string => !!x) : undefined;
+            return { key: n > 1 ? `${q.comp}#${q.solid}` : q.comp, tris: q.tris, mat: own ?? pd?.material ?? null, name: n > 1 ? `${name} (${q.solid + 1})` : name, ...(body?.length ? { body } : {}) };
           }),
         };
       },
