@@ -272,7 +272,7 @@ export interface ThermalSample {
   err: Float32Array;
   hit?: Uint8Array;
   /** With `domains`: the one each point is in. */
-  dom?: Uint8Array;
+  dom?: Uint16Array;
 }
 
 export interface ThermalResult {
@@ -321,7 +321,7 @@ interface Ctx {
   /** Conductivity (the largest of the three directions) and domain of each element; `k3` = along X, Y, Z, 3 each. */
   ke: Float64Array;
   k3: Float64Array;
-  dom: Uint8Array;
+  dom: Uint16Array;
   doms: ThermalDomain[] | null;
   bas: Basis;
   bas2: Basis;
@@ -332,17 +332,23 @@ interface Ctx {
 }
 
 /** The body each triangle of a set lies on (−1 = none found), asked once per set and kept. */
-const triBodies = new WeakMap<object, { doms: ThermalDomain[]; of: Int8Array }>();
-function bodiesOf(c: Ctx, tris: ArrayLike<number>): Int8Array | null {
-  const doms = c.doms;
-  if (!doms || typeof tris !== "object") return null;
-  const had = triBodies.get(tris as object);
-  if (had && had.doms === doms) return had.of;
-  const n = Math.floor(tris.length / 9), nrms = triNormals(tris), of = new Int8Array(n).fill(-1), eps = 1e-4 * c.grid.h;
+const triBodies = new WeakMap<object, { doms: ThermalDomain[]; of: Int32Array }>();
+/** The body each triangle is the surface of (the first one holding its middle stepped `eps` inwards), −1 = none.
+ * A 32-bit list: an 8-bit one lost every body past the 127th (a board with all its parts has hundreds). */
+export function triangleBodies(doms: ArrayLike<{ inside(x: number, y: number, z: number): boolean }>, tris: ArrayLike<number>, eps: number): Int32Array {
+  const n = Math.floor(tris.length / 9), nrms = triNormals(tris), of = new Int32Array(n).fill(-1);
   for (let t = 0; t < n; t++) {
     const o = 9 * t, x = (tris[o] + tris[o + 3] + tris[o + 6]) / 3 - eps * nrms[3 * t], y = (tris[o + 1] + tris[o + 4] + tris[o + 7]) / 3 - eps * nrms[3 * t + 1], z = (tris[o + 2] + tris[o + 5] + tris[o + 8]) / 3 - eps * nrms[3 * t + 2];
     for (let d = 0; d < doms.length; d++) if (doms[d].inside(x, y, z)) { of[t] = d; break; }
   }
+  return of;
+}
+function bodiesOf(c: Ctx, tris: ArrayLike<number>): Int32Array | null {
+  const doms = c.doms;
+  if (!doms || typeof tris !== "object") return null;
+  const had = triBodies.get(tris as object);
+  if (had && had.doms === doms) return had.of;
+  const of = triangleBodies(doms, tris, 1e-4 * c.grid.h);
   triBodies.set(tris as object, { doms, of });
   return of;
 }
@@ -377,7 +383,7 @@ function pieceDegree(c: Ctx, nrms: ArrayLike<number>, bodyOf: (t: number) => num
 }
 
 /** The points of some triangles cut at the grid planes, each with its element: 8 numbers per point, triangle by triangle. */
-function cutPoints(c: Ctx, tris: ArrayLike<number>, q: number, own: Int8Array | null, dom: number): Float64Array {
+function cutPoints(c: Ctx, tris: ArrayLike<number>, q: number, own: Int32Array | null, dom: number): Float64Array {
   const g = c.grid, nrms = triNormals(tris), eps = 1e-7 * g.h;
   const { pts, tri } = gridTrianglePoints(tris, g.lo, g.h, q, pieceDegree(c, nrms, t => own ? own[t] : dom), smallOf(tris, g.h));
   const out = points8(8 * pts.n);
@@ -438,7 +444,7 @@ function locFind(K: LocKept, tris: ArrayLike<number>, o: number, body: number, h
   return -1;
 }
 /** As `cutPoints`, through the kept triangles; `ids` = each point's place in `K` (for `K.free`). */
-function keptPoints(c: Ctx, K: LocKept, tris: ArrayLike<number>, own: Int8Array | null, dom: number): { L: Float64Array; ids: Int32Array } {
+function keptPoints(c: Ctx, K: LocKept, tris: ArrayLike<number>, own: Int32Array | null, dom: number): { L: Float64Array; ids: Int32Array } {
   const nt = Math.floor(tris.length / 9), recs = new Int32Array(nt), miss: number[] = [];
   for (let t = 0; t < nt; t++) {
     const body = own ? own[t] : dom, h = triHash(tris, 9 * t, body);
@@ -464,16 +470,34 @@ function keptPoints(c: Ctx, K: LocKept, tris: ArrayLike<number>, own: Int8Array 
       a.set(K.pts.subarray(0, 5 * K.n)); f.set(K.free.subarray(0, K.n));
       K.pts = a; K.free = f;
     }
-    for (let i = 0; i < pts.n; i++) {
-      const o = 4 * i, k = tri[i], r = recs[miss[k]], nx = nrms[3 * k], ny = nrms[3 * k + 1], nz = nrms[3 * k + 2];
-      const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
-      const cl = g.cellOf(x - eps * nx, y - eps * ny, z - eps * nz, K.body[r]);
+    const els = Int32Array.from(g.cells, cl => cl.el), maps = g.maps, n0 = g.n[0], n1 = g.n[1], n2 = g.n[2], lo0 = g.lo[0], lo1 = g.lo[1], lo2 = g.lo[2], gh = g.h;
+    const P = pts.a, np = pts.n, KP = K.pts, bodyOf = K.body, from = K.from, count = K.count;
+    let kn = K.n, kLast = -1, r = -1, bd = -1, nx = 0, ny = 0, nz = 0, map: Int32Array | null = null, cnt = 0;
+    for (let i = 0; i < np; i++) {
+      const o = 4 * i, k = tri[i];
+      if (k !== kLast) {
+        if (r >= 0) count[r] += cnt;
+        kLast = k; r = recs[miss[k]]; bd = bodyOf[r]; cnt = 0;
+        nx = nrms[3 * k]; ny = nrms[3 * k + 1]; nz = nrms[3 * k + 2];
+        map = bd >= 0 && bd < maps.length ? maps[bd] : null;
+      }
+      const x = P[o], y = P[o + 1], z = P[o + 2];
+      // the cube's cell of the triangle's body straight from the grid's map (`cellOf` only where it has none there)
+      const px = x - eps * nx, py = y - eps * ny, pz = z - eps * nz;
+      let cl = -1;
+      if (map) {
+        const ci = Math.min(n0 - 1, Math.max(0, Math.floor((px - lo0) / gh))), cj = Math.min(n1 - 1, Math.max(0, Math.floor((py - lo1) / gh))), ck = Math.min(n2 - 1, Math.max(0, Math.floor((pz - lo2) / gh)));
+        cl = map[(ck * n1 + cj) * n0 + ci];
+      }
+      if (cl < 0) cl = g.cellOf(px, py, pz, bd);
       if (cl < 0) continue;
-      if (K.from[r] < 0) K.from[r] = K.n;
-      const w = 5 * K.n++;
-      K.pts[w] = g.cells[cl].el; K.pts[w + 1] = x; K.pts[w + 2] = y; K.pts[w + 3] = z; K.pts[w + 4] = pts.a[o + 3];
-      K.count[r]++;
+      if (from[r] < 0) from[r] = kn;
+      const w = 5 * kn++;
+      KP[w] = els[cl]; KP[w + 1] = x; KP[w + 2] = y; KP[w + 3] = z; KP[w + 4] = P[o + 3];
+      cnt++;
     }
+    if (r >= 0) count[r] += cnt;
+    K.n = kn;
   }
   let n = 0;
   for (let t = 0; t < nt; t++) n += K.count[recs[t]];
@@ -779,6 +803,40 @@ function pairLower(n: number, K: Float64Array, N: Float64Array, M: Float64Array,
   }
 }
 
+/** Numbers per point of a perfect contact kept for `joinBlocks`: x, y, z, w, γ, then each side's weight and its
+ * conductivity times the normal; and per run of a shared loop: first point, end, the two elements' centres and half
+ * sizes, their function counts. */
+const JPT = 13, TJOIN = 12;
+
+/**
+ * One run of joining points between two elements: the blocks aa, ab, bb (each in a third of the slot; aa and bb by
+ * their lower triangles) summed from zero. The same sums on one thread and on several.
+ */
+function joinBlocks(S: Float64Array, q: number, P: Float64Array, from: number, end: number, bas: Basis, bas2: Basis,
+  ca: ArrayLike<number>, sa: number, cb: ArrayLike<number>, sb: number, ma: number, mb: number, MA: Float64Array, MB: Float64Array) {
+  const Saa = S.subarray(0, ma * ma), Sab = S.subarray(q, q + ma * mb), Sbb = S.subarray(2 * q, 2 * q + mb * mb);
+  Saa.fill(0); Sab.fill(0); Sbb.fill(0);
+  for (let i = from; i < end; i++) {
+    const o = JPT * i, w = P[o + 3], gamma = P[o + 4], wa = P[o + 5], ax = P[o + 6], ay = P[o + 7], az = P[o + 8], wb = P[o + 9], bx = P[o + 10], by = P[o + 11], bz = P[o + 12];
+    bas.eval(P[o], P[o + 1], P[o + 2], ca, sa, ma);
+    bas2.eval(P[o], P[o + 1], P[o + 2], cb, sb, mb);
+    // pair() takes half of each side's flux: the weights make it wa·(A's) + wb·(B's)
+    for (let k = 0; k < ma; k++) MA[k] = 2 * wa * (bas.g[3 * k] * ax + bas.g[3 * k + 1] * ay + bas.g[3 * k + 2] * az);
+    for (let k = 0; k < mb; k++) MB[k] = 2 * wb * (bas2.g[3 * k] * bx + bas2.g[3 * k + 1] * by + bas2.g[3 * k + 2] * bz);
+    pairLower(ma, Saa, bas.v, MA, 1, w, gamma);
+    pair(ma, mb, Sab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
+    pairLower(mb, Sbb, bas2.v, MB, -1, w, gamma);
+  }
+}
+kernel<TFaceJob, { j: TFaceJob; bas: Basis; bas2: Basis; MA: Float64Array; MB: Float64Array }>("tjoin", {
+  init: j => { const bas = new Basis(j.p); return { j, bas, bas2: new Basis(j.p), MA: new Float64Array(bas.n), MB: new Float64Array(bas.n) }; },
+  run({ j, bas, bas2, MA, MB }, t) {
+    const k = j.task, o = TJOIN * t;
+    joinBlocks(j.out.subarray(j.slot * t, j.slot * (t + 1)), j.slot / 3, j.pts, k[o], k[o + 1],
+      bas, bas2, [k[o + 2], k[o + 3], k[o + 4]], k[o + 5], [k[o + 6], k[o + 7], k[o + 8]], k[o + 9], k[o + 10], k[o + 11], MA, MB);
+  },
+});
+
 /** Numbers kept per joining point: contact, elements a and b, x, y, z, w, normal, γ (0 with a conductance), conductance. */
 const JOIN = 12;
 
@@ -807,19 +865,10 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
     how.set(Math.min(l.a, l.b) * nd + Math.max(l.a, l.b), l);
   }
   const boxes = doms.map(d => triBox(d.tris)), found = new Map<number, number>();
-  const MA = new Float64Array(nb), MB = new Float64Array(nb);
-  const Saa = new Float64Array(nb * nb), Sab = new Float64Array(nb * nb), Sbb = new Float64Array(nb * nb);
-  let runA = -1, runB = -1;
-  const flush = () => {
-    if (runA < 0) return;
-    const ma = nbs[runA], mb = nbs[runB];
-    const Kaa = A.block(runA, runA), Kab = A.block(runA, runB), Kba = A.block(runB, runA), Kbb = A.block(runB, runB);
-    for (let i = 0; i < ma; i++) for (let j = 0; j <= i; j++) { const v = Saa[i * ma + j]; Kaa[i * ma + j] += v; if (j < i) Kaa[j * ma + i] += v; }
-    for (let i = 0; i < mb; i++) for (let j = 0; j <= i; j++) { const v = Sbb[i * mb + j]; Kbb[i * mb + j] += v; if (j < i) Kbb[j * mb + i] += v; }
-    for (let i = 0; i < ma; i++) for (let j = 0; j < mb; j++) { const v = Sab[i * mb + j]; Kab[i * mb + j] += v; Kba[j * ma + i] += v; }
-    Saa.fill(0, 0, ma * ma); Sbb.fill(0, 0, mb * mb); Sab.fill(0, 0, ma * mb);
-    runA = runB = -1;
-  };
+  // the points of perfect contacts are kept (JPT numbers each) and summed afterwards by runs of one pair of elements
+  // (`joinBlocks`), on all threads when the work is worth it
+  let jp = new Float64Array(JPT * 4096), np = 0, runA = -1, runB = -1;
+  const runs: number[] = [];
   // a pair of bodies is joined where the surface of the one with less surface lies on the other: the points on a big
   // face are too far apart to find a wire's end on it (a resistor's lead was joined in one pass and not in the next),
   // and a body wholly inside another has only its own surface there
@@ -863,11 +912,11 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
       if (ci === undefined) { ci = contacts.length; found.set(a * nd + b, ci); contacts.push({ a, b, area: 0, type: hc ? "resistance" : "perfect", heat: 0, ta: 0, tb: 0 }); }
       contacts[ci].area += w;
       const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb];
-      bas.eval(x, y, z, EA.c, EA.s, c.nbs[ea]);
-      bas2.eval(x, y, z, EB.c, EB.s, c.nbs[eb]);
-      const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
       const ma = nbs[ea], mb = nbs[eb];
       if (hc) {
+        bas.eval(x, y, z, EA.c, EA.s, ma);
+        bas2.eval(x, y, z, EB.c, EB.s, mb);
+        const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
         const s = w * hc;
         for (let i = 0; i < ma; i++) {
           const na = s * bas.v[i];
@@ -884,19 +933,47 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
       }
       const oa = 3 * ea, ob = 3 * eb, [wa, wb] = joinWeights(k3, ea, eb, nx, ny, nz);
       const gamma = wa * gam[ea] + wb * gam[eb];
-      const ax = k3[oa] * nx, ay = k3[oa + 1] * ny, az = k3[oa + 2] * nz, bx2 = k3[ob] * nx, by2 = k3[ob + 1] * ny, bz2 = k3[ob + 2] * nz;
-      // pair() takes half of each side's flux: the weights make it wa·(A's) + wb·(B's)
-      for (let i = 0; i < ma; i++) MA[i] = 2 * wa * (bas.g[3 * i] * ax + bas.g[3 * i + 1] * ay + bas.g[3 * i + 2] * az);
-      for (let i = 0; i < mb; i++) MB[i] = 2 * wb * (bas2.g[3 * i] * bx2 + bas2.g[3 * i + 1] * by2 + bas2.g[3 * i + 2] * bz2);
-      // the points of one pair of elements are summed apart and added once (`flush`): the aa and bb blocks by their
-      // lower triangles, ba as ab turned over
-      if (ea !== runA || eb !== runB) { flush(); runA = ea; runB = eb; }
-      pairLower(ma, Saa, bas.v, MA, 1, w, gamma);
-      pair(ma, mb, Sab, bas.v, MA, 1, bas2.v, MB, -1, w, gamma);
-      pairLower(mb, Sbb, bas2.v, MB, -1, w, gamma);
+      if (ea !== runA || eb !== runB) { runs.push(np, ea, eb); runA = ea; runB = eb; }
+      if (JPT * (np + 1) > jp.length) { const more = new Float64Array(2 * jp.length); more.set(jp); jp = more; }
+      const o2 = JPT * np++;
+      jp[o2] = x; jp[o2 + 1] = y; jp[o2 + 2] = z; jp[o2 + 3] = w; jp[o2 + 4] = gamma;
+      jp[o2 + 5] = wa; jp[o2 + 6] = k3[oa] * nx; jp[o2 + 7] = k3[oa + 1] * ny; jp[o2 + 8] = k3[oa + 2] * nz;
+      jp[o2 + 9] = wb; jp[o2 + 10] = k3[ob] * nx; jp[o2 + 11] = k3[ob + 1] * ny; jp[o2 + 12] = k3[ob + 2] * nz;
       joins.push(ci, ea, eb, x, y, z, w, nx, ny, nz, gamma, 0);
     }
-    flush();
+    runA = runB = -1;
+  }
+  // the runs: each summed from zero into a slot (aa, ab, bb), added in the runs' order
+  const nr = runs.length / 3, q = nb * nb, slot = 3 * q;
+  const endOf = (r: number) => (r + 1 < nr ? runs[3 * (r + 1)] : np);
+  const add = (S: Float64Array, ea: number, eb: number) => {
+    const ma = nbs[ea], mb = nbs[eb];
+    const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
+    for (let i = 0; i < ma; i++) for (let j = 0; j <= i; j++) { const v = S[i * ma + j]; Kaa[i * ma + j] += v; if (j < i) Kaa[j * ma + i] += v; }
+    for (let i = 0; i < mb; i++) for (let j = 0; j <= i; j++) { const v = S[2 * q + i * mb + j]; Kbb[i * mb + j] += v; if (j < i) Kbb[j * mb + i] += v; }
+    for (let i = 0; i < ma; i++) for (let j = 0; j < mb; j++) { const v = S[q + i * mb + j]; Kab[i * mb + j] += v; Kba[j * ma + i] += v; }
+  };
+  if (!nr) return { contacts, joins };
+  if (!worthSharing(np * nb * nb * 6)) {
+    const S = new Float64Array(slot), MA = new Float64Array(nb), MB = new Float64Array(nb);
+    for (let r = 0; r < nr; r++) {
+      const ea = runs[3 * r + 1], eb = runs[3 * r + 2], EA = grid.elems[ea], EB = grid.elems[eb];
+      joinBlocks(S, q, jp, runs[3 * r], endOf(r), bas, bas2, EA.c, EA.s, EB.c, EB.s, nbs[ea], nbs[eb], MA, MB);
+      add(S, ea, eb);
+    }
+    return { contacts, joins };
+  }
+  const B = Math.max(1, Math.min(nr, 512, Math.floor(TFACE_SCRATCH / (8 * slot))));
+  const pts = sharedF64(JPT * np), out = sharedF64(B * slot), task = sharedF64(TJOIN * B);
+  pts.set(jp.subarray(0, JPT * np));
+  for (let r0 = 0; r0 < nr; r0 += B) {
+    const n = Math.min(B, nr - r0);
+    for (let t = 0; t < n; t++) {
+      const r = r0 + t, ea = runs[3 * r + 1], eb = runs[3 * r + 2], EA = grid.elems[ea], EB = grid.elems[eb];
+      task.set([runs[3 * r], endOf(r), EA.c[0], EA.c[1], EA.c[2], EA.s, EB.c[0], EB.c[1], EB.c[2], EB.s, nbs[ea], nbs[eb]], TJOIN * t);
+    }
+    parallelFor({ kind: "tjoin", n, p: c.p, slot, pts, task, out } satisfies Omit<TFaceJob, "ctl">);
+    for (let t = 0; t < n; t++) add(out.subarray(slot * t, slot * (t + 1)), runs[3 * (r0 + t) + 1], runs[3 * (r0 + t) + 2]);
   }
   return { contacts, joins };
 }
@@ -1690,7 +1767,7 @@ function denseSolve(S0: Float64Array, r0: number[], m: number): number[] {
 /** `free` gives a direct solver's factor memory back at once (it is as big as the matrix or bigger): never call `solve` after it. */
 interface Solver { solve(f: Float64Array, x0: Float64Array | null): Float64Array; free?(): void }
 
-function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) => Float64Array) | null): Built {
+function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint16Array) => Float64Array) | null): Built {
   const p = pb.p;
   const doms = pb.domains && pb.domains.length > 1 ? pb.domains : null;
   if (doms ? doms.some(d => !(d.k > 0) || (d.k3 && !(d.k3.length === 3 && d.k3.every(v => v > 0)))) : !(pb.k > 0) || (pb.k3 && !(pb.k3.length === 3 && pb.k3.every(v => v > 0)))) throw new Error("E-TH-NOK");
@@ -1705,7 +1782,7 @@ function build(pb: ThermalProblem, scaleBy?: Float64Array | ((dom: Uint8Array) =
   for (let e = 0; e < nel; e++) off[e + 1] = off[e] + nbs[e];
   const memory = thermalMemory(grid, p, deg0);
   if (memory > (pb.memory ?? MEMORY_LIMIT)) throw new Error(`E-SIM-MEMORY: ${memoryMb(memory)}`);
-  const g1 = grid, dom = Uint8Array.from(grid.elems, E => (doms ? g1.cells[E.cells[0]].dom : 0));
+  const g1 = grid, dom = Uint16Array.from(grid.elems, E => (doms ? g1.cells[E.cells[0]].dom : 0));
   const k3 = new Float64Array(3 * nel), ke = new Float64Array(nel);
   const scale = typeof scaleBy === "function" ? scaleBy(dom) : scaleBy;
   for (let e = 0; e < nel; e++) {
@@ -1902,7 +1979,7 @@ function samplerOf(c: Ctx, x: Float64Array, local: Float32Array | null) {
   };
   const sample = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): ThermalSample => {
     const n = pos.length / 3, temp = new Float32Array(n), flux = new Float32Array(3 * n), err = new Float32Array(n);
-    const hit = hits ? new Uint8Array(n) : undefined, eps = 1e-6 * g0.h, where = doms ? new Uint8Array(n) : undefined;
+    const hit = hits ? new Uint8Array(n) : undefined, eps = 1e-6 * g0.h, where = doms ? new Uint16Array(n) : undefined;
     const cells = typeof pos === "object" ? g0.cellsOf(pos, nrm, eps) : null;
     for (let i = 0; i < n; i++) {
       let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
@@ -1948,7 +2025,7 @@ function ktOf(pb: ThermalProblem): ((dom: number) => number[] | undefined) | nul
 }
 
 /** Each element's conductivity factor at its mean temperature in `x` (its constant coefficient). */
-function ktScale(dom: Uint8Array, nb: number, tab: (dom: number) => number[] | undefined, x: Float64Array | null, t0: number): Float64Array {
+function ktScale(dom: Uint16Array, nb: number, tab: (dom: number) => number[] | undefined, x: Float64Array | null, t0: number): Float64Array {
   const s = new Float64Array(dom.length);
   for (let e = 0; e < dom.length; e++) { const kt = tab(dom[e]); s[e] = kt ? ktFactor(kt, x ? x[e * nb] : t0) : 1; }
   return s;

@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.753.0] - 2026-11-25
+
+### Fixed
+
+- A thermal study of an assembly with more than 127 bodies (a board with all its parts) lost track of which body a surface belongs to for every body past the 127th: those surfaces were looked up point by point, which was slow, and a point on a face shared by two bodies could read the neighbour's temperature. Temperatures on such a board move by up to 0.2 K. Thermal and structural studies of more than 255 bodies no longer mix up the bodies' materials.
+
+### Changed
+
+- The terms that join touching bodies in a thermal study are summed on all cores. Building the equations of a board study with 240 bodies takes 27 s instead of 31 s in the third pass.
+
 ## [1.752.0] - 2026-11-25
 
 ### Changed
@@ -4955,7 +4965,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.752.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.753.0...HEAD
+[1.753.0]: https://github.com/kothf/step-viewer/compare/v1.752.0...v1.753.0
 [1.752.0]: https://github.com/kothf/step-viewer/compare/v1.751.0...v1.752.0
 [1.751.0]: https://github.com/kothf/step-viewer/compare/v1.750.0...v1.751.0
 [1.750.0]: https://github.com/kothf/step-viewer/compare/v1.749.0...v1.750.0

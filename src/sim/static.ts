@@ -312,7 +312,7 @@ export interface StaticResult {
    * error were every element like the one the point is in) at points; `nrm` = outward normals, so a point on
    * the surface is read from the cell the material is in. */
   /** `hit` (asked for with `hits`): 1 where the point lies in a cell of the grid, so the values there mean something. */
-  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; /** With `domains`: the one each point is in. */ dom?: Uint8Array };
+  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean): { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array; /** With `domains`: the one each point is in. */ dom?: Uint16Array };
   /** Displacement at a point, mm. */
   disp(x: number, y: number, z: number): [number, number, number];
   /** Modal: the modes, lowest first; `use(k)` makes `sample`/`disp`/`stress` read mode k (the first to begin with). */
@@ -861,7 +861,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const stiffest = doms ? Math.max(...doms.map(d => (d.rigid ? 0 : d.mat.E))) || Math.max(...doms.map(d => d.mat.E)) || 1 : pb.mat.E;
   const mats = doms ? doms.map(d => (d.rigid ? { ...d.mat, E: RIGID_STIFF * stiffest, nu: 0.3 } : d.mat)) : [pb.mat], lames = mats.map(lame);
   let { lam, mu } = lames[0];
-  const domE = Uint8Array.from(grid.elems, E => (doms ? grid!.cells[E.cells[0]].dom : 0));
+  const domE = Uint16Array.from(grid.elems, E => (doms ? grid!.cells[E.cells[0]].dom : 0));
   const setMat = (e: number) => { const L = lames[domE[e]]; lam = L.lam; mu = L.mu; };
   const rhoOf = (e: number) => mats[domE[e]].rho ?? 0;
   const rigidE = (e: number) => rigidD[domE[e]];
@@ -2043,7 +2043,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     use(k) { const v = modes?.[k]; if (v) x = v.x; },
     sample(pos, nrm, hits) {
       const n = pos.length / 3, u = new Float32Array(3 * n), vm = new Float32Array(n), err = new Float32Array(n);
-      const hit = hits ? new Uint8Array(n) : undefined, dom = doms ? new Uint8Array(n) : undefined;
+      const hit = hits ? new Uint8Array(n) : undefined, dom = doms ? new Uint16Array(n) : undefined;
       const eps = 1e-6 * grid.h, G = new Float64Array(9);
       const thT = th ? th.field(Float64Array.from(pos), false).t : null;
       const cells = typeof pos === "object" ? grid.cellsOf(pos, nrm, eps) : null;
