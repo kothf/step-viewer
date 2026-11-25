@@ -1,6 +1,6 @@
 // A thermal study saved in an assembly file, solved in node as the Simulation tab solves it (no bolts, no typed k tables):
 //   node bench/run.mjs bench/thboard.bench.ts <file.mcadasm> [study index]
-// Prints each pass and the hottest temperature of every component. THBOARD_PASSES overrides the study's passes; THBOARD_TRANSIENT=<end s>,<output s> runs a warm-up; PROF=1 prints a CPU profile, SIMTHREADS (1) = threads, THBOARD_MEM=1 prints the memory in use after each stage.
+// Prints each pass and the hottest temperature of every component. THBOARD_PASSES overrides the study's passes; THBOARD_TRANSIENT=<end s>,<output s> runs a warm-up; PROF=1 prints a CPU profile, SIMTHREADS (1) = threads, THBOARD_MEM=1 prints the memory in use after each stage, THBOARD_AT="x,y,z;…" the temperature at those points. Each solid has its own material, as in the app.
 import { readFileSync } from "node:fs";
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
@@ -30,12 +30,19 @@ const only = process.env.THBOARD_ONLY?.split(",");
 const shown = placed.filter((p: any) => p.body && !doc.components.find(c => c.id === p.id)?.hidden && (!only || only.includes(doc.components.find(c => c.id === p.id)?.name ?? "")));
 const geo: any = asmSimGeometry(oc, shown.map((p: any) => ({ id: p.id, shape: p.body.shape, faces: p.body.faces, names: p.body.names })), 0.0024, Number(process.env.THBOARD_ANG ?? 0.2));
 const partOf = new Map(shown.map((p: any) => [p.id, p.part]));
-const bodies = geo.regions.map((q: any) => ({ key: q.comp, tris: q.tris, name: doc.components.find(c => c.id === q.comp)?.name ?? q.comp, mat: (doc.parts as any)[partOf.get(q.comp)]?.doc?.material ?? null }));
-const bks = bodies.map((q: any) => { const bd = st.comps?.[q.key]?.board; return bd ? boardK(q.tris, bd, bd.t) : null; });
+// each solid's material: its body's own, else its part's (as the assembly's simGeo gives them)
+const srcOf = new Map(shown.map((p: any) => [p.id, p]));
+const bodies = geo.regions.map((q: any) => {
+  const pl: any = srcOf.get(q.comp), pd: any = (doc.parts as any)[pl.part]?.doc, keys = asm.bodyKeys(pl.part, doc, pl.src), key = keys?.[q.solid];
+  const fid = key?.split("#")[0], names = key ? [pd?.bodies?.[key]?.name, key, pd?.features.find((f: any) => f.id === fid)?.name].filter(Boolean) : undefined;
+  const cname = doc.components.find(c => c.id === q.comp)?.name ?? q.comp;
+  return { key: keys ? `${q.comp}#${q.solid}` : q.comp, tris: q.tris, name: names?.[0] ? `${cname}/${names[0]}` : cname, mat: (key && pd?.bodies?.[key]?.material) || pd?.material || null, body: names };
+});
+const bks = bodies.map((q: any) => { const bd = st.comps?.[q.key.split("#")[0]]?.board; return bd ? boardK(q.tris, bd, bd.t) : null; });
 const kOf = (i: number) => bks[i]?.along ?? bodies[i].mat?.k;
-const kmaps = bodies.map((q: any, i: number) => { const bd = st.comps?.[q.key]?.board; return bd?.map && bks[i] ? boardMap(q.tris, bd, bks[i]!.t) : null; });
+const kmaps = bodies.map((q: any, i: number) => { const bd = st.comps?.[q.key.split("#")[0]]?.board; return bd?.map && bks[i] ? boardMap(q.tris, bd, bks[i]!.t) : null; });
 const k3s = bodies.map((_q: any, i: number) => (bks[i]?.k3 ? bks[i]!.k3!.map(v => v * 1e-3) : null));
-const setup = thermalSetup(st, geo, bodies.map((q: any) => q.key));
+const setup = thermalSetup(st, geo, bodies.map((q: any) => q.key), { emis: bodies.map((q: any) => q.mat?.emis), names: bodies.map((q: any) => q.body), tris: bodies.map((q: any) => q.tris) });
 if (setup.problems.length && !only) throw new Error(JSON.stringify(setup.problems));
 console.log(bodies.map((q: any, i: number) => `${q.name}: k ${kOf(i)}`).join(", "));
 const pos = new Float32Array(geo.tris.length / 3 * 3);
@@ -93,6 +100,11 @@ for (const p of (trEnv ? runTransient : runThermal)({
       console.log(`  through the board there, bottom to top: ${Array.from(rc.vm as ArrayLike<number>).map(v => v.toFixed(1)).join(", ")}`);
       console.log(`  board near ${d[3]} (${d[0].toFixed(1)}, ${d[1].toFixed(1)}): max ${rr.vm[m].toFixed(1)} at (${pts[3 * m].toFixed(1)}, ${pts[3 * m + 1].toFixed(1)}), ${pts.length / 3} points`);
     }
+  }
+  // THBOARD_AT="x,y,z;x,y,z": the temperature at those points
+  if (sampler && process.env.THBOARD_AT) {
+    const at = process.env.THBOARD_AT.split(";").map(q => q.split(",").map(Number)), pp = Float32Array.from(at.flat()), r = sampler(pp, new Float32Array(pp.length));
+    console.log("  at " + at.map((q, i) => `(${q.join(", ")}) ${r.vm[i].toFixed(2)}`).join(", "));
   }
   if (p.transient) console.log(`transient: ${p.transient.steps} steps, ${p.transient.rejected} rejected, ${p.transient.times.length} frames`);
   if (p.transient && process.env.TRDBG) console.log("frames", [5, 15, 30, 60].map(k => p.transient!.cstats?.[k]?.map((s: any) => s.max.toFixed(3)).join(" ")).join(" | "));

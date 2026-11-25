@@ -417,6 +417,8 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
 /** A component of a thermal study's results: temperatures on its surface, the heat made in it, how the heat leaves it, W. */
 export interface ThermalComp {
   min: number; max: number; mean: number; power: number;
+  /** The hottest point lies inside the body, not on its surface (an enclosed, heated body). */
+  deep?: boolean;
   /** What leaves its own surface (power less what it conducts or radiates to other components). */
   out?: number;
   /** FR-TRES-005, steady solves only: to the air by convection, by radiation (to the surroundings and, net, to other components), to fixed temperatures, net by conduction to its neighbours. */
@@ -500,7 +502,7 @@ export interface PassResult {
   transient?: {
     times: number[]; frames: Float32Array[]; min: number[]; max: number[]; put: number[]; out: number[]; comps?: number[][];
     /** Per output time, each domain's lowest, highest and mean temperature over the plot points (assemblies). */
-    cstats?: { min: number; max: number; mean: number }[][];
+    cstats?: { min: number; max: number; mean: number; deep?: boolean }[][];
     steps: number; rejected: number; dt: [number, number]; capacity: number; t0: number; steady: number | null;
   };
 }
@@ -1049,7 +1051,7 @@ export function envelope(cases: PassResult[]): PassResult {
   const T = first.thermal ? cases.map(c => c.thermal!) : null;
   const thermal = T ? {
     min: Math.min(...T.map(x => x.min)), max: Math.max(...T.map(x => x.max)), applied: Math.max(...T.map(x => x.applied)), flows: [], solves: Math.max(...T.map(x => x.solves)),
-    ...(T[0].comps ? { comps: T[0].comps.map((_c, i) => ({ min: Math.min(...T.map(x => x.comps?.[i]?.min ?? Infinity)), max: Math.max(...T.map(x => x.comps?.[i]?.max ?? -Infinity)), mean: Math.max(...T.map(x => x.comps?.[i]?.mean ?? -Infinity)), power: Math.max(...T.map(x => x.comps?.[i]?.power ?? 0)) })) } : {}),
+    ...(T[0].comps ? { comps: T[0].comps.map((_c, i) => ({ min: Math.min(...T.map(x => x.comps?.[i]?.min ?? Infinity)), max: Math.max(...T.map(x => x.comps?.[i]?.max ?? -Infinity)), mean: Math.max(...T.map(x => x.comps?.[i]?.mean ?? -Infinity)), power: Math.max(...T.map(x => x.comps?.[i]?.power ?? 0)), ...(T.some(x => x.comps?.[i]?.deep) ? { deep: true } : {}) })) } : {}),
   } : undefined;
   return {
     ...first, u, vm, err, errors, maxU: top(c => c.maxU), maxVm: top(c => c.maxVm), dofs: top(c => c.dofs), ms: cases.reduce((s, c) => s + c.ms, 0),
@@ -1105,6 +1107,46 @@ export function ownTemps(domains: { tris: ArrayLike<number> }[], counts: ArrayLi
     const c = out[d], m = cnt.get(d);
     if (m) c.mean = sum.get(d)! / m;
     else { const v = k ? all / k : 0; c.min = v; c.max = v; c.mean = v; }
+  }
+}
+
+/** Points per axis of the box a body's inside is sampled at. Odd, so a round body's axis is one of them. */
+export const INNER_GRID = 7;
+/** A point inside counts as hotter (or cooler) than the surface only beyond this, K. */
+const DEEP_K = 0.02;
+
+/** Points inside the bodies of a study: `of` = the body each one lies in. */
+export interface InnerPoints { pos: Float32Array; of: Int32Array }
+
+/**
+ * Points inside every body (a grid over its box, the ones the body holds). Results on the plot mesh are surface
+ * values; a body heated inside and cooled at its surface (a capacitor's core in its can, a die in its package) is
+ * hottest at its middle, which only these points see.
+ */
+export function innerPoints(domains: { inside: (x: number, y: number, z: number) => boolean; tris: ArrayLike<number> }[], n = INNER_GRID): InnerPoints {
+  const pos: number[] = [], of: number[] = [];
+  domains.forEach((D, d) => {
+    const t = D.tris, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < t.length; i++) { const a = i % 3, v = t[i]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
+    if (!(hi[0] > lo[0] && hi[1] > lo[1] && hi[2] > lo[2])) return;
+    for (let k = 0; k < n; k++) for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const x = Math.fround(lo[0] + ((i + 0.5) / n) * (hi[0] - lo[0])), y = Math.fround(lo[1] + ((j + 0.5) / n) * (hi[1] - lo[1])), z = Math.fround(lo[2] + ((k + 0.5) / n) * (hi[2] - lo[2]));
+      if (D.inside(x, y, z)) { pos.push(x, y, z); of.push(d); }
+    }
+  });
+  return { pos: Float32Array.from(pos), of: Int32Array.from(of) };
+}
+
+/** Widens each body's lowest and highest temperature by what its inside points read (`deep` = the highest is inside). */
+export function innerTemps(P: InnerPoints, sample: (pos: Float32Array) => { temp: ArrayLike<number>; dom?: ArrayLike<number> }, out: { min: number; max: number; mean: number; deep?: boolean }[]): void {
+  if (!P.of.length) return;
+  const s = sample(P.pos);
+  if (!s.dom) return;
+  for (let i = 0; i < P.of.length; i++) {
+    const d = P.of[i], v = s.temp[i], c = out[d];
+    if (s.dom[i] !== d || !c || !Number.isFinite(v)) continue;
+    if (v > c.max + DEEP_K) { c.max = v; c.deep = true; }
+    if (v < c.min - DEEP_K) c.min = v;
   }
 }
 
@@ -1418,6 +1460,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   const h = inp.cells || !R ? cellSize(inp.body, inp.cells) : thermalCellSize(inp.body, R.map(r => r.tris), pads);
   const passes = Math.max(1, Math.min(MAX_PASSES, Math.round(inp.passes)));
   let grid: Grid | undefined, prev: Float64Array | undefined, before: Float32Array | null = null;
+  let inner: InnerPoints | undefined;
   const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
   const reuse = reuseKey(inp, h);
   // FR-TSOL-003 local passes (as runStatic): each element's degree, and its share of the error when its degree was last raised
@@ -1468,6 +1511,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       for (let i = 0; i < s.temp.length; i++) { const c = comps[s.dom[i]], v = s.temp[i]; if (v < c.min) c.min = v; if (v > c.max) c.max = v; c.mean += v; cnt[s.dom[i]]++; }
       comps.forEach((c, i) => { if (cnt[i]) c.mean /= cnt[i]; });
       ownTemps(domains, cnt, (pos, nrm) => r.sample(pos, nrm).temp, comps);
+      innerTemps((inner ??= innerPoints(domains)), pos => r.sample(pos), comps);
       for (const q of set.sources) {
         if (q.tris && q.dom !== undefined && q.power && comps[q.dom]) comps[q.dom].power += q.power;
         if (q.tris || !(q.power || q.density)) continue;
@@ -1519,7 +1563,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
  * temperature. The last pass carries every output time's temperatures at the sample points; its `vm` is the last one.
  */
 /** A transient output time's per-domain temperatures as the steady result's component rows (power = the steady one's, at full power). */
-export function frameComps(stats: { min: number; max: number; mean: number }[], powers: number[]) {
+export function frameComps(stats: { min: number; max: number; mean: number; deep?: boolean }[], powers: number[]) {
   return stats.map((c, d) => ({ ...c, power: powers[d] ?? 0 }));
 }
 
@@ -1556,7 +1600,8 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   const prof = set.sources.map(s => (s.id ? Tr.profiles[s.id] : undefined));
   const maxStep = Math.min(...prof.map(x => profileStep(x, Tr.end)));
   const frames: Float32Array[] = [], min: number[] = [], max: number[] = [], put: number[] = [], out: number[] = [];
-  const comps: number[][] = [], cstats: { min: number; max: number; mean: number }[][] = [];
+  const comps: number[][] = [], cstats: { min: number; max: number; mean: number; deep?: boolean }[][] = [];
+  let inner: InnerPoints | undefined;
   let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint16Array | undefined, flows: SinkFlow[] = [];
   const r = transientThermal(
     { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), sinks: set.sinks, sources: set.sources, ...(set.exchanges?.length ? { exchanges: exchangesOf(set, inp.body) } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
@@ -1572,8 +1617,9 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
         if (domains && s.dom) {
           const m = domains.map(() => -Infinity), lo = domains.map(() => Infinity), sum = domains.map(() => 0), n = domains.map(() => 0);
           for (let i = 0; i < s.temp.length; i++) { const d = s.dom[i], v = s.temp[i]; if (v > m[d]) m[d] = v; if (v < lo[d]) lo[d] = v; sum[d] += v; n[d]++; }
-          const st = m.map((v, d) => (n[d] ? { min: lo[d], max: v, mean: sum[d] / n[d] } : { min: Infinity, max: -Infinity, mean: 0 }));
+          const st: { min: number; max: number; mean: number; deep?: boolean }[] = m.map((v, d) => (n[d] ? { min: lo[d], max: v, mean: sum[d] / n[d] } : { min: Infinity, max: -Infinity, mean: 0 }));
           ownTemps(domains, n, (pos, nrm) => sample(pos, nrm).temp, st);
+          innerTemps((inner ??= innerPoints(domains)), pos => sample(pos), st);
           cstats[k] = st;
           comps[k] = st.map(x => x.max);
           dom = s.dom;
