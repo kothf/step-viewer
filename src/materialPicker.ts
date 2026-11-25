@@ -27,6 +27,7 @@ export const MAT_PROPS: [MatNum, string, string][] = [
   ["k", "Thermal conductivity", "W/(m·K)"],
   ["cp", "Specific heat", "J/(kg·K)"],
   ["alpha", "Thermal expansion", "10⁻⁶/K"],
+  ["emis", "Surface emissivity", ""],
 ];
 
 const num = (v: number) => String(+v.toPrecision(5));
@@ -98,7 +99,7 @@ export function pickMaterial(o: PickOptions = {}): Promise<Picked | undefined> {
     const row = (label: string, v: number | null | undefined, unit: string) => `<tr><th scope="row">${esc(t(label))}</th><td translate="no">${typeof v === "number" ? `${num(v)}${unit ? ` <span class="muted">${unit}</span>` : ""}` : "—"}</td></tr>`;
     props.innerHTML = `<h4 translate="no"><span class="mat-sw" style="background:${esc(m.color ?? "#9aa0a6")}" aria-hidden="true"></span>${esc(t(m.name))}</h4>`
       + (m.eq ? `<p class="muted mat-eq" translate="no">${esc(m.eq)}</p>` : "")
-      + `<table class="v-table mat-table"><tbody>${row("Density", m.density, "g/cm³")}${MAT_PROPS.map(([k, l, u]) => row(l, m[k], u)).join("")}</tbody></table>`
+      + `<table class="v-table mat-table"><tbody>${row("Density", m.density, "g/cm³")}${MAT_PROPS.filter(([k]) => k !== "emis" || typeof m.emis === "number").map(([k, l, u]) => row(l, m[k], u)).join("")}</tbody></table>`
       + (s ? `<p class="muted mat-src">${esc(t(s.basis === "min" ? "Strengths are the standard's minimum values." : "Typical values."))} ${esc(t("Source:"))} <span translate="no">${esc(t(s.text))}</span></p>` : "")
       + (m.ref ? `<p class="muted mat-src">${esc(t("Checked against:"))} <a href="https://${esc(m.ref)}" target="_blank" rel="noopener noreferrer" translate="no">${esc(m.ref.split("/")[0].replace(/^www\./, ""))}</a></p>` : m.cat !== "custom" ? `<p class="mat-src mat-unver">${esc(t("Not checked against a public reference yet."))}</p>` : "")
       + `<p class="muted mat-src">${esc(t("For mass and first estimates; use the supplier's certificate for design."))}</p>`
@@ -134,7 +135,7 @@ export function pickMaterial(o: PickOptions = {}): Promise<Picked | undefined> {
     for (const k of MAT_NUMS) {
       const v = n(k);
       if (v === undefined) continue;
-      if (!isFinite(v) || (k !== "alpha" && v < 0) || (k === "nu" && v > 0.5)) { toast(t("Check the value of {p}.", { p: t(MAT_PROPS.find(p => p[0] === k)![1]) }), true); return; }
+      if (!isFinite(v) || (k !== "alpha" && v < 0) || (k === "nu" && v > 0.5) || (k === "emis" && !(v > 0 && v <= 1))) { toast(t("Check the value of {p}.", { p: t(MAT_PROPS.find(p => p[0] === k)![1]) }), true); return; }
       m[k] = v;
     }
     if (!saveCustom(m)) { toast(t("A library material already has this name. Choose another name."), true); return; }

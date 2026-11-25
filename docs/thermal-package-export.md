@@ -64,6 +64,39 @@ With the STEP and the `gerber/` folder inside, opening the ZIP alone does everyt
   - `operating_point`.
   - `accuracy_C` and `range_C`, for the legend.
 
+## Optional: materials and the bodies the heat is made in (MöbiusCAD 1.755.0)
+
+All of this is optional; a package without it works as before (materials guessed by what a part is).
+
+```json
+"board": { "layers": 2, "copper_um": 35, "coverage": 0.4, "emissivity": 0.9 },
+"materials": {
+  "si":  { "name": "Silicon", "k_WmK": 148, "cp_JkgK": 700, "density_kgm3": 2330, "emissivity": 0.7 },
+  "cu":  { "name": "Copper, tinned", "k_WmK": 390, "cp_JkgK": 385, "density_kgm3": 8900, "emissivity": 0.1 }
+},
+"parts": [
+  { "part_id": 7, "designator": "Q2", "step_bodies": ["Q2 die", "Q2 tab", "Q2 case"], "t_kind": "junction",
+    "material": "Nylon PA66-GF30",
+    "body_materials": { "Q2 die": "si", "Q2 tab": "cu" },
+    "heat_bodies": ["Q2 die"] }
+]
+```
+
+- `materials`: by a key of your choice. `k_WmK` is required (an entry without it is ignored); `emissivity` is 0 to 1.
+- `body_materials` (per part): STEP solid name → material key. `material` (per part): the key for its other solids. A key that is not in `materials` is looked up as a MöbiusCAD library material name; nothing given = the guess as before. Names are compared without case.
+- `heat_bodies` (per part): the STEP solids the part's own heat is made in (die, wound core, a valve's plate). Absent = all its solids. The board share of the split still enters the board under the part.
+- A part with `t_kind` `junction` and `heat_bodies` reports the hottest point of those bodies as its junction; `rjc_KW` is then ignored. Without `heat_bodies`, `rjc_KW` works as before.
+- `board.emissivity`: the board's surface. Radiation from all open surfaces uses each body's own emissivity where its material has one, and the study's value on the rest.
+- The heat-source CSV may carry `heat_bodies` (names separated by `;`) and `material` columns.
+
+### The same in a MöbiusCAD assembly (`.mcadasm` with a study)
+
+A writer that makes the assembly itself (one part document per part, every solid its own body) needs no manifest:
+
+- **Emissivity**: `emis` (0 to 1) on a material (`PartDoc.material`, `PartDoc.bodies[key].material`). Radiation from all open surfaces (`{ type: "rad", all: true }`) uses it on that body's faces; the item's `emis` serves bodies whose material has none.
+- **Heat bodies**: a Heat from package row may carry `"bodies": ["Die", …]`: body names inside the row's part (the name typed in `PartDoc.bodies[key].name`, the body's key, or the name of the feature that made it; compared without case). The row's own heat is made only in those bodies; absent, or no body of that name, = all its bodies.
+- **Junction**: a row with `junction: true` and `bodies` reports the hottest point of those bodies; `rjc` is ignored for it.
+
 ## New optional key: the board's copper stack
 
 ```json

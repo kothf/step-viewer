@@ -64,8 +64,8 @@ export const KERNEL_MEMORY = /malloc failed|bad_alloc|out of memory|Cannot enlar
 /** The message of calls cut short by `stop()`. */
 export const STOPPED = "The geometry kernel was stopped.";
 
-/** `regions`: one per solid, with its component, its part's key and its own body material's name (null = the part's). */
-export interface AsmSimReply { geo: SimBody; regions: { comp: string; solid: number; part: string; mat: string | null; tris: Float64Array }[] }
+/** `regions`: one per solid, with its component, its part's key, its own body material's name (null = the part's) and, in a part of several solids, its Bodies folder key. */
+export interface AsmSimReply { geo: SimBody; regions: { comp: string; solid: number; part: string; mat: string | null; body?: string | null; tris: Float64Array }[] }
 
 /** One body of a model file as BREP text. */
 export interface ImportedBody { name: string; color: [number, number, number] | null; brep: string; solid: boolean; faces: number }

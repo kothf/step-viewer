@@ -510,6 +510,11 @@ export interface ThermalSetup {
   sinks: ThermalSink[];
   sources: ThermalSource[];
   sinkIds: string[];
+  /**
+   * Radiation from all open surfaces split by the bodies' own emissivities (`MatRef.emis`): the row of `sinkIds`
+   * each sink belongs to (absent = one sink per row). `mergeFlows` puts the sinks' flows back into rows.
+   */
+  sinkRow?: number[];
   /** Radiation between face sets (FR-TBC-007): the two sets and their emissivities; the view factor is found by the solver's worker. */
   exchanges?: { a: Float64Array; b: Float64Array; ea: number; eb: number }[];
   exchangeIds?: string[];
@@ -519,6 +524,43 @@ export interface ThermalSetup {
 }
 
 /** Area of a triangle soup (9 numbers per triangle), mm². */
+/** Body names are compared without case or outer spaces. */
+export const sameName = (s: string) => s.trim().toLowerCase();
+
+/** What the bodies of a thermal study bring themselves, each list by region. */
+export interface OwnBodies {
+  /** Surface emissivity of the body's material (0..1], absent = none: radiation from all open surfaces uses it there. */
+  emis?: (number | null | undefined)[];
+  /** The body's names inside its part (a part of several bodies): a package part's `bodies` picks by them. */
+  names?: (string[] | undefined)[];
+  /** Each region's own triangles, so the solids of one component can be told apart (absent: by component). */
+  tris?: ArrayLike<number>[];
+}
+
+/**
+ * The own emissivity of every triangle of `b` (NaN = none): its region's, found by the triangle itself when the
+ * regions' triangles are given (several solids of one component may differ), else by its component.
+ */
+function ownEmis(b: SimBody, regions: string[], own: OwnBodies): Float64Array | null {
+  const ok = (e: unknown): e is number => typeof e === "number" && e > 0 && e <= 1;
+  const emis = own.emis ?? [];
+  if (!emis.some(ok)) return null;
+  const n = b.face.length, out = new Float64Array(n).fill(NaN);
+  const byComp = new Map<string, number>(), split = new Set<string>(), seen = new Set<string>();
+  regions.forEach((k, i) => { const c = compOf(k); if (seen.has(c)) split.add(c); seen.add(c); if (ok(emis[i]) && !byComp.has(c)) byComp.set(c, emis[i] as number); });
+  const key = (a: ArrayLike<number>, o: number) => { let s = ""; for (let k = 0; k < 9; k++) s += a[o + k] + ","; return s; };
+  // triangles of components with several solids: which solid each belongs to
+  const byTri = new Map<string, number>();
+  if (own.tris) regions.forEach((k, i) => { if (!split.has(compOf(k))) return; const a = own.tris![i]; for (let o = 0; o + 8 < a.length; o += 9) byTri.set(key(a, o), i); });
+  const comp = b.names.map(nm => compOf(nm));
+  for (let t = 0; t < n; t++) {
+    const c = comp[b.face[t]];
+    if (split.has(c) && own.tris) { const i = byTri.get(key(b.tris, 9 * t)); if (i !== undefined && ok(emis[i])) out[t] = emis[i] as number; }
+    else { const e = byComp.get(c); if (e !== undefined) out[t] = e; }
+  }
+  return out;
+}
+
 /** The triangles of the faces on these components (face names `<comp>@<face>`). */
 function compTris(b: SimBody, comps: Set<string>): Float64Array {
   const on = b.names.map(n => comps.has(compOf(n))), keep: number[] = [];
@@ -590,7 +632,29 @@ export function flowFilm(b: SimBody, idx: number[], dir: ArrayLike<number>, spee
 }
 
 /** The surface conditions and heat sources of a thermal study (FR-TLOAD, FR-TBC): W/m² and W/(m²·K) become per mm². */
-export function thermalSetup(st: Study, b: SimBody, regions?: string[]): ThermalSetup {
+/** The flows of sinks that are one row of the study (`ThermalSetup.sinkRow`) added up: heat and area summed, means by area. */
+export function mergeFlows(flows: SinkFlow[], rows?: number[]): SinkFlow[] {
+  if (!rows || rows.length !== flows.length) return flows;
+  const out: SinkFlow[] = [];
+  flows.forEach((f, i) => {
+    const o = out[rows[i]];
+    if (!o) { out[rows[i]] = { ...f, ...(f.doms ? { doms: Float64Array.from(f.doms) } : {}) }; return; }
+    const area = o.area + f.area;
+    o.mean = area > 0 ? (o.mean * o.area + f.mean * f.area) / area : o.mean;
+    if (o.h !== undefined && f.h !== undefined) o.h = area > 0 ? (o.h * o.area + f.h * f.area) / area : o.h;
+    o.out += f.out; o.area = area;
+    if (o.doms && f.doms) for (let k = 0; k < o.doms.length; k++) o.doms[k] += f.doms[k];
+  });
+  return out;
+}
+
+/**
+ * `bodies` = what each region brings itself: radiation from all open surfaces uses a body's own emissivity on its
+ * faces and the item's value on the others; a package part's `bodies` picks the regions its own heat is made in.
+ */
+export function thermalSetup(st: Study, b: SimBody, regions?: string[], bodies?: OwnBodies): ThermalSetup {
+  const names = bodies?.names;
+  let emisOf: Float64Array | null | undefined;
   const off = new Set(st.suppressed ?? []), amb = st.settings.ambient ?? DEFAULT_AMBIENT;
   const out: ThermalSetup = { sinks: [], sources: [], sinkIds: [], problems: [] };
   const idxOf = (it: { id: string; faces: { name: string }[] }) => {
@@ -657,11 +721,13 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
         const area = surfaceArea(tris);
         if (!(s.rth > 0) || !(area > 0)) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
         out.sinks.push({ tris, h: 1 / (s.rth * area), ambient: s.ambient ?? amb });
+        out.sinkRow?.push(out.sinkIds.length);
         out.sinkIds.push(s.id);
         continue;
       }
       if (s.natural) {
         out.sinks.push({ tris, natural: { factor, down, ...faceSizes(b, idx, down) }, ambient: s.ambient ?? amb, ...free });
+        out.sinkRow?.push(out.sinkIds.length);
         out.sinkIds.push(s.id);
         continue;
       }
@@ -669,6 +735,7 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
         const v = s.forced.fan ? fanSpeed(s.forced.fan.q, s.forced.fan.a) : s.forced.speed;
         if (!(v > 0) || !Number.isFinite(v)) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
         out.sinks.push({ tris, forced: { h: flowFilm(b, idx, s.forced.dir, v) }, ambient: s.ambient ?? amb, ...free });
+        out.sinkRow?.push(out.sinkIds.length);
         out.sinkIds.push(s.id);
         continue;
       }
@@ -676,8 +743,19 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
       out.sinks.push({ tris, h: s.h! * 1e-6, ambient: s.ambient ?? amb, ...free });
     } else {
       if (!((s.emis ?? 0) > 0) || s.emis! > 1) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
+      // all open surfaces: a body whose material has its own emissivity radiates by it, the others by the item's
+      if (open && regions && bodies && emisOf === undefined) emisOf = ownEmis(b, regions, bodies);
+      const groups = new Map<number, number[]>();
+      if (open && emisOf) for (const t of idx) { const e = Number.isNaN(emisOf[t]) ? s.emis! : emisOf[t]; let g = groups.get(e); if (!g) groups.set(e, g = []); g.push(t); }
+      if (groups.size > 1 || (groups.size === 1 && !groups.has(s.emis!))) {
+        out.sinkRow ??= out.sinks.map((_x, i) => i);
+        for (const [e, g] of groups) { out.sinks.push({ tris: gather(g), emissivity: e, ambient: s.ambient ?? amb, ...free }); out.sinkRow.push(out.sinkIds.length); }
+        out.sinkIds.push(s.id);
+        continue;
+      }
       out.sinks.push({ tris, emissivity: s.emis, ambient: s.ambient ?? amb, ...free });
     }
+    out.sinkRow?.push(out.sinkIds.length);
     out.sinkIds.push(s.id);
   }
   for (const l of st.loads) {
@@ -736,7 +814,11 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
             own -= share;
           }
         }
-        if (own > 0) out.sources.push({ power: own, doms, id: l.id });
+        // the part's own heat is made in the bodies the package names (die, wound core, plate), else in all of them
+        const hot = new Set((part.hot ?? []).filter(c => comps.has(c)));
+        const named = new Set((part.bodies ?? []).map(sameName));
+        const core = doms.filter(i => hot.has(compOf(regions![i])) || (named.size > 0 && !!names?.[i]?.some(n => named.has(sameName(n)))));
+        if (own > 0) out.sources.push({ power: own, doms: core.length ? core : doms, id: l.id });
         any = true;
       }
       if (!any) out.problems.push({ id: l.id, code: "E-SIM-EMPTY" });
@@ -1375,7 +1457,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       pass: k + 1, p, ...(raised ? { raised } : {}), dofs: r.dofs, cells: r.grid.elems.length, memory: r.memory, ...(capped ? { capped } : {}), energy: r.energy, change, ms: Date.now() - t0, reactions: [], applied: none,
       u: s.flux, vm: s.temp, err: s.err, errors: [...known, passError(known)], maxU, maxVm: max, converged, done: converged || capped > 0 || !more,
       ...(s.dom ? { dom: s.dom } : {}),
-      thermal: { min, max, applied: r.applied, flows: r.flows, solves: r.iterations, ...(r.kSteps ? { kSteps: r.kSteps } : {}), ...(r.reused ? { reused: true } : {}), ...(r.airSteps ? { airSteps: r.airSteps } : {}), ...(domains ? { contacts: r.contacts, comps } : {}), ...(r.exchanges ? { exchanges: r.exchanges } : {}) },
+      thermal: { min, max, applied: r.applied, flows: mergeFlows(r.flows, set.sinkRow), solves: r.iterations, ...(r.kSteps ? { kSteps: r.kSteps } : {}), ...(r.reused ? { reused: true } : {}), ...(r.airSteps ? { airSteps: r.airSteps } : {}), ...(domains ? { contacts: r.contacts, comps } : {}), ...(r.exchanges ? { exchanges: r.exchanges } : {}) },
     };
     if (converged || capped) return;
   }
@@ -1444,7 +1526,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
           cstats[k] = m.map((v, d) => (n[d] ? { min: lo[d], max: v, mean: sum[d] / n[d] } : { min: 0, max: 0, mean: 0 }));
           dom = s.dom;
         }
-        if (k === times.length - 1) { flux = s.flux; flows = fl; }
+        if (k === times.length - 1) { flux = s.flux; flows = mergeFlows(fl, set.sinkRow); }
       },
     },
   );

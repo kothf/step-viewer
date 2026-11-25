@@ -3,7 +3,7 @@
 
 import type { StandIn } from "./standins";
 import type { ModelBody, PartMatch } from "./match";
-import { capacitorLife, isElectrolytic, type ThermalManifest, type ThermalPart } from "./package";
+import { capacitorLife, isElectrolytic, type PackageMaterial, type ThermalManifest, type ThermalPart } from "./package";
 
 /** The copper of a board, for its effective conductivity. */
 export interface BoardStack {
@@ -251,7 +251,7 @@ function bigCap(text: string) {
 }
 
 /** One package part's heat in the study. */
-export interface PlanHeat { id: number; name: string; bodies: number[]; p: number; limit?: number; life?: number; board?: number; sink?: number; path?: ThermalPart["path"]; elyt?: boolean; junction?: boolean; rjc?: number }
+export interface PlanHeat { id: number; name: string; bodies: number[]; p: number; /** The bodies (of `bodies`) its own heat is made in, from the package's `heat_bodies`; absent = all. */ hot?: number[]; limit?: number; life?: number; board?: number; sink?: number; path?: ThermalPart["path"]; elyt?: boolean; junction?: boolean; rjc?: number }
 export interface BoardPlan {
   /** Body index of the board, −1 = none found. */
   board: number;
@@ -268,6 +268,13 @@ export interface BoardPlan {
   enclosure?: "open" | "vented" | "closed";
   /** Gravity's direction from the package's orientation and the board's place (FR-TBC-011), when both are known. */
   down?: [number, number, number];
+  /**
+   * What the package says each body is made of (`body_materials` / `material`): a material of its own table, or the
+   * key to look up as a library name; null = nothing given, `mats` holds the guess.
+   */
+  given?: (PackageMaterial | string | null)[];
+  /** The board's surface emissivity from the package. */
+  boardEmis?: number;
   /** Total power of the parts that have bodies, W. */
   power: number;
   /** The board's copper stack from the manifest, where it gives one. */
@@ -309,13 +316,20 @@ export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelB
   const board = zero?.length ? zero[0] : findBoard(bodies, new Set(owner.keys()));
   const mats = bodies.map((b, i) => (i === board ? "" : guessMaterial(owner.get(i) ?? null, b.name)));
   const names = bodies.map((_b, i) => (i === board ? "PCB" : owner.get(i)?.designator ?? ""));
+  const same = (x: string, y: string) => x.trim().toLowerCase() === y.trim().toLowerCase();
+  const given = bodies.map((b, i) => {
+    const p = i === board ? null : owner.get(i);
+    const key = p ? Object.entries(p.mats ?? {}).find(([n]) => same(n, b.name))?.[1] ?? p.mat : undefined;
+    return key ? man.materials?.[key] ?? key : null;
+  });
   const heat: PlanHeat[] = [];
   let power = 0;
   for (const p of man.parts) {
     if (p.id === 0) continue;
     const si = stand.findIndex(x => x.id === p.id);
     const list = si >= 0 && !match.bodies.get(p.id)?.length ? [bodies.length + si] : (match.bodies.get(p.id) ?? []).filter(i => i !== board), w = p.p ?? 0;
-    heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.ratedLife !== undefined && p.ratedLife > 0 ? { life: p.ratedLife } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}), ...(isElectrolytic(p) ? { elyt: true } : {}), ...(p.tKind === "junction" ? { junction: true } : {}), ...(p.rjc !== undefined && p.rjc >= 0 ? { rjc: p.rjc } : {}) });
+    const hot = p.heat?.length ? list.filter(i => i < bodies.length && p.heat!.some(n => same(n, bodies[i].name))) : [];
+    heat.push({ id: p.id, name: p.designator || `#${p.id}`, bodies: list, p: w, ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.ratedLife !== undefined && p.ratedLife > 0 ? { life: p.ratedLife } : {}), ...(p.pBoard !== undefined ? { board: p.pBoard } : {}), ...(p.pSink !== undefined ? { sink: p.pSink } : {}), ...(p.path ? { path: p.path } : {}), ...(isElectrolytic(p) ? { elyt: true } : {}), ...(p.tKind === "junction" ? { junction: true } : {}), ...(p.rjc !== undefined && p.rjc >= 0 ? { rjc: p.rjc } : {}), ...(hot.length && hot.length < list.length ? { hot } : {}) });
     if (list.length) power += w;
   }
   const partOf = new Map(man.parts.map(p => [p.id, p]));
@@ -324,12 +338,14 @@ export function boardPlan(man: ThermalManifest, match: PartMatch, bodies: ModelB
     ...(stand.length ? { stand, standMats } : {}),
     ...(["open", "vented", "closed"].includes(man.settings.enclosure ?? "") ? { enclosure: man.settings.enclosure as "open" | "vented" | "closed" } : {}),
     ...(() => { const down = boardDown(man.settings.orientation, bodies, board); return down ? { down } : {}; })(),
-    ...(man.board ? { stack: { ...man.board } } : {}) };
+    ...(given.some(Boolean) ? { given } : {}),
+    ...(man.board?.emis !== undefined ? { boardEmis: man.board.emis } : {}),
+    ...(() => { const { emis: _e, ...stack } = man.board ?? {}; return Object.keys(stack).length ? { stack } : {}; })() };
 }
 
 /** What a part's reported temperature is of (FR-TBRD-021). */
 export type PartTempKind = "body" | "case" | "junction";
-export interface PartTempIn { name: string; p: number; off?: boolean; limit?: number; life?: number; junction?: boolean; rjc?: number; comps: string[] }
+export interface PartTempIn { name: string; p: number; off?: boolean; limit?: number; life?: number; junction?: boolean; rjc?: number; comps: string[]; hot?: string[]; /** The hottest point of the bodies named as its heat bodies inside its part (`PackageHeat.bodies`), found by the caller. */ die?: number }
 export interface PartTemp {
   name: string;
   /** °C: the hottest point of the part's bodies, plus p × Rjc for a junction. */
@@ -339,6 +355,8 @@ export interface PartTemp {
   kind: PartTempKind;
   /** A junction part with no Rjc: only its case temperature is known. */
   caseOnly?: boolean;
+  /** A junction read off the bodies the heat is made in (the package's `heat_bodies`), not from case + Rjc. */
+  die?: boolean;
   limit?: number;
   over?: boolean;
   /** An electrolytic with a rated life at its limit: hours at `t` by the 10 °C rule (FR-TBRD-022). */
@@ -347,7 +365,8 @@ export interface PartTemp {
 
 /**
  * Each package part's temperature in a study (FR-TBRD-021): the maximum of its bodies; a part whose package temperature
- * is a junction (or that has an Rjc typed) reports its case maximum plus p × Rjc, or the case alone, marked, without Rjc.
+ * is a junction (or that has an Rjc typed) reports its case maximum plus p × Rjc, or the case alone, marked, without Rjc;
+ * a junction part with heat bodies (`hot`) reports their hottest point.
  * `maxOf` gives the hottest temperature of a component (undefined: not in the result).
  */
 export function partTemps(parts: PartTempIn[], maxOf: (comp: string) => number | undefined): PartTemp[] {
@@ -356,6 +375,14 @@ export function partTemps(parts: PartTempIn[], maxOf: (comp: string) => number |
     let body = -Infinity;
     for (const c of x.comps) { const m = maxOf(c); if (m !== undefined && m > body) body = m; }
     if (!Number.isFinite(body)) continue;
+    // a part whose heat bodies are modelled (a die): its junction is their hottest point, whatever Rjc says
+    let die = -Infinity;
+    if (x.junction) for (const c of x.hot ?? []) if (x.comps.includes(c)) { const m = maxOf(c); if (m !== undefined && m > die) die = m; }
+    if (x.junction && x.die !== undefined && Number.isFinite(x.die) && x.die > die) die = x.die;
+    if (Number.isFinite(die)) {
+      out.push({ name: x.name, t: die, body, kind: "junction", die: true, ...(x.limit !== undefined ? { limit: x.limit, over: die > x.limit } : {}) });
+      continue;
+    }
     const p = x.off ? 0 : Math.max(0, x.p), rjc = x.rjc !== undefined && x.rjc >= 0 ? x.rjc : undefined;
     const junction = !!x.junction || rjc !== undefined;
     const t = junction && rjc !== undefined ? body + p * rjc : body;

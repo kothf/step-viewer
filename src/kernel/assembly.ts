@@ -84,6 +84,14 @@ export class Assembler {
     catch { return null; }
   }
 
+  /** Each solid's Bodies folder key (TopExp order) of a part source with several solids; null for one solid. */
+  bodyKeys(key: string, doc: AsmDoc, src: object): string[] | null {
+    const s = this.sources.get(key), pd = doc.parts[key]?.doc;
+    if (!s || s !== src || !s.body || !pd) return null;
+    try { const info = s.modeller.bodyInfo(s.body, pd); return info.length > 1 ? info.map(b => b.key) : null; }
+    catch { return null; }
+  }
+
   /** A built part's body as BREP text with its face order (`Modeller.toTransport`), for the disk cache; null when it has none. */
   transport(key: string): { brep: string; order: number[] } | null {
     const s = this.sources.get(key);

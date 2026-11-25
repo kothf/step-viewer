@@ -49,7 +49,7 @@ import { BOARD_MATERIAL, DEFAULT_STACK, boardConductivity, boardK, partTemps, pl
 import { boardMap, gerberName, mapPicture, stackK, type CopperMap } from "../thermal/copper";
 import { copperFromGerber } from "../thermal/copperRaster";
 import { overall, type SimProgress, type SimStage } from "./progress";
-import { GLOBAL_PASSES, MAX_PASSES, edgeLines, frameComps, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
+import { GLOBAL_PASSES, MAX_PASSES, edgeLines, frameComps, spotPoints, envelope, positiveAxis, sameName, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
 import { thermalSummary, type ThermalSummary } from "./summary";
@@ -88,7 +88,7 @@ export interface SimHost {
   /** The snapped point under the pointer (part coordinates) and the edge it is on, if any. */
   snapAt(x: number, y: number): { kind: string; point: [number, number, number]; edge?: EdgeInfo } | null;
   /** `regions` of an assembly carry each solid's material and its component's name. */
-  simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts?: number; regions?: { key: string; tris: Float64Array; mat?: MatRef | null; name?: string }[] }>;
+  simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts?: number; regions?: { key: string; tris: Float64Array; mat?: MatRef | null; name?: string; /** A solid of a part with several: the names of its body (typed name, Bodies key, feature name). */ body?: string[] }[] }>;
   /** No part command is open. */
   idle(): boolean;
   /** Draws the part's planes, sketches and marks again. */
@@ -110,7 +110,7 @@ interface CaseResult { id: string; name: string; passes: PassResult[]; job: numb
 type BoltKept = { id: string; name: string; members: string[]; d: number; pitch: number; tapped: boolean };
 /** A bolt found among the fasteners, with the patches it joins. */
 interface BoltUse extends BoltKept { a: Float64Array; b: Float64Array; E: number; /** Components of the patch under the head and of the nut or thread. */ ca: string; cb: string }
-interface Results { /** When it was solved (ISO time), for results that came back. */ at?: string; /** Read from the results kept with the model file. */ fromFile?: boolean; /** Kept with the model but solved for another model or study state. */ old?: boolean; /** Board studies: package parts whose heatsink share went into a heatsink body, by part id. */ heatsinks?: Record<string, { comp: string; w: number }>; /** Transient thermal studies: the last pass as solved (every output time); the last entry of `passes` is the time shown. */ tr?: PassResult; /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; /** Thermal: radiation between face sets, in the order of `thermal.exchanges`. */ xids?: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[] }
+interface Results { /** When it was solved (ISO time), for results that came back. */ at?: string; /** Read from the results kept with the model file. */ fromFile?: boolean; /** Kept with the model but solved for another model or study state. */ old?: boolean; /** Board studies: package parts whose heatsink share went into a heatsink body, by part id. */ heatsinks?: Record<string, { comp: string; w: number }>; /** Transient thermal studies: the last pass as solved (every output time); the last entry of `passes` is the time shown. */ tr?: PassResult; /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string; body?: string[] }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; /** Thermal: radiation between face sets, in the order of `thermal.exchanges`. */ xids?: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[] }
 const BOLT_NOTE = "Tension, shear and bending of each bolt as a beam. The safety factor compares their combined stress on the thread's stress area with the proof stress of the property class.";
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
 /** Solve on change: how long after the last change the solve starts, ms. */
@@ -137,7 +137,7 @@ const RELIEF_NOTE = "The part is held by nothing: its supports are left out and 
 /** The most load cases a study has. */
 export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { /** When it was solved (ISO time). */ at?: string; heatsinks?: Record<string, { comp: string; w: number }>; xids?: string[]; welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
+interface Kept { /** When it was solved (ISO time). */ at?: string; heatsinks?: Record<string, { comp: string; w: number }>; xids?: string[]; welds?: { id: string; name: string }[]; conns?: { id: string; name: string; spring: boolean }[]; bolts?: BoltKept[]; comps?: { key: string; name: string; body?: string[] }[]; off?: string[]; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; bodyMats?: { name: string; sy: number; rigid?: boolean; /** Thermal studies: conductivity, W/(m·K); `kz` = through a board, when it differs. */ k?: number; kz?: number }[]; cases?: { id: string; name: string; passes: PassResult[] }[] }
 
 /** A time in the UI's language. */
 const timeText = (s: number) => timeIn(s, { s: t("s"), min: t("min"), h: t("h") });
@@ -309,7 +309,7 @@ export class SimController {
   private filesRead = 0;
   private marks = new THREE.Group();
   /** An assembly's solids as last sent to the solver (the solver names them by their place in this list). */
-  private comps: { key: string; name: string }[] = [];
+  private comps: { key: string; name: string; body?: string[] }[] = [];
   private saved: { meshes: { mesh: THREE.Mesh; mat: THREE.Material | THREE.Material[] }[] } | null = null;
   private overlay: THREE.Mesh | null = null;
   // an assembly's plot follows its components (FR-CON-031): the part of each plot vertex, what is drawn, and how
@@ -1576,7 +1576,8 @@ export class SimController {
         if (bolted.has(pairKey(compOf(ka), compOf(kb))) && !typed.has(pairKey(ka, kb))) links.push({ a: i, b: j, type: "resistance" as const, h: BOLTED_TCC * 1e-6 });
       }
     }
-    const setup = thermalSetup(st, geo, asm ? bodies.map(b => b.key) : undefined);
+    // a body whose material has its own emissivity radiates by it from all open surfaces; a board's is typed with its stack
+    const setup = thermalSetup(st, geo, asm ? bodies.map(b => b.key) : undefined, asm ? { emis: mats.map(q => q?.emis), names: bodies.map(b => b.body), tris: bodies.map(b => b.tris) } : undefined);
     // a conductivity table (FR-TMAT-004) as factors on each body's k; a board keeps its copper's conductivity
     const kts = bodies.map((b, i) => { const rows = st.kt?.[compOf(b.key)]; return rows?.length && !bks[i] ? ktFactors(rows, kOf(i)) : null; });
     // a board with its Gerber set: the conductivity follows its copper cell by cell (FR-TBRD-020)
@@ -1609,7 +1610,7 @@ export class SimController {
       const { off, geo, bodies, mats, bks, k3s, kOf, nameOf, links, setup, kts, kmaps } = this.thermalParts(st, got, bolted);
       const kt = !asm && st.kt?.[""]?.length ? ktFactors(st.kt[""], m!.k!) : undefined, k3 = !asm ? st.k3?.[""] : undefined;
       if (asm) {
-        this.comps = bodies.map(b => ({ key: b.key, name: b.name ?? b.key }));
+        this.comps = bodies.map(b => ({ key: b.key, name: b.name ?? b.key, ...(b.body ? { body: b.body } : {}) }));
         if (!this.freshFound(st)) void this.findFrom(bodies, st.settings.gap ?? DEFAULT_GAP, this.foundKey(st)).then(() => { this.renderAll(); this.drawMarks(); }).catch(() => {});
       }
       // power cases (FR-TSTU-005): each solved on its own with its ticked heat loads and the same cooling
@@ -2160,7 +2161,15 @@ export class SimController {
     const max = new Map<string, number>();
     r.comps.forEach((c, d) => { const id = compOf(c.key), m = rows[d]?.max; if (m !== undefined && Number.isFinite(m)) max.set(id, Math.max(max.get(id) ?? -Infinity, m)); });
     const env = !!r.env && r.passes === r.env;
-    return partTemps(l.parts.filter(x => x.comps.length && (x.p >= PACKAGE_MIN_POWER || x.limit !== undefined)).map(x => ({ ...x, ...(env ? { off: true } : {}) })), c => max.get(c));
+    // heat bodies named inside a part of several bodies (a die): their hottest point
+    const dieOf = (x: PackageHeat) => {
+      if (!x.junction || !x.bodies?.length) return undefined;
+      const want = new Set(x.bodies.map(sameName));
+      let m = -Infinity;
+      r.comps!.forEach((c, d) => { const v = rows[d]?.max; if (v !== undefined && Number.isFinite(v) && x.comps.includes(compOf(c.key)) && c.body?.some(n => want.has(sameName(n)))) m = Math.max(m, v); });
+      return Number.isFinite(m) ? m : undefined;
+    };
+    return partTemps(l.parts.filter(x => x.comps.length && (x.p >= PACKAGE_MIN_POWER || x.limit !== undefined)).map(x => { const die = dieOf(x); return { ...x, ...(die !== undefined ? { die } : {}), ...(env ? { off: true } : {}) }; }), c => max.get(c));
   }
 
   private partTempsHtml(): string {
@@ -2170,7 +2179,7 @@ export class SimController {
     const lim = rows.some(x => x.limit !== undefined), life = rows.some(x => x.life !== undefined);
     return `<h5 class="sim-sub">${esc(t("Part temperatures"))}</h5>`
       + `<table class="sim-comptable sim-ptemps"><thead><tr><th>${esc(t("Part"))}</th><th>°C</th><th title="${esc(t("What the temperature is of"))}">${esc(t("Kind"))}</th>${lim ? `<th title="${esc(t("Temperature limit from the package"))}">${esc(t("Limit"))}, °C</th>` : ""}${life ? `<th title="${esc(t("Electrolytic life by the 10 °C rule: the rated life doubles for every 10 °C under the limit"))}">${esc(t("Life"))}, h</th>` : ""}</tr></thead><tbody>`
-      + rows.map(x => `<tr data-ptemp="${esc(x.name)}" class="${x.over ? "bad" : x.life !== undefined && x.life < DEFAULT_LIMITS.life ? "warn" : ""}"${x.kind === "junction" ? ` title="${esc(t("Case {c} °C + power × Rjc", { c: sig(x.body) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td data-v="pttemp">${sig(x.t)}</td><td data-v="ptkind"${x.caseOnly ? ` title="${esc(t("The package gives a junction temperature, but no Rjc is known: this is the case only."))}"` : ""}>${esc(kind(x))}${x.caseOnly ? "*" : ""}</td>${lim ? `<td data-v="ptlimit">${x.limit === undefined ? "" : sig(x.limit)}</td>` : ""}${life ? `<td data-v="ptlife">${x.life === undefined ? "" : hours(x.life)}</td>` : ""}</tr>`).join("") + `</tbody></table>`
+      + rows.map(x => `<tr data-ptemp="${esc(x.name)}" class="${x.over ? "bad" : x.life !== undefined && x.life < DEFAULT_LIMITS.life ? "warn" : ""}"${x.die ? ` title="${esc(t("Hottest point of the bodies the heat is made in; the whole part peaks at {c} °C", { c: sig(x.body) }))}"` : x.kind === "junction" ? ` title="${esc(t("Case {c} °C + power × Rjc", { c: sig(x.body) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td data-v="pttemp">${sig(x.t)}</td><td data-v="ptkind"${x.caseOnly ? ` title="${esc(t("The package gives a junction temperature, but no Rjc is known: this is the case only."))}"` : ""}>${esc(kind(x))}${x.caseOnly ? "*" : ""}</td>${lim ? `<td data-v="ptlimit">${x.limit === undefined ? "" : sig(x.limit)}</td>` : ""}${life ? `<td data-v="ptlife">${x.life === undefined ? "" : hours(x.life)}</td>` : ""}</tr>`).join("") + `</tbody></table>`
       + (rows.some(x => !x.over && x.life !== undefined && x.life < DEFAULT_LIMITS.life) ? `<p class="sim-note" data-v="lifenote">${esc(t("Electrolytics expected to last under {h} h are marked.", { h: hours(DEFAULT_LIMITS.life) }))}</p>` : "")
       + (rows.some(x => x.caseOnly) ? `<p class="sim-note muted" data-v="ptnote">${esc(t("* Case temperature only: type the part's Rjc (junction to case, K/W) in the Parts table of the package heat load to get its junction temperature."))}</p>` : "");
   }
@@ -4795,7 +4804,7 @@ export class SimController {
         const parts = l.parts ?? [], lifeCol = parts.some(x => x.elyt || x.life !== undefined);
         body += group(t("Parts"), `<table class="sim-pkparts"><thead><tr><th></th><th>${esc(t("Part"))}</th><th>${esc(t("Power, W"))}</th><th title="${esc(t("Junction to case, K/W: the part's temperature is then its case plus power × Rjc"))}">Rjc, K/W</th><th title="${esc(t("Temperature limit, °C: the result marks the part when it runs hotter"))}">${esc(t("Limit"))}, °C</th>${lifeCol ? `<th title="${esc(t("Rated life of an electrolytic at its limit, h: the result gives its life by the 10 °C rule"))}">${esc(t("Life"))}, h</th>` : ""}</tr></thead><tbody>${parts.map((x, i) => {
           const low = !(x.p >= PACKAGE_MIN_POWER), lost = !x.comps.length;
-          return `<tr data-pk="${x.id}" class="${low || lost ? "muted" : ""}"${lost ? ` title="${esc(t("No body of the model was matched to this part."))}"` : low ? ` title="${esc(t("Under 10 mW: left out."))}"` : ""}><td><input type="checkbox" data-k="pkon" data-i="${i}" aria-label="${esc(x.name)}"${x.off ? "" : " checked"}${lost ? " disabled" : ""} /></td><td translate="no">${esc(x.name)}</td><td><input type="text" inputmode="decimal" data-q="pkp" data-i="${i}" value="${trim(x.p)}" spellcheck="false"${lost ? " disabled" : ""} /></td><td><input type="text" inputmode="decimal" data-q="pkrjc" data-i="${i}" value="${x.rjc === undefined ? "" : trim(x.rjc)}" placeholder="${x.junction ? esc(t("none")) : ""}" spellcheck="false" aria-label="${esc(t("{name}: Rjc", { name: x.name }))}"${lost ? " disabled" : ""} /></td><td><input type="text" inputmode="decimal" data-q="pklim" data-i="${i}" value="${x.limit === undefined ? "" : trim(x.limit)}" spellcheck="false" aria-label="${esc(t("{name}: limit", { name: x.name }))}"${lost ? " disabled" : ""} /></td>${lifeCol ? `<td>${x.elyt || x.life !== undefined ? `<input type="text" inputmode="decimal" data-q="pklife" data-i="${i}" value="${x.life === undefined ? "" : trim(x.life)}" spellcheck="false" aria-label="${esc(t("{name}: rated life", { name: x.name }))}"${lost ? " disabled" : ""} />` : ""}</td>` : ""}</tr>`;
+          return `<tr data-pk="${x.id}" class="${low || lost ? "muted" : ""}"${lost ? ` title="${esc(t("No body of the model was matched to this part."))}"` : low ? ` title="${esc(t("Under 10 mW: left out."))}"` : ""}><td><input type="checkbox" data-k="pkon" data-i="${i}" aria-label="${esc(x.name)}"${x.off ? "" : " checked"}${lost ? " disabled" : ""} /></td><td translate="no"${x.hot?.length ? ` data-v="pkhot" title="${esc(t("Its heat is made in {n} of its {m} bodies, as the package says.", { n: x.hot.length, m: x.comps.length }))}"` : x.bodies?.length ? ` data-v="pkhot" title="${esc(t("Its heat is made in these bodies of the part: {list}", { list: x.bodies.join(", ") }))}"` : ""}>${esc(x.name)}${x.hot?.length || x.bodies?.length ? " ◆" : ""}</td><td><input type="text" inputmode="decimal" data-q="pkp" data-i="${i}" value="${trim(x.p)}" spellcheck="false"${lost ? " disabled" : ""} /></td><td><input type="text" inputmode="decimal" data-q="pkrjc" data-i="${i}" value="${x.rjc === undefined ? "" : trim(x.rjc)}" placeholder="${x.junction && (x.hot?.length || x.bodies?.length) ? esc(t("die")) : x.junction ? esc(t("none")) : ""}" spellcheck="false" aria-label="${esc(t("{name}: Rjc", { name: x.name }))}"${lost || (x.junction && (x.hot?.length || x.bodies?.length)) ? " disabled" : ""} /></td><td><input type="text" inputmode="decimal" data-q="pklim" data-i="${i}" value="${x.limit === undefined ? "" : trim(x.limit)}" spellcheck="false" aria-label="${esc(t("{name}: limit", { name: x.name }))}"${lost ? " disabled" : ""} /></td>${lifeCol ? `<td>${x.elyt || x.life !== undefined ? `<input type="text" inputmode="decimal" data-q="pklife" data-i="${i}" value="${x.life === undefined ? "" : trim(x.life)}" spellcheck="false" aria-label="${esc(t("{name}: rated life", { name: x.name }))}"${lost ? " disabled" : ""} />` : ""}</td>` : ""}</tr>`;
         }).join("")}</tbody></table>`
           + `<p class="pm-help muted">${esc(t("The power of each part from the board's thermal package, made throughout the part's bodies. Untick a part to leave it out, or type another power."))}</p>`
           + (parts.some(x => x.junction) ? `<p class="pm-help muted" data-v="rjchelp">${esc(t("The package gives junction temperatures for some parts: type their Rjc to report the junction, else the case is reported."))}</p>` : ""))

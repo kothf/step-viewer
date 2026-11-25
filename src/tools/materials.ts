@@ -30,6 +30,8 @@ export interface Material {
   cp?: number | null;
   /** Linear thermal expansion, 10⁻⁶/K. */
   alpha?: number | null;
+  /** Surface emissivity, 0..1: what radiation from all open surfaces uses for a body of this material (absent = the study's value). */
+  emis?: number | null;
   /** Appearance colour, #rrggbb. */
   color?: string;
   /** Key of `SOURCES`. */
@@ -481,7 +483,7 @@ export const MATERIAL_RU: Record<string, string> = Object.fromEntries([
 
 // ---------- the user's own materials (this browser) ----------
 const STORE = "mc:materials";
-const NUMS = ["E", "nu", "sy", "su", "k", "cp", "alpha"] as const;
+const NUMS = ["E", "nu", "sy", "su", "k", "cp", "alpha", "emis"] as const;
 export type MatNum = typeof NUMS[number];
 export const MAT_NUMS: readonly MatNum[] = NUMS;
 
@@ -493,7 +495,7 @@ export function validMaterial(x: unknown): Material | null {
   const density = Number(o.density);
   if (!name || !(density > 0) || !isFinite(density)) return null;
   const m: Material = { name, density, cat: "custom" };
-  for (const k of NUMS) { const v = o[k]; if (typeof v === "number" && isFinite(v)) m[k] = v; }
+  for (const k of NUMS) { const v = o[k]; if (typeof v === "number" && isFinite(v) && (k !== "emis" || (v > 0 && v <= 1))) m[k] = v; }
   if (typeof o.color === "string" && /^#[0-9a-f]{6}$/i.test(o.color)) m.color = o.color.toLowerCase();
   if (typeof o.eq === "string" && o.eq.trim()) m.eq = o.eq.trim().slice(0, 120);
   return m;

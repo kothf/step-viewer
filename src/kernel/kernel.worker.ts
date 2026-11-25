@@ -383,8 +383,8 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       if (!shown.length) throw new Error("E-SIM-NOBODY");
       const geo = asmSimGeometry(kernel.module, shown.map(p => ({ id: p.id, shape: p.body.shape, faces: p.body.faces as any[], names: p.body.names })), r.lin, r.ang);
       // each solid's material: its body's own, else its part's
-      const mats = new Map(shown.map(p => [p.id, { part: p.part, own: assembler!.bodyMats(p.part, r.doc, p.src) }]));
-      const regions = geo.regions.map(q => ({ ...q, part: mats.get(q.comp)!.part, mat: mats.get(q.comp)!.own?.[q.solid] ?? null }));
+      const mats = new Map(shown.map(p => [p.id, { part: p.part, own: assembler!.bodyMats(p.part, r.doc, p.src), keys: assembler!.bodyKeys(p.part, r.doc, p.src) }]));
+      const regions = geo.regions.map(q => ({ ...q, part: mats.get(q.comp)!.part, mat: mats.get(q.comp)!.own?.[q.solid] ?? null, body: mats.get(q.comp)!.keys?.[q.solid] ?? null }));
       post({ id: r.id, ok: true, geo: { tris: geo.tris, face: geo.face, lo: geo.lo, hi: geo.hi, names: geo.names }, regions }, [...new Set([geo.tris.buffer, geo.face.buffer, ...regions.map(q => q.tris.buffer)])]);
     } else if (r.type === "exportMesh") {
       const oc = kernel.module;
