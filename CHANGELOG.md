@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.759.0] - 2026-11-25
+
+### Added
+
+- **Insert part in place** in assemblies, as in other CAD apps: **New part** on the Assembly tab makes a new part inside the assembly. Type its name, then click a flat face of a component (it lights up under the pointer): the part opens in the context of the assembly, the other components see-through around it, with its first sketch already on that face. The sketch is an external reference, so it follows the face when that component moves or changes. With no face to pick, **Start at the assembly origin** opens it with its standard planes. The part's origin is the assembly's origin; **Return to assembly** adds it as a component fixed in place, in one undo step, and a part left empty is not added. Saving the assembly into its folder writes the new part beside it as its own `.mcadprt` file, like every other part.
+
 ## [1.758.0] - 2026-11-25
 
 ### Fixed
@@ -5000,7 +5006,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.758.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.759.0...HEAD
+[1.759.0]: https://github.com/kothf/step-viewer/compare/v1.758.0...v1.759.0
 [1.758.0]: https://github.com/kothf/step-viewer/compare/v1.757.0...v1.758.0
 [1.757.0]: https://github.com/kothf/step-viewer/compare/v1.756.0...v1.757.0
 [1.756.0]: https://github.com/kothf/step-viewer/compare/v1.755.0...v1.756.0
