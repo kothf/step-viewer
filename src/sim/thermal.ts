@@ -10,7 +10,7 @@ import { Basis, basisSize } from "./basis";
 import { BlockMatrix } from "./sparse";
 import { BlockCholesky, type CholPlan } from "./blockchol";
 import { pcgSolver } from "./pcg";
-import { makeGrid, refit, memoryBytes, elementReach, type Grid } from "./grid";
+import { makeGrid, refit, memoryBytes, elementReach, threadBodies, type Grid } from "./grid";
 import { type MomentTables, conductFromMoments, degreeOf, massFromMoments, momentTables, momentsAdd, momentsClear, momentsKept, momentsPoint, legendrePoint } from "./moments";
 import { facePoints, fitFacePoints, fitPlanePoints, gridTrianglePoints, smallTriangleDegrees, type Inside, type Points } from "./quad";
 import { DIRECT_LIMIT, MEMORY_LIMIT, directFits, memoryMb, topEigen, triArea, triBox, triNormals } from "./static";
@@ -1018,32 +1018,67 @@ function contactFlows(c: Ctx, contacts: ThermalContact[], joins: number[], x: Fl
   for (const C of contacts) if (C.area > 0) { C.ta /= C.area; C.tb /= C.area; }
 }
 
+/** Numbers per point asked by the shared open-surface test: place, normal, own body. */
+const TFREE = 7, TFREE_CHUNK = 2048;
+interface TFreeJob extends ParJob { key: number; tris: Float64Array[]; U: Float64Array; res: Int32Array; boxes: Float64Array; start: Int32Array; idx: Int32Array; lo: number[]; h: number; dims: number[]; eps: number; far: number }
+/** Does a surface point (stepped `eps`, or `far`, along its normal) lie in a body other than its own, among the bodies near its cube? */
+function coveredAt(doms: ArrayLike<(x: number, y: number, z: number) => boolean>, boxes: ArrayLike<number>, start: Int32Array | null, idx: Int32Array | null, lo: number[], h: number, n: number[],
+  x: number, y: number, z: number, nx: number, ny: number, nz: number, own: number, eps: number, far: number): boolean {
+  let from = 0, to = doms.length;
+  if (start) {
+    const i = Math.min(n[0] - 1, Math.max(0, Math.floor((x - lo[0]) / h))), j = Math.min(n[1] - 1, Math.max(0, Math.floor((y - lo[1]) / h))), k = Math.min(n[2] - 1, Math.max(0, Math.floor((z - lo[2]) / h)));
+    const cu = (k * n[1] + j) * n[0] + i;
+    from = start[cu]; to = start[cu + 1];
+  }
+  for (let q = from; q < to; q++) {
+    const d = idx ? idx[q] : q;
+    if (d === own) continue;
+    const b = 6 * d;
+    if (x < boxes[b] - far || y < boxes[b + 1] - far || z < boxes[b + 2] - far || x > boxes[b + 3] + far || y > boxes[b + 4] + far || z > boxes[b + 5] + far) continue;
+    if (doms[d](x + eps * nx, y + eps * ny, z + eps * nz) || (far > eps && doms[d](x + far * nx, y + far * ny, z + far * nz))) return true;
+  }
+  return false;
+}
+kernel<TFreeJob, { j: TFreeJob; doms: Inside[] }>("tfree", {
+  init(j) { return { j, doms: threadBodies(j) }; },
+  run({ j, doms }, t) {
+    const U = j.U, end = Math.min(j.res.length, (t + 1) * TFREE_CHUNK);
+    for (let i = t * TFREE_CHUNK; i < end; i++) {
+      const o = TFREE * i;
+      j.res[i] = coveredAt(doms, j.boxes, j.start, j.idx, j.lo, j.h, j.dims, U[o], U[o + 1], U[o + 2], U[o + 3], U[o + 4], U[o + 5], U[o + 6], j.eps, j.far) ? 2 : 1;
+    }
+  },
+});
+
 /** The points of some surface triangles that lie on no other domain: what the air around an assembly touches. */
 function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
   const { grid, pb } = c, doms = c.doms!;
   const eps = 2e-3 * grid.h, far = Math.max(0, pb.gap ?? 0) + eps;
-  const boxes = doms.map(d => triBox(d.tris)), N = grid.domsNear(far);
+  const boxes = new Float64Array(6 * doms.length), N = grid.domsNear(far);
+  doms.forEach((d, i) => boxes.set(triBox(d.tris), 6 * i));
   // through the kept triangles each point is asked once however many sinks hold it
   const K = c.loc && c.loc.q === q ? c.loc : null, kept = K ? keptPoints(c, K, tris, bodiesOf(c, tris), -1) : null;
   const L = kept ? kept.L : located(c, tris, q, -1, false), ids = kept ? kept.ids : null;
+  // the points not asked before: on all threads when the grid's bodies are there too (the same tests either way)
+  const np = L.length / 8, ask: number[] = [];
+  for (let i = 0; i < np; i++) if (!(ids && K!.free[ids[i]])) ask.push(i);
+  const ins = doms.map(d => d.inside), B = grid.bodies;
+  let res: Int32Array;
+  if (B && N && B.tris.length === doms.length && worthSharing(ask.length * 2000)) {
+    const U = sharedF64(TFREE * ask.length);
+    res = sharedI32(ask.length);
+    ask.forEach((i, a) => { const o = 8 * i, u = TFREE * a; U[u] = L[o + 1]; U[u + 1] = L[o + 2]; U[u + 2] = L[o + 3]; U[u + 3] = L[o + 5]; U[u + 4] = L[o + 6]; U[u + 5] = L[o + 7]; U[u + 6] = c.dom[L[o]]; });
+    parallelFor({ kind: "tfree", n: Math.ceil(ask.length / TFREE_CHUNK), key: B.key, tris: B.tris, U, res, boxes, start: N.start, idx: N.idx, lo: grid.lo, h: grid.h, dims: grid.n, eps, far } satisfies Omit<TFreeJob, "ctl">);
+  } else {
+    res = new Int32Array(ask.length);
+    ask.forEach((i, a) => { const o = 8 * i; res[a] = coveredAt(ins, boxes, N ? N.start : null, N ? N.idx : null, grid.lo, grid.h, grid.n, L[o + 1], L[o + 2], L[o + 3], L[o + 5], L[o + 6], L[o + 7], c.dom[L[o]], eps, far) ? 2 : 1; });
+  }
+  const on = new Uint8Array(np);
+  if (ids) for (let i = 0; i < np; i++) on[i] = K!.free[ids[i]];
+  ask.forEach((i, a) => { on[i] = res[a]; if (ids) K!.free[ids[i]] = res[a]; });
   let m = 0;
   for (let o = 0; o < L.length; o += 8) {
-    const known = ids ? K!.free[ids[o / 8]] : 0;
-    let on = known === 2;
-    if (!known) {
-      const x = L[o + 1], y = L[o + 2], z = L[o + 3], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], own = c.dom[L[o]];
-      let from = 0, to = doms.length;
-      if (N) { const [i, j, k] = grid.index(x, y, z), cu = (k * grid.n[1] + j) * grid.n[0] + i; from = N.start[cu]; to = N.start[cu + 1]; }
-      for (let qd = from; qd < to && !on; qd++) {
-        const d = N ? N.idx[qd] : qd;
-        if (d === own) continue;
-        const B = boxes[d];
-        if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
-        on = doms[d].inside(x + eps * nx, y + eps * ny, z + eps * nz) || (far > eps && doms[d].inside(x + far * nx, y + far * ny, z + far * nz));
-      }
-      if (ids) K!.free[ids[o / 8]] = on ? 2 : 1;
-    }
-    if (on) continue;
+    if (on[o / 8] === 2) continue;
     if (m !== o) { L.copyWithin(m, o, o + 8); if (ids) ids[m / 8] = ids[o / 8]; }
     m += 8;
   }

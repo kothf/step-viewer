@@ -31,6 +31,8 @@ export function gauss(n: number) {
 /** Inside test of the body; a mesh body adds exact line cuts and box hints (see body.ts). */
 export type Inside = ((x: number, y: number, z: number) => boolean) & {
   hits?(axis: number, p: ArrayLike<number>): number[];
+  /** The cuts of `hits` strictly between a and b (the same numbers, without walking the whole line). */
+  hitsIn?(axis: number, p: ArrayLike<number>, a: number, b: number): number[];
   hint?(lo: ArrayLike<number>, hi: ArrayLike<number>): { axis: number; edge: boolean } | null;
   /** A mesh body's triangles (9 numbers each): another thread can make the same body from them. */
   tris?: Float64Array;
@@ -168,6 +170,7 @@ function exactLeaf(lo: number[], hi: number[], q: number, inside: Inside, out: P
   const hits = inside.hits!;
   const p = [0, 0, 0];
   const cuts = (axis: number, a: number, b: number) => {
+    if (inside.hitsIn) return inside.hitsIn(axis, p, a, b);
     const v = hits(axis, p);
     return v.filter(x => x > a && x < b);
   };
@@ -249,7 +252,7 @@ function exactFace(axis: number, at: number, lo: number[], hi: number[], q: numb
   const p = [0, 0, 0];
   p[axis] = at;
   const tb: number[] = [];
-  for (const e of [lo[d], hi[d]]) { p[d] = e; p[t] = lo[t]; for (const x of hits(t, p)) if (x > lo[t] && x < hi[t]) tb.push(x); }
+  for (const e of [lo[d], hi[d]]) { p[d] = e; p[t] = lo[t]; for (const x of inside.hitsIn ? inside.hitsIn(t, p, lo[t], hi[t]) : hits(t, p)) if (x > lo[t] && x < hi[t]) tb.push(x); }
   const xs = [lo[t], ...tb.sort((a, b) => a - b), hi[t]];
   for (let s = 0; s + 1 < xs.length; s++) {
     const t0 = xs[s], t1 = xs[s + 1];
