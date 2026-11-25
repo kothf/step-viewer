@@ -17492,7 +17492,7 @@ try {
   }
 
   // --- Thermal solve on change 1.703 (FR-TSOL-020): new steady thermal studies solve by themselves after each change ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
     tp.on("pageerror", e => errors.push(e.message));
@@ -17569,7 +17569,7 @@ try {
   }
 
   // --- Transient thermal 1.661 (FRS-thermal TH4): warm-up over time with a heater switched on later ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
     tp.on("pageerror", e => errors.push(e.message));
@@ -18720,7 +18720,7 @@ try {
   }
 
   // --- radiation between faces 1.666 (FRS-thermal FR-TBC-007): heat crossing a gap only by radiation ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const ap = await ctx.newPage();
     ap.on("pageerror", e => errors.push(e.message));
@@ -19411,7 +19411,7 @@ try {
   }
 
   // --- thermal package 1.668 (FRS-thermal FR-TREP-010): a board study's result saved as a thermal package and opened again ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const kp = await ctx.newPage();
     kp.on("pageerror", e => errors.push(e.message));
