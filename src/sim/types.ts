@@ -240,6 +240,8 @@ export interface StudySettings {
   energyTol: number;
   /** Assemblies: components are joined across gaps up to this wide, mm (default `DEFAULT_GAP`). */
   gap?: number;
+  /** Thermal assemblies: still air between two bodies conducts heat across gaps up to this wide, mm (default `DEFAULT_AIR_SPAN`, 0 = off; FR-TCON-004). */
+  airSpan?: number;
   /** Modal studies: how many modes are found (default `DEFAULT_MODES`, at most `MAX_MODES`). */
   modes?: number;
   /** Modal studies: only the modes between these frequencies, Hz (then `modes` is not used; at most `MAX_MODES` are found). */
@@ -409,6 +411,8 @@ export function glueStiffness(l: { t?: number; E?: number }): [number, number] {
 }
 /** Assemblies: components are joined across gaps up to this wide, mm, when the study sets none (FR-CON-003). */
 export const DEFAULT_GAP = 0.1;
+/** Thermal assemblies: still air conducts between bodies facing each other up to this far apart, mm (FR-TCON-004): a resistor lying 1 mm over a board. */
+export const DEFAULT_AIR_SPAN = 2;
 
 export type PlotKind = "vm" | "u" | "ux" | "uy" | "uz" | "sf" | "err" | "temp" | "rise" | "flux" | "dmap";
 

@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.761.0] - 2026-11-26
+
+### Added
+
+- Thermal studies of assemblies: still air conducts heat between components that face each other across a small gap (FR-TCON-004). A power resistor lying 1 mm over a board now heats the board under it through the air, as it does on a real board; before, it lost that heat only to convection and read about 10 % hot (a 10 W resistor on a Tube Amp CAD export: 167 °C, now 158 °C; Tube Amp CAD's own map says 153 °C). **Air conducts across** under Connections sets the widest gap (2 mm unless changed, 0 = off); the air is taken at the mean temperature of those gaps from the pass before. Such pairs read *through still air* in the Connections table and *Still air* in the report.
+
+### Fixed
+
+- **Heat paths** were missing for Tube Amp CAD exports that carry only the heat (3.260 and later): the board is now the study's Circuit board component. Its note says the solve finds how much heat goes into the board, the air and the heatsinks.
+- A pair that both touches and faces across still air shows the sum of the two in the Connections table, not the last one found.
+
 ## [1.760.0] - 2026-11-25
 
 ### Changed
@@ -5017,7 +5028,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.760.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.761.0...HEAD
+[1.761.0]: https://github.com/kothf/step-viewer/compare/v1.760.0...v1.761.0
 [1.760.0]: https://github.com/kothf/step-viewer/compare/v1.759.0...v1.760.0
 [1.759.0]: https://github.com/kothf/step-viewer/compare/v1.758.0...v1.759.0
 [1.758.0]: https://github.com/kothf/step-viewer/compare/v1.757.0...v1.758.0

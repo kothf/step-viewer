@@ -14319,8 +14319,8 @@ try {
     await ctx.close();
   }
 
-  // --- Sheet metal (FR-FT-120): base flange from a gauge table, edge flange picked in the view, flatten, flat pattern DXF ---
-  if (inShard(4)) {
+  // --- Sheet metal (FR-FT-120): base flange from a gauge table, edge flange picked in the view, flatten, flat pattern DXF (shard 5 since 1.761.0: shard 4 reached the 12 minute limit) ---
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -17625,7 +17625,7 @@ try {
   }
 
   // --- Transient thermal 1.661 (FRS-thermal TH4): warm-up over time with a heater switched on later ---
-  if (inShard(6)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
     tp.on("pageerror", e => errors.push(e.message));
@@ -18219,8 +18219,10 @@ try {
     await bp.click('#sim-tools [data-s="solve"]');
     await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 400000 });
     await bp.waitForTimeout(500);
+    // the board share goes in as a fixed power; since 1.761 the lying resistors also warm the board under them through
+    // the still air (FR-TCON-004), a few tenths of a watt of their air share
     const hp2 = await bp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, applied: s.thermal?.applied, paths: s.thermal?.paths, note: document.querySelector('#sim-tree [data-v="pathnote"]')?.textContent }; });
-    check(!hp2.error && hp2.paths.length === 5 && hp2.paths.some(x => x.name === "R14" && Math.abs(x.board - 1.6) < 0.05) && hp2.paths.some(x => x.name === "R20" && Math.abs(x.board - 1.9) < 0.05) && /kept/.test(hp2.note ?? "") && hp2.applied > 5 && hp2.applied <= 10.98,
+    check(!hp2.error && hp2.paths.length === 5 && hp2.paths.some(x => x.name === "R14" && x.board > 1.55 && x.board < 1.6 + 0.4) && hp2.paths.some(x => x.name === "R20" && x.board > 1.85 && x.board < 1.9 + 0.4) && /kept/.test(hp2.note ?? "") && hp2.applied > 5 && hp2.applied <= 10.98,
       `thermal 1.657: with the package's split kept the study solves again and says so under the Heat paths table (${JSON.stringify(hp2)})`);
     // 1.675 (FR-TBRD-020): the board's copper read from its Gerber files; the conductivity then follows it cell by cell
     const max0 = await bp.evaluate(() => window.__sv.sim.state().thermal?.max);
@@ -18776,7 +18778,7 @@ try {
   }
 
   // --- radiation between faces 1.666 (FRS-thermal FR-TBC-007): heat crossing a gap only by radiation ---
-  if (inShard(6)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const ap = await ctx.newPage();
     ap.on("pageerror", e => errors.push(e.message));

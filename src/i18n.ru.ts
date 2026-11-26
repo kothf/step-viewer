@@ -6478,4 +6478,10 @@ export const RU: Record<string, string> = {
   "Nothing to sketch on yet: start at the assembly origin.": "Пока не на чем рисовать эскиз: начните в начале координат сборки.",
   "Start at the assembly origin": "Начать в начале координат сборки",
   "Return to assembly adds it, fixed in place, and Save writes its own file beside the assembly.": "«Вернуться в сборку» добавит её, зафиксированной на месте, а «Сохранить» запишет её собственный файл рядом со сборкой.",
+  "Air conducts across": "Воздух проводит через зазор до",
+  "Still air conducts heat between components facing each other across a gap up to this wide (a resistor lying over the board). 0 = off.": "Неподвижный воздух проводит тепло между компонентами, обращёнными друг к другу через зазор не шире этого (резистор, лежащий над платой). 0 = выключено.",
+  "Still air": "Неподвижный воздух",
+  "through still air": "через неподвижный воздух",
+  "They do not touch: the heat crosses the still air between them": "Они не касаются: тепло проходит через неподвижный воздух между ними",
+  "All the heat is made in the parts: the solve finds how much goes into the board, the air and the heatsinks.": "Всё тепло выделяется в деталях: расчёт сам находит, сколько уходит в плату, в воздух и в радиаторы.",
 };

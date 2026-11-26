@@ -56,7 +56,7 @@ import { thermalSummary, type ThermalSummary } from "./summary";
 import { BOARD_RC, SERIES_COLORS, componentSeries, exprProblem, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
 import { fluxArrows } from "./arrows";
 import { parseKTable, kTableText, ktFactors, type KTable } from "./ktable";
-import { keepsSplit, DEFAULT_CHASSIS_RTH, DEFAULT_GAP, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
+import { keepsSplit, DEFAULT_CHASSIS_RTH, DEFAULT_GAP, DEFAULT_AIR_SPAN, DEFAULT_MODES, DEFAULT_REF, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyComp, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 /** Hours to two significant figures (capacitor life). */
 const hours = (h: number) => String(Math.round(+h.toPrecision(2)));
@@ -1564,7 +1564,7 @@ export class SimController {
       if (tp.setup.problems.length) throw new Error("E-TH-NOFIELD");
       const { bodies, k3s, kOf, nameOf, kts, kmaps } = tp;
       return { ...base, thermal: { ...tr, body: tp.geo, mat: { name: nameOf(0), E: 0, nu: 0, rho: 0 }, regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: nameOf(i), E: 0, nu: 0, rho: 0 } })),
-        thermal: { k: kOf(0) * 1e-3, setup: tp.setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s, gap: th.settings.gap ?? DEFAULT_GAP, links: tp.links, ...(kts ? { kts } : {}), ...(kmaps ? { kmaps } : {}) } } };
+        thermal: { k: kOf(0) * 1e-3, setup: tp.setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s, gap: th.settings.gap ?? DEFAULT_GAP, airSpan: th.settings.airSpan ?? DEFAULT_AIR_SPAN, links: tp.links, ...(kts ? { kts } : {}), ...(kmaps ? { kmaps } : {}) } } };
     }
     const q = th.mats?.[""] ?? doc.material;
     if (!q?.k) throw new Error("E-TH-NOFIELD");
@@ -1704,7 +1704,7 @@ export class SimController {
         body: geo, problem: { fixed: [], loads: [], problems: [], supportIds: [] }, passes: total, energyTol: st.settings.energyTol, pos: mesh.pos, nrm: mesh.nrm, ...(memLimit() ? { memory: memLimit() } : {}),
         mat: { name: asm ? nameOf(0) : m!.name, E: 0, nu: 0, rho: 0 },
         ...(asm ? { regions: bodies.map((b, i) => ({ tris: b.tris, mat: { name: nameOf(i), E: 0, nu: 0, rho: 0 } })) } : {}),
-        thermal: asm ? { k: kOf(0) * 1e-3, setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s, gap: st.settings.gap ?? DEFAULT_GAP, links, ...(kts ? { kts } : {}), ...(kmaps ? { kmaps } : {}), ...(transient ? { transient } : {}) } : { k: m!.k! * 1e-3, setup, ...(kt ? { kt } : {}), ...(k3 ? { k3: k3.map(v => v * 1e-3) } : {}), ...(transient ? { transient } : {}) },
+        thermal: asm ? { k: kOf(0) * 1e-3, setup, ks: bodies.map((_b, i) => kOf(i) * 1e-3), k3s, gap: st.settings.gap ?? DEFAULT_GAP, airSpan: st.settings.airSpan ?? DEFAULT_AIR_SPAN, links, ...(kts ? { kts } : {}), ...(kmaps ? { kmaps } : {}), ...(transient ? { transient } : {}) } : { k: m!.k! * 1e-3, setup, ...(kt ? { kt } : {}), ...(k3 ? { k3: k3.map(v => v * 1e-3) } : {}), ...(transient ? { transient } : {}) },
       }, p => {
         mine.push(p);
         res.ms = performance.now() - t0;
@@ -2167,15 +2167,27 @@ export class SimController {
     const typed = new Map((st.links ?? []).filter(l => l.type === "none" || THERMAL_LINK_TYPES.has(l.type)).map(l => [key(l.a, l.b), l]));
     const isBolted = (a: string, b: string) => bolted.has(key(compOf(a), compOf(b)));
     const names = new Map([...(pre?.comps ?? []), ...comps].map(c => [c.key, c.name]));
-    type Row = { a: string; b: string; area: number | null; heat?: number; drop?: number };
+    type Row = { a: string; b: string; area: number | null; heat?: number; drop?: number; still?: boolean };
     const rows: Row[] = (pre?.list ?? []).map(c => ({ a: pre!.comps[c.a]?.key ?? "", b: pre!.comps[c.b]?.key ?? "", area: c.area })).filter(r => r.a && r.b);
     const at = new Map(rows.map(r => [key(r.a, r.b), r]));
+    // a pair can meet both where it touches and across still air (FR-TCON-004): its rows add up, the drop is the
+    // larger heat's, and a pair that meets only through the air is marked so
+    const seen = new Map<string, { big: number; touch: boolean }>();
     for (const c of found) {
       const a = comps[c.a]?.key ?? "", b = comps[c.b]?.key ?? "";
       if (!a || !b) continue;
-      const r = at.get(key(a, b));
-      if (r) { r.a = a; r.b = b; r.area = c.area; r.heat = c.heat; r.drop = c.ta - c.tb; }
-      else { const n: Row = { a, b, area: c.area, heat: c.heat, drop: c.ta - c.tb }; rows.push(n); at.set(key(a, b), n); }
+      const k = key(a, b), r = at.get(k), s = seen.get(k), air = c.type === "air";
+      if (!r || !s) {
+        const n: Row = r ?? { a, b, area: null };
+        n.a = a; n.b = b; n.area = c.area; n.heat = c.heat; n.drop = c.ta - c.tb; n.still = air;
+        if (!r) { rows.push(n); at.set(k, n); }
+        seen.set(k, { big: Math.abs(c.heat), touch: !air });
+        continue;
+      }
+      const sg = r.a === a ? 1 : -1;
+      r.area = (r.area ?? 0) + c.area; r.heat = (r.heat ?? 0) + sg * c.heat;
+      if (Math.abs(c.heat) > s.big) { s.big = Math.abs(c.heat); r.drop = sg * (c.ta - c.tb); }
+      s.touch ||= !air; r.still = !s.touch;
     }
     for (const l of typed.values()) if (!at.has(key(l.a, l.b))) rows.push({ a: l.a, b: l.b, area: null });
     const heats = rows.some(r => r.heat != null), f = UNITS[units.current].f, dis = this.running ? " disabled" : "";
@@ -2185,6 +2197,7 @@ export class SimController {
     let html = `<div class="sim-sec sim-links sim-tlinks"><h4>${esc(t("Connections"))}</h4>`
       + `<p class="sim-note muted">${esc(t("Components that touch, or come within the gap, pass heat to each other. A contact is perfect unless a pad, a contact resistance, an air gap or no contact is set for it."))}</p>`
       + `<label class="sim-kv2">${esc(t("Gap tolerance"))} <input type="number" data-k="gap" min="0" step="0.05" value="${sig((st.settings.gap ?? DEFAULT_GAP) * f)}" aria-label="${esc(t("Gap tolerance"))}" /> ${esc(units.current)}</label>`
+      + `<label class="sim-kv2" title="${esc(t("Still air conducts heat between components facing each other across a gap up to this wide (a resistor lying over the board). 0 = off."))}">${esc(t("Air conducts across"))} <input type="number" data-k="airspan" min="0" step="0.5" value="${sig((st.settings.airSpan ?? DEFAULT_AIR_SPAN) * f)}" aria-label="${esc(t("Air conducts across"))}" /> ${esc(units.current)}</label>`
       + `<button class="btn small sim-find" data-a="findlinks"${this.finding || this.running ? " disabled" : ""}>${esc(this.finding ? t("Finding the connections…") : t("Find connections"))}</button>`;
     if (!rows.length) return html + `<p class="sim-note muted" data-v="nolinks">${esc(res || pre ? t("No components touch.") : t("Find connections lists the pairs that touch; a solve lists them too."))}</p></div>`;
     html += `<table class="sim-contacts"><thead><tr><th>${esc(t("Components"))}<br />${esc(t("Area"))}, ${esc(units.current)}²</th>${heats ? `<th>${esc(t("Heat"))}, W<br />ΔT, °C</th>` : ""}<th>${esc(t("Contact"))}</th></tr></thead><tbody>`
@@ -2192,7 +2205,7 @@ export class SimController {
         const bt = isBolted(r.a, r.b), k = key(r.a, r.b), l = typed.get(k), cur = l?.type ?? (bt ? "bolted" : "perfect");
         const patch = !!pre?.list.some(c => key(pre.comps[c.a]?.key ?? "", pre.comps[c.b]?.key ?? "") === k);
         const ab = `data-a="${esc(r.a)}" data-b="${esc(r.b)}"`;
-        return `<tr data-link="${esc(k)}"${patch ? ` data-a="link" tabindex="0"` : ""} class="${k === this.linkSel ? "sel" : ""}"><td><span translate="no">${esc(names.get(r.a) ?? r.a)} – ${esc(names.get(r.b) ?? r.b)}</span><br /><span class="muted" data-v="carea">${r.area == null ? "" : sig(r.area * f * f)}</span></td>`
+        return `<tr data-link="${esc(k)}"${patch ? ` data-a="link" tabindex="0"` : ""} class="${k === this.linkSel ? "sel" : ""}"><td><span translate="no">${esc(names.get(r.a) ?? r.a)} – ${esc(names.get(r.b) ?? r.b)}</span><br /><span class="muted" data-v="carea">${r.area == null ? "" : sig(r.area * f * f)}</span>${r.still ? ` <span class="muted" data-v="cstill" title="${esc(t("They do not touch: the heat crosses the still air between them"))}">${esc(t("through still air"))}</span>` : ""}</td>`
           + (heats ? `<td><span data-v="cheat">${r.heat == null ? "" : sig(Math.abs(r.heat))}</span><br /><span data-v="cdrop">${r.drop == null ? "" : pct(Math.abs(r.drop))}</span></td>` : "")
           + `<td><select data-k="tlink" ${ab} aria-label="${esc(t("Contact"))}"${dis}>${opt("perfect", "Perfect", cur)}${bt ? opt("bolted", "Bolted joint", cur) : ""}${opt("pad", "Pad or paste", cur)}${opt("resist", "Contact resistance", cur)}${opt("air", "Air gap", cur)}${opt("none", "No contact", cur)}</select></td></tr>`
           + (cur === "pad" ? `<tr class="sim-glue" data-tpad="${esc(k)}"><td colspan="${heats ? 3 : 2}"><label>${esc(t("Material"))} <select data-k="padlib" ${ab}${dis}>${padOpts(l?.t ?? DEFAULT_PAD.t, l?.k ?? DEFAULT_PAD.k)}</select></label> <label title="${esc(t("Thickness of the pad or paste layer"))}">${esc(t("Thickness"))} <input type="number" data-k="padt" ${ab} min="0" step="0.05" value="${trim(l?.t ?? DEFAULT_PAD.t)}"${dis} /> mm</label> <label title="${esc(t("Thermal conductivity of the pad or paste"))}">k <input type="number" data-k="padk" ${ab} min="0" step="0.5" value="${trim(l?.k ?? DEFAULT_PAD.k)}"${dis} /> W/(m·K)</label></td></tr>` : "")
@@ -2254,10 +2267,12 @@ export class SimController {
    */
   private heatPaths(r: Results | null = this.res && !this.stale() ? this.res : null) {
     const last = r?.passes.at(-1), rows = last?.thermal?.comps, st = this.study(), off = new Set(st?.suppressed ?? []);
-    const l = st?.loads.find(x => x.type === "pkgheat" && !off.has(x.id) && x.board);
+    const l = st?.loads.find(x => x.type === "pkgheat" && !off.has(x.id));
     // a warm-up has no steady heat flows to split (its component rows give temperatures only)
     if (!r?.comps || !rows || !l || (r.env && r.passes === r.env) || last?.transient) return [];
-    const board = r.comps.findIndex(c => compOf(c.key) === l.board), contacts = last!.thermal!.contacts ?? [];
+    // an export that carries only the heat names no board: the study's board component is the one (FR-TBRD-003)
+    const bid = l.board ?? Object.entries(st?.comps ?? {}).find(([, c]) => c.board)?.[0];
+    const board = bid ? r.comps.findIndex(c => compOf(c.key) === bid) : -1, contacts = last!.thermal!.contacts ?? [];
     if (board < 0) return [];
     const out: { name: string; p: number; board: number; air: number; chassis: number; sink: number; sinkPut: number; other: number; pkg: { board: number; air: number; sink: number } | null }[] = [];
     for (const x of l.parts ?? []) {
@@ -2290,7 +2305,7 @@ export class SimController {
     return `<h5 class="sim-sub">${esc(t("Heat paths"))}</h5>`
       + `<table class="sim-comptable sim-paths"><thead><tr><th>${esc(t("Part"))}</th><th title="${esc(t("Heat made in the part"))}">W</th><th title="${esc(t("Conducted into the board"))}">${esc(t("Board"))}<br />%</th><th title="${esc(t("Off the part's own surface: convection, radiation, or a heatsink resistance on it"))}">${esc(t("Surface"))}<br />%</th>${hCol ? `<th title="${esc(t("Into the heatsink: the package's heatsink share, put into it where the part touches it, less what flows back into the part"))}">${esc(t("Heatsink"))}<br />%</th>` : ""}${cCol ? `<th title="${esc(t("The package's chassis share, put on the chassis walls"))}">${esc(t("Chassis"))}<br />%</th>` : ""}<th title="${esc(t("Into a heatsink, other parts or the chassis"))}">${esc(t("Other"))}<br />%</th></tr></thead><tbody>`
       + rows.map(x => `<tr data-path="${esc(x.name)}"${x.pkg ? ` title="${esc(t("The package's split: board {b} %, air {a} %, heatsink or chassis {s} %", { b: share(x.pkg.board, x.p), a: share(x.pkg.air, x.p), s: share(x.pkg.sink, x.p) }))}"` : ""}><td translate="no">${esc(x.name)}</td><td>${sig(x.p)}</td><td data-v="pboard"${x.board < 0 ? ` title="${esc(t("It takes heat in from the board"))}"` : ""}>${share(x.board, x.p).replace("-", "−")}</td><td data-v="pair">${share(x.air, x.p)}</td>${hCol ? `<td data-v="psink">${share(Math.max(0, x.sink), x.p)}</td>` : ""}${cCol ? `<td data-v="pchassis">${share(x.chassis, x.p)}</td>` : ""}<td data-v="pother">${share(Math.max(0, x.other), x.p)}</td></tr>`).join("") + `</tbody></table>`
-      + `<p class="sim-note muted" data-v="pathnote">${esc(t("The package's split is kept: its board shares enter the board under each part as fixed powers."))}</p>`
+      + `<p class="sim-note muted" data-v="pathnote">${esc(t((st?.loads ?? []).some(l => l.type === "pkgheat" && !off.has(l.id) && keepsSplit(l)) ? "The package's split is kept: its board shares enter the board under each part as fixed powers." : "All the heat is made in the parts: the solve finds how much goes into the board, the air and the heatsinks."))}</p>`
       + ((st?.loads ?? []).some(l => l.type === "pkgheat" && !off.has(l.id) && l.board && (l.parts ?? []).some(x => !x.off && (x.hot?.length || x.bodies?.length)))
         ? `<p class="sim-note muted" data-v="dienote">${esc(t("A part that names the bodies its heat is made in makes all its power there; its shares are taken from its case where it meets the board or the heatsink."))}</p>` : "")
       + (hCol ? `<p class="sim-note muted" data-v="sinknote">${esc(t("The heatsink shares, {w} W, enter the heatsinks where the parts touch them.", { w: sig(rows.reduce((a, x) => a + x.sinkPut, 0)) }))}</p>` : "")
@@ -4112,7 +4127,7 @@ export class SimController {
     if (res.comps && T.contacts?.length) {
       blocks.push({ kind: "h", text: t("Connections") });
       blocks.push({ kind: "table", widths: [4, 2, 2, 2, 2], rows: [[t("Components"), t("Contact"), `${t("Area")}, mm²`, `${t("Heat")}, W`, "ΔT, °C"],
-        ...T.contacts.map(c => [`${res.comps![c.a]?.name ?? ""} – ${res.comps![c.b]?.name ?? ""}`, t(c.type === "perfect" ? "Perfect" : "Pad or contact resistance"), sig(c.area), sig(Math.abs(c.heat)), pct(Math.abs(c.ta - c.tb))])] });
+        ...T.contacts.map(c => [`${res.comps![c.a]?.name ?? ""} – ${res.comps![c.b]?.name ?? ""}`, t(c.type === "perfect" ? "Perfect" : c.type === "air" ? "Still air" : "Pad or contact resistance"), sig(c.area), sig(Math.abs(c.heat)), pct(Math.abs(c.ta - c.tb))])] });
     }
     const paths = this.heatPaths(res);
     if (paths.length) {
@@ -5185,6 +5200,10 @@ export class SimController {
       const v = Math.max(0, Number(el.value) / UNITS[units.current].f);
       if (!Number.isFinite(v)) return;
       this.host.change(t("Gap tolerance"), d => { const s2 = d.studies?.find(x => x.id === st.id); if (s2) { if (Math.abs(v - DEFAULT_GAP) < 1e-12) delete s2.settings.gap; else s2.settings.gap = v; } });
+    } else if (el.dataset.k === "airspan") {
+      const v = Math.max(0, Number(el.value) / UNITS[units.current].f);
+      if (!Number.isFinite(v)) return;
+      this.host.change(t("Air conducts across"), d => { const s2 = d.studies?.find(x => x.id === st.id); if (s2) { if (Math.abs(v - DEFAULT_AIR_SPAN) < 1e-12) delete s2.settings.airSpan; else s2.settings.airSpan = v; } });
     } else if (el.dataset.k === "cfilter" || el.dataset.k === "tfilter") {
       if (el.dataset.k === "cfilter") this.linkFilter.comp = el.value; else this.linkFilter.type = el.value;
       this.renderTree();
