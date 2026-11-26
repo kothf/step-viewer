@@ -156,8 +156,16 @@ export interface ThermalLink {
 
 /** Thinnest air layer taken, mm: a touching pair set to Air gap still passes a finite heat. */
 export const AIR_MIN = 0.01;
+/** Longest step when marching across still air to the body facing a point (FR-TCON-004), mm. */
+const AIR_STEP = 0.25;
 /** Dry air's conductivity at `T` °C, W/(mm·K): 0.0243 W/(m·K) at 0 °C, 0.0314 at 100 °C, 0.0386 at 200 °C. */
 export function airK(T: number): number { return (0.0243 + 7.15e-5 * Math.max(-50, Math.min(600, T))) * 1e-3; }
+/** The mean temperature of the still-air contacts of a solve, area weighted, to 0.1 °C, or undefined without any (FR-TCON-004). */
+export function airMean(contacts: ThermalContact[] | undefined): number | undefined {
+  let a = 0, s = 0;
+  for (const c of contacts ?? []) if (c.type === "air" && c.area > 0 && Number.isFinite(c.ta + c.tb)) { a += c.area; s += (c.area * (c.ta + c.tb)) / 2; }
+  return a > 0 ? Math.round((10 * s) / a) / 10 : undefined;
+}
 /** The links with each air layer's conductance at the temperature `T(link)` gives. */
 function airLinks(links: ThermalLink[], T: (l: ThermalLink) => number): ThermalLink[] {
   return links.map(l => (l.air !== undefined ? { ...l, type: "resistance" as const, h: airK(T(l)) / Math.max(l.air, AIR_MIN) } : l));
@@ -172,7 +180,8 @@ export interface ThermalContact {
   a: number;
   b: number;
   area: number;
-  type: "perfect" | "resistance";
+  /** "air": through still air across a gap wider than the joining gap (`airSpan`, FR-TCON-004). */
+  type: "perfect" | "resistance" | "air";
   /** Heat passing from a to b, W, and the mean temperature of each side over the contact, °C. */
   heat: number;
   ta: number;
@@ -223,6 +232,15 @@ export interface ThermalProblem {
   /** Several bodies, joined where they touch (within `gap` mm) as `links` say. */
   domains?: ThermalDomain[];
   gap?: number;
+  /**
+   * Still air conducts between two bodies facing each other across a gap wider than `gap` and up to this wide, mm
+   * (FR-TCON-004): a point of one body's surface whose normal reaches the other at distance d passes air's k / d per
+   * area. Absent or 0 = only bodies within `gap` exchange heat by conduction.
+   */
+  airSpan?: number;
+  /** The temperature still air across those gaps is taken at, °C (default: the fixed and ambient temperatures' mean); a
+   * caller solving in passes gives the air contacts' mean temperature from the pass before. */
+  airT?: number;
   links?: ThermalLink[];
   sinks: ThermalSink[];
   /** Radiation between face sets (FR-TBC-007). */
@@ -859,6 +877,10 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
   const { grid, nb, nbs, bas, bas2, gam, k3, pb } = c, doms = c.doms!, nd = doms.length;
   const contacts: ThermalContact[] = [], joins: number[] = [];
   const eps = 2e-3 * grid.h, gap = Math.max(0, pb.gap ?? 0), far = gap + eps;
+  // still air across wider gaps (FR-TCON-004): marched along the normal in steps of at most AIR_STEP, then halved to the surface
+  const span = Math.max(far, pb.airSpan ?? 0), reach = Math.max(far, span), kAir = airK(pb.airT ?? startTemp(pb));
+  const airSteps: number[] = [];
+  if (span > far) { const n = Math.ceil((span - far) / AIR_STEP); for (let i = 1; i <= n; i++) airSteps.push(far + ((span - far) * i) / n); }
   const how = new Map<number, ThermalLink>();
   for (const l of pb.links ?? []) {
     if (l.type === "resistance" && !(l.h! > 0)) throw new Error("E-TH-CONTACT");
@@ -872,7 +894,7 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
   // a pair of bodies is joined where the surface of the one with less surface lies on the other: the points on a big
   // face are too far apart to find a wire's end on it (a resistor's lead was joined in one pass and not in the next),
   // and a body wholly inside another has only its own surface there
-  const isNear = new Uint8Array(nd), N = grid.domsNear(far), steps = gap > 0 ? [eps, far] : [eps];
+  const isNear = new Uint8Array(nd), N = grid.domsNear(reach), steps = gap > 0 ? [eps, far] : [eps];
   const areas = doms.map(d => surfaceArea(d.tris));
   for (let a = 0; a < nd; a++) {
     const near: number[] = [];
@@ -881,7 +903,7 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
       if (d === a || areas[d] < areas[a] || (areas[d] === areas[a] && d < a)) continue;
       if (how.get(Math.min(a, d) * nd + Math.max(a, d))?.type === "none") continue;
       let apart = false;
-      for (let k = 0; k < 3; k++) if (boxes[a][k] > boxes[d][3 + k] + far || boxes[d][k] > boxes[a][3 + k] + far) apart = true;
+      for (let k = 0; k < 3; k++) if (boxes[a][k] > boxes[d][3 + k] + reach || boxes[d][k] > boxes[a][3 + k] + reach) apart = true;
       if (!apart) { near.push(d); isNear[d] = 1; }
     }
     if (!near.length) continue;
@@ -904,12 +926,35 @@ function joinTerms(c: Ctx, A: BlockMatrix, tq: number): { contacts: ThermalConta
         }
         if (b >= 0) break;
       }
+      // not touching anything: still air to the nearest body the normal meets within the span
+      let air = 0;
+      if (b < 0 && airSteps.length) {
+        let lo = far;
+        for (const st of airSteps) {
+          for (let qd = from; qd < to && b < 0; qd++) {
+            const d = N ? N.idx[qd] : near[qd];
+            if (N && !isNear[d]) continue;
+            const B = boxes[d], px = x + st * nx, py = y + st * ny, pz = z + st * nz;
+            if (px < B[0] || py < B[1] || pz < B[2] || px > B[3] || py > B[4] || pz > B[5]) continue;
+            if (doms[d].inside(px, py, pz)) b = d;
+          }
+          if (b >= 0) {
+            // halve the last step to the other body's surface
+            let hi = st;
+            for (let it = 0; it < 4; it++) { const m = (lo + hi) / 2; if (doms[b].inside(x + m * nx, y + m * ny, z + m * nz)) hi = m; else lo = m; }
+            air = hi; bx = x + (hi + eps) * nx; by = y + (hi + eps) * ny; bz = z + (hi + eps) * nz;
+            break;
+          }
+          lo = st;
+        }
+      }
       if (b < 0) continue;
       const ca = grid.cellOf(x - eps * nx, y - eps * ny, z - eps * nz, a), cb = grid.cellOf(bx, by, bz, b);
       if (ca < 0 || cb < 0) continue;
-      const link = how.get(Math.min(a, b) * nd + Math.max(a, b)), hc = link?.type === "resistance" ? link.h! : 0;
-      let ci = found.get(a * nd + b);
-      if (ci === undefined) { ci = contacts.length; found.set(a * nd + b, ci); contacts.push({ a, b, area: 0, type: hc ? "resistance" : "perfect", heat: 0, ta: 0, tb: 0 }); }
+      const link = how.get(Math.min(a, b) * nd + Math.max(a, b)), hc = air > 0 ? kAir / air : link?.type === "resistance" ? link.h! : 0;
+      const fk = (air > 0 ? nd * nd : 0) + a * nd + b;
+      let ci = found.get(fk);
+      if (ci === undefined) { ci = contacts.length; found.set(fk, ci); contacts.push({ a, b, area: 0, type: air > 0 ? "air" : hc ? "resistance" : "perfect", heat: 0, ta: 0, tb: 0 }); }
       contacts[ci].area += w;
       const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb];
       const ma = nbs[ea], mb = nbs[eb];
@@ -2108,7 +2153,7 @@ function sameBuild(k: KeptBuild | null | undefined, pb: ThermalProblem): k is Ke
   if (!k) return false;
   const q = k.pb, same = (x: ArrayLike<number>, y: ArrayLike<number>) => x.length === y.length && Array.prototype.every.call(x, (v: number, i: number) => v === y[i]);
   return q.p === pb.p && q.h === pb.h && same(q.lo, pb.lo) && same(q.hi, pb.hi) && (q.inside === pb.inside || (!!q.inside.tris && !!pb.inside.tris && same(q.inside.tris, pb.inside.tris))) && q.k === pb.k && q.k3 === pb.k3
-    && q.sinks === pb.sinks && q.sources === pb.sources && q.links === pb.links && q.gap === pb.gap && (q.depth ?? 3) === (pb.depth ?? 3)
+    && q.sinks === pb.sinks && q.sources === pb.sources && q.links === pb.links && q.gap === pb.gap && (q.airSpan ?? 0) === (pb.airSpan ?? 0) && q.airT === pb.airT && (q.depth ?? 3) === (pb.depth ?? 3)
     && (q.exchanges?.length ?? 0) === (pb.exchanges?.length ?? 0) && (q.exchanges ?? []).every((X, i) => X.a === pb.exchanges![i].a && X.b === pb.exchanges![i].b && X.f === pb.exchanges![i].f && X.ea === pb.exchanges![i].ea && X.eb === pb.exchanges![i].eb)
     && (q.domains?.length ?? 0) === (pb.domains?.length ?? 0)
     && (q.domains ?? []).every((d, i) => { const e = pb.domains![i]; return d.tris === e.tris && d.k === e.k && d.k3 === e.k3 && d.kmap === e.kmap; });

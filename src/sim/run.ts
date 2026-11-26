@@ -8,7 +8,7 @@ import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
 import { DEFAULT_AMBIENT, DEFAULT_REF, keepsSplit, enclosureFactor, fanSpeed, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { contactPatch, facingPatch, intoPatch, nearPatch } from "../thermal/study";
-import { forcedH, keepBuild, kmapMean, ktFactor, solveThermal, takeBuild, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
+import { airMean, forcedH, keepBuild, kmapMean, ktFactor, solveThermal, takeBuild, thermalMemory, transientThermal, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource, type ThermalExchange, type ExchangeFlow, type KMap } from "./thermal";
 import { viewFactor } from "./viewfactor";
 import { progress, progressPass } from "./progress";
 
@@ -929,6 +929,8 @@ export interface RunInput {
    */
   temp?: { alpha: number; /** Per region (assemblies, bodies of their own material): α, 1/K; 0 for a rigid one. */ alphas?: number[]; thermal?: RunInput };
   thermal?: { k: number; setup: ThermalSetup; ks?: number[]; /** Per region: conductivity along X, Y, Z when they differ (a board), else null. */ k3s?: (number[] | null)[]; gap?: number; links?: ThermalLink[];
+    /** Still air conducts across gaps between components up to this wide, mm (FR-TCON-004; absent = off). */
+    airSpan?: number;
     /** A part's conductivity along X, Y, Z when it differs by direction (FR-TMAT-003), W/(mm·K). */
     k3?: number[];
     /** Per region: a board's conductivity varying over it, from its copper (FR-TBRD-020), else null. */
@@ -1420,7 +1422,7 @@ function hashOf(a: ArrayLike<number> | undefined, h = 2166136261): number {
 export function reuseKey(inp: RunInput, h: number): string {
   const T = inp.thermal!;
   return JSON.stringify([
-    hashOf(inp.body.tris), inp.body.lo, inp.body.hi, h, inp.memory ?? null, T.k, T.ks ?? null, T.k3s ?? null, T.k3 ?? null, T.kt ?? null, T.kts ?? null, T.gap ?? null, T.links ?? null,
+    hashOf(inp.body.tris), inp.body.lo, inp.body.hi, h, inp.memory ?? null, T.k, T.ks ?? null, T.k3s ?? null, T.k3 ?? null, T.kt ?? null, T.kts ?? null, T.gap ?? null, T.airSpan ?? null, T.links ?? null,
     (T.kmaps ?? []).map(m => (m ? [m.axis, m.ua, m.va, m.u0, m.v0, m.cell, m.nu, m.nv, hashOf(m.along), hashOf(m.through)] : null)),
     (inp.regions ?? []).map(r => hashOf(r.tris)),
     T.setup.sinks.map(s => [hashOf(s.tris), s.temp !== undefined ? "t" : "f", s.temp !== undefined ? 0 : s.h ?? 0, s.emissivity ?? 0, !!s.free, s.natural ? 1 : 0, s.forced ? hashOf(s.forced.h) : 0]),
@@ -1474,6 +1476,7 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
   let inner: InnerPoints | undefined;
   const known: number[] = [], none: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
   const reuse = reuseKey(inp, h);
+  let airT: number | undefined;
   // FR-TSOL-003 local passes (as runStatic): each element's degree, and its share of the error when its degree was last raised
   let degrees: Int8Array | undefined, ind: Float64Array | undefined;
   // heat entering through small faces (a part's pads on a board): the elements under them run ahead from the first pass
@@ -1496,8 +1499,10 @@ export function* runThermal(inp: RunInput, keep?: (s: Sampler, inside: (x: numbe
       p = 0;
       for (let e = 0; e < degrees.length; e++) p = Math.max(p, degrees[e]);
     }
-    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), grid, prev, ...(degrees ? { degrees } : {}), sinks: set.sinks, sources: set.sources, ...(exchanges ? { exchanges } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}), reuse });
+    const r = solveThermal({ lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), grid, prev, ...(degrees ? { degrees } : {}), sinks: set.sinks, sources: set.sources, ...(exchanges ? { exchanges } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links, ...(T.airSpan ? { airSpan: T.airSpan, ...(airT !== undefined ? { airT } : {}) } : {}) } : {}), reuse: airT !== undefined ? `${reuse}|air${airT}` : reuse });
     grid = r.grid; prev = r.x;
+    // still air across gaps is taken at the mean temperature of its contacts in this pass for the next (FR-TCON-004)
+    airT = airMean(r.contacts) ?? airT;
     if (!ind || !degrees || k < GLOBAL_PASSES) ind = Float64Array.from(r.eta);
     else for (const e of marked) ind[e] = r.eta[e];
     if (r.prevError != null) known.push(r.prevError);
@@ -1615,7 +1620,7 @@ export function* runTransient(inp: RunInput): Generator<PassResult> {
   let inner: InnerPoints | undefined;
   let flux = new Float32Array(3 * (inp.pos.length / 3)), dom: Uint16Array | undefined, flows: SinkFlow[] = [];
   const r = transientThermal(
-    { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), sinks: set.sinks, sources: set.sources, ...(set.exchanges?.length ? { exchanges: exchangesOf(set, inp.body) } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links } : {}) },
+    { lo: inp.body.lo, hi: inp.body.hi, inside, h, p, k: T.ks?.[0] ?? T.k, ...(T.kt ? { kt: T.kt } : {}), ...(!domains && (T.k3 ?? T.k3s?.[0]) ? { k3: (T.k3 ?? T.k3s![0])! } : {}), sinks: set.sinks, sources: set.sources, ...(set.exchanges?.length ? { exchanges: exchangesOf(set, inp.body) } : {}), memory: inp.memory, ...(domains ? { domains, gap: T.gap, links: T.links, ...(T.airSpan ? { airSpan: T.airSpan } : {}) } : {}) },
     {
       rc: R ? Tr.rcs! : [Tr.rc], t0: Tr.t0, times, built, ...(Number.isFinite(maxStep) ? { maxStep } : {}), breaks: prof.flatMap(profileBreaks),
       factor: (i, t) => profileFactor(prof[i], t),
