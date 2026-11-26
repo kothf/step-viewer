@@ -14319,8 +14319,8 @@ try {
     await ctx.close();
   }
 
-  // --- Sheet metal (FR-FT-120): base flange from a gauge table, edge flange picked in the view, flatten, flat pattern DXF ---
-  if (inShard(4)) {
+  // --- Sheet metal (FR-FT-120): base flange from a gauge table, edge flange picked in the view, flatten, flat pattern DXF (shard 5 since 1.761.0: shard 4 reached the 12 minute limit) ---
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
