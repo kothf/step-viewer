@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.762.0] - 2026-11-26
+
+### Added
+
+- Thermal studies: **Add surroundings** under Cooling when a study has no way for the heat to leave (no convection, radiation, fixed temperature or chassis wall). One click adds still air (natural convection) and radiation to the room on every open surface; set the ambient and the enclosure beside it. Tube Amp CAD now exports a board's heat sources only and leaves the surroundings to the assembly they go into.
+
 ## [1.761.0] - 2026-11-26
 
 ### Added
@@ -5028,7 +5034,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.761.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.762.0...HEAD
+[1.762.0]: https://github.com/kothf/step-viewer/compare/v1.761.0...v1.762.0
 [1.761.0]: https://github.com/kothf/step-viewer/compare/v1.760.0...v1.761.0
 [1.760.0]: https://github.com/kothf/step-viewer/compare/v1.759.0...v1.760.0
 [1.759.0]: https://github.com/kothf/step-viewer/compare/v1.758.0...v1.759.0

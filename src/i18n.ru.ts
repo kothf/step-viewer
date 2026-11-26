@@ -5990,6 +5990,8 @@ export const RU: Record<string, string> = {
   "Cooling": "Охлаждение",
   "The analysis needs a material with a thermal conductivity.": "Для расчёта нужен материал с теплопроводностью.",
   "None yet: the heat needs a way out. Pick one in the Simulation tab.": "Пока нет: теплу нужен выход. Выберите на вкладке «Расчёт».",
+  "No surroundings yet: the heat has no way out. Add still air and radiation to the room on every open surface, then set the ambient below, or pick cooling in the Simulation tab.": "Окружение не задано: теплу некуда уходить. Добавьте неподвижный воздух и излучение в помещение на всех открытых поверхностях и задайте температуру окружающей среды ниже, или выберите охлаждение на вкладке «Расчёт».",
+  "Add surroundings": "Добавить окружение",
   "Faces with no condition are insulated: no heat crosses them.": "Грани без условий теплоизолированы: тепло через них не проходит.",
   "Stop at temperature change": "Остановить при изменении температуры",
   "Each pass raises the accuracy on the same geometry and stops early once no temperature changes by more than {n} % of the temperature range.": "Каждый проход повышает точность на той же геометрии и останавливается раньше, когда ни одна температура не меняется больше чем на {n} % от диапазона температур.",

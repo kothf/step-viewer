@@ -477,3 +477,18 @@ export function pickCount(it: StudySupport | StudyLoad | StudyRefine | StudyExtr
   const l = it as { on?: "edges" | "points"; edges?: StudyEdge[]; points?: StudyPoint[] };
   return l.on === "edges" ? l.edges?.length ?? 0 : l.on === "points" ? l.points?.length ?? 0 : it.faces.length;
 }
+
+/** Supports that let a thermal study's heat leave the model (a fixed temperature, convection, radiation to the surroundings, a chassis wall). */
+const WAY_OUT: SupportType[] = ["temp", "conv", "rad", "chassis"];
+/** Whether a thermal study has somewhere for its heat to go: an unsuppressed fixed temperature, convection, radiation or chassis wall. */
+export function hasSurroundings(st: Study): boolean {
+  const off = new Set(st.suppressed ?? []);
+  return st.supports.some(s => WAY_OUT.includes(s.type) && !off.has(s.id));
+}
+/** Add surroundings (a board study exported with heat sources only): still air on every open surface (natural convection) and radiation to the room at the emissivity given; ambient stays as set (default 25 °C). */
+export function addSurroundings(st: Study, emis = 0.9): void {
+  const s1: StudySupport = { id: nextId(st, "s"), name: itemName(st, "conv"), type: "conv", faces: [], all: true, natural: true, h: FILM_PRESETS[0][1] };
+  st.supports.push(s1);
+  const s2: StudySupport = { id: nextId(st, "s"), name: itemName(st, "rad"), type: "rad", faces: [], all: true, emis };
+  st.supports.push(s2);
+}
