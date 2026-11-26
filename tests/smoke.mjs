@@ -17624,6 +17624,58 @@ try {
     await ctx.close();
   }
 
+  // --- Add surroundings 1.762: a thermal study with heat sources only offers still air and radiation on every open surface in one click ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const sp = await ctx.newPage();
+    sp.on("pageerror", e => errors.push(e.message));
+    sp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await sp.goto(`${origin}/index.html?debug`);
+    await sp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await sp.goto(`${origin}/index.html?debug`);
+    await sp.waitForFunction(() => window.__sv);
+    await sp.click("#new-part");
+    await sp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    await sp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, 0, 0), P(2, 40, 0), P(3, 40, 40), P(4, 0, 40), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } });
+      d.material = { name: "Test aluminium", density: 2.7, E: 70, nu: 0.33, sy: 100, k: 160, cp: 900 };
+    }));
+    await sp.waitForTimeout(150);
+    await sp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    await sp.click("#cm-t-simulation");
+    await sp.waitForTimeout(300);
+    await sp.click('#sim-tools [data-s="mode-thermal"]');
+    await sp.waitForTimeout(150);
+    await sp.click('#sim-tools [data-s="heat"]');
+    await sp.waitForSelector("#sim-pm .pm-ok");
+    await sp.check('#sim-pm [data-k="body"]');
+    await sp.fill('#sim-pm [data-n="value"]', "2");
+    await sp.press('#sim-pm [data-n="value"]', "Tab");
+    await sp.click("#sim-pm .pm-ok");
+    await sp.waitForTimeout(300);
+    const box0 = await sp.evaluate(() => ({ shown: !!document.querySelector('#sim-tree [data-v="surround"] [data-a="surround"]'), text: document.querySelector('#sim-tree [data-v="surround"]')?.textContent ?? "" }));
+    await sp.click('#sim-tree [data-a="surround"]');
+    await sp.waitForTimeout(300);
+    const after = await sp.evaluate(() => {
+      const st = window.__sv.model.store.doc.studies.at(-1);
+      return { sup: st.supports.map(s => [s.type, !!s.all, !!s.natural, s.emis ?? null]), shown: !!document.querySelector('#sim-tree [data-v="surround"]') };
+    });
+    await sp.click('#sim-tools [data-s="solve"]');
+    await sp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 240000 });
+    const res = await sp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, max: s.thermal?.max }; });
+    await sp.evaluate(() => window.__sv.model.store.undo());
+    await sp.click("#lang-btn");
+    await sp.waitForTimeout(400);
+    const ru = await sp.evaluate(() => document.querySelector('#sim-tree [data-v="surround"]')?.textContent ?? "");
+    await sp.click("#lang-btn");
+    check(box0.shown && /no way out/.test(box0.text) && JSON.stringify(after.sup) === JSON.stringify([["conv", true, true, null], ["rad", true, false, 0.9]]) && !after.shown
+      && !res.error && res.max > 25 && res.max < 200 && /Окружение не задано/.test(ru) && /Добавить окружение/.test(ru),
+      `thermal 1.762: a thermal study with only a heat source offers Add surroundings, which adds still air and radiation on every open surface, and then solves (${JSON.stringify({ box0, after, res, ru })})`);
+    await ctx.close();
+  }
+
   // --- Transient thermal 1.661 (FRS-thermal TH4): warm-up over time with a heater switched on later ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

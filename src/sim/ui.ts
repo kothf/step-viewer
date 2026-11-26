@@ -51,7 +51,7 @@ import { copperFromGerber } from "../thermal/copperRaster";
 import { overall, type SimProgress, type SimStage } from "./progress";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, frameComps, spotPoints, envelope, positiveAxis, sameName, studyProblem, thermalSetup, withoutFaces, type PassResult, type RunInput, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
-import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
+import { BOLTED_TCC, DEFAULT_AIR_GAP, PAD_LIBRARY, padEntry, THERMAL_LINK_TYPES, DEFAULT_FORCED, FLOWS, fanSpeed, type ForcedAir, NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, DOWNS, ENCLOSURES, enclosureFactor, type Enclosure, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt, hasSurroundings, addSurroundings } from "./types";
 import { thermalSummary, type ThermalSummary } from "./summary";
 import { BOARD_RC, SERIES_COLORS, componentSeries, exprProblem, parseProfile, profileText, timeChartSvg, timeText as timeIn, timeToReach, transientCsv, type PowerProfile } from "./transient";
 import { fluxArrows } from "./arrows";
@@ -4292,6 +4292,7 @@ export class SimController {
       const amb = st.settings.ambient ?? DEFAULT_AMBIENT, passes = Math.min(THERMAL_PASSES, st.settings.passes);
       html += `<div class="sim-sec sim-heat"><h4>${esc(t("Heat sources"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>` + casesHtml()
         + `<div class="sim-sec sim-cool"><h4>${esc(t("Cooling and fixed temperatures"))}</h4><ul class="sim-list">${st.supports.map(x => row(x, false)).join("") || none(t("None yet: the heat needs a way out. Pick one in the Simulation tab."))}</ul>`
+        + (hasSurroundings(st) ? "" : `<div class="sim-surround" data-v="surround"><p class="sim-note">${esc(t("No surroundings yet: the heat has no way out. Add still air and radiation to the room on every open surface, then set the ambient below, or pick cooling in the Simulation tab."))}</p><button class="btn small" data-a="surround">${esc(t("Add surroundings"))}</button></div>`)
         + `<label class="pm-field"><span>${esc(t("Ambient temperature"))}, °C</span><input type="number" data-k="ambient" step="any" value="${sig(amb)}" title="${esc(t(TIP.ambient))}"></label>`
         + this.enclosureHtml(st)
         + `<p class="sim-note muted">${esc(t("Faces with no condition are insulated: no heat crosses them."))}</p></div>`
@@ -4972,6 +4973,9 @@ export class SimController {
       this.renderAll();
     }
     else if (a === "case") this.pickCase(Number(b.dataset.case));
+    else if (a === "surround" && st) {
+      this.host.change(t("Add surroundings"), d => { const s = d.studies?.find(x => x.id === st.id); if (s && !hasSurroundings(s)) addSurroundings(s); });
+    }
     else if (a === "addcase" && st) {
       this.host.change(t("Add load case"), d => { const s = d.studies?.find(x => x.id === st.id); if (s && (s.cases?.length ?? 0) < MAX_CASES) (s.cases ??= []).push(newCase(s)); });
     }
