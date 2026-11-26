@@ -18219,8 +18219,10 @@ try {
     await bp.click('#sim-tools [data-s="solve"]');
     await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 400000 });
     await bp.waitForTimeout(500);
+    // the board share goes in as a fixed power; since 1.761 the lying resistors also warm the board under them through
+    // the still air (FR-TCON-004), a few tenths of a watt of their air share
     const hp2 = await bp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, applied: s.thermal?.applied, paths: s.thermal?.paths, note: document.querySelector('#sim-tree [data-v="pathnote"]')?.textContent }; });
-    check(!hp2.error && hp2.paths.length === 5 && hp2.paths.some(x => x.name === "R14" && Math.abs(x.board - 1.6) < 0.05) && hp2.paths.some(x => x.name === "R20" && Math.abs(x.board - 1.9) < 0.05) && /kept/.test(hp2.note ?? "") && hp2.applied > 5 && hp2.applied <= 10.98,
+    check(!hp2.error && hp2.paths.length === 5 && hp2.paths.some(x => x.name === "R14" && x.board > 1.55 && x.board < 1.6 + 0.4) && hp2.paths.some(x => x.name === "R20" && x.board > 1.85 && x.board < 1.9 + 0.4) && /kept/.test(hp2.note ?? "") && hp2.applied > 5 && hp2.applied <= 10.98,
       `thermal 1.657: with the package's split kept the study solves again and says so under the Heat paths table (${JSON.stringify(hp2)})`);
     // 1.675 (FR-TBRD-020): the board's copper read from its Gerber files; the conductivity then follows it cell by cell
     const max0 = await bp.evaluate(() => window.__sv.sim.state().thermal?.max);
