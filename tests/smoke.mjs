@@ -17625,7 +17625,7 @@ try {
   }
 
   // --- Transient thermal 1.661 (FRS-thermal TH4): warm-up over time with a heater switched on later ---
-  if (inShard(6)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
     tp.on("pageerror", e => errors.push(e.message));
@@ -18778,7 +18778,7 @@ try {
   }
 
   // --- radiation between faces 1.666 (FRS-thermal FR-TBC-007): heat crossing a gap only by radiation ---
-  if (inShard(6)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const ap = await ctx.newPage();
     ap.on("pageerror", e => errors.push(e.message));
