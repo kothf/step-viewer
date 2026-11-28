@@ -5516,6 +5516,16 @@ try {
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
     check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · .*checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
+    // 1.767: closing the vault keeps the part tied, read-only with the reason and no Check out; opening it again ties it back.
+    const tieOf = () => mp.evaluate(() => ({ chip: document.querySelector("#doc-vault")?.textContent ?? "", bar: document.querySelector("#mc-ro")?.textContent ?? "", co: !!document.querySelector("#mc-ro [data-a=co]") }));
+    const openTie = await tieOf();
+    await mp.evaluate(() => window.__sv.vault.close());
+    const closedTie = await tieOf();
+    await mp.evaluate(() => window.__sv.vault.openInBrowser("Smoke vault"));
+    await mp.waitForFunction(() => /v3/.test(document.querySelector("#doc-vault")?.textContent ?? ""), null, { timeout: 5000 }).catch(() => {});
+    const backTie = await tieOf();
+    check(openTie.co && /v3/.test(openTie.chip) && /closed/.test(closedTie.chip) && /closed/.test(closedTie.bar) && !closedTie.co && /v3/.test(backTie.chip) && backTie.co,
+      `vault 1.767: a closed vault keeps the part tied and read-only; opening it again ties it back (${JSON.stringify([openTie, closedTie, backTie])})`);
     await ctx.close();
   }
 
@@ -8866,13 +8876,13 @@ try {
     // ...but it turns about the axis it may still turn about, as a wheel does (exam bug 51).
     const turn = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return { ang: Math.round(Math.atan2(t[4], t[0]) * 1000) / 1000, z: t[10] }; });
     check(Math.abs(turn.ang) > 0.05 && Math.abs(turn.z - 1) < 1e-6, `asm 1.317: dragging a pin with only its turn free turns it about its axis (${JSON.stringify(turn)})`);
-    // 1.767: View mates from a component's menu filters the Mates folder; ✕ shows them all again (C7).
+    // 1.768: View mates from a component's menu filters the Mates folder; ✕ shows them all again (C7).
     await mp.click("#asm-tree .ft-comp >> nth=1", { button: "right" });
     await mp.click('#asm-menu button:text-is("View mates")');
     const vmates = await mp.evaluate(() => ({ head: document.querySelector('#asm-tree [data-id="folder:mates"] .ft-name')?.textContent, rows: document.querySelectorAll("#asm-tree .ft-mate").length, all: window.__sv.asm.doc.mates.length }));
     await mp.click('#asm-tree [data-a="vmclear"]');
     const vmBack = await mp.evaluate(() => document.querySelectorAll("#asm-tree .ft-mate").length);
-    check(/^Mates of /.test(vmates.head ?? "") && vmates.rows === vmates.all && vmBack === vmates.all, `asm 1.767: View mates lists the component's mates; ✕ shows all (${JSON.stringify({ vmates, vmBack })})`);
+    check(/^Mates of /.test(vmates.head ?? "") && vmates.rows === vmates.all && vmBack === vmates.all, `asm 1.768: View mates lists the component's mates; ✕ shows all (${JSON.stringify({ vmates, vmBack })})`);
     // Delete the coincident mate from the tree: the pin can slide along the axis again.
     await mp.hover("#asm-tree .ft-mate >> nth=1");
     await mp.click('#asm-tree .ft-mate >> nth=1 >> [data-a="del"]');
