@@ -62,7 +62,7 @@ Status: **1.762.0** = before this round, **now** = after it. ✓ works, ✗ miss
 | E4 | A dimension typed as an expression of global variables follows the variables | yes | ✗ (kept the old value) | ✓ |
 | E5 | The panel says how many degrees of freedom are left, or Fully defined | same | ✓ | ✓ |
 | E6 | Distance from a point to a standard plane (XY, YZ, ZX), shown in the view and typed in the Modify box | yes | ✗ | ✓ (1.768.0) |
-| E7 | Angle of a line to a standard plane (XY, YZ, ZX), shown in the view and typed in the Modify box | yes | ✗ | ✓ (1.772.0) |
+| E7 | Angle of a line to a standard plane (XY, YZ, ZX), shown in the view and typed in the Modify box | yes | ✗ | ✓ (1.773.0) |
 
 ## F. Use of the 3D sketch
 
