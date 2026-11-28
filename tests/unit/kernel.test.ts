@@ -1162,6 +1162,13 @@ test("3D sketch as a sweep path (FR-SK-080)", async () => {
   // A branched sketch is not a path.
   const br = m.evaluate(doc([{ ...k, pts: [...(k as { pts: unknown[] }).pts, { id: "D", p: [30, 10, 0] }], segs: [...(k as { segs: unknown[] }).segs, { id: "l3", t: "line", pts: ["B", "D"] }] } as Feature, sw]));
   assert.equal(br.statuses.find(s => s.id === "w")?.code, "E-SWP-PATH");
+  // A sketch fillet R5 at the corner: lines trimmed 5 each, a quarter arc between; the tube's volume = area × path length (Pappus).
+  const kf = { ...k, dims: [{ id: "f1", t: "fillet", e: ["B"], val: { v: 5 } }] } as Feature;
+  const rf = run(m, doc([kf, sw]));
+  close(rf.props!.volume, Math.PI * 4 * (40 + 2.5 * Math.PI), 1e-3);
+  // Too big a radius for the 20 mm line: the 3D sketch says so.
+  const big = m.evaluate(doc([{ ...kf, dims: [{ id: "f1", t: "fillet", e: ["B"], val: { v: 25 } }] } as Feature, sw]));
+  assert.equal(big.statuses.find(s => s.id === "k")?.code, "E-3D-FILLET");
 });
 
 test("3D sketch points on 2D sketch points follow the sketch (weldments exam #6)", async () => {

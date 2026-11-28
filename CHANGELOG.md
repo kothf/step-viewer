@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.764.0] - 2026-11-28
+
+### Added
+
+- 3D sketch: **Fillet** rounds the corner where two lines meet. Select the corner point and click Fillet: the radius is asked at once, R shows on the arc in the view and can be changed there or in Dimensions (also as an expression of global variables). The lines keep their sharp corner, so their dimensions still measure to it. A sweep along the sketch follows the arc; a radius too big for the lines is refused with a message. Structural members still take the lines with sharp corners.
+- 3D sketch: **Tangent** between a spline and the line (or spline) it joins, so a path runs on smoothly at that point.
+
 ## [1.763.0] - 2026-11-28
 
 ### Added
@@ -5055,7 +5062,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.763.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.764.0...HEAD
+[1.764.0]: https://github.com/kothf/step-viewer/compare/v1.763.0...v1.764.0
 [1.763.0]: https://github.com/kothf/step-viewer/compare/v1.762.0...v1.763.0
 [1.762.0]: https://github.com/kothf/step-viewer/compare/v1.761.0...v1.762.0
 [1.761.0]: https://github.com/kothf/step-viewer/compare/v1.760.0...v1.761.0

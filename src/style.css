@@ -886,6 +886,11 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .pm-sec h4 { margin: 0 0 4px; font-size: 12px; }
 .pm-dims { list-style: none; margin: 0; padding: 0; font-size: 12px; }
 .pm-dims li { padding: 1px 0; }
+/* 3D sketch dimensions: name, value, unit and ✕ on one row. */
+.pm-dims li.s3dim { display: flex; align-items: center; gap: 4px; }
+.pm-dims li.s3dim .pm-field { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; margin: 0; }
+.pm-dims li.s3dim .pm-field > span:first-child { flex: 1; min-width: 0; }
+.pm-dims li.s3dim .pm-field input { width: 6em; flex: none; }
 .pm-def[data-state=full] { color: var(--text); }
 .pm-def[data-state=under] { color: var(--accent-text); }
 .pm-def[data-state=over] { color: var(--danger); }

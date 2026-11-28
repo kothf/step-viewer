@@ -104,3 +104,35 @@ test("3D sketch: a changed dimension moves the later end, not the first point (1
   near(r.pts.A[1], 0, 1); near(r.pts.B[1], 0, 1);
   assert.ok(r.pts.C[1] > 45, `C moved: ${r.pts.C}`);
 });
+
+test("3D sketch: fillets round a corner of two lines, tangent joins a spline to a line (FR-SK-080 B12, D6)", async () => {
+  const { fillets3d, filletCorner, segPoints } = await import("../../src/sketch/sketch3d");
+  const s = sk({
+    pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [30, 0, 0], fixed: true }, { id: "C", p: [30, 20, 0], fixed: true }],
+    segs: [{ id: "l1", t: "line", pts: ["A", "B"] }, { id: "l2", t: "line", pts: ["B", "C"] }],
+    dims: [{ id: "f", t: "fillet", e: ["B"], val: { v: 5 } }],
+  });
+  assert.deepEqual(filletCorner(s, "B"), ["l1", "l2"]);
+  assert.equal(filletCorner(s, "A"), null);
+  const { list, error } = fillets3d(s);
+  assert.equal(error, undefined);
+  const f = list[0];
+  near(f.t1[0], 25); near(f.t2[1], 5); near(f.c[0], 25); near(f.c[1], 5);
+  for (const q of f.arc) near(Math.hypot(q[0] - 25, q[1] - 5), 5);
+  // The lines end where the arc starts; the sketch keeps the sharp corner (solving is unchanged).
+  near(segPoints(s, s.segs[0])[1][0], 25);
+  assert.ok(solve3d(s).ok);
+  // Too big for the 20 mm line: refused.
+  const big = solve3d({ ...s, dims: [{ id: "f", t: "fillet", e: ["B"], val: { v: 25 } }] });
+  assert.equal(big.ok, false); assert.ok(big.fillet);
+  // Tangent: a spline A–P–B ending where a line B–C starts: the spline's end runs on along the line.
+  const t = solve3d(sk({
+    pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "P", p: [10, 8, 0] }, { id: "B", p: [20, 0, 0], fixed: true }, { id: "C", p: [40, 0, 0], fixed: true }],
+    segs: [{ id: "s", t: "spline", pts: ["A", "P", "B"] }, { id: "l", t: "line", pts: ["B", "C"] }],
+    rels: [{ id: "r", t: "tangent", e: ["s", "l"] }],
+  }));
+  assert.ok(t.ok);
+  const st = sk({ pts: [{ id: "A", p: [0, 0, 0] }, { id: "P", p: t.pts.P }, { id: "B", p: [20, 0, 0] }], segs: [{ id: "s", t: "spline", pts: ["A", "P", "B"] }] });
+  const q = segPoints(st, st.segs[0], 64), a = q[q.length - 2], b = q[q.length - 1];
+  assert.ok(Math.abs(b[1] - a[1]) / Math.abs(b[0] - a[0]) < 0.02, `end slope ${(b[1] - a[1]) / (b[0] - a[0])}`);
+});
