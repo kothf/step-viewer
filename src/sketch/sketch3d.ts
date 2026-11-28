@@ -59,6 +59,12 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
       if (u && v) out.push(Math.atan2(len(cross(u, v)), dot(u, v)) - d.val.v);
       continue;
     }
+    if (d.t === "radius") {
+      // An arc's radius: the circle through its three points.
+      const s = seg(d.e[0]);
+      if (s && s.t === "arc" && s.pts.length === 3) { const g = arc3(P(s.pts[0]), P(s.pts[1]), P(s.pts[2])); out.push((g ? g.r : 1e6) - d.val.v); }
+      continue;
+    }
     if (d.t === "planeAngle") {
       // The angle between a line and a standard plane (0..90°): atan of its part along the plane's normal over the part in it.
       const u = vec(d.e[0]);
@@ -75,7 +81,11 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
 /** The direction a segment leaves its end `c` (a spline's end tangent from its Bézier poles). */
 function leaving(s: Sk3Seg, c: string, P: (id: string) => V3): V3 {
   const q = s.pts.map(P), first = s.pts[0] === c;
-  if (s.t === "line" || q.length < 3) return first ? sub(q[q.length - 1], q[0]) : sub(q[0], q[q.length - 1]);
+  if (s.t === "arc" && q.length === 3) {
+    const g = arc3(q[0], q[1], q[2]);
+    if (g) return first ? cross(g.n, sub(q[0], g.c)) : cross(sub(q[2], g.c), g.n);
+  }
+  if (s.t !== "spline" || q.length < 3) return first ? sub(q[q.length - 1], q[0]) : sub(q[0], q[q.length - 1]);
   const bz = splineBezierN(q);
   return first ? sub(bz[1], bz[0]) : sub(bz[bz.length - 2], bz[bz.length - 1]);
 }
@@ -242,14 +252,14 @@ export function solve3d(sk: Sketch3dFeature): Solve3d {
 /** The segments in one chain, end to end (each with its point ids in path order), or why not. */
 export function chain3d(sk: Sketch3dFeature): { order: string[][]; closed: boolean } | { error: string } {
   const segs = sk.segs.filter(s => s.pts.length >= 2);
-  if (!segs.length) return { error: "The 3D sketch has no lines or splines." };
+  if (!segs.length) return { error: "The 3D sketch has no lines, arcs or splines." };
   const rest = segs.slice(1);
   let order: string[][] = [segs[0].pts.slice()];
   const ends = () => [order[0][0], order[order.length - 1][order[order.length - 1].length - 1]];
   while (rest.length) {
     const [a, b] = ends();
     const i = rest.findIndex(s => [s.pts[0], s.pts[s.pts.length - 1]].some(q => q === a || q === b));
-    if (i < 0) return { error: "A 3D sketch path must be one chain of lines and splines." };
+    if (i < 0) return { error: "A 3D sketch path must be one chain of lines, arcs and splines." };
     const s = rest.splice(i, 1)[0].pts.slice(), s0 = s[0], s1 = s[s.length - 1];
     if (s0 === b) order.push(s);
     else if (s1 === b) order.push(s.reverse());
@@ -259,14 +269,44 @@ export function chain3d(sk: Sketch3dFeature): { order: string[][]; closed: boole
   // A point where three segments meet is not a chain.
   const count = new Map<string, number>();
   for (const s of segs) for (const q of [s.pts[0], s.pts[s.pts.length - 1]]) count.set(q, (count.get(q) ?? 0) + 1);
-  if ([...count.values()].some(n => n > 2)) return { error: "A 3D sketch path must be one chain of lines and splines." };
+  if ([...count.values()].some(n => n > 2)) return { error: "A 3D sketch path must be one chain of lines, arcs and splines." };
   const [a, b] = ends();
   return { order, closed: a === b && segs.length > 1 };
+}
+
+/** The circle through three points as an arc from `a` through `m` to `e`: centre, radius, normal (a → m → e runs counter-clockwise about it), start axis `u`, `v` = n × u and the sweep (0..2π); null when the points lie on one line. */
+export function arc3(a: V3, m: V3, e: V3): { c: V3; r: number; n: V3; u: V3; v: V3; sweep: number } | null {
+  const ab = sub(m, a), ac = sub(e, a), w = cross(ab, ac), w2 = dot(w, w);
+  const size = Math.max(len(ab), len(ac));
+  if (w2 < 1e-18 * size ** 4 || size < 1e-12) return null;
+  // Circumcentre: a + (|ac|² (w × ab) + |ab|² (ac × w)) / (2 |w|²).
+  const t1 = cross(w, ab), t2 = cross(ac, w), k1 = dot(ac, ac), k2 = dot(ab, ab);
+  const c: V3 = [0, 1, 2].map(j => a[j] + (k1 * t1[j] + k2 * t2[j]) / (2 * w2)) as V3;
+  const r = len(sub(a, c)), lw = Math.sqrt(w2), n: V3 = [w[0] / lw, w[1] / lw, w[2] / lw];
+  const d = sub(a, c), u: V3 = [d[0] / r, d[1] / r, d[2] / r], v = cross(n, u);
+  const q = sub(e, c);
+  let sweep = Math.atan2(dot(q, v), dot(q, u));
+  if (sweep <= 0) sweep += 2 * Math.PI;
+  return { c, r, n, u, v, sweep };
+}
+
+/** The point at angle `t` from the start of an `arc3` arc. */
+export function arcAt(g: { c: V3; r: number; u: V3; v: V3 }, t: number): V3 {
+  const x = g.r * Math.cos(t), y = g.r * Math.sin(t);
+  return [0, 1, 2].map(j => g.c[j] + x * g.u[j] + y * g.v[j]) as V3;
 }
 
 /** Points along a segment for drawing (splines sampled through their Bézier poles). */
 export function segPoints(sk: Sketch3dFeature, s: Sk3Seg, k = 16): V3[] {
   const P = s.pts.map(id => sk.pts.find(p => p.id === id)?.p ?? [0, 0, 0] as V3);
+  if (s.t === "arc" && P.length === 3) {
+    const g = arc3(P[0], P[1], P[2]);
+    if (!g) return [P[0], P[2]];
+    const n = Math.max(8, Math.ceil((g.sweep / (Math.PI / 2)) * k));
+    const out: V3[] = [];
+    for (let i = 0; i <= n; i++) out.push(arcAt(g, (g.sweep * i) / n));
+    return out;
+  }
   if (s.t === "line" || P.length < 3) {
     // A line ends where a sketch fillet at its corner starts.
     if (s.t === "line" && sk.dims.some(d => d.t === "fillet")) {

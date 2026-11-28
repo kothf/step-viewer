@@ -775,11 +775,11 @@ export interface CurveFeature {
 /** A 3D sketch point (FR-SK-080), part coordinates in mm. */
 export interface Sk3Point { id: string; p: V3; fixed?: boolean; /** Held on a 2D sketch's point (a CAD app's coincident to a sketch point): kept fixed and moved there on every rebuild. */ at?: { sketch: string; pt: string } }
 /** A 3D sketch line (two points) or spline (two or more points, the C2 interpolant). */
-export interface Sk3Seg { id: string; t: "line" | "spline"; pts: string[] }
+export interface Sk3Seg { id: string; /** arc: pts = [start, a point on it, end] (a 3-point arc). */ t: "line" | "spline" | "arc"; pts: string[] }
 /** 3D sketch relations: a line along an axis or parallel to a standard plane, two lines parallel/perpendicular/equal, two points coincident, a point at a line's middle or on a line (e = [point, line]). */
 export interface Sk3Rel { id: string; t: "alongX" | "alongY" | "alongZ" | "parallelPlane" | "parallel" | "perpendicular" | "equal" | "coincident" | "midpoint" | "onLine" | "tangent" | "onPlane"; /** onPlane: e = [point] on the standard plane `plane`. */ e: string[]; plane?: "XY" | "YZ" | "ZX" }
 /** 3D sketch dimensions: a line's length, the distance between two points, or the angle between two lines (radians). */
-export interface Sk3Dim { id: string; /** "fillet" = a sketch fillet: e = [corner point of two lines], val = radius; the lines keep their sharp corner (dimensions measure to it) and are rounded where drawn and built. */ t: "length" | "distance" | "angle" | "fillet" | "planeDist" | "planeAngle"; e: string[]; val: Num; /** planeDist: e = [point], its distance from the standard plane `plane`; planeAngle: e = [line], its angle to `plane` (0..π/2). */ plane?: "XY" | "YZ" | "ZX" }
+export interface Sk3Dim { id: string; /** "fillet" = a sketch fillet: e = [corner point of two lines], val = radius; the lines keep their sharp corner (dimensions measure to it) and are rounded where drawn and built. */ t: "length" | "distance" | "angle" | "fillet" | "planeDist" | "planeAngle" | "radius"; e: string[]; val: Num; /** radius: e = [arc]. planeDist: e = [point], its distance from the standard plane `plane`; planeAngle: e = [line], its angle to `plane` (0..π/2). */ plane?: "XY" | "YZ" | "ZX" }
 
 /**
  * 3D sketch (FR-SK-080): points, lines and splines in space with relations and dimensions. The

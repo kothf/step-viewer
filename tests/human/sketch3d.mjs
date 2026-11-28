@@ -236,6 +236,62 @@ d = await draft();
     await pg.keyboard.press("Escape");
   } else check("E7", false, "a slanted line to dimension", { segs: d.segs.length });
 }
+// B13/E8: the Arc tool goes on from the chain's free end: end point, then a point it passes through; Radius dimensions it.
+d = await draft();
+{
+  const use = id => d.segs.filter(g => g.pts[0] === id || g.pts.at(-1) === id).length;
+  const free = d.pts.filter(p => use(p.id) === 1 && !p.fixed).at(-1) ?? d.pts.filter(p => use(p.id) === 1).at(-1);
+  await tb("arc");
+  await clickAt(pg, await W(free.p));
+  st = await s3();
+  const ax = { XY: [0, 1], YZ: [1, 2], ZX: [2, 0] }[st?.plane ?? "XY"];
+  const at = (a, b) => free.p.map((v, j) => v + (j === ax[0] ? a : 0) + (j === ax[1] ? b : 0));
+  await clickAt(pg, await W(at(20, 0)));
+  await pg.mouse.move(...(await W(at(10, 7)))); await pg.waitForTimeout(150);
+  const pv = (await deco()).preview;
+  await clickAt(pg, await W(at(10, 7)));
+  d = await draft();
+  const arc = d.segs.find(g => g.t === "arc");
+  const P = id => d.pts.find(p => p.id === id).p;
+  check("B13", !!arc && arc.pts[0] === free.id && pv > 0, "Arc: from the free end, a click for the end and one it passes through make a 3-point arc joined to the chain", { arc: arc?.pts, start: free.id, preview: pv, plane: st?.plane }, await snap(pg, "arc"));
+  await pg.keyboard.press("Escape"); await pg.keyboard.press("Escape"); await pg.waitForTimeout(150);
+  if (arc) {
+    // D8: the line before it and the arc take Tangent: the arc turns to leave the line smoothly.
+    const ln = d.segs.find(g => g.t === "line" && (g.pts[1] === free.id || g.pts[0] === free.id));
+    await pg.click(`#mc-pm [data-s3sel="${ln.id}"]`); await pg.waitForTimeout(150);
+    await pg.keyboard.down("Control"); await pg.click(`#mc-pm [data-s3sel="${arc.id}"]`); await pg.keyboard.up("Control"); await pg.waitForTimeout(150);
+    const tg = await pg.$('#mc-pm [data-s3r="tangent"]');
+    if (tg) await tg.click();
+    await pg.waitForTimeout(300);
+    d = await draft();
+    {
+      const [A, M, E] = d.segs.find(g => g.id === arc.id).pts.map(P), L0 = P(ln.pts[0] === free.id ? ln.pts[1] : ln.pts[0]);
+      const u = A.map((v, j) => v - L0[j]), ab = M.map((v, j) => v - A[j]), ae = E.map((v, j) => v - A[j]);
+      // Tangent at the start: the line direction lies in the arc's plane and is square to the radius at A.
+      const cr = (x, y) => [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]], dt = (x, y) => x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+      const n = cr(ab, ae), nl = Math.hypot(...n), ul = Math.hypot(...u);
+      const inPlane = Math.abs(dt(n, u)) / (nl * ul);
+      const t1 = cr(n, ab).map(v => v * dt(ae, ae)), t2 = cr(ae, n).map(v => v * dt(ab, ab));
+      const rc = t1.map((v, j) => (v + t2[j]) / (2 * nl * nl));
+      const square = Math.abs(dt(rc, u)) / (Math.hypot(...rc) * ul);
+      check("D8", !!tg && d.rels.some(r => r.t === "tangent" && r.e.includes(arc.id)) && inPlane < 1e-4 && square < 1e-4, "a line and the arc it runs into take Tangent: the arc leaves the line smoothly", { inPlane, square });
+    }
+    await pg.click(`#mc-pm [data-s3sel="${arc.id}"]`); await pg.waitForTimeout(200);
+    const b = await pg.$('#mc-pm [data-s3r="dim:radius"]');
+    if (b) await b.click();
+    await pg.waitForTimeout(250);
+    d = await draft();
+    const dim = d.dims.find(x => x.t === "radius");
+    if (dim) { await pg.click(`.sk3-dim[data-dim="${dim.id}"]`); await pg.waitForTimeout(200); await pg.fill(".mod-box .mod-in", "12"); await pg.keyboard.press("Enter"); await pg.waitForTimeout(300); }
+    d = await draft();
+    const a2 = d.segs.find(g => g.id === arc.id), [A, M, E] = a2.pts.map(P);
+    // Circumradius from the three points: abc / 4·area.
+    const L = (u, v) => Math.hypot(...u.map((x, j) => x - v[j]));
+    const ab = L(A, M), bc = L(M, E), ca = L(E, A), sp = (ab + bc + ca) / 2, area = Math.sqrt(Math.max(0, sp * (sp - ab) * (sp - bc) * (sp - ca)));
+    const r = area > 1e-9 ? (ab * bc * ca) / (4 * area) : NaN;
+    check("E8", !!b && !!dim && Math.abs(r - 12) < 1e-3, "Radius on a selected arc is a dimension: typing 12 makes the arc R12", { r, label: await pg.$eval(`.sk3-dim[data-dim="${dim?.id}"]`, e => e.textContent).catch(() => null) }, await snap(pg, "radius"));
+  } else check("E8", false, "an arc to dimension", {});
+}
 // A2: ✓ keeps the 3D sketch; F1: a sweep with a circular profile follows it.
 await pg.click("#mc-ok");
 await idle(pg);
@@ -249,6 +305,6 @@ await pg.click("#mc-ok");
 await idle(pg);
 const vol = await ev(() => window.__sv.model.last()?.props?.volume ?? window.__sv.viewer.parts[0]?.data?.volume ?? 0);
 const img4 = await snap(pg, "sweep");
-check("F1", sw?.path?.curve && sw.circular && vol > 0, "Sweep takes the 3D sketch as its path with a circular profile", { path: sw?.path, circular: sw?.circular, vol }, img4);
+check("F1", sw?.path?.curve && sw.circular && vol > 0, "Sweep takes the 3D sketch as its path with a circular profile", { path: sw?.path, circular: sw?.circular, vol, statuses: await ev(() => JSON.stringify(window.__sv.model.last()?.statuses)), k: await ev(() => JSON.stringify(window.__sv.model.store.doc.features.find(f => f.type === "sketch3d"))) }, img4);
 
 await finish(browser, pg);

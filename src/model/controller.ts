@@ -39,7 +39,7 @@ import { allCtxRefs, ctxMark, moveEdgeGeo, type AnyCtxRef, type PartContext } fr
 import type { ModelEdge } from "../sketch/external";
 import { silhouettes } from "../sketch/silhouette";
 import { applyDir as tfDir, applyPoint as tfPoint, invert as tfInvert } from "../asm/math";
-import { filletCorner, fillets3d, inferAxis, lineAngle, linePlaneAngle, onAxis, segPoints, solve3d } from "../sketch/sketch3d";
+import { filletCorner, fillets3d, arc3, arcAt, inferAxis, lineAngle, linePlaneAngle, onAxis, segPoints, solve3d } from "../sketch/sketch3d";
 import type { SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, Sk3Point, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, DomeFeature, WrapFeature, FlexFeature, HoleSink, HoleElem, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
@@ -3069,7 +3069,7 @@ export class ModelController {
       // 3D sketch (FR-SK-080): Tab turns the sketch plane, Esc ends the chain, Delete removes the selection.
       const s3 = this.s3(m.draft);
       if (k === "tab") { stop(); s3.plane = s3.plane === "XY" ? "YZ" : s3.plane === "YZ" ? "ZX" : "XY"; this.renderPanel(); this.drawDecor(); return; }
-      if (k === "escape" && (s3.anchor || s3.tool)) { stop(); if (s3.anchor) { s3.anchor = null; s3.spline = null; } else s3.tool = null; this.cursor3d = null; this.renderPanel(); this.drawDecor(); return; }
+      if (k === "escape" && (s3.anchor || s3.tool)) { stop(); if (s3.arcEnd) s3.arcEnd = null; else if (s3.anchor) { s3.anchor = null; s3.spline = null; } else s3.tool = null; this.cursor3d = null; this.renderPanel(); this.drawDecor(); return; }
       if (k === "escape" && s3.sel.length) { stop(); s3.sel = []; this.renderPanel(); this.drawDecor(); return; }
       // Esc with nothing left to clear leaves an unchanged 3D sketch; a changed one stays open (✕ discards it), as in the 2D sketch.
       if (k === "escape" && this.changed3d(m.draft)) { stop(); toast(t("The sketch has changes: ✓ keeps them, ✕ discards them.")); return; }
@@ -9854,7 +9854,7 @@ export class ModelController {
   }
 
   /** 3D sketch editing state (view-only): tool, sketch plane, the chain's last point, the spline being drawn, selection. */
-  private sk3: { id: string; tool: "line" | "spline" | null; plane: "XY" | "YZ" | "ZX"; anchor: string | null; spline: string | null; sel: string[] } = { id: "", tool: null, plane: "XY", anchor: null, spline: null, sel: [] };
+  private sk3: { id: string; tool: "line" | "spline" | "arc" | null; plane: "XY" | "YZ" | "ZX"; anchor: string | null; spline: string | null; sel: string[]; /** Arc tool: the end point clicked after the start, waiting for the point the arc passes through. */ arcEnd?: string | null } = { id: "", tool: null, plane: "XY", anchor: null, spline: null, sel: [] };
   private s3(f: Sketch3dFeature) {
     if (this.sk3.id !== f.id) this.sk3 = { id: f.id, tool: f.segs.length ? null : "line", plane: "XY", anchor: null, spline: null, sel: [] };
     return this.sk3;
@@ -9972,6 +9972,13 @@ export class ModelController {
     if (a) {
       let pos: number[] = [];
       if (s3.tool === "line") pos = [...a, ...p];
+      else if (s3.tool === "arc") {
+        // Arc: a line to the end point first; once the end is down, the arc through the pointer.
+        const en = s3.arcEnd ? f.pts.find(q => q.id === s3.arcEnd)?.p : undefined;
+        const g = en ? arc3(a, p, en) : null;
+        if (en && g) { let prev = a; for (let i = 1; i <= 48; i++) { const q = arcAt(g, (g.sweep * i) / 48); pos.push(...prev, ...q); prev = q; } }
+        else pos = en ? [...a, ...en] : [...a, ...p];
+      }
       else {
         const sg = s3.spline ? f.segs.find(x => x.id === s3.spline) : undefined;
         const ids = sg ? sg.pts : [s3.anchor!];
@@ -10076,6 +10083,16 @@ export class ModelController {
       let pid = at.id;
       if (!pid) { pid = uid("p"); f.pts.push({ id: pid, p: at.p!, ...(at.at ? { fixed: true, at: at.at } : {}) }); }
       const a = s3.anchor;
+      if (s3.tool === "arc" && a && a !== pid) {
+        // 3-point arc: start (the anchor), end, then a point it passes through; the end becomes the next start.
+        if (!s3.arcEnd) { s3.arcEnd = pid; return; }
+        if (pid === s3.arcEnd) return;
+        const e = s3.arcEnd, P = (id: string) => f.pts.find(q => q.id === id)!.p;
+        if (!arc3(P(a), P(pid), P(e))) { toast(t("The three points lie on one line: click a point off the line from the start to the end."), true); f.pts = f.pts.filter(q => q.id !== pid || at.id); return; }
+        f.segs.push({ id: uid("a"), t: "arc", pts: [a, pid, e] });
+        s3.arcEnd = null; s3.anchor = e;
+        return;
+      }
       if (a && a !== pid) {
         if (s3.tool === "line") {
           const lid = uid("l");
@@ -10105,6 +10122,7 @@ export class ModelController {
       f.dims = f.dims.filter(d => d.e.every(x => ids.has(x)));
       s3.sel = [];
       if (s3.anchor && !ids.has(s3.anchor)) { s3.anchor = null; s3.spline = null; }
+      if (s3.arcEnd && !ids.has(s3.arcEnd)) s3.arcEnd = null;
     });
   }
 
@@ -10186,7 +10204,7 @@ export class ModelController {
     const u = UNITS[units.current].f;
     const round = new Map(fillets3d(f).list.map(x => [x.id, x]));
     f.dims.forEach((d, i) => {
-      const p = d.t === "fillet" ? (round.get(d.id)?.m ?? P(d.e[0])) : d.t === "length" ? mid(d.e[0]) : d.t === "distance" ? half(P(d.e[0]), P(d.e[1])) : d.t === "planeDist" ? P(d.e[0]) : d.t === "planeAngle" ? mid(d.e[0]) : (() => {
+      const p = d.t === "fillet" ? (round.get(d.id)?.m ?? P(d.e[0])) : d.t === "length" ? mid(d.e[0]) : d.t === "distance" ? half(P(d.e[0]), P(d.e[1])) : d.t === "planeDist" ? P(d.e[0]) : d.t === "planeAngle" || d.t === "radius" ? mid(d.e[0]) : (() => {
         // Angle: by the shared end of the two lines, else between their middles.
         const a = f.segs.find(g => g.id === d.e[0]), b = f.segs.find(g => g.id === d.e[1]);
         const common = a?.pts.find(q => b?.pts.includes(q));
@@ -10198,7 +10216,7 @@ export class ModelController {
       el.dataset.at = JSON.stringify(p);
       el.dataset.dim = d.id;
       el.setAttribute("translate", "no");
-      el.textContent = d.t === "angle" || d.t === "planeAngle" ? `${trimNum((d.val.v * 180) / Math.PI, 2)}°` : d.t === "fillet" ? `R${trimNum(d.val.v * u, 3)}` : trimNum(d.val.v * u, 3);
+      el.textContent = d.t === "angle" || d.t === "planeAngle" ? `${trimNum((d.val.v * 180) / Math.PI, 2)}°` : d.t === "fillet" || d.t === "radius" ? `R${trimNum(d.val.v * u, 3)}` : trimNum(d.val.v * u, 3);
       el.title = `D${i + 1}${d.t === "planeDist" ? ` (${t("Distance to {p}", { p: d.plane ?? "XY" })})` : d.t === "planeAngle" ? ` (${t("Angle to {p}", { p: d.plane ?? "XY" })})` : ""}: ${t("Click to type the size")}`;
       el.addEventListener("click", () => this.editDim3d(f, d.id, el));
       layer.appendChild(el);
@@ -10248,10 +10266,10 @@ export class ModelController {
   private sk3Panel(f: Sketch3dFeature, group: (legend: string, inner: string) => string): { title: string; body: string } {
     const s3 = this.s3(f), u = UNITS[units.current].f, sel = new Set(s3.sel);
     const pIdx = (id: string) => f.pts.findIndex(p => p.id === id) + 1;
-    const segName = (id: string) => { const sg = f.segs.find(g => g.id === id); if (!sg) return "?"; const k = f.segs.filter(g => g.t === sg.t).indexOf(sg) + 1; return sg.t === "line" ? t("Line {n}", { n: k }) : t("Spline {n}", { n: k }); };
+    const segName = (id: string) => { const sg = f.segs.find(g => g.id === id); if (!sg) return "?"; const k = f.segs.filter(g => g.t === sg.t).indexOf(sg) + 1; return sg.t === "line" ? t("Line {n}", { n: k }) : sg.t === "arc" ? t("Arc {n}", { n: k }) : t("Spline {n}", { n: k }); };
     const entName = (id: string) => f.pts.some(p => p.id === id) ? `P${pIdx(id)}` : segName(id);
     const tb = (id: string, label: string, on: boolean) => `<button class="btn small${on ? " primary" : ""}" data-s3t="${id}" aria-pressed="${on}">${esc(label)}</button>`;
-    const tools = `<div class="pm-rels">${tb("select", t("Select"), !s3.tool)}${tb("line", t("Line"), s3.tool === "line")}${tb("spline", t("Spline"), s3.tool === "spline")}${s3.anchor ? `<button class="btn small" data-s3a="end">${esc(t("End chain"))}</button>` : ""}</div>`
+    const tools = `<div class="pm-rels">${tb("select", t("Select"), !s3.tool)}${tb("line", t("Line"), s3.tool === "line")}${tb("arc", t("Arc"), s3.tool === "arc")}${tb("spline", t("Spline"), s3.tool === "spline")}${s3.anchor ? `<button class="btn small" data-s3a="end">${esc(t("End chain"))}</button>` : ""}</div>`
       + `<label class="pm-field"><span>${esc(t("Sketch plane"))}</span><select data-s3p translate="no">${(["XY", "YZ", "ZX"] as const).map(p => `<option value="${p}"${p === s3.plane ? " selected" : ""}>${p}</option>`).join("")}</select></label>`
       + `<p class="pm-help muted">${esc(t("Click to place points; each click draws to the last one. Points land on model vertices and faces, else on the sketch plane through the last point. A line close to an axis snaps onto it (Ctrl draws it as it is). Tab turns the plane, Esc ends the chain. With Select, drag a point to move it."))}</p>`;
     const rows = f.pts.map((p, i) => `<tr${sel.has(p.id) ? ' class="on"' : ""}><th scope="row"><button class="link" data-s3sel="${p.id}" translate="no">P${i + 1}</button></th>${p.p.map((v, j) => `<td><input type="text" inputmode="decimal" class="pm-n" data-s3x="${i}:${j}" value="${trimNum(v * u, 4)}" aria-label="${"XYZ"[j]}${i + 1}" /></td>`).join("")}<td><input type="checkbox" data-s3f="${i}"${p.fixed ? " checked" : ""} title="${esc(t("Fixed"))}" aria-label="${esc(t("Fixed"))} P${i + 1}" /></td></tr>`).join("");
@@ -10260,13 +10278,14 @@ export class ModelController {
     const segs = f.segs.length ? `<ul class="pm-dims">${f.segs.map(sg => `<li><button class="link${sel.has(sg.id) ? " on" : ""}" data-s3sel="${sg.id}" aria-pressed="${sel.has(sg.id)}">${esc(segName(sg.id))}</button> <span class="muted" translate="no">${sg.pts.map(q => `P${pIdx(q)}`).join("–")}${sg.t === "line" ? ` · ${trimNum(L(sg) * u, 3)} ${units.current}` : ""}</span></li>`).join("")}</ul>` : "";
     // Relations and dimensions that fit the selection.
     const lines = s3.sel.filter(id => f.segs.find(g => g.id === id)?.t === "line"), points = s3.sel.filter(id => f.pts.some(p => p.id === id));
-    const splines = s3.sel.filter(id => f.segs.find(g => g.id === id)?.t === "spline");
+    const splines = s3.sel.filter(id => { const g = f.segs.find(x => x.id === id); return g?.t === "spline" || g?.t === "arc"; });
     const rb = (k: string, label: string) => { const ic = k.split(":")[0]; return `<button class="btn small${ic === "dim" ? "" : " rel-btn"}" data-s3r="${k}">${ic === "dim" ? "" : relIcon(ic as RelIconKind)}<span>${esc(label)}</span></button>`; };
     let add = "";
     if (splines.length) {
       // A spline and a line or another spline sharing an end: Tangent (a sweep path runs on smoothly there).
       const two = [...splines, ...lines].map(id => f.segs.find(g => g.id === id)!);
       if (two.length === 2 && !points.length && [two[0].pts[0], two[0].pts[two[0].pts.length - 1]].some(q => q === two[1].pts[0] || q === two[1].pts[two[1].pts.length - 1])) add = rb("tangent", t("Tangent"));
+      if (two.length === 1 && two[0].t === "arc" && !points.length && !f.dims.some(d => d.t === "radius" && d.e[0] === two[0].id)) add = rb("dim:radius", t("Radius"));
     } else if (lines.length === 1 && !points.length) add = rb("alongX", t("Along X")) + rb("alongY", t("Along Y")) + rb("alongZ", t("Along Z")) + (["XY", "YZ", "ZX"] as const).map(p => rb(`parallelPlane:${p}`, t("Parallel to {p}", { p }))).join("") + rb("dim:length", t("Length")) + (["XY", "YZ", "ZX"] as const).map(p => rb(`dim:pangle:${p}`, t("Angle to {p}", { p }))).join("");
     if (lines.length === 2 && !points.length) add = rb("parallel", t("Parallel")) + rb("perpendicular", t("Perpendicular")) + rb("equal", t("Equal")) + rb("dim:angle", t("Angle"));
     if (lines.length === 1 && points.length === 1) add = rb("midpoint", t("Midpoint")) + rb("onCurve:onLine", t("On line"));
@@ -10281,12 +10300,14 @@ export class ModelController {
     // The status line says what a click does now (FR-SK-080).
     const ms = document.getElementById("mc-status");
     if (ms) ms.textContent = !s3.tool ? t("Select: click a point or line, Ctrl+click adds; drag a point to move it.")
-      : t(s3.anchor ? "{tool}: click the next point on plane {p} (Tab turns it); Esc ends the chain." : "{tool}: click the first point on plane {p} (Tab turns it).", { tool: s3.tool === "line" ? t("Line") : t("Spline"), p: s3.plane });
+      : s3.tool === "arc" && s3.arcEnd ? t("Arc: click a point the arc passes through, on plane {p} (Tab turns it).", { p: s3.plane })
+      : s3.tool === "arc" && s3.anchor ? t("Arc: click where the arc ends, on plane {p} (Tab turns it); Esc ends the chain.", { p: s3.plane })
+      : t(s3.anchor ? "{tool}: click the next point on plane {p} (Tab turns it); Esc ends the chain." : "{tool}: click the first point on plane {p} (Tab turns it).", { tool: s3.tool === "line" ? t("Line") : s3.tool === "arc" ? t("Arc") : t("Spline"), p: s3.plane });
     const st = solve3d(f);
     const status = !st.ok ? t("The relations and dimensions conflict.") : st.dof === 0 ? t("Fully defined") : t("{n} degree of freedom left|{n} degrees of freedom left", { n: st.dof });
     return { title: t("3D Sketch"), body: group(t("Tools"), tools)
       + group(t("Points"), pts)
-      + group(t("Lines and splines"), segs || `<p class="pm-help muted">${esc(t("None yet."))}</p>`)
+      + group(t("Lines, arcs and splines"), segs || `<p class="pm-help muted">${esc(t("None yet."))}</p>`)
       + group(t("Relations"), (s3.sel.length ? `<p class="pm-help" data-s3picked>${esc(t("Selected"))}: <span translate="no">${esc(s3.sel.map(entName).join(", "))}</span></p>` : "") + (add ? `<div class="pm-rels">${add}</div>` : `<p class="pm-help muted">${esc(t("Select a line, two lines, two points, a point and a line, or a spline and the segment it joins (in the view or above; Ctrl+click adds) to add relations and dimensions. Select one point to put it on a standard plane or give its distance from one; select a corner point to round it with a fillet."))}</p>`) + (rels ? `<ul class="pm-dims">${rels}</ul>` : ""))
       + group(t("Dimensions"), dims ? `<ul class="pm-dims">${dims}</ul>` : `<p class="pm-help muted">${esc(t("None yet."))}</p>`)
       + `<p class="pm-help" role="status" data-s3status>${esc(status)}</p>` };
@@ -10298,7 +10319,7 @@ export class ModelController {
       try { const v = evaluate(inp.value, "length", unit as never, evalVars(this.doc, unit as never).values); inp.removeAttribute("aria-invalid"); return v; }
       catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return null; }
     };
-    pm.querySelectorAll<HTMLButtonElement>("[data-s3t]").forEach(b => b.addEventListener("click", () => { const k = b.dataset.s3t; s3.tool = k === "line" || k === "spline" ? k : null; s3.spline = null; if (!s3.tool) s3.anchor = null; this.renderPanel(); this.drawDecor(); }));
+    pm.querySelectorAll<HTMLButtonElement>("[data-s3t]").forEach(b => b.addEventListener("click", () => { const k = b.dataset.s3t; s3.tool = k === "line" || k === "spline" || k === "arc" ? k : null; s3.spline = null; s3.arcEnd = null; if (!s3.tool) s3.anchor = null; this.renderPanel(); this.drawDecor(); }));
     pm.querySelector<HTMLSelectElement>("[data-s3p]")?.addEventListener("change", ev => { s3.plane = (ev.target as HTMLSelectElement).value as "XY" | "YZ" | "ZX"; this.drawDecor(); });
     // A click selects just that item; Ctrl/Shift+click adds or removes it (weldments exam #7: plain clicks toggled a hidden multi-selection).
     pm.querySelectorAll<HTMLButtonElement>("[data-s3sel]").forEach(b => b.addEventListener("click", ev => { const id = b.dataset.s3sel!; s3.sel = ev.ctrlKey || ev.metaKey || ev.shiftKey ? (s3.sel.includes(id) ? s3.sel.filter(x => x !== id) : [...s3.sel, id]) : [id]; this.renderPanel(); this.drawDecor(); }));
@@ -10328,6 +10349,11 @@ export class ModelController {
           return;
         }
         if (k === "midpoint" || k === "onCurve:onLine") { f.rels.push({ id: uid("r"), t: k === "midpoint" ? "midpoint" : "onLine", e: [points[0], lines[0]] }); return; }
+        if (k === "dim:radius") {
+          const sg = f.segs.find(g => g.t === "arc" && s3.sel.includes(g.id)), P = (id: string) => f.pts.find(p => p.id === id)!.p, g = sg && arc3(P(sg.pts[0]), P(sg.pts[1]), P(sg.pts[2]));
+          if (sg && g) f.dims.push({ id: uid("d"), t: "radius", e: [sg.id], val: { v: Math.round(g.r * 1000) / 1000 } });
+          return;
+        }
         if (k.startsWith("dim:pangle:")) {
           const plane = k.slice(11) as "XY" | "YZ" | "ZX", a = linePlaneAngle(f, lines[0], plane);
           if (a == null || a < 1e-6 || a > Math.PI / 2 - 1e-6) { toast(t(a != null && a > 1e-6 ? "The line is square to {p}: use Along {a} instead." : "The line lies along {p}: use Parallel to {p} instead.", { p: plane, a: "ZXY"["XY YZ ZX".split(" ").indexOf(plane)] }), true); return; }
@@ -10353,7 +10379,7 @@ export class ModelController {
         f.rels.push(r);
       });
     }));
-    pm.querySelector("[data-s3a=end]")?.addEventListener("click", () => { s3.anchor = null; s3.spline = null; this.renderPanel(); this.drawDecor(); });
+    pm.querySelector("[data-s3a=end]")?.addEventListener("click", () => { s3.anchor = null; s3.spline = null; s3.arcEnd = null; this.renderPanel(); this.drawDecor(); });
     pm.querySelector("[data-s3a=del]")?.addEventListener("click", () => this.delete3d(f));
     pm.querySelectorAll<HTMLButtonElement>("[data-s3rdel]").forEach(b => b.addEventListener("click", () => this.change3d(f, () => { f.rels = f.rels.filter(r => r.id !== b.dataset.s3rdel); })));
     pm.querySelectorAll<HTMLButtonElement>("[data-s3ddel]").forEach(b => b.addEventListener("click", () => this.change3d(f, () => { f.dims = f.dims.filter(d => d.id !== b.dataset.s3ddel); })));

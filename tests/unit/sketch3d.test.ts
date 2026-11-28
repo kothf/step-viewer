@@ -167,3 +167,29 @@ test("3D sketch: the angle of a line to a standard plane (3D sketch test E7)", (
   assert.equal(r.dof, 0);
   near(linePlaneAngle(sk({ pts: [{ id: "A", p: [0, 0, 0] }, { id: "B", p: r.pts.B }], segs: [{ id: "l", t: "line", pts: ["A", "B"] }] }), "l", "XY")!, Math.PI / 6, 1e-6);
 });
+
+test("3D sketch: 3-point arcs, their radius and tangency to a line (3D sketch test B13, E8)", async () => {
+  const { arc3, segPoints } = await import("../../src/sketch/sketch3d");
+  // Quarter circle R10 in XY about the origin.
+  const g = arc3([10, 0, 0], [10 * Math.SQRT1_2, 10 * Math.SQRT1_2, 0], [0, 10, 0])!;
+  near(g.r, 10); near(g.sweep, Math.PI / 2); near(g.c[0], 0); near(g.c[1], 0);
+  assert.equal(arc3([0, 0, 0], [1, 1, 1], [2, 2, 2]), null);
+  // A line along X into an arc tangent to it, radius 15, the arc ending on the YZ... plane x = line end.
+  const s = sk({
+    pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [20, 0, 0] }, { id: "M", p: [30, 4, 0] }, { id: "C", p: [33, 14, 0] }],
+    segs: [{ id: "l", t: "line", pts: ["A", "B"] }, { id: "a", t: "arc", pts: ["B", "M", "C"] }],
+    rels: [{ id: "r1", t: "alongX", e: ["l"] }, { id: "r2", t: "tangent", e: ["l", "a"] }, { id: "r3", t: "onPlane", e: ["M"], plane: "XY" }, { id: "r4", t: "onPlane", e: ["C"], plane: "XY" }],
+    dims: [{ id: "d1", t: "length", e: ["l"], val: { v: 20 } }, { id: "d2", t: "radius", e: ["a"], val: { v: 15 } }],
+  });
+  const r = solve3d(s);
+  assert.ok(r.ok);
+  const h = arc3(r.pts.B, r.pts.M, r.pts.C)!;
+  near(h.r, 15, 1e-5); near(r.pts.B[0], 20, 1e-6);
+  // Tangent: the centre lies square to the line at B, i.e. at x = 20.
+  near(h.c[0], 20, 1e-4); near(Math.abs(h.c[1]), 15, 1e-4);
+  const pts = segPoints({ ...s, pts: s.pts.map(p => ({ ...p, p: r.pts[p.id] })) }, s.segs[1]);
+  assert.ok(pts.length > 8);
+  for (const p of pts) near(Math.hypot(p[0] - h.c[0], p[1] - h.c[1], p[2] - h.c[2]), 15, 1e-4);
+  const c = chain3d(s);
+  assert.ok(!("error" in c));
+});

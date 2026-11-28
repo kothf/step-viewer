@@ -1171,6 +1171,21 @@ test("3D sketch as a sweep path (FR-SK-080)", async () => {
   assert.equal(big.statuses.find(s => s.id === "k")?.code, "E-3D-FILLET");
 });
 
+test("3D sketch arc as part of a sweep path (3D sketch test F8)", async () => {
+  const m = new Modeller(await occ());
+  // 20 along X, then a quarter arc R10 turning to +Y in XY, then 15 along Y: a Ø4 tube, volume = area × path length.
+  const q = 10 * Math.SQRT1_2;
+  const k: Feature = { id: "k", type: "sketch3d", name: "3DSketch1", pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [20, 0, 0] }, { id: "M", p: [20 + q, 10 - q, 0] }, { id: "C", p: [30, 10, 0] }, { id: "D", p: [30, 25, 0] }],
+    segs: [{ id: "l1", t: "line", pts: ["A", "B"] }, { id: "a", t: "arc", pts: ["B", "M", "C"] }, { id: "l2", t: "line", pts: ["C", "D"] }], rels: [], dims: [] };
+  const sw: Feature = { id: "w", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 4 }, path: { curve: "k" } };
+  const r = run(m, doc([k, sw]));
+  close(r.props!.volume, Math.PI * 4 * (35 + 5 * Math.PI), 1e-3);
+  // A sharp corner between a line and an arc (not tangent) still gives a solid tube.
+  const k2: Feature = { ...k, pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [20, 0, 0] }, { id: "M", p: [30, 3, 0] }, { id: "C", p: [40, 0, 0] }], segs: [{ id: "l1", t: "line", pts: ["A", "B"] }, { id: "a", t: "arc", pts: ["B", "M", "C"] }] } as Feature;
+  const r2 = run(m, doc([k2, sw]));
+  assert.ok(r2.props!.volume > Math.PI * 4 * 40, String(r2.props!.volume));
+});
+
 test("3D sketch path with a sketch profile (3D sketch test F2)", async () => {
   const m = new Modeller(await occ());
   // A 10 mm square on XY swept 30 up Z, then 20 along X: area × path length both with the sharp (mitred) corner and with an R8 sketch fillet.
