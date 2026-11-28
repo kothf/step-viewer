@@ -14,7 +14,7 @@ import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
-import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, colorAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, exprValue, motorPlotUnit, motorSeries, type MotorPlot, parsePoints, parseSegments, playTime, type PointsFit, sortKeys, valueAt } from "./evaluate";
+import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, colorAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, frameTime, motorAmount, orbitKeys, exprValue, motorPlotUnit, motorSeries, type MotorPlot, parsePoints, parseSegments, playTime, type PointsFit, sortKeys, valueAt } from "./evaluate";
 import { encodeGif, gifDelays } from "./gif";
 import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
@@ -472,7 +472,7 @@ export class MotionManager {
     while (this.frames.length <= i) {
       const n = this.frames.length;
       if (!moving) { this.frames.push(rest); continue; }
-      const f = frameAt(s, n / s.fps, mates);
+      const f = frameAt(s, frameTime(s, n), mates);
       const extra: Mate[] = [];
       for (const a of f.axis) {
         const m = mates.get(a.mate)!, g = this.asm.localGeo(m.a);
@@ -503,10 +503,11 @@ export class MotionManager {
 
   /** Component transforms at frame `i` (time `tq`): the solved frame with placement keys applied. Between two solved
    *  frames each part moves along the screw motion from one to the next, so playback is smooth at any frame rate. */
-  private tfsAt(i: number, tq = i / this.study.fps): Record<string, Tf> {
+  private tfsAt(i: number, tq = frameTime(this.study, i)): Record<string, Tf> {
     const s = this.study;
     let tfs = this.frames[i] ?? this.asm.restTfs();
-    const x = tq * s.fps, i0 = Math.floor(x + 1e-9), u = x - i0, a = this.frames[i0], b = this.frames[i0 + 1];
+    const x = tq * s.fps, i0 = Math.floor(x + 1e-9), a = this.frames[i0], b = this.frames[i0 + 1];
+    const t0 = frameTime(s, i0), t1 = frameTime(s, i0 + 1), u = t1 > t0 + 1e-12 ? Math.min(1, (tq - t0) / (t1 - t0)) : 0;
     if (u > 1e-6 && a && b) {
       tfs = { ...a };
       for (const [id, tb] of Object.entries(b)) if (a[id]) tfs[id] = tweenTf(a[id], tb, u);
@@ -536,7 +537,7 @@ export class MotionManager {
     const per: [string, string][][] = [], tfs: Record<string, Tf>[] = [], memo = new Map<string, boolean>();
     for (let k = 0; k < n; k++) {
       tfs.push(this.tfsAt(k));
-      this.asm.motionShow(tfs[k], frameAt(s, k / s.fps, mates).explode);
+      this.asm.motionShow(tfs[k], frameAt(s, frameTime(s, k), mates).explode);
       per.push(this.asm.motionClashes(memo));
     }
     if (!s.tracks.some(k => k.kind === "explode" && !k.off)) steadyClashes(per, tfs);
@@ -692,10 +693,10 @@ export class MotionManager {
         if (this.gapSync) {
           const runs = missing.map(x => ({ x, rel: new Map<string, number>(), v: [] as number[] }));
           for (let k = 0; k < n; k++) {
-            this.asm.motionShow(all[k], frameAt(s, k / s.fps, mates).explode);
+            this.asm.motionShow(all[k], frameAt(s, frameTime(s, k), mates).explode);
             for (const r of runs) r.v.push(this.gapAt(all[k], r.x.gap!, r.rel));
           }
-          this.asm.motionShow(this.tfsAt(i), frameAt(s, i / s.fps, mates).explode);
+          this.asm.motionShow(this.tfsAt(i), frameAt(s, frameTime(s, i), mates).explode);
           for (const r of runs) { this.keepGap(this.gapKey(base, r.x), r.v); this.gapVals.set(r.x.id, r.v); }
         } else void this.measureGaps(missing, all, base);
       }
@@ -852,8 +853,8 @@ export class MotionManager {
     const ang = this.traceAng.get(x.id) ?? [], vals = traceSeries(pts, s.fps, q, ang), j = Math.min(pts.length - 1, Math.max(0, i)), p = pts[j];
     const unit = t(plotUnit(q)), label = t(TRACE_PLOTS.find(([k]) => k === q)?.[1] ?? "Distance from start");
     const read = q === "angle" || q === "aspeed"
-      ? t("At {t} s: angle {a}°; angular speed {w}°/s", { t: fmt(j / s.fps), a: fmt(ang[j] ?? 0), w: fmt(rates(ang, s.fps)[j] ?? 0) })
-      : t("At {t} s: X {x}, Y {y}, Z {z} mm; speed {v} mm/s", { t: fmt(j / s.fps), x: fmt(p[0]), y: fmt(p[1]), z: fmt(p[2]), v: fmt(speeds(pts, s.fps)[j]) })
+      ? t("At {t} s: angle {a}°; angular speed {w}°/s", { t: fmt(frameTime(s, j)), a: fmt(ang[j] ?? 0), w: fmt(rates(ang, s.fps)[j] ?? 0) })
+      : t("At {t} s: X {x}, Y {y}, Z {z} mm; speed {v} mm/s", { t: fmt(frameTime(s, j)), x: fmt(p[0]), y: fmt(p[1]), z: fmt(p[2]), v: fmt(speeds(pts, s.fps)[j]) })
         + (q === "accel" ? " " + t("acceleration {a} mm/s²", { a: fmt(accels(pts, s.fps)[j]) }) : "");
     return plotSvg(vals, s.fps, this.time, unit, x.color, esc(label)) + `<span class="mo-tread muted">${esc(read)}</span>`;
   }
@@ -863,7 +864,7 @@ export class MotionManager {
     if (!v.length || v.some(d => !Number.isFinite(d))) return `<span class="muted">${esc(t("The components are not shown."))}</span>`;
     const j = Math.min(v.length - 1, Math.max(0, i)), r = rates(v, s.fps);
     const label = t(GAP_PLOTS.find(([k]) => k === q)?.[1] ?? "Distance");
-    const read = t("At {t} s: distance {d} mm ({v} mm/s)", { t: fmt(j / s.fps), d: fmt(v[j]), v: fmt(r[j]) });
+    const read = t("At {t} s: distance {d} mm ({v} mm/s)", { t: fmt(frameTime(s, j)), d: fmt(v[j]), v: fmt(r[j]) });
     return plotSvg(q === "speed" ? r : v, s.fps, this.time, t(plotUnit(q)), x.color, esc(label)) + `<span class="mo-tread muted">${esc(read)}</span>`;
   }
 
@@ -917,11 +918,11 @@ export class MotionManager {
     keys.forEach(k => this.gapBusy.add(k));
     const s = this.study, n = all.length, mates = new Map((this.asm.doc?.mates ?? []).map(m => [m.id, m]));
     const runs = todo.map(x => ({ x, rel: new Map<string, number>(), v: [] as number[] }));
-    const back = () => { const i = Math.min(n - 1, Math.max(0, Math.round(this.time * s.fps))); this.asm.motionShow(this.tfsAt(i), frameAt(s, i / s.fps, mates).explode); };
+    const back = () => { const i = Math.min(n - 1, Math.max(0, Math.round(this.time * s.fps))); this.asm.motionShow(this.tfsAt(i), frameAt(s, frameTime(s, i), mates).explode); };
     try {
       let t0 = performance.now();
       for (let k = 0; k < n; k++) {
-        this.asm.motionShow(all[k], frameAt(s, k / s.fps, mates).explode);
+        this.asm.motionShow(all[k], frameAt(s, frameTime(s, k), mates).explode);
         for (const r of runs) r.v.push(this.gapAt(all[k], r.x.gap!, r.rel));
         if (performance.now() - t0 > 60 && k < n - 1) {
           back();
@@ -962,7 +963,7 @@ export class MotionManager {
     const j = Math.min(mv.dist.length - 1, Math.max(0, i)), dr = rates(mv.dist, s.fps), ar = rates(mv.angle, s.fps);
     const vals = q === "speed" ? dr : q === "angle" ? mv.angle : q === "aspeed" ? ar : mv.dist;
     const label = t(MATE_PLOTS.find(([k]) => k === q)?.[1] ?? "Distance");
-    const read = t("At {t} s: distance {d} mm ({v} mm/s); angle {a}° ({w}°/s)", { t: fmt(j / s.fps), d: fmt(mv.dist[j]), v: fmt(dr[j]), a: fmt(mv.angle[j]), w: fmt(ar[j]) });
+    const read = t("At {t} s: distance {d} mm ({v} mm/s); angle {a}° ({w}°/s)", { t: fmt(frameTime(s, j)), d: fmt(mv.dist[j]), v: fmt(dr[j]), a: fmt(mv.angle[j]), w: fmt(ar[j]) });
     return plotSvg(vals, s.fps, this.time, t(plotUnit(q)), x.color, esc(label)) + `<span class="mo-tread muted">${esc(read)}</span>`;
   }
 
@@ -1095,7 +1096,7 @@ export class MotionManager {
       const i = Math.round(p.t * this.study.fps), trip = sensors && i > last ? this.tripAt(last, i) : null;
       last = i;
       if (trip) {
-        this.time = trip.i / this.study.fps;
+        this.time = frameTime(this.study, trip.i);
         this.showAt(this.time);
         this.pause();
         toast(trip.x ? t("Sensor tripped at {t} s", { t: fmt(this.time) }) : t("Interference at {t} s", { t: fmt(this.time) }));
@@ -1489,7 +1490,7 @@ export class MotionManager {
     if (line) { line.style.left = this.x(this.time); this.followHead(); }
     const tm = this.pane.querySelector<HTMLElement>("[data-mo=time]");
     if (tm) tm.textContent = `${fmt(this.time)} / ${fmt(s.duration)} ${t("s")}`;
-    if (!this.recording) this.setStatus(this.badFrames.has(i) ? t("The mates cannot be solved at {t} s; the components stay where they were.", { t: fmt(i / s.fps) }) : "");
+    if (!this.recording) this.setStatus(this.badFrames.has(i) ? t("The mates cannot be solved at {t} s; the components stay where they were.", { t: fmt(frameTime(s, i)) }) : "");
   }
 
   private renderTransport() {
