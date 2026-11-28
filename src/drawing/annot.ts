@@ -1037,7 +1037,7 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
   // A plain section leaves out the centre marks and cosmetic threads of what its cut took away.
   const kept = v.kind === "section" && ctx.topo ? cutAway(sheet, v, ctx.topo) : ctx.topo;
   if (v.marks !== false && kept) out.prims.push(...centreMarks(v, pl, kept, P, n));
-  if (v.threads !== false && ctx.threads?.length) out.prims.push(...threadPrims(v, pl, ctx.threads, kept, P, n));
+  if (v.threads !== false && ctx.threads?.length) out.prims.push(...threadPrims(v, pl, ctx.threads, kept, P, n, sectionCut(sheet, v)));
   if (v.sketches && ctx.sketches?.length) out.prims.push(...sketchPrims(v, pl, ctx.sketches, P));
   const btable = (sheet.annots ?? []).some(a => a.t === "btable" && a.view === v.id);
   if (v.bendLines !== false && ctx.bends?.length) out.prims.push(...bendPrims(v, pl, ctx.bends, P, ctx, btable));
@@ -1646,11 +1646,14 @@ export function threadRun(t: ThreadInfo, topo: Topo | null): { c: V3; dir: V3; L
  * across; seen end-on, a thin ¾ circle (gap in the upper right quadrant). Internal threads seen from the
  * side lie inside the part, so they are dashed unless the view is a section.
  */
-export function threadPrims(v: DrawingView, pl: Placement, threads: ThreadInfo[], topo: Topo | null, P: (p: V3) => P2, n: V3): Prim[] {
+export function threadPrims(v: DrawingView, pl: Placement, threads: ThreadInfo[], topo: Topo | null, P: (p: V3) => P2, n: V3, cutAt?: SectionCut | null): Prim[] {
   const thinS: Seg2[] = [], hidS: Seg2[] = [], limS: Seg2[] = [], limH: Seg2[] = [];
   for (const t of threads) {
     const run = threadRun(t, topo);
     if (!run) continue;
+    // In a section only a thread the cut runs through shows as cut; one behind the cut face is hidden, one in the cut-away part is gone.
+    const at = v.kind === "section" && cutAt ? cutAt(run.c, Math.max(t.d / 2, run.R)) : null;
+    if (at === "gone") continue;
     const { c, dir, L } = run, r = t.d / 2, R = Math.max(r, run.R);
     const cos = dot3(dir, n);
     const c2 = P(c), e2 = P([c[0] + dir[0] * L, c[1] + dir[1] * L, c[2] + dir[2] * L]);
@@ -1659,12 +1662,42 @@ export function threadPrims(v: DrawingView, pl: Placement, threads: ThreadInfo[]
       (cos < 0 ? thinS : hidS).push({ k: "a", c: 0, o: c2, r, a0: Math.PI / 2, a1: 2 * Math.PI });
     } else if (Math.abs(cos) < 1e-6) {
       const d = unit2([e2[0] - c2[0], e2[1] - c2[1]]), s: P2 = [-d[1], d[0]];
-      const hidden = t.internal && v.kind !== "section";
+      const hidden = t.internal && (v.kind !== "section" || at === "behind");
       for (const k of [-1, 1]) (hidden ? hidS : thinS).push({ k: "l", c: 0, p: [c2[0] + s[0] * r * k, c2[1] + s[1] * r * k, e2[0] + s[0] * r * k, e2[1] + s[1] * r * k] });
       (hidden ? limH : limS).push({ k: "l", c: 0, p: [e2[0] - s[0] * R, e2[1] - s[1] * R, e2[0] + s[0] * R, e2[1] + s[1] * R] });
     }
   }
-  return [...decorPrims(v, pl, thinS, "thin", "THREAD"), ...decorPrims(v, pl, hidS, "hidden", "THREAD"), ...decorPrims(v, pl, limS, "thick", "THREAD"), ...decorPrims(v, pl, limH, "hidden", "THREAD")];
+  // Views drawn without hidden lines (hidden lines removed, shaded) leave hidden threads out too.
+  const style = v.style ?? (v.kind === "section" ? "hlr" : "hlv"), hid = style === "hlv" || style === "wire";
+  return [...decorPrims(v, pl, thinS, "thin", "THREAD"), ...(hid ? decorPrims(v, pl, hidS, "hidden", "THREAD") : []), ...decorPrims(v, pl, limS, "thick", "THREAD"), ...(hid ? decorPrims(v, pl, limH, "hidden", "THREAD") : [])];
+}
+
+/** Where a point of the model lies against a section's cut, for a feature of radius r round it: on the cut face, behind it, or in the part cut away. */
+export type SectionCut = (c: V3, r: number) => "cut" | "behind" | "gone" | null;
+
+/**
+ * The cut of a plain, offset or half section as a `SectionCut` (null for other views; aligned and broken-out
+ * sections answer null, so their threads keep showing as cut).
+ */
+export function sectionCut(sheet: Sheet, v: DrawingView): SectionCut | null {
+  if (v.kind !== "section") return null;
+  let rq: ReturnType<typeof viewReq>;
+  try { rq = viewReq(sheet, v); } catch { return null; }
+  if (!rq.p || rq.align || rq.poly) return null;
+  const p = rq.p, n = rq.view.dir;
+  const st = rq.stair;
+  if (!st) return (c, r) => { const s = dot3(c, n) - dot3(p, n); return Math.abs(s) < r ? "cut" : s > 0 ? "gone" : "behind"; };
+  const d0 = dot3(st.o, st.m);
+  return (c, r) => {
+    const q: V3 = [c[0] - st.o[0], c[1] - st.o[1], c[2] - st.o[2]], tc = dot3(q, st.e), oc = dot3(c, st.m) - d0;
+    // The level legs of the staircase (t0..t1 at offset o) are the cut faces; beyond one (towards the viewer) is cut away. Where no leg runs (past the cut of a half section) nothing is cut, so all of it is behind.
+    for (let i = 0; i + 3 < st.pts.length; i += 2) {
+      const t0 = st.pts[i], o0 = st.pts[i + 1], t1 = st.pts[i + 2], o1 = st.pts[i + 3];
+      if (o0 !== o1 || tc < Math.min(t0, t1) - 1e-9 || tc > Math.max(t0, t1) + 1e-9) continue;
+      return Math.abs(oc - o0) < r ? "cut" : oc > o0 ? "gone" : "behind";
+    }
+    return "behind";
+  };
 }
 
 /** The model's shown sketches projected into the view as thin polylines. */

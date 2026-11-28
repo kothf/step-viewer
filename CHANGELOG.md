@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.765.0] - 2026-11-28
+
+### Fixed
+
+- Drawings: a thread of a hole that a section does not cut is no longer drawn as cut. Behind the cut it is hidden like other hidden lines (shown only with Hidden lines visible), and in the part cut away it is gone; this also holds for the uncut half of a half section.
+- Drawings: a form tolerance (straightness, flatness, circularity, cylindricity) takes no datum. Picking one clears the datum cells and turns them off, so a new frame no longer keeps datum A after Flatness is picked.
+
+### Added
+
+- Hands-on drawing tests (sections, hole callouts, geometric tolerances, updates after model edits) with a test list that says how other CAD apps behave.
+
 ## [1.764.0] - 2026-11-28
 
 ### Added
@@ -5062,7 +5073,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.764.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.765.0...HEAD
+[1.765.0]: https://github.com/kothf/step-viewer/compare/v1.764.0...v1.765.0
 [1.764.0]: https://github.com/kothf/step-viewer/compare/v1.763.0...v1.764.0
 [1.763.0]: https://github.com/kothf/step-viewer/compare/v1.762.0...v1.763.0
 [1.762.0]: https://github.com/kothf/step-viewer/compare/v1.761.0...v1.762.0

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Projection, Topo, V3 } from "../../src/kernel/drawing";
 import { placement } from "../../src/drawing/compose";
-import { sketchPrims, threadPrims, threadRun } from "../../src/drawing/annot";
+import { sectionCut, sketchPrims, threadPrims, threadRun } from "../../src/drawing/annot";
 import { alignAxis } from "../../src/drawing/views";
 import type { ThreadInfo } from "../../src/drawing/items";
 import type { DrawingView, Sheet } from "../../src/drawing/types";
@@ -59,4 +59,34 @@ test("sketches are thin polylines; a free view has no alignment", () => {
   const pv: DrawingView = { id: "p", name: "Top", parent: "v", side: [0, 1], x: 200, y: 250 };
   assert.equal(alignAxis(pv), "x");
   assert.equal(alignAxis({ ...pv, free: true }), null);
+});
+
+test("in a section, a thread the cut misses is hidden behind it or gone with the part cut away (drawings tests A11)", () => {
+  const P = (p: V3): [number, number] => [p[0], p[2]];
+  const inner = { ...thr, internal: true };
+  const sec: DrawingView = { ...view, kind: "section" };
+  const pens = (at: "cut" | "behind" | "gone", style?: DrawingView["style"]) => threadPrims({ ...sec, style }, pl, [inner], topo, P, [0, -1, 0], () => at).map(p => p.pen);
+  assert.ok(pens("cut").includes("thin") && pens("cut").includes("thick"));
+  assert.deepEqual(pens("behind"), [], "a section draws no hidden lines");
+  assert.ok(pens("behind", "hlv").length > 0 && pens("behind", "hlv").every(p => p === "hidden"));
+  assert.deepEqual(pens("gone", "hlv"), []);
+  // A plain view without hidden lines leaves a hidden thread out.
+  assert.deepEqual(threadPrims({ ...view, style: "hlr" }, pl, [inner], topo, P, [0, -1, 0]), []);
+});
+
+test("sectionCut: where a point lies against a plain and a half section's cut", () => {
+  const par: DrawingView = { id: "p", name: "Top", orient: "top", x: 150, y: 150 };
+  const plain: DrawingView = { id: "a", name: "A-A", kind: "section", parent: "p", line: [-60, 0, 60, 0], look: 1, x: 150, y: 70, letter: "A" };
+  const half: DrawingView = { id: "b", name: "B-B", kind: "section", parent: "p", line: [-25, 25, -25, 0], path: [-25, 25, -25, 0, -45, 0], look: -1, x: 270, y: 150, letter: "B" };
+  const sh = { ...sheet, views: [par, plain, half] } as Sheet;
+  const a = sectionCut(sh, plain)!, b = sectionCut(sh, half)!;
+  assert.equal(sectionCut(sh, par), null);
+  assert.equal(a([25, 0, 10], 3), "cut");
+  const s1 = a([25, 15, 10], 3), s2 = a([25, -15, 10], 3);
+  assert.deepEqual([s1, s2].sort(), ["behind", "gone"]);
+  assert.equal(b([-25, 10, 10], 3), "cut");
+  assert.notEqual(b([25, 15, 10], 3), "cut");
+  // Past the cut leg the half section is not cut: everything there is seen as in a plain view.
+  assert.equal(b([25, -15, 10], 3), "behind");
+  assert.equal(b([-25, -15, 10], 3), "behind");
 });

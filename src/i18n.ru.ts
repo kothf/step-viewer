@@ -2960,6 +2960,7 @@ export const RU: Record<string, string> = {
   "Primary": "Первичная",
   "Secondary": "Вторичная",
   "Tertiary": "Третичная",
+  "A form tolerance has no datum.": "У допуска формы нет базы.",
   "Click up to three faces of this component. Inserting a part with a reference of the same name mates it to this one: flat faces coincident, cylinders concentric.": "Щёлкните до трёх граней этого компонента. Деталь со ссылкой того же имени при вставке сопрягается с этой: плоские грани совпадают, цилиндры концентричны.",
   "Other references: {names}": "Другие ссылки: {names}",
   "Pick faces of the component the reference belongs to.": "Выберите грани компонента, которому принадлежит ссылка.",

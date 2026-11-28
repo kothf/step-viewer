@@ -7176,6 +7176,10 @@ try {
     // The dialog opens on its symbol palette: Cancel adds nothing, OK adds the frame.
     await dp.waitForSelector("#drw-gtol-dlg[open] .gt-pal");
     const gnew = await dp.evaluate(() => ({ pal: document.querySelectorAll("#drw-gtol-dlg .gt-pal [data-pick] svg").length, mods: document.querySelectorAll("#drw-gtol-dlg .ad-syms [data-ins]").length, pv: !!document.querySelector("#drw-gtol-dlg .ad-pv") }));
+    // Flatness (a form tolerance) takes no datum: the new frame's A goes and the datum cells grey out (drawings tests C5).
+    await dp.click('#drw-gtol-dlg .gt-pal [data-pick="flat"]');
+    const gform = await dp.evaluate(() => [...document.querySelectorAll('#drw-gtol-dlg [data-g^="0:d"]')].map(e => `${e.value}${e.disabled ? "-" : "+"}`).join(","));
+    check(gform === "-,-,-", `drawing: Flatness empties and greys out the datum cells (${gform})`);
     await dp.click("#drw-gtol-dlg [data-cancel]"); await annotDlgGone(dp);
     const gnone = (await annots()).filter(a => a.t === "gtol").length;
     await tool("gtol"); await click(front.id, -30, 20); await dp.mouse.move(gx, gy); await dp.mouse.click(gx, gy);
