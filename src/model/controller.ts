@@ -6072,7 +6072,10 @@ export class ModelController {
     const label = a.label;
     if (label && f) {
       const tip = a.ang ? a.ang.head.position.clone().add(a.ang.head.position.clone().sub(a.ang.c).setLength(a.scale * 0.9)) : a.obj.position.clone().addScaledVector(a.dir, a.scale * 1.5);
-      const s = tip.project(v.camera);
+      const s = tip.clone().project(v.camera);
+      // An arrow pointing left on screen gets its label on the left of the tip, so it never covers the shaft.
+      const b = (a.ang ? a.ang.c : a.obj.position).clone().project(v.camera);
+      label.classList.toggle("left", s.x < b.x);
       label.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
       label.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
       const val = (f as unknown as Record<string, Num | undefined>)[a.key]?.v ?? 0;

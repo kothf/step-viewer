@@ -3627,21 +3627,27 @@ try {
     // 1.371 (FR-UI-115): a feature picked in the tree shows its dimensions and its own values (angle, radius…) on the model;
     // a value opens the Modify box and ✓ changes the feature as one undo step.
     {
-      // A shell (thickness) to show: the part has only sketches and extrudes so far.
-      await mp.evaluate(() => window.__sv.modeller.command("shell"));
-      await mp.waitForSelector('#mc-pm input[data-num="thickness"]');
-      await mp.evaluate(() => {
-        const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
-        d.faces = [{ name: names.find(n => n.startsWith("cpe:")) }]; m.draftChanged();
-      });
-      await idle();
+      // A Move Face (distance) to show: the part has only sketches and extrudes so far. ✓ keeps a failing new
+      // feature's panel open (1.768.0), so the first flat face it builds on is used (a shell fails on this body).
+      await mp.evaluate(() => window.__sv.modeller.command("moveface"));
+      await mp.waitForSelector('#mc-pm input[data-num="distance"]');
+      for (let i = 0; i < 16; i++) {
+        await mp.evaluate(i => {
+          const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+          const cand = [names.find(n => n.startsWith("cpe:")), ...names.filter(n => /:end$|:start$/.test(n))].filter(Boolean);
+          d.faces = [{ name: cand[i % cand.length] }]; d.distance = { v: 2 }; m.draftChanged();
+        }, i);
+        await idle();
+        const okNow = await mp.evaluate(() => { const m = window.__sv.modeller; return window.__sv.model.last()?.statuses.find(s => s.id === m.mode.draft.id)?.ok === true; });
+        if (okNow) break;
+      }
       await mp.evaluate(() => window.__sv.modeller.ok());
       await idle();
       const pick = await mp.evaluate(() => {
         const m = window.__sv.modeller, d = window.__sv.model.store.doc;
         const f = d.features.find(x => m.featureValues(x).some(v => v.q !== "count") && m.calloutPoint(x));
         const fv = f && m.featureValues(f).find(v => v.q !== "count");
-        return f ? { id: f.id, type: f.type, key: fv.key, q: fv.q, v: f[fv.key].v } : { types: d.features.map(x => x.type) };
+        return f ? { id: f.id, type: f.type, key: fv.key, q: fv.q, v: f[fv.key].v } : { types: d.features.map(x => x.type), mode: m.mode.kind, st: window.__sv.model.last()?.statuses.filter(s => !s.ok).map(s => s.message), toasts: [...document.querySelectorAll(".toast")].map(e => e.textContent) };
       });
       let ival = null, after = null, undone = null;
       if (pick.id) {
@@ -3940,7 +3946,7 @@ try {
       if (ap2) await mp.mouse.click(ap2[0], ap2[1]);
       await idle();
       const flipB = await mp.evaluate(() => !!window.__sv.model.mode().draft?.flip);
-      check(!!ap && flipA && !flipB && Math.abs((await vol()) - vLp) < 1, `model 1.767: linear pattern direction arrow clicked in the view reverses the direction (${JSON.stringify({ ap, flipA, flipB })})`);
+      check(!!ap && flipA && !flipB && Math.abs((await vol()) - vLp) < 1, `model 1.767: linear pattern direction arrow clicked in the view reverses the direction (${JSON.stringify({ ap, ap2, flipA, flipB })})`);
       // Up to distance: the 20 typed becomes the reach of the last instance (3 gaps of 6.67 mm), then back.
       await mp.selectOption('#mc-pm select[data-k="total"]', "1");
       await idle();
