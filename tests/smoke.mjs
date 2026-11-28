@@ -16149,7 +16149,7 @@ try {
     await fp.click("#file-btn");
     await fp.click("#file-menu [data-f=pack]");
     await fp.waitForSelector("#pack-dlg[open]");
-    const boxes = await fp.$$eval("#pack-dlg [data-pk]:not([data-pk=name])", b => b.length);
+    const boxes = await fp.$$eval("#pack-dlg .pack-list [data-pk]", b => b.length);
     await fp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
     const [dl] = await Promise.all([fp.waitForEvent("download"), fp.click("#pack-dlg [data-a=ok]")]);
     const zbytes = await readFile(await dl.path());
@@ -20412,7 +20412,8 @@ try {
     await rp.click("#file-btn");
     await rp.click("#file-menu [data-f=pack]");
     await rp.waitForSelector("#pack-dlg[open]");
-    await rp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
+    // the documents and their parts, folders kept (not "Put every file in one folder")
+    await rp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = b.dataset.pk !== "flat" && b.dataset.pk !== "drw"; }));
     const [dl] = await Promise.all([rp.waitForEvent("download"), rp.click("#pack-dlg [data-a=ok]")]);
     const ztext = (await readFile(await dl.path())).toString("latin1");
     check(ztext.includes("hw/Block-renamed.mcadprt") && ztext.includes("Plate.mcadprt") && !ztext.includes("parts/Block"), `references: Pack and Go packs the part files beside the assembly, at their reference paths (${ztext.length} bytes)`);
