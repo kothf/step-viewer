@@ -18200,8 +18200,8 @@ try {
   }
 
   // --- thermal 1.655 (FRS-thermal J5, FR-TSTU-004, FR-TBRD-001): a study straight from a board's STEP and its package ---
-  // In shard 2 since 1.724.0: shard 6 reached the 12 minute limit (this block solves the board five times, about 2.5 min).
-  if (inShard(2)) {
+  // In shard 1 since 1.779.0 (shard 2 since 1.724.0, shard 6 before: each reached the 12 minute limit; this block solves the board five times, about 2.5 min).
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
