@@ -519,7 +519,7 @@ export class VaultExplorer {
       ? `<p class="vx-pv-lock${st?.mine ? " mine" : ""}">${svg(ICON.lock)}${esc(st?.mine ? t("Checked out to you") : t("Checked out by {user}", { user: f.checkout.user }))} · <span class="muted">${esc(fmtDate(f.checkout.at))}</span></p>`
       : `<p class="vx-pv-lock muted">${esc(v.stateOf(f.state).checkout ? t("Checked in: read-only until you check it out.") : t("Read-only in this state"))}</p>`;
     const thumb = this.thumbs.get(f.id);
-    const trs = v.transitionsOf(f);
+    const trs = v.allowedTransitions(f);
     box.innerHTML = `<div class="vx-pic">${thumb ? `<img src="${thumb}" alt="${esc(t("Preview of {name}", { name: base(f.path) }))}" />` : kindIcon(f.kind).replace('class="vx-i', 'class="vx-i vx-big')}</div>
       <h3 class="vx-pv-name" translate="no">${esc(base(f.path))}</h3>
       <p class="muted vx-pv-path" translate="no">${esc(dirOf(f.path) || v.info.name)}</p>
