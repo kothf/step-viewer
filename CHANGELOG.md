@@ -5,6 +5,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.774.0] - 2026-11-28
+
+### Fixed
+
+- Shell with no face removed makes a closed hollow body (it gave the inner block before).
+- Shell outward keeps the outer corners sharp, as other CAD apps do (they came out rounded).
+- Suppress takes the features that use the suppressed one along (a pattern of a hole, a chamfer on its edge) and Unsuppress brings them back; unsuppressing a feature also brings back the suppressed features it needs. A pattern of a suppressed hole no longer fails.
+- ✓ on a new or changed feature that the view shows failing (a fillet radius too big for its edges) keeps the panel open with the reason instead of adding a failed feature.
+- Alt+↑/↓, Enter and F2 act on a Features tree row right after it is clicked.
+
+### Added
+
+- Linear pattern direction arrows in the view, as other CAD apps show them: an orange arrow per direction from the seed while the pattern is open; drag it to change the spacing, click it to reverse that direction (before, a direction picked from an edge could run off the part with only a checkbox to turn it).
+- Hands-on test of core modelling (fillets, chamfers, patterns, mirror, shell, holes, rebuild after edits above) in `tests/human/core.mjs`.
+
+## [1.773.0] - 2026-11-28
+
+### Fixed
+
+- Drawings: a thread of a hole that a section does not cut is no longer drawn as cut. Behind the cut it is hidden like other hidden lines (shown only with Hidden lines visible), and in the part cut away it is gone; this also holds for the uncut half of a half section.
+- Drawings: a form tolerance (straightness, flatness, circularity, cylindricity) takes no datum. Picking one clears the datum cells and turns them off, so a new frame no longer keeps datum A after Flatness is picked.
+
+### Added
+
+- Hands-on drawing tests (sections, hole callouts, geometric tolerances, updates after model edits) with a test list that says how other CAD apps behave.
+
 ## [1.772.0] - 2026-11-28
 
 ### Fixed
@@ -5142,7 +5168,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.772.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.774.0...HEAD
+[1.774.0]: https://github.com/kothf/step-viewer/compare/v1.773.0...v1.774.0
+[1.773.0]: https://github.com/kothf/step-viewer/compare/v1.772.0...v1.773.0
 [1.772.0]: https://github.com/kothf/step-viewer/compare/v1.771.0...v1.772.0
 [1.771.0]: https://github.com/kothf/step-viewer/compare/v1.770.0...v1.771.0
 [1.770.0]: https://github.com/kothf/step-viewer/compare/v1.769.0...v1.770.0
