@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.775.0] - 2026-11-28
+## [1.776.0] - 2026-11-28
 
 ### Added
 
@@ -17,6 +17,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 
 - Sweep: a path with a sharp corner next to an arc or spline is refused with a message (make that join tangent) instead of giving a solid of volume 0.
+
+## [1.775.0] - 2026-11-28
+
+### Fixed
+
+- Simulation: every command on the Simulation bar shows its name at 1440 px again (it fell back to bare glyphs). The less used supports, loads and cooling conditions are in ▾ menus beside Fixed support / Sliding / Hinge, Gravity and Convection, as other CAD apps group them.
+- Simulation: typing a force's X, Tab, Y, Tab, Z, Tab in a study panel kept only the first values; the panel no longer loses its place in the tab order.
+- Simulation: the "Pick a material…" warning goes away once a material is picked.
+- Opening an assembly together with its part files (its whole folder) opened one of the parts instead of the assembly, so its results file was not shown either.
+
+### Added
+
+- Hands-on test of setting up studies (first command with no study, edit / suppress / delete from the tree, force direction, a global variable in a load, Solve on change, convection presets, an assembly's results beside it and in Pack and Go) in `tests/human/simsetup2.mjs`.
 
 ## [1.774.0] - 2026-11-28
 
@@ -5181,7 +5194,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.775.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.776.0...HEAD
+[1.776.0]: https://github.com/kothf/step-viewer/compare/v1.775.0...v1.776.0
 [1.775.0]: https://github.com/kothf/step-viewer/compare/v1.774.0...v1.775.0
 [1.774.0]: https://github.com/kothf/step-viewer/compare/v1.773.0...v1.774.0
 [1.773.0]: https://github.com/kothf/step-viewer/compare/v1.772.0...v1.773.0

@@ -1,6 +1,6 @@
 // Thermal stress in an assembly by hand (FRS-thermal TH5): two steel blocks end to end, 0.05 mm apart, held at
 // their far ends and warmed by 100 K are pushed by E α ΔT; with the second of aluminium both carry one force.
-import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock } from "./lib.mjs";
+import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock, simCmd } from "./lib.mjs";
 const { browser, pg } = await open("thermalstressasm");
 await makeBlock(pg, 100, 20, 20);
 await pg.keyboard.press("Escape");
@@ -68,8 +68,8 @@ await pg.click("#sim-pm .pm-ok");
 await idle(pg);
 await view(7);
 // TSA-1: Loads ▸ Temperature is offered over an assembly: 120 °C everywhere, stress-free at 20 °C.
-const tempOn = await pg.evaluate(() => !document.querySelector('#sim-tools [data-s="temperature"]')?.disabled);
-await pg.click('#sim-tools [data-s="temperature"]');
+const tempOn = await pg.evaluate(() => !document.querySelector('#sim-tools [data-fly="load"]')?.disabled);
+await simCmd(pg, "temperature");
 await pg.waitForSelector("#sim-pm .pm-ok");
 await pg.fill('#sim-pm [data-n="value"]', "120");
 await pg.press('#sim-pm [data-n="value"]', "Tab");

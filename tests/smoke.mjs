@@ -16,6 +16,14 @@ import { crc32, deflateRawSync, inflateRawSync } from "node:zlib";
 import { extname, join, resolve, sep } from "node:path";
 import { chromium } from "playwright";
 import { createRequire } from "node:module";
+// A Simulation bar command, through its group's ▾ menu when it sits there.
+const SIM_FLY = { dirs: "sup", elastic: "sup", disp: "sup", torque: "load", bearing: "load", remote: "load", hydro: "load", centrifugal: "load", temperature: "load", radx: "cool", chassis: "cool", insul: "cool" };
+async function simCmd(pg, s) {
+  if (!SIM_FLY[s]) return pg.click(`#sim-tools [data-s="${s}"]`);
+  await pg.click(`#sim-tools [data-fly="${SIM_FLY[s]}"]`);
+  await pg.click(`#mc-menu [data-s="${s}"]`);
+}
+
 
 const root = resolve(process.argv[2] || "dist/step-viewer");
 const fixtures = resolve("node_modules/occt-import-js/test/testfiles");
@@ -17089,14 +17097,14 @@ try {
     // then a centrifugal load: 6000 rpm about X throws the bar (0.628 kg, centre at y = 100, z = 10) outwards with ρ ω² V r.
     await mp.click('#sim-tools [data-s="new"]');
     await settle();
-    await mp.click('#sim-tools [data-s="elastic"]');
+    await simCmd(mp, "elastic");
     p = await at("f1:side:s1l1");
     await mp.mouse.click(p.x, p.y);
     await mp.waitForTimeout(200);
     const elPanel = await mp.evaluate(() => ({ kn: document.querySelector('#sim-pm [data-q="kn"]')?.value, kt: document.querySelector('#sim-pm [data-q="kt"]')?.value, title: document.querySelector("#sim-pm h3")?.textContent }));
     await mp.click("#sim-pm .pm-ok");
     await settle();
-    await mp.click('#sim-tools [data-s="disp"]');
+    await simCmd(mp, "disp");
     p = await at("f1:end");
     await mp.mouse.click(p.x, p.y);
     await mp.waitForTimeout(200);
@@ -17114,7 +17122,7 @@ try {
     await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
     await mp.waitForTimeout(300);
     const n1 = await sim();
-    await mp.click('#sim-tools [data-s="centrifugal"]');
+    await simCmd(mp, "centrifugal");
     await mp.waitForTimeout(200);
     await mp.selectOption('#sim-pm [data-k="axis"]', "x");
     await mp.fill('#sim-pm [data-n="value"]', "6000");
@@ -17134,7 +17142,7 @@ try {
       `sim 1.621: an elastic support and an enforced displacement solve without a load and balance each other; a centrifugal load throws the bar outwards (${JSON.stringify({ elPanel, dvPanel, nSet, e1: n1.error, r: n1.reactions.map(r => r.force), maxU: n1.maxU, cfRow, e2: n2.error, applied: n2.applied?.force })})`);
     // 1.622: Torque and Bearing load take cylindrical faces only (the bar has none: a flat face is refused with a hint);
     // Hydrostatic pressure: water 1 m above the bar's top face (20 × 200 mm) presses 1000 × 9.80665 × 1 Pa × 4000 mm² = 39.2 N down.
-    await mp.click('#sim-tools [data-s="torque"]');
+    await simCmd(mp, "torque");
     await mp.waitForTimeout(200);
     p = await at("f1:end");
     await mp.mouse.click(p.x, p.y);
@@ -17142,13 +17150,13 @@ try {
     const tqPanel = await mp.evaluate(() => ({ title: document.querySelector("#sim-pm h3")?.textContent, value: document.querySelector('#sim-pm [data-n="value"]')?.value,
       faces: document.querySelector("#sim-pm .sim-faces")?.textContent, toast: [...document.querySelectorAll(".toast")].map(e => e.textContent).join("|") }));
     await mp.click("#sim-pm .pm-cancel");
-    await mp.click('#sim-tools [data-s="bearing"]');
+    await simCmd(mp, "bearing");
     await mp.waitForTimeout(200);
     const brPanel = await mp.evaluate(() => ({ title: document.querySelector("#sim-pm h3")?.textContent, inputs: document.querySelectorAll("#sim-pm [data-n]").length }));
     await mp.click("#sim-pm .pm-cancel");
     await mp.locator('#sim-tree .sim-row [data-a="toggle"]').last().click();
     await settle();
-    await mp.click('#sim-tools [data-s="hydro"]');
+    await simCmd(mp, "hydro");
     await mp.waitForTimeout(200);
     p = await at("f1:end");
     await mp.mouse.click(p.x, p.y);
@@ -17165,7 +17173,7 @@ try {
     await mp.waitForTimeout(300);
     const n3 = await sim();
     await mp.click("#lang-btn");
-    await mp.click('#sim-tools [data-s="torque"]');
+    await simCmd(mp, "torque");
     await mp.waitForTimeout(200);
     const tqRu = await mp.evaluate(() => { const en = /^(Torque|Reverse direction|About the faces|Click cylindrical)/; return [...document.querySelectorAll("#sim-pm h3, #sim-pm legend, #sim-pm label, #sim-pm p, #sim-pm .sim-faces")].map(e => e.textContent.trim()).filter(x => en.test(x)); });
     await mp.click("#sim-pm .pm-cancel");
@@ -17179,12 +17187,17 @@ try {
     // Its resultant is the force at the point: about the origin the moment is (0, 100, 120) × (0, 50, 0) = (−6000, 0, 0) N·mm.
     await mp.locator('#sim-tree .sim-row [data-a="toggle"]').last().click();
     await settle();
-    await mp.click('#sim-tools [data-s="remote"]');
+    await simCmd(mp, "remote");
     await mp.waitForTimeout(200);
     p = await at("f1:end");
     await mp.mouse.click(p.x, p.y);
     await mp.waitForTimeout(200);
-    for (const [k, v] of [["a0", "0"], ["a1", "100"], ["a2", "120"]]) { await mp.fill(`#sim-pm [data-q="${k}"]`, v); await mp.keyboard.press("Tab"); }
+    // 1.775: typed as a person does, X Tab Y Tab Z Tab: each value is taken and Tab goes on to the next field
+    // (the redrawn panel lost the tab order, so Z was dropped)
+    await mp.click('#sim-pm [data-q="a0"]');
+    for (const v of ["0", "100", "120"]) { await mp.keyboard.press("Control+a"); await mp.keyboard.type(v); await mp.keyboard.press("Tab"); }
+    const tabbed = await mp.evaluate(() => ({ at: [0, 1, 2].map(i => document.querySelector(`#sim-pm [data-q="a${i}"]`)?.value), focus: document.activeElement?.dataset.n ?? document.activeElement?.dataset.k ?? document.activeElement?.tagName }));
+    check(JSON.stringify(tabbed.at) === JSON.stringify(["0", "100", "120"]) && tabbed.focus !== "BODY", `sim 1.775: X Tab Y Tab Z Tab in a load panel keeps every value and moves on (${JSON.stringify(tabbed)})`);
     for (const [k, v] of [["c0", "0"], ["c1", "50"], ["c2", "0"]]) { await mp.fill(`#sim-pm [data-n="${k}"]`, v); await mp.keyboard.press("Tab"); }
     const rmPanel = await mp.evaluate(() => ({ title: document.querySelector("#sim-pm h3")?.textContent, groups: [...document.querySelectorAll("#sim-pm legend")].map(e => e.textContent), pick: !!document.querySelector('#sim-pm [data-k="pickat"]'),
       wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
@@ -17439,17 +17452,27 @@ try {
     }, name);
     const sim = () => tp.evaluate(() => window.__sv.sim.state());
     const bar = () => tp.evaluate(() => ({ ids: [...document.querySelectorAll("#sim-tools [data-s]")].map(b => b.dataset.s), on: document.querySelector("#sim-tools .sim-mode-b.on")?.dataset.s ?? "", checked: [...document.querySelectorAll('#sim-tools [role="radio"][aria-checked="true"]')].length,
-      wide: document.querySelector("#cm-body").scrollWidth > document.querySelector("#cm-body").clientWidth + 1, words: [...document.querySelectorAll("#sim-tools .sim-mode-b .mc-l")].filter(e => e.getBoundingClientRect().width > 0).length }));
+      wide: document.querySelector("#cm-body").scrollWidth > document.querySelector("#cm-body").clientWidth + 1, words: [...document.querySelectorAll("#sim-tools .sim-mode-b .mc-l")].filter(e => e.getBoundingClientRect().width > 0).length,
+      bare: [...document.querySelectorAll("#sim-tools .mc-b")].filter(b => !(b.querySelector(".mc-l")?.getBoundingClientRect().width > 0)).map(b => b.dataset.s) }));
     const solved = async () => { await tp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 240000 }); await tp.waitForTimeout(300); };
     await tp.click("#cm-t-simulation");
     await tp.waitForTimeout(300);
     const b0 = await bar();
+    // 1.775.0: the less used supports and loads wait behind ▾, so every command keeps its words at 1440 px
+    await tp.click('#sim-tools [data-fly="load"]');
+    await tp.waitForTimeout(150);
+    const fly = await tp.evaluate(() => ({ items: [...document.querySelectorAll("#mc-menu [data-s]")].map(b => b.dataset.s), exp: document.querySelector('#sim-tools [data-fly="load"]')?.getAttribute("aria-expanded"), focus: document.activeElement?.closest("#mc-menu") ? document.activeElement.dataset.s : "" }));
+    await tp.keyboard.press("Escape");
+    await tp.waitForTimeout(100);
+    const flyGone = await tp.evaluate(() => document.querySelector("#mc-menu").hidden && document.activeElement?.dataset.fly === "load");
+    check(b0.bare.length === 0 && JSON.stringify(fly.items) === JSON.stringify(["torque", "bearing", "remote", "hydro", "centrifugal", "temperature"]) && fly.exp === "true" && fly.focus === "torque" && flyGone,
+      `sim 1.775: every Simulation bar command shows its label at 1440 px; More loads ▾ lists the rest and Esc goes back to it (${JSON.stringify({ bare: b0.bare, fly, flyGone })})`);
     await tp.click('#sim-tools [data-s="mode-thermal"]');
     await tp.waitForTimeout(150);
     const b1 = await bar();
     const empty = await tp.evaluate(() => !!document.querySelector('#sim-tree .sim-empty [data-a="newthermal"]'));
     check(b0.on === "mode-structural" && b0.ids.includes("force") && b0.ids.includes("fixed") && !b0.ids.includes("heat") && b0.checked === 1 && !b0.wide && b0.words === 2
-      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "vheat", "hflux", "temp", "conv", "fan", "rad", "radx", "chassis", "insul", "solve", "results", "report"]) && empty,
+      && b1.on === "mode-thermal" && b1.checked === 1 && !b1.wide && b1.bare.length === 0 && JSON.stringify(b1.ids) === JSON.stringify(["mode-structural", "mode-thermal", "newthermal", "mat", "ambient", "transient", "heat", "vheat", "hflux", "temp", "conv", "fan", "rad", "solve", "results", "report"]) && empty,
       `thermal 1.651: the Simulation bar has a Structural | Thermal switch; Thermal shows the thermal study's commands in place of supports and loads (${JSON.stringify({ b0, b1, empty })})`);
     // 8 W made in the whole bar (a thermal study is made on the way), the top face held at 30 °C
     await tp.click('#sim-tools [data-s="heat"]');
@@ -18731,7 +18754,7 @@ try {
     }));
     await sp.waitForTimeout(300);
     // Loads ▸ Temperature: 120 °C everywhere, stress-free at 20 °C; the thermal study is offered as a source
-    await sp.click('#sim-tools [data-s="temperature"]');
+    await simCmd(sp, "temperature");
     await sp.waitForSelector("#sim-pm .pm-ok");
     const opts = await sp.evaluate(() => [...document.querySelectorAll('#sim-pm [data-k="tfrom"] option')].map(o => o.value));
     await sp.selectOption('#sim-pm [data-k="tfrom"]', "");
@@ -18818,7 +18841,7 @@ try {
     await ap.waitForTimeout(200);
     await ap.keyboard.press("Escape");
     await ap.waitForTimeout(200);
-    const tempOn = await ap.evaluate(() => !document.querySelector('#sim-tools [data-s="temperature"]')?.disabled);
+    const tempOn = await ap.evaluate(() => !document.querySelector('#sim-tools [data-fly="load"]')?.disabled);
     await ap.evaluate(c1 => window.__sv.asm.change(d => {
       const st = d.studies.at(-1), F = (c, f) => ({ name: `${c}@${f}` });
       st.supports.push({ id: "s1", type: "sliding", faces: [F(c1, "f1:side:s1l1"), F("c2", "f1:side:s1l3"), F(c1, "f1:start"), F("c2", "f1:start"), F(c1, "f1:side:s1l4"), F("c2", "f1:side:s1l4")] });
@@ -18827,7 +18850,7 @@ try {
     }), c1);
     await ap.waitForTimeout(400);
     // Loads ▸ Temperature: 120 °C everywhere, stress-free at 20 °C
-    await ap.click('#sim-tools [data-s="temperature"]');
+    await simCmd(ap, "temperature");
     await ap.waitForSelector("#sim-pm .pm-ok");
     await ap.selectOption('#sim-pm [data-k="tfrom"]', "");
     await ap.waitForTimeout(150);
@@ -18941,8 +18964,8 @@ try {
     await solved();
     const t0 = await sim();
     // radiation between the second bar's face towards the first and the first bar's face towards it
-    const tools = await ap.evaluate(() => [...document.querySelectorAll("#sim-tools [data-s]")].map(b => b.dataset.s));
-    await ap.click('#sim-tools [data-s="radx"]');
+    const tools = await ap.evaluate(() => [...document.querySelectorAll("#sim-tools [data-s], #sim-tools [data-fly]")].map(b => b.dataset.s ?? `fly:${b.dataset.fly}`));
+    await simCmd(ap, "radx");
     await ap.waitForTimeout(200);
     p = await at(1, 0, -1);
     await ap.mouse.click(p.x, p.y);
@@ -18977,7 +19000,7 @@ try {
     const x1 = t1.thermal?.exchanges?.[0];
     const R = (0.1 / 0.9) / 2000 + 1 / (2000 * (x1?.f ?? 1)) + (0.2 / 0.8) / 2000;
     const law = x1 ? 5.670374419e-14 * ((x1.ta + 273.15) ** 4 - (x1.tb + 273.15) ** 4) / R : 0;
-    check(/E-TH-LOOSE/.test(t0.error ?? "") && tools.includes("radx") && asked.side === "true" && /1 face/.test(asked.boxes[0] ?? "") && panel.boxes.length === 2 && /1 face/.test(panel.boxes[1] ?? "") && panel.emis === "0.9" && ruPm.length === 0
+    check(/E-TH-LOOSE/.test(t0.error ?? "") && tools.includes("fly:cool") && asked.side === "true" && /1 face/.test(asked.boxes[0] ?? "") && panel.boxes.length === 2 && /1 face/.test(panel.boxes[1] ?? "") && panel.emis === "0.9" && ruPm.length === 0
       && item.a?.length === 1 && /^c2@/.test(item.a[0]) && item.b?.length === 1 && !/^c2@/.test(item.b[0]) && item.e[0] === 0.9 && item.e[1] === 0.8 && /ε 0\.9 \/ 0\.8/.test(item.row)
       && !t1.error && x1 && Math.abs(x1.f - F) < 0.02 && Math.abs(x1.heat - 0.5) < 0.01 && Math.abs(t1.thermal.out[0] - 0.5) < 0.01 && Math.abs(law - 0.5) < 0.01 && x1.ta > x1.tb + 20
       && res.rows.length === 1 && res.wide <= 0 && ru.length === 0,
@@ -19275,7 +19298,7 @@ try {
     await solved();
     const open = await ip.evaluate(() => window.__sv.sim.state().thermal);
     // the Insulated button: a panel with only the faces and its help; Russian throughout
-    await ip.click('#sim-tools [data-s="insul"]');
+    await simCmd(ip, "insul");
     await ip.waitForSelector("#sim-pm .sim-faces");
     const panel = await ip.evaluate(() => ({ help: [...document.querySelectorAll("#sim-pm .pm-help")].map(p => p.textContent).join(" "), inputs: document.querySelectorAll("#sim-pm input[data-q]").length }));
     await ip.click("#lang-btn");
@@ -19396,7 +19419,7 @@ try {
     await cp.click('#sim-tools [data-s="mode-thermal"]');
     await cp.waitForTimeout(300);
     // the bar button opens a chassis wall by its resistance; the other choice holds it at a temperature
-    await cp.click('#sim-tools [data-s="chassis"]');
+    await simCmd(cp, "chassis");
     await cp.waitForSelector('#sim-pm select[data-k="cmode"]');
     const p1 = await cp.evaluate(() => ({ mode: document.querySelector('#sim-pm select[data-k="cmode"]').value, rth: document.querySelector('#sim-pm input[data-q="rth"]')?.value, amb: !!document.querySelector('#sim-pm input[data-q="amb"]') }));
     await cp.selectOption('#sim-pm select[data-k="cmode"]', "temp");

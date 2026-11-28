@@ -1,6 +1,6 @@
 // More supports and loads by hand (FRS-structural FR-SUP-005, FR-SUP-006, FR-LOAD-007): a block on an elastic
 // support pushed down by an enforced displacement, then spun about an axis.
-import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock } from "./lib.mjs";
+import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock, simCmd } from "./lib.mjs";
 const { browser, pg } = await open("loads2");
 await makeBlock(pg, 100, 20, 20);
 await pg.keyboard.press("Escape");
@@ -20,7 +20,7 @@ await pg.click('#mat-dlg [data-a="ok"]');
 await idle(pg);
 
 // L2-1: Elastic support on the end face x = 50, 200 N/mm³ along the normal, free in the face.
-await pg.click('#sim-tools [data-s="elastic"]');
+await simCmd(pg, "elastic");
 await clickAt(pg, await screenOf(pg, [50, 0, 10]));
 await pg.waitForTimeout(250);
 await pg.fill('#sim-pm [data-q="kn"]', "200");
@@ -34,7 +34,7 @@ const s1 = await pg.evaluate(() => window.__sv.model.store.doc.studies[0].suppor
 check("L2-1", JSON.stringify(s1) === JSON.stringify([["elastic", 200, 0, 1]]), "an elastic support with its two stiffnesses is added on the clicked face", s1, img1);
 
 // L2-2: the top face is pushed down 0.02 mm (only Z given). No load: the solve runs on the displacement alone.
-await pg.click('#sim-tools [data-s="disp"]');
+await simCmd(pg, "disp");
 await clickAt(pg, await screenOf(pg, [0, 0, 20]));
 await pg.waitForTimeout(250);
 await pg.uncheck('#sim-pm [data-k="dir0"]');
@@ -68,7 +68,7 @@ check("L2-3", !r3.error && r3.reactions.length === 2 && r3.reactions[1].force[2]
   "the block bends on its springs under the pushed face; the springs' reaction balances the pushing force", { error: r3.error, reactions: r3.reactions.map(r => r.force), maxU: r3.maxU }, img3);
 
 // L2-4: a centrifugal load of 12000 rpm about Y at the origin: nothing is thrown one way (the block is centred), stresses grow.
-await pg.click('#sim-tools [data-s="centrifugal"]');
+await simCmd(pg, "centrifugal");
 await pg.waitForTimeout(250);
 await pg.selectOption('#sim-pm [data-k="axis"]', "y");
 await pg.fill('#sim-pm [data-n="value"]', "12000");

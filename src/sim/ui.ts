@@ -24,7 +24,7 @@ import { deltaRange } from "../thermal/compare";
 import { paletteColor, paletteCss } from "../thermal/match";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
-import { chooseModal, toast } from "../ui";
+import { chooseModal, toast, untoast } from "../ui";
 import { hint } from "../hints";
 import type { Viewer } from "../viewer/Viewer";
 import type { MatRef } from "../tools/materials";
@@ -151,6 +151,9 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "remote", "hydro", "gravity", "centrifugal", "temperature"];
+/** Commands of a bar group that sit in its ▾ menu (FLY_TITLE names the menu). */
+const MORE: Record<"sup" | "load" | "cool", string[]> = { sup: ["dirs", "elastic", "disp"], load: ["torque", "bearing", "remote", "hydro", "centrifugal", "temperature"], cool: ["radx", "chassis", "insul"] };
+const FLY_TITLE: Record<string, string> = { sup: "More supports", load: "More loads", cool: "More cooling conditions" };
 const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", vheat: "▣", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", fan: "⤳", rad: "☼", radx: "⇌", chassis: "▥", insul: "▨", transient: "◷", temperature: "ϑ" };
 /** A forced air condition's speed, m/s (from the fan when it has one). */
 const forcedSpeed = (f: ForcedAir) => (f.fan ? fanSpeed(f.fan.q, f.fan.a) : f.speed);
@@ -301,6 +304,8 @@ export class SimController {
   private boltsFound: { key: string; list: BoltUse[]; missed: { id: string; why: string }[] } | null = null;
   /** The connection whose patch is shown (its pair key), and what the Connections table is narrowed to. */
   private linkSel = "";
+  /** A value taken on Tab: its change event, which follows when the field stayed, is not taken again. */
+  private tabbed: HTMLInputElement | null = null;
   private linkFilter = { comp: "", type: "" };
   /** What the labels on the plot stand on: a plot-mesh triangle and the weights of the point in it. */
   private pins: { i: number[]; w: number[] }[] = [];
@@ -399,6 +404,8 @@ export class SimController {
     host.section.onCaps = caps => this.capsChanged(caps);
     this.marks.name = "sim-marks";
     $("#sim-tools").addEventListener("click", e => {
+      const f = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-fly]");
+      if (f && !f.disabled) { this.flyMenu(f); return; }
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-s]");
       if (b && !b.disabled) this.command(b.dataset.s!);
     });
@@ -407,7 +414,25 @@ export class SimController {
     tree.addEventListener("change", e => this.treeChange(e.target as HTMLInputElement));
     const pm = $("#sim-pm");
     pm.addEventListener("click", e => this.panelClick(e));
-    pm.addEventListener("change", e => this.panelChange(e.target as HTMLInputElement));
+    pm.addEventListener("change", e => { if (e.target === this.tabbed) { this.tabbed = null; return; } this.panelChange(e.target as HTMLInputElement); });
+    // Tab out of a changed value: the change redraws the panel, which lost the browser's place in the tab order
+    // (typing X Tab Y Tab Z left Z unchanged), so the value is taken here and the next field focused by hand
+    pm.addEventListener("keydown", e => {
+      const el = e.target as HTMLInputElement;
+      if (e.key !== "Tab" || e.altKey || e.ctrlKey || e.metaKey || !(el instanceof HTMLInputElement) || el.type !== "text" || el.value === el.defaultValue) return;
+      const attr = el.dataset.n != null ? "n" : el.dataset.q != null ? "q" : el.dataset.k != null ? "k" : null;
+      if (!attr) return;
+      e.preventDefault();
+      const sel = `[data-${attr}="${el.dataset[attr]}"]${el.dataset.i != null ? `[data-i="${el.dataset.i}"]` : ""}`;
+      this.tabbed = el;
+      this.panelChange(el);
+      const items = [...pm.querySelectorAll<HTMLElement>("input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])")].filter(x => x.offsetParent && x.tabIndex >= 0);
+      const now = el.isConnected ? el : pm.querySelector<HTMLElement>(sel);
+      const next = now ? items[items.indexOf(now) + (e.shiftKey ? -1 : 1)] : null;
+      next?.focus();
+      if (next instanceof HTMLInputElement && next.type === "text") next.select();
+      this.tabbed = null;
+    });
     $("#sim-summary").addEventListener("click", e => this.summaryClick(e));
     const lg = $("#sim-legend");
     lg.addEventListener("change", e => this.legendChange(e.target as HTMLInputElement));
@@ -1164,6 +1189,8 @@ export class SimController {
     if (!r?.material) return;
     const ref = toRef(r.material);
     this.host.change(t("Material"), d => { d.material = ref; });
+    // the warning that sent the person here is answered now
+    untoast([t("Pick a material with an elastic modulus and Poisson's ratio first."), t("Pick a material with a thermal conductivity first.")]);
   }
 
   private editItem(id: string) {
@@ -4289,6 +4316,28 @@ export class SimController {
     this.renderStatus();
   }
 
+  /** The ▾ menu of a bar group: its other commands, each with its icon and tooltip. */
+  private flyMenu(caret: HTMLButtonElement) {
+    const key = caret.dataset.fly as keyof typeof MORE, menu = document.getElementById("mc-menu");
+    if (!menu || !MORE[key]) return;
+    const label = (k: string) => t((SUPPORT_LABEL as Record<string, string>)[k] ?? (LOAD_LABEL as Record<string, string>)[k] ?? k);
+    menu.innerHTML = `<div class="mc-menu-h" role="presentation">${esc(t(FLY_TITLE[key]))}</div>` + MORE[key].map(k => `<button role="menuitem" tabindex="-1" data-s="${k}" title="${esc(t(TIP[k] ?? ""))}"><span class="mc-i" aria-hidden="true">${ICON[k]}</span>${esc(label(k))}</button>`).join("");
+    menu.hidden = false;
+    const r = caret.getBoundingClientRect(), m = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(r.left - 40, innerWidth - m.width - 8))}px`;
+    menu.style.top = `${Math.min(r.bottom + 4, innerHeight - m.height - 8)}px`;
+    caret.setAttribute("aria-expanded", "true");
+    const btns = [...menu.querySelectorAll<HTMLButtonElement>("button")];
+    const close = (back: boolean) => { menu.hidden = true; menu.innerHTML = ""; menu.onkeydown = null; caret.setAttribute("aria-expanded", "false"); if (back) caret.focus(); };
+    btns.forEach(b => b.addEventListener("click", () => { close(false); this.command(b.dataset.s!); }));
+    menu.onkeydown = e => {
+      const k = btns.indexOf(document.activeElement as HTMLButtonElement);
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); btns[(k + (e.key === "ArrowDown" ? 1 : -1) + btns.length) % btns.length].focus(); }
+      else if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); e.stopPropagation(); close(true); }
+    };
+    btns[0]?.focus();
+  }
+
   private renderBar() {
     const el = $("#sim-tools");
     if (cmTab() !== "simulation") return;
@@ -4297,6 +4346,8 @@ export class SimController {
       `<button class="mc-b${o.on ? " on" : ""}" data-s="${id}" title="${esc(title)}"${o.on != null ? ` aria-pressed="${!!o.on}"` : ""}${o.dis ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${ICON[id]}</span><span class="mc-l">${esc(label)}</span></button>`;
     const group = (label: string, inner: string) => `<div class="mc-g" role="group" aria-label="${esc(label)}">${inner}</div>`;
     const sep = `<div class="mc-sep"></div>`;
+    // the less used commands of a group wait behind ▾, so the bar keeps its words (a CAD app's Fixtures ▾ / External Loads ▾)
+    const fly = (b: string, key: string) => (key ? `<span class="mc-fly">${b}<button class="mc-caret" data-fly="${key}" aria-haspopup="menu" aria-expanded="false" title="${esc(t(FLY_TITLE[key]))}" aria-label="${esc(t(FLY_TITLE[key]))}"${busy ? " disabled" : ""}>▾</button></span>` : b);
     if (!st) this.modeFor = null;
     else if (st.id !== this.modeFor) { this.modeFor = st.id; this.mode = st.kind === "thermal" ? "thermal" : "structural"; }
     const asm = this.host.asm();
@@ -4312,14 +4363,14 @@ export class SimController {
     if (thermal) {
       el.innerHTML = pick + sep + group(t("Study"), btn("newthermal", t("Thermal study"), t(asm ? "New thermal study: the temperatures of this assembly and where its heat goes" : TIP.newthermal), { dis: busy }) + (asm ? "" : btn("mat", t("Material"), t("The part's material: thermal conductivity"), { dis: busy })) + btn("ambient", t("Ambient"), t(TIP.ambient), { dis: busy }) + btn("transient", t("Over time"), t(TIP.transient), { dis: busy || st?.kind !== "thermal", on: !!(st?.kind === "thermal" && st.settings.transient) }))
         + sep + group(t("Heat sources"), THERMAL_LOADS.filter(k => k !== "pkgheat").map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
-        + sep + group(t("Cooling"), THERMAL_SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join("").replace(/(<button[^>]*data-s="conv"[\s\S]*?<\/button>)/, `$1${btn("fan", t("Forced air"), t(TIP.fan), { dis: busy })}`))
+        + sep + group(t("Cooling"), THERMAL_SUPPORTS.filter(k => !MORE.cool.includes(k)).map((k, i, a) => fly(btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy }) + (k === "conv" ? btn("fan", t("Forced air"), t(TIP.fan), { dis: busy }) : ""), i === a.length - 1 ? "cool" : "")).join(""))
         + sep + group(t("Solve"), solve);
       return;
     }
     const noLoads = st?.kind === "modal";
     el.innerHTML = pick + sep + group(t("Study"), btn("new", t("New study"), asm ? t("New static study of this assembly") : t("New static study of this part"), { dis: busy }) + btn("newmodal", t("Modal study"), asm ? t("New modal study: the natural frequencies and mode shapes of this assembly") : t("New modal study: the natural frequencies and mode shapes of this part"), { dis: busy }) + (asm ? "" : btn("mat", t("Material"), t("The part's material: elastic modulus, Poisson's ratio, strength"), { dis: busy })))
-      + sep + group(t("Supports"), SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
-      + (noLoads ? "" : sep + group(t("Loads"), LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy })).join("")))
+      + sep + group(t("Supports"), SUPPORTS.filter(k => !MORE.sup.includes(k)).map((k, i, a) => fly(btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy }), i === a.length - 1 ? "sup" : "")).join(""))
+      + (noLoads ? "" : sep + group(t("Loads"), LOADS.filter(k => !MORE.load.includes(k)).map((k, i, a) => fly(btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy }), i === a.length - 1 ? "load" : "")).join("")))
       + sep + group(t("Connections"), (asm ? btn("weld", t(WELD_LABEL), t("A weld along edges where two components meet"), { dis: busy }) + btn("spot", t(SPOT_LABEL), t("Spot welds at points, through one component into the next"), { dis: busy }) : "") + btn("connector", t(CONNECTOR_LABEL), t("A rigid or spring connector between two sets of faces"), { dis: busy }) + btn("mass", t(MASS_LABEL), t("A mass spread over faces: it weighs and lowers the natural frequencies"), { dis: busy }))
       + sep + group(t("Solve"), btn("refine", t(REFINE_LABEL), t("Local accuracy: the solution starts finer at the picked faces"), { dis: busy || noLoads }) + solve);
   }
