@@ -5,12 +5,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.767.0] - 2026-11-28
+## [1.768.0] - 2026-11-28
 
 ### Added
 
 - 3D sketch: select one point to put it **On XY**, **On YZ** or **On ZX**, or to give its **Distance to** one of those planes. The distance shows in the view and is changed there or in Dimensions, like the other dimensions.
 - 3D sketch test list: a sweep of a sketch profile along a 3D sketch (sharp corner and sketch fillet) is now checked.
+
+## [1.767.0] - 2026-11-28
+
+### Fixed
+
+- Vault: logging out, logging in as someone else, or closing the vault no longer cuts the open part off from its vault file. It stays read-only and shows who holds it (or that the vault is closed, or that nobody is logged in), and it is the vault's again once the vault is open and a user is logged in. Before, it became an ordinary part that could be edited and saved as a loose copy.
+- Vault: the read-only bar offers Check out only when it would work. In review or Released it says that files in that state cannot be checked out; on a file someone else holds it names them.
+- Vault: Change state is not offered on a checked-out file (the panel says to check it in first), and only the transitions your roles allow are shown, so a Designer no longer sees Approve.
+- Vault: releasing a drawing writes its revision and the approver into the drawing, so the title block shows Rev A and Approved by. The data card's part number is the drawing number.
+- Vault: with "Check-in needs a comment", the Check in window stays open until a comment is typed, instead of closing and losing the choices. Reject and transitions that need a comment work the same way.
+- Vault: after a check-in, check-out, state change or data card, the side panel stays on the Vault tab instead of jumping to Features.
+- Vault: Update on a drawing whose working copy already uses the latest part says so and asks for a check-in, instead of "up to date" while the drawing still shows as behind. Nothing is reopened when nothing changed.
+- Vault panel: a long vault name no longer runs under the Explorer button; it ends with … and shows whole in its tooltip.
+- Vault explorer: moving or renaming the folder of a file that is open no longer closes the explorer when the file reloads.
 
 ## [1.766.0] - 2026-11-28
 
@@ -5088,7 +5102,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.767.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.768.0...HEAD
+[1.768.0]: https://github.com/kothf/step-viewer/compare/v1.767.0...v1.768.0
 [1.767.0]: https://github.com/kothf/step-viewer/compare/v1.766.0...v1.767.0
 [1.766.0]: https://github.com/kothf/step-viewer/compare/v1.765.0...v1.766.0
 [1.765.0]: https://github.com/kothf/step-viewer/compare/v1.764.0...v1.765.0
