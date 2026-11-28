@@ -3,7 +3,7 @@
 // on a double-click of an existing one, with the symbols as buttons and a live preview.
 import { t } from "../i18n";
 import { trapFocus } from "../ui";
-import { GMODS, GSYMS, GSYM_NAMES, gtolPrims, rowText, surfPrims, symbolPrims } from "./gdt";
+import { GMODS, GSYMS, GSYM_NAMES, gtolPrims, takesDatums, rowText, surfPrims, symbolPrims } from "./gdt";
 import { drawnSymbols, svgBody } from "./output";
 import type { Prim } from "./prims";
 import { textWidth } from "./textWidth";
@@ -86,7 +86,7 @@ export function editGtol(start: GtolAnnot, dec: string, isNew: boolean): Promise
     const comp = i > 0 && !!r.composite;
     return `<tr>
       <td><button type="button" class="gt-sym" data-sym="${i}" aria-haspopup="true" aria-expanded="${pal === i}"${comp ? " disabled" : ""} title="${esc(t(GSYM_NAMES[r.sym]))}" aria-label="${esc(t("Symbol"))} ${i + 1}: ${esc(t(GSYM_NAMES[r.sym]))}">${symIcon(r.sym)}<span aria-hidden="true">▾</span></button></td>
-      ${COLS.map(([k, l]) => `<td><input data-g="${i}:${k}" value="${esc(cellVal(r, k))}" ${k[0] === "d" ? 'maxlength="10" class="gt-datum"' : 'inputmode="decimal"'} aria-label="${esc(t(l))} ${i + 1}" translate="no" autocomplete="off"></td>`).join("")}
+      ${COLS.map(([k, l]) => { const off = k[0] === "d" && !takesDatums(r.sym); return `<td><input data-g="${i}:${k}" value="${esc(off ? "" : cellVal(r, k))}" ${k[0] === "d" ? 'maxlength="10" class="gt-datum"' : 'inputmode="decimal"'}${off ? ` disabled title="${esc(t("A form tolerance has no datum."))}"` : ""} aria-label="${esc(t(l))} ${i + 1}" translate="no" autocomplete="off"></td>`; }).join("")}
       <td class="gt-rowend">${i > 0 ? `<label class="drw-chk" title="${esc(t("Composite with the row above"))}"><input type="checkbox" data-comp="${i}"${comp ? " checked" : ""}> ${esc(t("Composite"))}</label>` : ""}${a.rows.length > 1 ? `<button type="button" class="btn small" data-rm="${i}" aria-label="${esc(t("Remove row"))} ${i + 1}">✕</button>` : ""}</td></tr>`;
   };
   const render = () => {
@@ -144,6 +144,8 @@ export function editGtol(start: GtolAnnot, dec: string, isNew: boolean): Promise
       a.rows[i].sym = b.dataset.pick as GSym;
       // Composite rows under it share its symbol.
       for (let j = i + 1; a.rows[j]?.composite; j++) a.rows[j].sym = a.rows[i].sym;
+      // A form tolerance (flatness, straightness, roundness, cylindricity) relates to no datum: its datums go.
+      for (let j = i; j === i || a.rows[j]?.composite; j++) if (!takesDatums(a.rows[j].sym)) a.rows[j].datums = [];
       pal = null; render(); focusCell(`${i}:tol`, true); return;
     }
     if (b.dataset.add !== undefined) { a.rows.push({ sym: a.rows.at(-1)?.sym ?? "flat", tol: "", datums: [] }); pal = null; render(); focusCell(`${a.rows.length - 1}:tol`); return; }
@@ -164,7 +166,7 @@ export function gtolPicture(a: GtolAnnot, dec: string): string { const g = gtolP
 /** The annotation as stored: empty cells dropped. */
 function clean(a: GtolAnnot): GtolAnnot {
   const rows = a.rows.map(r => {
-    const d = r.datums.map(s => s.trim());
+    const d = takesDatums(r.sym) ? r.datums.map(s => s.trim()) : [];
     while (d.length && !d[d.length - 1]) d.pop();
     const o: GRow = { sym: r.sym, tol: r.tol.trim(), datums: d };
     if (r.tol2?.trim()) o.tol2 = r.tol2.trim();

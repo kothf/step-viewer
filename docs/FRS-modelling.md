@@ -1677,13 +1677,13 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-FT-050 | Hole types counterdrilled, clearance (close/normal/loose) and slot; end conditions up to face and up to next | 1.100.0: clearance, counterdrill and slot holes; Up to next and Up to surface ends | Done |
 | FR-FT-052 | Placement by sketch points that can be dimensioned and related, or points of an existing sketch | 1.639.0: position sketch made on the face with the Point tool, live preview, existing sketches picked in the tree | Done |
 | FR-FT-060 | Shell with multi-thickness faces (P3) | 1.100.0: multi-thickness faces | Done |
-| FR-FT-060 | Shell with no face removed (closed hollow body); outward with sharp outer corners | 1.772.0: no face = body − offset solid (`fid:off:` walls); outward uses the Intersection join, Arc join when that fails | Done |
-| FR-HIS-004 | Suppress takes dependants along, Unsuppress brings them back (a CAD app's parent/child suppression) | 1.772.0: `doc.ts` `setSuppressed` (`supBy`), parents of an unsuppressed feature come back too | Done |
+| FR-FT-060 | Shell with no face removed (closed hollow body); outward with sharp outer corners | 1.774.0: no face = body − offset solid (`fid:off:` walls); outward uses the Intersection join, Arc join when that fails | Done |
+| FR-HIS-004 | Suppress takes dependants along, Unsuppress brings them back (a CAD app's parent/child suppression) | 1.774.0: `doc.ts` `setSuppressed` (`supBy`), parents of an unsuppressed feature come back too | Done |
 | FR-FT-061 | Parting-line draft (P5) | 1.100.0: parting-line draft | Done |
 | FR-FT-062 | Rib draft | 1.100.0: rib draft (normal ribs) | Done |
 | FR-FT-070 / FR-FT-071 / FR-FT-072 | Patterns and mirror of **faces and bodies** (P3) | 1.100.0: features, faces or bodies as the pattern/mirror source | Done |
 | FR-FT-070 / FR-FT-071 | Skip instances by clicking them in the view | 1.502.0: Instances to skip box shows a dot per instance; a click skips it or brings it back | Done |
-| FR-FT-070 | Direction arrows in the view (drag = spacing, click = reverse) | 1.772.0: an arrow per direction from the seed while a linear pattern is open | Done |
+| FR-FT-070 | Direction arrows in the view (drag = spacing, click = reverse) | 1.774.0: an arrow per direction from the seed while a linear pattern is open | Done |
 | FR-FT-070 / FR-FT-071 | Linear spacing or total extent, seed only in direction 2; circular second direction (symmetric) | 1.502.0: Up to distance per direction, Pattern seed only; 1.503.0: Up to reference (plane or flat face + offset, per direction), circular Direction 2 (Symmetric or own count/angle) | Done |
 | FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | 1.100.0: sketch-driven and table-driven patterns | Done |
 | FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Done in 1.141.0 (Geometry pattern box on feature patterns and mirror) | Done |
