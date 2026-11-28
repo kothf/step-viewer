@@ -566,14 +566,14 @@ export interface CircularPatternFeature extends CopySource {
 }
 
 /**
- * Sketch-driven and table-driven patterns (FR-FT-073): a copy at each point of a sketch (moved from the
+ * Sketch-driven, table-driven and curve-driven patterns (FR-FT-073, FR-FT-076): a copy at each point of a sketch (moved from the
  * seed's reference point, its centroid unless a sketch point is picked) or at each X/Y row of a table in a
  * coordinate system (offsets from the seed).
  */
 export interface SketchPatternFeature extends CopySource {
   id: string; type: "spattern"; name: string; suppressed?: boolean;
   features: string[];
-  src: "sketch" | "table";
+  src: "sketch" | "table" | "curve";
   sketch?: string;
   /** Sketch point used as the seed's reference point; absent: the seed's centroid. */
   refPt?: string;
@@ -581,6 +581,19 @@ export interface SketchPatternFeature extends CopySource {
   table?: { x: Num; y: Num }[];
   /** Coordinate system feature for the table; absent: the part's axes. */
   csys?: string;
+  /**
+   * Curve driven (src "curve"): copies go along `path` from the point of the curve nearest the seed's centre,
+   * `count` instances (the seed is the first) `spacing` apart along the curve, or spread over the whole curve with
+   * `equal`; `align` turns each copy with the curve's tangent (rotation-minimising frame), else copies only move.
+   */
+  path?: SweepPath;
+  count?: number;
+  spacing?: Num;
+  equal?: boolean;
+  align?: boolean;
+  flip?: boolean;
+  /** Instances to skip ("1", "2", …; the seed is 0). */
+  skip?: string[];
 }
 
 /**

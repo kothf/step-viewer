@@ -1436,6 +1436,44 @@ test("Patterns of faces and bodies, sketch- and table-driven patterns (FR-FT-070
   close(r.props!.volume, v0 - 2 * hole, 1e-5);
 });
 
+test("Curve driven pattern (FR-FT-076)", async () => {
+  const m = new Modeller(await occ());
+  const top = { face: { name: "eb:end" } };
+  // A 200 × 200 × 10 plate; a Ø8 boss 5 high at (70, 0), 10 mm outside a quarter arc of radius 60 about the origin.
+  const base: Feature[] = [rect("b", 0, 0, 200, 200), { id: "eb", type: "extrude", name: "E1", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+    circle("c", 70, 0, 4, top), { id: "ec", type: "extrude", name: "Boss", sketch: "c", op: "boss", end: "blind", depth: { v: 5 } }];
+  const arc: SketchFeature = { id: "k", type: "sketch", name: "Path", plane: top, rels: [], dims: [], ents: [
+    { id: "o", t: "point", x: 0, y: 0 }, { id: "a", t: "point", x: 60, y: 0 }, { id: "b2", t: "point", x: 0, y: 60 }, { id: "ka", t: "arc", c: "o", a: "a", b: "b2" }] };
+  const boss = Math.PI * 16 * 5, v0 = 400000 + boss;
+  const cp = (o: object): Feature => ({ id: "cp", type: "spattern", name: "CurvePattern1", features: ["ec"], src: "curve", path: { sketch: "k" }, count: 3, spacing: { v: 30 }, ...o } as Feature);
+  const spot = (r: { spots?: Record<string, { key: string; p: number[] }[]> }, key: string) => r.spots!.cp.find(s => s.key === key)!.p;
+  // Equal spacing over the open arc: copies at 45° and 90°; aligned, each keeps 10 mm outside the arc.
+  let r = run(m, doc([...base, arc, cp({ equal: true, align: true })]));
+  close(r.props!.volume, v0 + 2 * boss, 1e-5);
+  const p2 = spot(r, "2");
+  assert.ok(Math.abs(p2[0]) < 0.05 && Math.abs(p2[1] - 70) < 0.05, `aligned copy at ${p2}`);
+  // Not aligned: the copies only move, by the curve point's move.
+  r = run(m, doc([...base, arc, cp({ equal: true })]));
+  const q2 = spot(r, "2");
+  assert.ok(Math.abs(q2[0] - 10) < 0.05 && Math.abs(q2[1] - 60) < 0.05, `moved copy at ${q2}`);
+  // Spacing along the curve: 4 instances 40 mm apart; the arc is 94.2 long, so the last runs past its end (warned, left out).
+  const w = m.evaluate(doc([...base, arc, cp({ count: 4, spacing: { v: 40 }, align: true })]));
+  const st = w.statuses.find(s => s.id === "cp")!;
+  assert.ok(st.ok && /1 of 3 copies run past the end of the curve/.test(st.warning ?? ""), JSON.stringify(st));
+  close(m.props(w.body!).volume, v0 + 2 * boss, 1e-5);
+  // Reversed, all copies would run off the start: an error.
+  const bad = m.evaluate(doc([...base, arc, cp({ flip: true })]));
+  assert.equal(bad.statuses.find(s => s.id === "cp")!.ok, false);
+  // A skipped instance is left out.
+  r = run(m, doc([...base, arc, cp({ equal: true, skip: ["1"] })]));
+  close(r.props!.volume, v0 + boss, 1e-5);
+  // A closed curve (a circle of radius 60 through the seed's foot) with equal spacing: 6 copies round it.
+  const ring: SketchFeature = circle("r", 0, 0, 60, top);
+  r = run(m, doc([...base, ring, cp({ path: { sketch: "r" }, count: 6, equal: true, align: true })]));
+  close(r.props!.volume, v0 + 5 * boss, 1e-5);
+  for (const s of r.spots!.cp.filter(x => !x.key.startsWith("@"))) close(Math.hypot(s.p[0], s.p[1]), 70, 1e-3);
+});
+
 test("Up to body; counterdrilled, slot holes; hole up to face and up to next (FR-FT-012, FR-FT-050)", async () => {
   const m = new Modeller(await occ());
   // A 100 × 60 × 20 block, and a 20 × 20 × 10 block floating 30 mm above it as its own body.

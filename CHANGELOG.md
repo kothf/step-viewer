@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.779.0] - 2026-11-28
+
+### Added
+- **Curve driven pattern** (Features tab, pattern ▾): copies of features, faces or bodies along a sketch curve, a helix or a 3D curve, starting from the point of the curve nearest the seed. Set the number of instances and the spacing along the curve, or tick **Equal spacing** to spread them over the whole curve (a closed curve wraps round). **Align to curve** turns each copy with the curve, so it keeps its pose to it; untick it and the copies only move. **Reverse direction** and **Instances to skip** (click the dots in the view) work as in the linear pattern. Copies that would run past the end of an open curve are left out with a warning.
+
 ## [1.778.0] - 2026-11-28
 
 ### Added
@@ -5212,7 +5217,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.778.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.779.0...HEAD
+[1.779.0]: https://github.com/kothf/step-viewer/compare/v1.778.0...v1.779.0
 [1.778.0]: https://github.com/kothf/step-viewer/compare/v1.777.0...v1.778.0
 [1.777.0]: https://github.com/kothf/step-viewer/compare/v1.776.0...v1.777.0
 [1.776.0]: https://github.com/kothf/step-viewer/compare/v1.775.0...v1.776.0

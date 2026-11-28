@@ -20555,6 +20555,16 @@ try {
     const back = await vol();
     check(holes.ok && sup.suppressed && sup.supBy === "h" && sup.ok && Math.abs(sup.v - 120000) < 0.5 && Math.abs(back.v - holes.v) < 1e-6,
       `model 1.774: suppressing a hole suppresses its pattern too, Unsuppress brings both back (${JSON.stringify({ holes: holes.v, sup: { s: sup.suppressed, by: sup.supBy, v: sup.v, ok: sup.ok }, back: back.v })})`);
+    // model 1.779: curve driven pattern of the hole round a circle of radius 20 about (-10, 0), 4 equal; one skipped.
+    await cp.evaluate(() => window.__sv.model.store.change("Curve", doc => {
+      doc.features = doc.features.filter(f => f.id !== "p");
+      doc.features.push({ id: "rc", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: -10, y: 0 }, { id: "ck", t: "circle", c: "o", r: 20 }] },
+        { id: "cv", type: "spattern", name: "CurvePattern1", features: ["h"], src: "curve", path: { sketch: "rc" }, count: 4, equal: true, align: true, skip: ["2"] });
+    }));
+    await settle();
+    const cv = await cp.evaluate(() => ({ v: window.__sv.model.last().props.volume, ok: window.__sv.model.last().statuses.every(s => s.ok), spots: (window.__sv.model.last().spots?.cv ?? []).filter(s => !s.key.startsWith("@")).map(s => [s.key, Math.round(s.p[0]), Math.round(s.p[1])]) }));
+    check(cv.ok && Math.abs(cv.v - (120000 - 3 * Math.PI * 25 * 20)) < 1 && JSON.stringify(cv.spots.map(q => `${q[1]},${q[2]}`).sort()) === '["-10,-20","-10,20","10,0"]',
+      `model 1.779: curve driven pattern round a circle, 4 equal with one skipped = 3 holes, instances a quarter turn apart (${JSON.stringify(cv)})`);
     await ctx.close();
   }
 } catch (err) {
