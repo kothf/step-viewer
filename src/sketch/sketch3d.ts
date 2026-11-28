@@ -1,5 +1,5 @@
 // 3D sketch (FR-SK-080): a small least-squares solver for points in space, and segment chaining.
-import type { Sketch3dFeature, Sk3Seg, V3 } from "../model/types";
+import type { Sketch3dFeature, Sk3Geo, Sk3Seg, V3 } from "../model/types";
 import { splineBezierN } from "./spline";
 
 const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -8,6 +8,31 @@ const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[
 const len = (a: V3) => Math.hypot(a[0], a[1], a[2]);
 const AX: Record<string, number> = { alongX: 0, alongY: 1, alongZ: 2 };
 const PLANE_N: Record<string, number> = { XY: 2, YZ: 0, ZX: 1 };
+
+/** The point of a model face, edge or vertex (as last measured) nearest `p`. */
+export function geoNearest(g: Sk3Geo, p: V3): V3 {
+  const unitV = (v: V3): V3 => { const l = len(v) || 1e-12; return [v[0] / l, v[1] / l, v[2] / l]; };
+  const add = (a: V3, b: V3, k = 1): V3 => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+  if (g.k === "point") return g.o;
+  if (g.k === "plane") { const n = unitV(g.n); return add(p, n, -dot(sub(p, g.o), n)); }
+  if (g.k === "line") { const d = unitV(g.d); return add(g.o, d, dot(sub(p, g.o), d)); }
+  if (g.k === "sphere") { const w = sub(p, g.o); return len(w) < 1e-12 ? add(g.o, [g.r, 0, 0]) : add(g.o, unitV(w), g.r); }
+  if (g.k === "cyl") {
+    const d = unitV(g.d), w = sub(p, g.o), a = add(g.o, d, dot(w, d)), r = sub(p, a);
+    return len(r) < 1e-12 ? a : add(a, unitV(r), g.r);
+  }
+  if (g.k === "circle") {
+    const n = unitV(g.n), w = sub(p, g.o), r = add(w, n, -dot(w, n));
+    return len(r) < 1e-12 ? g.o : add(g.o, unitV(r), g.r);
+  }
+  let best = g.pts[0] ?? p, bd = Infinity;
+  for (let i = 0; i + 1 < g.pts.length; i++) {
+    const a = g.pts[i], u = sub(g.pts[i + 1], a), l2 = dot(u, u) || 1e-18, t = Math.max(0, Math.min(1, dot(sub(p, a), u) / l2));
+    const q = add(a, u, t), d = len(sub(p, q));
+    if (d < bd) { bd = d; best = q; }
+  }
+  return best;
+}
 
 export interface Solve3d { ok: boolean; pts: Record<string, V3>; dof: number; residual: number; /** Why a sketch fillet does not fit the solved points (then `ok` is false). */ fillet?: string }
 
@@ -19,6 +44,18 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
   for (const r of sk.rels) {
     if (r.t === "coincident") { const d = sub(P(r.e[1]), P(r.e[0])); out.push(...d); continue; }
     if (r.t === "onPlane") { out.push(P(r.e[0])[PLANE_N[r.plane ?? "XY"]]); continue; }
+    if (r.t === "onFace" || r.t === "onEdge" || r.t === "onVertex") {
+      // A point held on a model face, edge or vertex: its distance from it (one number for a surface, the offset for a curve or point).
+      const g = r.geo;
+      if (!g) continue;
+      const q = P(r.e[0]);
+      if (g.k === "plane") out.push(dot(sub(q, g.o), g.n) / (len(g.n) || 1));
+      else if (g.k === "sphere") out.push(len(sub(q, g.o)) - g.r);
+      else if (g.k === "cyl") { const c = cross(sub(q, g.o), g.d); out.push(len(c) / (len(g.d) || 1) - g.r); }
+      else if (g.k === "circle") { const w = sub(q, g.o), ln = len(g.n) || 1, h = dot(w, g.n) / ln; out.push(h, len(cross(w, g.n)) / ln - g.r); }
+      else out.push(...sub(q, geoNearest(g, q)));
+      continue;
+    }
     if (r.t === "midpoint" || r.t === "onLine") {
       // e = [point, line]: the point at the line's middle, or anywhere on the line (through its ends, unbounded).
       const s = seg(r.e[1]);

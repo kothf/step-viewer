@@ -18,7 +18,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
-import type { EdgeInfo, PartData } from "../topology";
+import type { EdgeInfo, FaceInfo, PartData } from "../topology";
 import { edgeLoop, sameEdges, tangentChain } from "./chain";
 import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
 import { hasHolePoints, syncHole, syncHoleSketches } from "./holePos";
@@ -39,8 +39,8 @@ import { allCtxRefs, ctxMark, moveEdgeGeo, type AnyCtxRef, type PartContext } fr
 import type { ModelEdge } from "../sketch/external";
 import { silhouettes } from "../sketch/silhouette";
 import { applyDir as tfDir, applyPoint as tfPoint, invert as tfInvert } from "../asm/math";
-import { filletCorner, fillets3d, arc3, arcAt, inferAxis, lineAngle, linePlaneAngle, onAxis, segPoints, solve3d } from "../sketch/sketch3d";
-import type { SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, Sk3Point, CurveFeature, SweepSurfFeature, SweepPath,
+import { filletCorner, fillets3d, arc3, arcAt, geoNearest, inferAxis, lineAngle, linePlaneAngle, onAxis, segPoints, solve3d } from "../sketch/sketch3d";
+import type { SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, Sk3Geo, Sk3Point, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, DomeFeature, WrapFeature, FlexFeature, HoleSink, HoleElem, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
@@ -1072,11 +1072,18 @@ export class ModelController {
     for (const [id, sk] of Object.entries(upd)) {
       const cur = this.store!.feature(id);
       if (sk.type === "sketch3d") {
-        // A 3D sketch moved onto the sketch points it is on: take over its point positions (no undo step), also in an open panel.
+        // A 3D sketch moved onto the sketch points, model faces and edges it is on: take over its point positions (no undo step), also in an open panel.
         if (cur?.type !== "sketch3d") continue;
         const pos = new Map(sk.pts.map(q => [q.id, q.p]));
         const m = this.mode, open = m.kind === "feature" && m.draft.id === id && m.draft.type === "sketch3d" ? m.draft : null;
-        const move = (g: Sketch3dFeature) => { let ch = false; for (const q of g.pts) { const p = pos.get(q.id); if (p && p.some((c, k) => Math.abs(c - q.p[k]) > 1e-9)) { q.p = [...p] as V3; ch = true; } } return ch; };
+        const geo = new Map(sk.rels.filter(x => x.geo).map(x => [x.id, x.geo!]));
+        const move = (g: Sketch3dFeature) => {
+          let ch = false;
+          for (const q of g.pts) { const p = pos.get(q.id); if (p && p.some((c, k) => Math.abs(c - q.p[k]) > 1e-9)) { q.p = [...p] as V3; ch = true; } }
+          // What points on model faces and edges are held on, as the rebuild measured it.
+          for (const x of g.rels) { const n = geo.get(x.id); if (n && JSON.stringify(n) !== JSON.stringify(x.geo)) { x.geo = structuredClone(n); ch = true; } }
+          return ch;
+        };
         const next = structuredClone(cur);
         if (move(next)) this.store!.amend(d => { const i = d.features.findIndex(f => f.id === id); if (i >= 0) d.features[i] = next; });
         if (open && move(open)) this.drawDecor();
@@ -9882,7 +9889,7 @@ export class ModelController {
   }
 
   /** Where a click in the view puts a 3D sketch point: an existing point, a snap point, a face, else the sketch plane through the last point. */
-  private click3d(e: PointerEvent, f: Sketch3dFeature): { id?: string; p?: V3; at?: { sketch: string; pt: string }; axis?: "alongX" | "alongY" | "alongZ" } | null {
+  private click3d(e: PointerEvent, f: Sketch3dFeature): { id?: string; p?: V3; at?: { sketch: string; pt: string }; axis?: "alongX" | "alongY" | "alongZ"; model?: Omit<Sk3Rel, "id" | "e"> } | null {
     const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
     const scr = (p: V3) => { const q = new THREE.Vector3(...p).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; };
     const near = f.pts.find(p => { const [x, y] = scr(p.p); return Math.hypot(x - e.clientX, y - e.clientY) < 8; });
@@ -9890,10 +9897,25 @@ export class ModelController {
     // A point of a shown 2D sketch before the 3D sketch: the new point stays on it when that sketch changes (exam #6).
     const on = this.sketchPointAt(e.clientX, e.clientY, f.id, scr);
     if (on) return on;
+    // On the model: a vertex, an edge or a face holds the new point (On vertex / On edge / On face, as other CAD apps add
+    // while drawing); Ctrl places it there with no relation. Midpoints and centres only place it.
+    const free = e.ctrlKey || e.metaKey;
     const snap = this.host.snapAt?.(e.clientX, e.clientY);
-    if (snap) return { p: snap.point };
+    if (snap) {
+      const ed = snap.kind === "vertex" && !free ? this.host.edgeAt(e.clientX, e.clientY)?.edge : undefined;
+      const ref = ed ? this.edgeRefs([ed])[0] : undefined;
+      return ref ? { p: snap.point, model: { t: "onVertex", vertex: { edge: ref, at: snap.point }, geo: { k: "point", o: snap.point } } } : { p: snap.point };
+    }
+    const eh = free ? null : this.host.edgeAt(e.clientX, e.clientY);
+    if (eh?.edge) {
+      const on = this.edgeClick(eh.edge, e.clientX, e.clientY, scr), ref = this.edgeRefs([eh.edge])[0];
+      if (on && ref) return { p: on, model: { t: "onEdge", edge: { ...ref, hint: on }, geo: this.edgeGeo3(eh.edge) } };
+    }
     const face = this.host.faceAt(e.clientX, e.clientY);
-    if (face) return { p: face.point };
+    if (face) {
+      const ref = free ? null : this.faceRef(face.faceId), fi = this.host.viewer.parts[0]?.data.faces[face.faceId];
+      return ref ? { p: face.point, model: { t: "onFace", face: { ...ref, hint: face.point }, ...(fi ? { geo: this.faceGeo3(fi, face.point) } : {}) } } : { p: face.point };
+    }
     const s3 = this.s3(f);
     const o = (s3.anchor && f.pts.find(p => p.id === s3.anchor)?.p) || [0, 0, 0];
     const n = s3.plane === "XY" ? [0, 0, 1] : s3.plane === "YZ" ? [1, 0, 0] : [0, 1, 0];
@@ -9907,6 +9929,38 @@ export class ModelController {
     // A line drawn close to an axis snaps onto it and gets Along X/Y/Z, as in other CAD apps; Ctrl draws it as it is.
     const axis = s3.tool === "line" && s3.anchor && !e.ctrlKey && !e.metaKey ? inferAxis(o, p) : null;
     return axis ? { p: onAxis(o, p, axis), axis } : { p };
+  }
+
+  /** The point of a model edge's polyline nearest the pointer on screen. */
+  private edgeClick(ed: EdgeInfo, x: number, y: number, scr: (p: V3) => number[]): V3 | null {
+    let best: V3 | null = null, bd = Infinity;
+    for (let i = 0; i + 5 < ed.pts.length; i += 3) {
+      const a: V3 = [ed.pts[i], ed.pts[i + 1], ed.pts[i + 2]], b: V3 = [ed.pts[i + 3], ed.pts[i + 4], ed.pts[i + 5]];
+      const [ax, ay] = scr(a), [bx, by] = scr(b), ux = bx - ax, uy = by - ay, l2 = ux * ux + uy * uy || 1e-9;
+      const tt = Math.max(0, Math.min(1, ((x - ax) * ux + (y - ay) * uy) / l2)), d = Math.hypot(x - ax - ux * tt, y - ay - uy * tt);
+      if (d < bd) { bd = d; best = a.map((v, k) => v + (b[k] - v) * tt) as V3; }
+    }
+    if (!best) return null;
+    // Straight and round edges: the point put exactly on the curve.
+    return geoNearest(this.edgeGeo3(ed), best);
+  }
+
+  /** A shown model edge as the 3D sketch solver holds points on it (until the rebuild measures it exactly). */
+  private edgeGeo3(ed: EdgeInfo): Sk3Geo {
+    if (ed.type === "line") return { k: "line", o: ed.start, d: ed.dir ?? (ed.end.map((v, k) => v - ed.start[k]) as V3) };
+    if (ed.center && ed.axis && ed.radius) return { k: "circle", o: ed.center, n: ed.axis, r: ed.radius };
+    const pts: V3[] = [];
+    for (let i = 0; i + 2 < ed.pts.length; i += 3) pts.push([ed.pts[i], ed.pts[i + 1], ed.pts[i + 2]]);
+    return { k: "poly", pts };
+  }
+
+  /** A shown model face as the 3D sketch solver holds points on it: planes, cylinders and spheres exactly, other faces by the plane touching them at `p`. */
+  private faceGeo3(fi: FaceInfo, p: V3): Sk3Geo {
+    const kind = fi.surface ?? fi.type;
+    if (kind === "plane" && fi.normal) return { k: "plane", o: fi.centroid, n: fi.normal };
+    if (kind === "cylinder" && fi.axis && fi.radius) return { k: "cyl", o: fi.center, d: fi.axis, r: fi.radius };
+    if (kind === "sphere" && fi.radius) return { k: "sphere", o: fi.center, r: fi.radius };
+    return { k: "plane", o: p, n: fi.normal ?? [0, 0, 1] };
   }
 
   /** The 3D sketch point or segment under the pointer (points first, within 8 px; segments within 6 px). */
@@ -9966,7 +10020,7 @@ export class ModelController {
     }
     const at = this.click3d(e, f);
     const p = at ? (at.id ? f.pts.find(q => q.id === at.id)?.p : at.p) : undefined;
-    this.cursor3d = p ? { p, id: at!.id, axis: at!.axis, on: !!at!.id || !!at!.at } : null;
+    this.cursor3d = p ? { p, id: at!.id, axis: at!.axis, on: !!at!.id || !!at!.at || !!at!.model } : null;
     if (!p) { this.host.viewer.invalidate(); return; }
     const a = s3.anchor ? f.pts.find(q => q.id === s3.anchor)?.p : undefined;
     if (a) {
@@ -10081,7 +10135,10 @@ export class ModelController {
     if (!at) return;
     this.change3d(f, () => {
       let pid = at.id;
-      if (!pid) { pid = uid("p"); f.pts.push({ id: pid, p: at.p!, ...(at.at ? { fixed: true, at: at.at } : {}) }); }
+      if (!pid) {
+        pid = uid("p"); f.pts.push({ id: pid, p: at.p!, ...(at.at ? { fixed: true, at: at.at } : {}) });
+        if (at.model) f.rels.push({ id: uid("r"), e: [pid], ...at.model } as Sk3Rel);
+      }
       const a = s3.anchor;
       if (s3.tool === "arc" && a && a !== pid) {
         // 3-point arc: start (the anchor), end, then a point it passes through; the end becomes the next start.
@@ -10196,7 +10253,7 @@ export class ModelController {
       el.className = `sk-rel sk3-rel${box.rels.some(r => r.e.some(x => sel.has(x))) ? " sel" : ""}`;
       el.dataset.at = JSON.stringify(box.p);
       el.dataset.rel = key;
-      el.innerHTML = box.rels.map(r => relIcon((r.t === "onLine" ? "onCurve" : r.t) as RelIconKind)).join("");
+      el.innerHTML = box.rels.map(r => relIcon((r.t === "onLine" ? "onCurve" : r.t === "onFace" ? "onPlane" : r.t === "onEdge" ? "edge" : r.t === "onVertex" ? "coincident" : r.t) as RelIconKind)).join("");
       el.title = box.rels.map(r => this.relLabel3d(r)).join(", ");
       el.addEventListener("click", () => { s3.sel = [...new Set(box.rels.flatMap(r => r.e))]; this.renderPanel(); this.drawDecor(); });
       layer.appendChild(el);
@@ -10225,7 +10282,7 @@ export class ModelController {
 
   private relLabel3d(r: Sk3Rel): string {
     return r.t === "alongX" ? t("Along X") : r.t === "alongY" ? t("Along Y") : r.t === "alongZ" ? t("Along Z") : r.t === "parallelPlane" ? t("Parallel to {p}", { p: r.plane ?? "XY" })
-      : r.t === "parallel" ? t("Parallel") : r.t === "perpendicular" ? t("Perpendicular") : r.t === "equal" ? t("Equal") : r.t === "midpoint" ? t("Midpoint") : r.t === "onLine" ? t("On line") : r.t === "tangent" ? t("Tangent") : r.t === "onPlane" ? t("On {p}", { p: r.plane ?? "XY" }) : t("Coincident");
+      : r.t === "parallel" ? t("Parallel") : r.t === "perpendicular" ? t("Perpendicular") : r.t === "equal" ? t("Equal") : r.t === "midpoint" ? t("Midpoint") : r.t === "onLine" ? t("On line") : r.t === "tangent" ? t("Tangent") : r.t === "onPlane" ? t("On {p}", { p: r.plane ?? "XY" }) : r.t === "onFace" ? t("On face") : r.t === "onEdge" ? t("On edge") : r.t === "onVertex" ? t("On model vertex") : t("Coincident");
   }
 
   /** The Modify box for a 3D sketch dimension clicked in the view: the sketch follows as you type, ✓ keeps it. */
