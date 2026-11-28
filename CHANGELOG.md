@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.770.0] - 2026-11-28
+## [1.771.0] - 2026-11-28
 
 ### Added
 
@@ -16,6 +16,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: with a duration that is not a whole number of frames (1.25 s at 30 fps) the end now shows the study's last moment. Before, To end stopped at 1.2417 s, so a 60 rpm motor came out 3° short and mate keys 0.13 mm short, also after saving and opening again.
 - Mate panel: picking a second face on the same component says that it replaced the first and asks for a face on another component, instead of "✓ with nothing picked closes the panel."
+
+## [1.770.0] - 2026-11-28
+
+### Added
+
+- Simulation: a right-click on a face offers the study's commands for it (Fixed support, Force, Pressure, Sliding; in a thermal study Heat power, Convection, Fixed temperature, Insulated).
+- Simulation: each support and load in the study tree shows its size beside its faces, such as "1 face · 2000 N".
+
+### Fixed
+
+- Simulation: a face picked before Fixed support, Force or another command goes into it.
+- Simulation: a part opened with saved results shows the study used last, with its plot drawn at once.
+- Simulation: Duplicate study keeps the results of the study it copies.
+- Save asks for the file name at once after a solve, instead of packing the results first (parts and assemblies).
 
 ## [1.769.0] - 2026-11-28
 
@@ -5122,7 +5136,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.770.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.771.0...HEAD
+[1.771.0]: https://github.com/kothf/step-viewer/compare/v1.770.0...v1.771.0
 [1.770.0]: https://github.com/kothf/step-viewer/compare/v1.769.0...v1.770.0
 [1.769.0]: https://github.com/kothf/step-viewer/compare/v1.768.0...v1.769.0
 [1.768.0]: https://github.com/kothf/step-viewer/compare/v1.767.0...v1.768.0

@@ -97,6 +97,10 @@ export interface SimHost {
   redraw(): void;
   /** Shows the Study side tab. */
   showTab(): void;
+  /** Faces picked in the view before a study command (pre-selection), as face indices of `model()`. */
+  picked?(): number[];
+  /** Lets go of that selection once a command has taken it. */
+  clearPick?(): void;
 }
 
 type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "load"; draft: StudyLoad; isNew: boolean } | { kind: "refine"; draft: StudyRefine; isNew: boolean } | { kind: "weld"; draft: StudyWeld; isNew: boolean } | { kind: "connector"; draft: StudyConnector; isNew: boolean } | { kind: "mass"; draft: StudyMass; isNew: boolean };
@@ -243,6 +247,10 @@ const ASSUMPTIONS = "Linear elastic analysis with small displacements. Results a
 export class SimController {
   /** The study shown (view-only; the first one when unset or gone). */
   private activeId: string | null = null;
+  /** Results came back from the model file while the Simulation tab was off: plot them when it opens. */
+  private showKept = false;
+  /** A face a right-click menu picked for the next study command (instead of the view's selection). */
+  private menuFace: number | null = null;
   private edit: Edit | null = null;
   private res: Results | null = null;
   private running = false;
@@ -310,6 +318,8 @@ export class SimController {
   private docId: string | null = null;
   /** The last results of each study, by document id: written with the model when it is saved, read back when it is opened. */
   private files = new Map<string, Map<string, SavedStudy>>();
+  /** Entries of `files` read from an opened results file and not shown yet: only these show on the model by themselves. */
+  private opened = new WeakSet<SavedStudy>();
   private fileHits = 0;
   private filesRead = 0;
   private marks = new THREE.Group();
@@ -413,7 +423,12 @@ export class SimController {
     else if (a === "gif") void this.recordGif().then(b => { if (b) toast(t("GIF saved"), "success"); });
       else if (a === "tplay") { if (this.playTimer) { this.stopPlay(); this.seek(this.frame); } else this.startPlay(); }
     });
-    onCmTab(tab => { if (tab === "simulation" && this.host.doc()) this.host.showTab(); this.renderAll(); this.drawMarks(); });
+    onCmTab(tab => {
+      if (tab === "simulation" && this.host.doc()) this.host.showTab();
+      // results that came back with the model file: shown the first time the Simulation tab opens
+      if (tab === "simulation" && this.showKept && this.res?.fromFile && !this.res.old && !this.stale()) { this.showKept = false; this.plot.on = true; this.showPlot(); const sv = this.files.get(this.host.doc()?.id ?? "")?.get(this.res.study); if (sv) this.opened.delete(sv); }
+      this.renderAll(); this.drawMarks();
+    });
     onLangChange(() => this.renderAll());
     this.renderAll();
   }
@@ -821,7 +836,12 @@ export class SimController {
     this.cacheHits++;
     if (fromFile) this.fileHits++;
     if (!old) this.noteResult();
-    this.plot.on = false;
+    // results kept with the model file show on the model as soon as the Simulation tab is on (now or later)
+    const auto = fromFile && !old && !!saved && this.opened.has(saved);
+    this.plot.on = auto && cmTab() === "simulation";
+    this.showKept = auto && !this.plot.on;
+    if (this.plot.on && saved) this.opened.delete(saved);
+    if (this.plot.on) this.showPlot();
     this.syncProbes();
     this.syncPath();
     this.renderAll();
@@ -892,7 +912,8 @@ export class SimController {
       if (live && e.key === keyHash(this.keyOf(doc, st))) { const p = await this.packageOf(doc, st, e.data as Kept).catch(() => null); if (p) pkgs.set(st.id, p); }
     }
     if (!list.length) return null;
-    return packResults({ doc: doc.id, model: doc.name, saved: new Date().toISOString(), studies: list }, `MöbiusCAD ${__APP_VERSION__}`, pkgs);
+    const active = live ? this.study()?.id : undefined;
+    return packResults({ doc: doc.id, model: doc.name, saved: new Date().toISOString(), studies: list, ...(active ? { active } : {}) }, `MöbiusCAD ${__APP_VERSION__}`, pkgs);
   }
 
   /** A results file read with a document (FR-SOL-030): its studies come back when that document is shown. */
@@ -901,7 +922,12 @@ export class SimController {
     if (r.doc && r.doc !== docId) return 0;
     let m = this.files.get(docId);
     if (!m) this.files.set(docId, m = new Map());
-    for (const s of r.studies) if ((s.data as Kept)?.passes?.length) m.set(s.id, s);
+    for (const s of r.studies) if ((s.data as Kept)?.passes?.length) { m.set(s.id, s); this.opened.add(s); }
+    // the study that was open when it was saved opens first (FR-STU-003)
+    if (r.active) {
+      try { localStorage.setItem(`mc:simStudy:${docId}`, r.active); } catch { /* no storage */ }
+      if (this.host.doc()?.id === docId && !this.edit && !this.running && this.host.doc()?.studies?.some(x => x.id === r.active)) { this.activeId = r.active; this.res = null; this.clearPlot(); }
+    }
     this.filesRead++;
     if (this.host.doc()?.id === docId) { this.asked = ""; void this.restore(); }
     return r.studies.length;
@@ -921,6 +947,52 @@ export class SimController {
   // ---------- commands ----------
 
   private command(c: string) {
+    const before = this.edit;
+    const pre = this.menuFace != null ? [this.menuFace] : this.host.idle() ? this.host.picked?.() ?? [] : [];
+    this.menuFace = null;
+    this.command0(c);
+    // a new support or load takes the faces picked before it (pre-selection, as in other CAD apps)
+    if (this.edit && this.edit !== before && this.edit.isNew) {
+      this.host.clearPick?.();
+      if (pre.length && this.takeFaces(this.edit, pre)) { this.renderAll(); this.drawMarks(); }
+    }
+  }
+
+  /** Puts picked faces into a new item that takes faces; false when it takes none of them. */
+  private takeFaces(ed: Edit, ids: number[]): boolean {
+    const d = ed.draft, model = this.host.model(), names = this.host.faceNames();
+    if (!model || ed.kind === "weld" || d.type === "gravity" || this.unpicked(d) || (d as StudyLoad).on) return false;
+    const round = d.type === "hinge" || d.type === "centrifugal" || d.type === "torque" || d.type === "bearing";
+    let n = 0;
+    for (const id of ids) {
+      const name = names[id], face = model.faces[id];
+      if (!name || !face || d.faces.some(f => f.name === name) || (round && face.type !== "cylinder")) continue;
+      d.faces.push({ name, hint: this.facePoint(model, face) });
+      n++;
+    }
+    return n > 0;
+  }
+
+  /** A point on a face (the middle of its first triangle), part coordinates: what a click on it would give. */
+  private facePoint(model: SimModel, face: { triStart: number; centroid: number[] }): [number, number, number] {
+    const g = model.geometry, pos = g.getAttribute("position"), idx = g.getIndex(), k = face.triStart * 3;
+    if (!pos || k + 2 >= (idx ? idx.count : pos.count)) return [face.centroid[0], face.centroid[1], face.centroid[2]];
+    const v = (j: number) => (idx ? idx.getX(k + j) : k + j);
+    const r = (x: number) => Math.round(x * 1e4) / 1e4;
+    return [0, 1, 2].map(c => r((pos.getComponent(v(0), c) + pos.getComponent(v(1), c) + pos.getComponent(v(2), c)) / 3)) as [number, number, number];
+  }
+
+  /** Study commands for a face under a right-click while the Simulation tab is on (parts). */
+  menu(faceId: number): [string, () => void][] {
+    if (cmTab() !== "simulation" || !this.host.doc() || this.running || this.edit || this.host.asm()) return [];
+    const thermal = this.mode === "thermal" || this.study()?.kind === "thermal";
+    const modal = !thermal && this.study()?.kind === "modal";
+    const go = (c: string) => () => { this.menuFace = faceId; this.command(c); };
+    const ids: string[] = thermal ? ["heat", "conv", "temp", "insul"] : modal ? ["fixed", "sliding"] : ["fixed", "force", "pressure", "sliding"];
+    return ids.map(c => [t((SUPPORT_LABEL as Record<string, string>)[c] ?? (LOAD_LABEL as Record<string, string>)[c] ?? c), go(c)]);
+  }
+
+  private command0(c: string) {
     const doc = this.host.doc();
     if (!doc) return;
     if (!this.host.idle()) { toast(t("Finish the open command first.")); return; }
@@ -1266,6 +1338,25 @@ export class SimController {
     if (it.type === "pkgheat") return t("{n} part|{n} parts", { n: ((it as StudyLoad).parts ?? []).filter(x => !x.off && x.p >= PACKAGE_MIN_POWER && x.comps.length).length });
     const on = (it as StudyLoad).on, n = pickCount(it);
     return on === "edges" ? t("{n} edge|{n} edges", { n }) : on === "points" ? t("{n} point|{n} points", { n }) : t("{n} face|{n} faces", { n });
+  }
+
+  /** The size of a structural load or the movement of a support, short, for its tree row ("" when it has none to show). */
+  private valueText(it: StudySupport | StudyLoad): string {
+    if (it.type === "disp") { const s = it as StudySupport; return ["X", "Y", "Z"].map((a, i) => ((s.dirs ?? [true, true, true])[i] ? `${a} ${sig((s.disp ?? [0, 0, 0])[i])}` : "")).filter(Boolean).join(" ") + " mm"; }
+    if (it.type === "elastic") return `${sig((it as StudySupport).kn ?? 0)} N/mm³`;
+    if (!("faces" in it)) return "";
+    const l = it as StudyLoad, v = l.value?.v ?? 0, size = (c?: { v: number }[], f = 1) => sig(Math.hypot(...(c ?? []).map(x => (x?.v ?? 0) * f)));
+    switch (l.type) {
+      case "force": return l.normal && !l.on ? `${sig(v)} N` : `${size(l.comp)} N`;
+      case "bearing": case "remote": return `${size(l.comp)} N`;
+      case "pressure": return `${sig(v)} MPa`;
+      case "moment": return `${size(l.comp, 1e-3)} N·m`;
+      case "torque": return `${sig(v * 1e-3)} N·m`;
+      case "gravity": return `${size(l.comp, 1e-3)} m/s²`;
+      case "centrifugal": return `${sig(v)} rpm`;
+      case "hydro": return `${sig(v)} kg/m³`;
+      default: return "";
+    }
   }
 
   key(e: KeyboardEvent): boolean {
@@ -4254,7 +4345,7 @@ export class SimController {
       const isOff = off.has(it.id);
       return `<li class="sim-row${isOff ? " off" : ""}${bad ? " bad" : ""}${this.edit?.draft.id === it.id ? " cur" : ""}" data-id="${it.id}">`
         + `<button class="sim-name" data-a="edit" translate="no" title="${esc(t("Edit"))}"><i class="sim-dot ${it.type === "refine" ? "ref" : it.type === "connector" ? "conn" : it.type === "mass" ? "mass" : it.type === "weld" ? "weld" : load ? "load" : "sup"}" aria-hidden="true"></i>${esc(it.name ?? it.id)}</button>`
-        + `<span class="sim-meta">${isThermalType(it.type) ? esc(`${(it.type === "heat" && (it as StudyLoad).body) || it.type === "vheat" ? (this.host.asm() ? t("whole component") : t("whole body")) : this.pickText(it)} · ${this.thermalText(it as StudyLoad, st)}`) : it.type === "gravity" ? "" : it.type === "temperature" ? this.tempText(it as StudyLoad, true) : it.type === "centrifugal" && !it.faces.length ? esc(this.axisText(it as StudyLoad)) : esc(it.type === "connector" ? t(it.kind === "spring" ? "spring" : "rigid") : this.pickText(it))}${it.type === "mass" ? ` · ${trim(it.mass)} kg` : it.type === "refine" ? ` · ${esc(t("level {n}", { n: it.level }))}` : it.type === "weld" ? (it.on === "points" ? ` · ⌀ ${trim(it.dia ?? DEFAULT_SPOT)} mm` : ` · a ${trim(it.throat)} mm`) : ""}</span>`
+        + `<span class="sim-meta">${isThermalType(it.type) ? esc(`${(it.type === "heat" && (it as StudyLoad).body) || it.type === "vheat" ? (this.host.asm() ? t("whole component") : t("whole body")) : this.pickText(it)} · ${this.thermalText(it as StudyLoad, st)}`) : it.type === "gravity" ? esc(this.valueText(it as StudyLoad)) : it.type === "temperature" ? this.tempText(it as StudyLoad, true) : it.type === "centrifugal" && !it.faces.length ? esc(this.axisText(it as StudyLoad)) : esc(it.type === "connector" ? t(it.kind === "spring" ? "spring" : "rigid") : [this.pickText(it), this.valueText(it as StudyLoad)].filter(Boolean).join(" · "))}${it.type === "mass" ? ` · ${trim(it.mass)} kg` : it.type === "refine" ? ` · ${esc(t("level {n}", { n: it.level }))}` : it.type === "weld" ? (it.on === "points" ? ` · ⌀ ${trim(it.dia ?? DEFAULT_SPOT)} mm` : ` · a ${trim(it.throat)} mm`) : ""}</span>`
         + `<button class="sim-ib" data-a="toggle" aria-pressed="${isOff}" title="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}" aria-label="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}">${isOff ? "○" : "●"}</button>`
         + `<button class="sim-ib" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">×</button>`
         + (bad ? `<p class="sim-prob">${esc(this.errorText(`${bad}: ${it.id}`))}</p>` : "")
@@ -5076,11 +5167,17 @@ export class SimController {
       let k = 2;
       while (list.some(x => x.name === `${st.name} (${k})`)) k++;
       const copy: Study = { ...(JSON.parse(JSON.stringify(st)) as Study), id: blank.id, name: `${st.name} (${k})` };
+      // the copy has the same set-up, so the results it was made from are its own until something changes
+      const docId = this.host.doc()?.id, had = docId ? this.files.get(docId)?.get(st.id) : undefined;
+      const keep = this.res && !this.running && !this.stale() ? this.res : null, plotOn = this.plot.on;
       this.client.cancel();
       this.edit = null; this.res = null; this.error = null; this.probes = []; this.probeKey = ""; this.probing = false;
       this.clearPlot();
       this.setActive(copy.id);
+      if (keep) this.res = { ...keep, study: copy.id };
       this.host.change(t("Duplicate study"), d => { (d.studies ??= []).push(copy); });
+      if (keep && docId && had) this.remember(docId, copy, had.key, had.data as Kept);
+      if (keep && this.res) { this.plot.on = plotOn; if (plotOn) this.showPlot(); this.renderAll(); }
     } else if (a === "delstudy" && st) {
       this.client.cancel();
       this.edit = null; this.res = null; this.error = null; this.probes = []; this.probeKey = ""; this.probing = false;

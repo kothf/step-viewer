@@ -8876,13 +8876,13 @@ try {
     // ...but it turns about the axis it may still turn about, as a wheel does (exam bug 51).
     const turn = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return { ang: Math.round(Math.atan2(t[4], t[0]) * 1000) / 1000, z: t[10] }; });
     check(Math.abs(turn.ang) > 0.05 && Math.abs(turn.z - 1) < 1e-6, `asm 1.317: dragging a pin with only its turn free turns it about its axis (${JSON.stringify(turn)})`);
-    // 1.770: View mates from a component's menu filters the Mates folder; ✕ shows them all again (C7).
+    // 1.771: View mates from a component's menu filters the Mates folder; ✕ shows them all again (C7).
     await mp.click("#asm-tree .ft-comp >> nth=1", { button: "right" });
     await mp.click('#asm-menu button:text-is("View mates")');
     const vmates = await mp.evaluate(() => ({ head: document.querySelector('#asm-tree [data-id="folder:mates"] .ft-name')?.textContent, rows: document.querySelectorAll("#asm-tree .ft-mate").length, all: window.__sv.asm.doc.mates.length }));
     await mp.click('#asm-tree [data-a="vmclear"]');
     const vmBack = await mp.evaluate(() => document.querySelectorAll("#asm-tree .ft-mate").length);
-    check(/^Mates of /.test(vmates.head ?? "") && vmates.rows === vmates.all && vmBack === vmates.all, `asm 1.770: View mates lists the component's mates; ✕ shows all (${JSON.stringify({ vmates, vmBack })})`);
+    check(/^Mates of /.test(vmates.head ?? "") && vmates.rows === vmates.all && vmBack === vmates.all, `asm 1.771: View mates lists the component's mates; ✕ shows all (${JSON.stringify({ vmates, vmBack })})`);
     // Delete the coincident mate from the tree: the pin can slide along the axis again.
     await mp.hover("#asm-tree .ft-mate >> nth=1");
     await mp.click('#asm-tree .ft-mate >> nth=1 >> [data-a="del"]');
@@ -16708,7 +16708,7 @@ try {
     await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 180000 });
     const eRes = await sim();
     check(edgePick.box === "1 edge" && !edgePick.normal && edgePick.marks === 1 && ptPick.box === "1 point" && ptPick.marks === 1 && eLoads.length === 2 && eLoads[0].on === "edges" && JSON.stringify(eLoads[0].edges) === JSON.stringify([spot.faces])
-      && eLoads[1].on === "points" && eLoads[1].faces === 3 && eLoads[0].rows.includes("1 edge") && eLoads[0].rows.includes("1 point") && !eRes.error && Math.abs(eRes.applied.force[2] + 1750) < 1e-6 && Math.abs(eRes.reactions[0].force[2] - 1750) < 0.01,
+      && eLoads[1].on === "points" && eLoads[1].faces === 3 && eLoads[0].rows.some(r => r.startsWith("1 edge")) && eLoads[0].rows.some(r => r.startsWith("1 point")) && !eRes.error && Math.abs(eRes.applied.force[2] + 1750) < 1e-6 && Math.abs(eRes.reactions[0].force[2] - 1750) < 0.01,
       `sim 1.612: a force on an edge and one on a corner point are picked in the view, kept by face names and solved; the reaction balances all three loads (${JSON.stringify({ edgePick, ptPick, eLoads: eLoads.map(l => ({ on: l.on, faces: l.faces })), error: eRes.error, applied: eRes.applied?.force, reaction: eRes.reactions[0]?.force })})`);
     // 1.613.0: five passes with the stop target at 0: passes 4 and 5 raise the accuracy in some cells only.
     await mp.selectOption('#sim-tree [data-k="passes"]', "5");

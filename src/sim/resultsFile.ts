@@ -34,9 +34,11 @@ export interface ResultsManifest {
   app: string;
   saved: string;
   studies: { id: string; name: string; kind: string; key: string; at: string; file: string; thermal?: string[] }[];
+  /** The study that was open when the model was saved: it opens first again. */
+  active?: string;
 }
 
-export interface ResultsFile { doc: string; model: string; saved: string; studies: SavedStudy[] }
+export interface ResultsFile { doc: string; model: string; saved: string; studies: SavedStudy[]; active?: string }
 
 /** JSON with every object's keys sorted: the same text for a document read from a file (saved with sorted keys) and as built here. */
 export function stableJson(v: unknown): string {
@@ -128,7 +130,7 @@ const safeName = (s: string) => s.replace(/[^\w.-]+/g, "_").slice(0, 60) || "stu
 export async function packResults(r: ResultsFile, app: string, thermal: Map<string, { name: string; data: Uint8Array | string }[]> = new Map()): Promise<Uint8Array> {
   const files: { name: string; data: Uint8Array | string }[] = [];
   const used = new Set<string>();
-  const mf: ResultsManifest = { format: RESULTS_FORMAT, version: RESULTS_VERSION, doc: r.doc, model: r.model, app, saved: r.saved, studies: [] };
+  const mf: ResultsManifest = { format: RESULTS_FORMAT, version: RESULTS_VERSION, doc: r.doc, model: r.model, app, saved: r.saved, studies: [], ...(r.active ? { active: r.active } : {}) };
   for (const s of r.studies) {
     let base = safeName(s.id), k = 2;
     while (used.has(base)) base = `${safeName(s.id)}-${k++}`;
@@ -160,7 +162,7 @@ export async function unpackResults(bytes: Uint8Array | ArrayBuffer): Promise<Re
     if (!j || !b) continue;
     studies.push({ id: s.id, name: s.name, kind: s.kind, key: s.key, at: s.at, data: decodeValue(dec.decode(j), b) });
   }
-  return { doc: mf.doc, model: mf.model, saved: mf.saved, studies };
+  return { doc: mf.doc, model: mf.model, saved: mf.saved, studies, ...(mf.active ? { active: mf.active } : {}) };
 }
 
 /** Only the manifest: which model the results belong to (cheap: the study data is not decoded). */
