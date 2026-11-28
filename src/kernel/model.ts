@@ -12,7 +12,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { areaOf, massOf, optimalBox, stateAt } from "./memo";
 import type { V2, SkEnt } from "../model/types";
-import type { FlexFeature, WrapFeature, DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, RefSig, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { FlexFeature, WrapFeature, DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, Sk3Geo, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, RefSig, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { applyRefFixes, type RefFix } from "../model/refFix";
@@ -24,7 +24,7 @@ import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type Pr
 import { splineBezierN } from "../sketch/spline";
 import { segSpline } from "../sketch/wrap";
 import { FlexError, flexAffine, flexIdle, flexLinear, flexMap, flexPoint, type FlexMap } from "../model/flex";
-import { chain3d, fillets3d, segPoints, solve3d } from "../sketch/sketch3d";
+import { arc3, chain3d, fillets3d, segPoints, solve3d } from "../sketch/sketch3d";
 import { applyExt, piercePoint, projectEdge, uvOf, type ModelEdge } from "../sketch/external";
 import { circleEdge, lineEdge } from "../sketch/silhouette";
 import { solve } from "../sketch/solver";
@@ -3478,7 +3478,7 @@ export class Modeller {
     if ("helix" in path || "curve" in path) {
       const c = this.curves.get("helix" in path ? path.helix : path.curve);
       if (!c) throw new FeatureError("E-FT-PARENT", "helix" in path ? "The helix is missing or has an error." : "The curve is missing or has an error.");
-      if (!c.wire) throw new FeatureError("E-SWP-PATH", "A 3D sketch path must be one chain of lines and splines.");
+      if (!c.wire) throw new FeatureError("E-SWP-PATH", "A 3D sketch path must be one chain of lines, arcs and splines.");
       return c.wire;
     }
     const { sk, frame } = this.sketchOf(path.sketch, doc, body, frames, "a path sketch");
@@ -3494,10 +3494,21 @@ export class Modeller {
    * A 3D sketch's points held on 2D sketch points (`Sk3Point.at`) moved to where those points are now, then the sketch solved
    * again, so a 3D sketch drawn on a frame sketch follows it (weldments exam #6). Null when nothing moved.
    */
-  follow3d(f: Sketch3dFeature, doc: PartDoc, frames: Record<string, Frame>): Sketch3dFeature | null {
-    if (!f.pts.some(q => q.at)) return null;
+  follow3d(f: Sketch3dFeature, doc: PartDoc, frames: Record<string, Frame>, body: Named | null = null): Sketch3dFeature | null {
+    const held = (r: Sk3Rel) => (r.t === "onFace" && !!r.face) || (r.t === "onEdge" && !!r.edge) || (r.t === "onVertex" && !!r.vertex);
+    if (!f.pts.some(q => q.at) && !f.rels.some(held)) return null;
     const next: Sketch3dFeature = structuredClone(f);
     let lost = 0, changed = false;
+    // Points on model faces, edges and vertices: measure what they are on as the body is now.
+    for (const r of next.rels) {
+      if (!held(r)) continue;
+      const q = next.pts.find(p => p.id === r.e[0]);
+      if (!q) continue;
+      let g: Sk3Geo;
+      try { g = this.geo3(r, body, frames, q.p); } catch { lost++; continue; }
+      if (JSON.stringify(g) !== JSON.stringify(r.geo)) { r.geo = g; changed = true; }
+    }
+    if (!changed && next.rels.some(r => held(r) && r.geo) && solve3d(next).residual > 1e-9) changed = true;
     for (const q of next.pts) {
       if (!q.at) continue;
       const sk = doc.features.find(g => g.id === q.at!.sketch), fr = frames[q.at.sketch];
@@ -3507,7 +3518,7 @@ export class Modeller {
       if (Math.hypot(w[0] - q.p[0], w[1] - q.p[1], w[2] - q.p[2]) > 1e-9) { q.p = w; changed = true; }
       q.fixed = true;
     }
-    if (lost) this.warning = "Some 3D sketch points lost the sketch points they were on; they stay where they were.";
+    if (lost) this.warning = "Some 3D sketch points lost the sketch points, model faces or edges they were on; they stay where they were.";
     if (!changed) return null;
     const r = solve3d(next);
     if (!r.ok) throw new FeatureError("E-3D-FOLLOW", "The 3D sketch cannot follow the sketch points it is on: its relations or dimensions conflict.");
@@ -3515,10 +3526,36 @@ export class Modeller {
     return next;
   }
 
+  /** What a 3D sketch point is held on (a model face, edge or vertex) as the body is now, for the solver. */
+  private geo3(r: Sk3Rel, body: Named | null, frames: Record<string, Frame>, p: V3): Sk3Geo {
+    const oc = this.oc, T = oc.GeomAbs_SurfaceType, q = (v: V3): V3 => v.map(x => Math.round(x * 1e9) / 1e9) as V3;
+    if (r.t === "onVertex") return { k: "point", o: q(this.vertexPos(r.vertex, body, frames)) };
+    if (r.t === "onEdge") {
+      const me = this.modelEdge(this.resolveEdge(body, r.edge!));
+      if (me.type === "line") return { k: "line", o: q(me.start), d: q(unit(sub3(me.end, me.start))) };
+      if ((me.type === "circle" || me.type === "arc") && me.center && me.axis && me.radius) return { k: "circle", o: q(me.center), n: q(me.axis), r: me.radius };
+      const pts: V3[] = [];
+      for (let i = 0; i + 2 < (me.pts ?? []).length; i += 3) pts.push(q([me.pts![i], me.pts![i + 1], me.pts![i + 2]]));
+      return { k: "poly", pts };
+    }
+    const face = this.resolveFace(body, r.face!);
+    const ad = new oc.BRepAdaptor_Surface_2(face, true);
+    try {
+      const ty = ad.GetType();
+      if (ty === T.GeomAbs_Plane) { const pl = ad.Plane(); return { k: "plane", o: q(this.xyz(pl.Location())), n: q(this.xyz(pl.Axis().Direction())) }; }
+      if (ty === T.GeomAbs_Cylinder) { const c = ad.Cylinder(); return { k: "cyl", o: q(this.xyz(c.Location())), d: q(this.xyz(c.Axis().Direction())), r: c.Radius() }; }
+      if (ty === T.GeomAbs_Sphere) { const c = ad.Sphere(); return { k: "sphere", o: q(this.xyz(c.Location())), r: c.Radius() }; }
+    } finally { ad.delete(); }
+    // Other surfaces: the plane touching the face at the point nearest where the point is.
+    const d = new oc.BRepExtrema_DistShapeShape_2(new oc.BRepBuilderAPI_MakeVertex(this.P(p)).Vertex(), face, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+    const o = d.IsDone() && d.NbSolution() ? this.xyz(d.PointOnShape2(1)) : p;
+    return { k: "plane", o: q(o), n: q(this.normalNear(face, o)) };
+  }
+
   /** 3D sketch (FR-SK-080): its lines and splines as one wire when they form a chain (a sweep path); drawn from the document. */
   private sketch3d(f: Sketch3dFeature): Curve {
     const oc = this.oc;
-    if (!f.segs.some(s => s.pts.length >= 2)) throw new FeatureError("E-3D-EMPTY", "The 3D sketch has no lines or splines.");
+    if (!f.segs.some(s => s.pts.length >= 2)) throw new FeatureError("E-3D-EMPTY", "The 3D sketch has no lines, arcs or splines.");
     const ch = chain3d(f);
     if ("error" in ch) return { wire: null, pts: [] };
     const P = (id: string): V3 => f.pts.find(p => p.id === id)?.p ?? [0, 0, 0];
@@ -3530,7 +3567,9 @@ export class Modeller {
       let q = ids.map(P);
       const seg = f.segs.find(s => s.pts.length === ids.length && (s.pts.every((x, i) => x === ids[i]) || s.pts.every((x, i) => x === ids[ids.length - 1 - i])));
       if (seg?.t === "line") { q = segPoints(f, seg); if (seg.pts[0] !== ids[0]) q.reverse(); }
-      const e = seg?.t === "spline" && q.length > 2 ? this.bezierEdge(splineBezierN(q)) : new oc.BRepBuilderAPI_MakeEdge_3(this.P(q[0]), this.P(q[q.length - 1])).Edge();
+      const g3 = seg?.t === "arc" && q.length === 3 ? arc3(q[0], q[1], q[2]) : null;
+      const e = g3 ? new oc.BRepBuilderAPI_MakeEdge_24(new oc.Handle_Geom_Curve_2(new oc.GC_MakeArcOfCircle_4(this.P(q[0]), this.P(q[1]), this.P(q[2])).Value().get())).Edge()
+        : seg?.t === "spline" && q.length > 2 ? this.bezierEdge(splineBezierN(q)) : new oc.BRepBuilderAPI_MakeEdge_3(this.P(q[0]), this.P(q[q.length - 1])).Edge();
       mk.Add_1(e);
       // A sketch fillet at the corner after this segment: its arc joins this line to the next one.
       const r = round.get(ids[ids.length - 1]);
@@ -3649,6 +3688,7 @@ export class Modeller {
       oc.TopExp.Vertices_2(spine, va, vb);
       endVertex = vb;
     }
+    const curvedCorner = this.curvedCorner(spine);
     const pipe = (w: any, edgeEnt: [any, string][]): Named => {
       const mk = new oc.BRepOffsetAPI_MakePipeShell(spine);
       if (guide) {
@@ -3674,6 +3714,9 @@ export class Modeller {
       if (!mk.IsDone()) throw new FeatureError("E-SWP-FAIL", "The sweep failed. Is the profile too big for the path's bends, or far from the path?");
       if (!mk.MakeSolid()) throw new FeatureError("E-SWP-FAIL", "The sweep did not close into a solid.");
       let shape = mk.Shape();
+      // A sharp corner next to an arc or spline: OCCT's mitre gives a broken solid there (volume wrong or 0).
+      if (curvedCorner && !new oc.BRepCheck_Analyzer(shape, true, false).IsValid_2())
+        throw new FeatureError("E-SWP-CORNER", "The path has a sharp corner next to an arc or spline: make that join tangent (select both and add Tangent).");
       if (this.volume(shape) < 0) shape = shape.Reversed();
       return this.nameSweep(mk, f.id, edgeEnt, shape);
     };
@@ -3699,6 +3742,27 @@ export class Modeller {
       }
     }
     return this.applyTool(f, tools, prev);
+  }
+
+  /** Whether a path wire has a sharp corner (tangents more than 0.1° apart) where an arc or spline meets the next edge. */
+  private curvedCorner(spine: any): boolean {
+    const oc = this.oc;
+    const ends: { a: V3; b: V3; line: boolean }[] = [];
+    for (const ex = new oc.BRepTools_WireExplorer_2(spine); ex.More(); ex.Next()) {
+      const e = ex.Current(), ad = new oc.BRepAdaptor_Curve_2(e);
+      const p = new oc.gp_Pnt_1(), v0 = new oc.gp_Vec_1(), v1 = new oc.gp_Vec_1();
+      ad.D1(ad.FirstParameter(), p, v0); ad.D1(ad.LastParameter(), p, v1);
+      let a = unit(this.xyz(v0)), b = unit(this.xyz(v1));
+      if (e.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) [a, b] = [mul(b, -1), mul(a, -1)];
+      ends.push({ a, b, line: ad.GetType() === oc.GeomAbs_CurveType.GeomAbs_Line });
+    }
+    const closed = oc.BRep_Tool.IsClosed_1(spine);
+    for (let i = 0; i < ends.length; i++) {
+      const j = i + 1 < ends.length ? i + 1 : closed ? 0 : -1;
+      if (j < 0 || (ends[i].line && ends[j].line)) continue;
+      if (dot(ends[i].b, ends[j].a) < Math.cos(Math.PI / 1800)) return true;
+    }
+    return false;
   }
 
   /** Loft (FR-FT-082): through the profiles' outer contours in order, with ThruSections. */
@@ -6868,7 +6932,7 @@ export class Modeller {
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
           else if (f.type === "helix") this.curves.set(f.id, this.helix(f, doc, body, frames));
           else if (f.type === "sketch3d") {
-            const moved3 = this.follow3d(f, doc, frames);
+            const moved3 = this.follow3d(f, doc, frames, body);
             if (moved3) { doc.features[i] = moved3; sketches[f.id] = moved3; }
             this.curves.set(f.id, this.sketch3d(moved3 ?? f));
           }

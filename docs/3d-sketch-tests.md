@@ -31,6 +31,9 @@ Status: **1.762.0** = before this round, **now** = after it. ✓ works, ✗ miss
 | B10 | Coordinates typed in the point table move the point | yes (PropertyManager) | ✓ | ✓ |
 | B11 | Dragging a point in the view moves it, the relations hold | yes | ✗ | ✓ |
 | B12 | Sketch fillet: a corner of two lines rounded with a radius (asked at once, R shown on the arc; the lines keep the sharp corner for dimensions); a sweep follows the arc | yes | ✗ | ✓ (1.764.0) |
+| B13 | Arc through 3 points: start, end, then a point it passes through (previewed through the pointer); the chain goes on from its end | yes (3 Point Arc) | ✗ | ✓ (1.776.0) |
+| B14 | Points clicked on a model face, edge or vertex are held there (On face, On edge, On model vertex) and follow the model when it changes | same | ✗ (only snapped, then left behind) | ✓ (1.776.0) |
+| B15 | Convert edges: a clicked model edge becomes a line, arc (a full circle two arcs) or spline held on it, and follows the model | yes (Convert Entities) | ✗ | ✓ (1.776.0) |
 
 ## C. Selection
 
@@ -51,6 +54,7 @@ Status: **1.762.0** = before this round, **now** = after it. ✓ works, ✗ miss
 | D5 | Midpoint and On line (a point and a line) | yes | ✗ | ✓ |
 | D6 | Tangent between a spline and a line (or two splines) at a shared end | yes | ✗ | ✓ (1.764.0) |
 | D7 | On XY / YZ / ZX: a point on a standard plane; refused with a message when it cannot hold | yes | ✗ | ✓ (1.768.0) |
+| D8 | Tangent between a line and an arc at a shared end | yes | ✗ | ✓ (1.776.0) |
 
 ## E. Dimensions
 
@@ -62,6 +66,8 @@ Status: **1.762.0** = before this round, **now** = after it. ✓ works, ✗ miss
 | E4 | A dimension typed as an expression of global variables follows the variables | yes | ✗ (kept the old value) | ✓ |
 | E5 | The panel says how many degrees of freedom are left, or Fully defined | same | ✓ | ✓ |
 | E6 | Distance from a point to a standard plane (XY, YZ, ZX), shown in the view and typed in the Modify box | yes | ✗ | ✓ (1.768.0) |
+| E7 | Angle of a line to a standard plane (XY, YZ, ZX), shown in the view and typed in the Modify box | yes | ✗ | ✓ (1.776.0) |
+| E8 | Radius of an arc, shown in the view and typed in the Modify box | yes | ✗ | ✓ (1.776.0) |
 
 ## F. Use of the 3D sketch
 
@@ -74,3 +80,4 @@ Status: **1.762.0** = before this round, **now** = after it. ✓ works, ✗ miss
 | F5 | Hide/Show from the tree; Hide/Show items ▸ Curves | same | ✓ | ✓ |
 | F6 | Save and open keeps the 3D sketch | same | ✓ | ✓ |
 | F7 | Russian UI: every new text translated | — | — | ✓ |
+| F8 | Sweep along a path with an arc (exact arc edge); a sharp corner next to an arc or spline is refused with a message instead of a broken solid | same | ✗ (volume 0) | ✓ (1.776.0) |
