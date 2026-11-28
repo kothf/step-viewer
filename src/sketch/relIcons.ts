@@ -6,7 +6,7 @@
 import type { RelKind } from "../model/types";
 
 /** Icon keys: every 2D relation, plus "edge" (a fix that follows a model edge), "merge" and the 3D sketch ones. */
-export type RelIconKind = RelKind | "edge" | "merge" | "alongX" | "alongY" | "alongZ" | "parallelPlane";
+export type RelIconKind = RelKind | "edge" | "merge" | "alongX" | "alongY" | "alongZ" | "parallelPlane" | "onPlane";
 
 const L = (x1: number, y1: number, x2: number, y2: number, extra = "") => `<path d="M${x1} ${y1}L${x2} ${y2}"${extra}/>`;
 const dot = (x: number, y: number, r = 1.7) => `<circle cx="${x}" cy="${y}" r="${r}" fill="currentColor" stroke="none"/>`;
@@ -37,6 +37,7 @@ const BODY: Record<RelIconKind, string> = {
   alongY: L(2, 8, 11, 8) + `<path d="M8.5 5.5L11 8L8.5 10.5"/>` + axisText("Y"),
   alongZ: L(2, 8, 11, 8) + `<path d="M8.5 5.5L11 8L8.5 10.5"/>` + axisText("Z"),
   parallelPlane: `<path d="M1.5 13L4.5 9.5H14.5L11.5 13Z"/>` + L(3, 6, 12, 6),
+  onPlane: `<path d="M1.5 13L4.5 9.5H14.5L11.5 13Z"/>` + dot(8, 11.2),
 };
 
 /** A relation's icon as inline SVG (`size` px square), drawn in the text colour; hidden from screen readers. */

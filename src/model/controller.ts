@@ -10176,7 +10176,7 @@ export class ModelController {
     const u = UNITS[units.current].f;
     const round = new Map(fillets3d(f).list.map(x => [x.id, x]));
     f.dims.forEach((d, i) => {
-      const p = d.t === "fillet" ? (round.get(d.id)?.m ?? P(d.e[0])) : d.t === "length" ? mid(d.e[0]) : d.t === "distance" ? half(P(d.e[0]), P(d.e[1])) : (() => {
+      const p = d.t === "fillet" ? (round.get(d.id)?.m ?? P(d.e[0])) : d.t === "length" ? mid(d.e[0]) : d.t === "distance" ? half(P(d.e[0]), P(d.e[1])) : d.t === "planeDist" ? P(d.e[0]) : (() => {
         // Angle: by the shared end of the two lines, else between their middles.
         const a = f.segs.find(g => g.id === d.e[0]), b = f.segs.find(g => g.id === d.e[1]);
         const common = a?.pts.find(q => b?.pts.includes(q));
@@ -10189,7 +10189,7 @@ export class ModelController {
       el.dataset.dim = d.id;
       el.setAttribute("translate", "no");
       el.textContent = d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 2)}°` : d.t === "fillet" ? `R${trimNum(d.val.v * u, 3)}` : trimNum(d.val.v * u, 3);
-      el.title = `D${i + 1}: ${t("Click to type the size")}`;
+      el.title = `D${i + 1}${d.t === "planeDist" ? ` (${t("Distance to {p}", { p: d.plane ?? "XY" })})` : ""}: ${t("Click to type the size")}`;
       el.addEventListener("click", () => this.editDim3d(f, d.id, el));
       layer.appendChild(el);
     });
@@ -10197,7 +10197,7 @@ export class ModelController {
 
   private relLabel3d(r: Sk3Rel): string {
     return r.t === "alongX" ? t("Along X") : r.t === "alongY" ? t("Along Y") : r.t === "alongZ" ? t("Along Z") : r.t === "parallelPlane" ? t("Parallel to {p}", { p: r.plane ?? "XY" })
-      : r.t === "parallel" ? t("Parallel") : r.t === "perpendicular" ? t("Perpendicular") : r.t === "equal" ? t("Equal") : r.t === "midpoint" ? t("Midpoint") : r.t === "onLine" ? t("On line") : r.t === "tangent" ? t("Tangent") : t("Coincident");
+      : r.t === "parallel" ? t("Parallel") : r.t === "perpendicular" ? t("Perpendicular") : r.t === "equal" ? t("Equal") : r.t === "midpoint" ? t("Midpoint") : r.t === "onLine" ? t("On line") : r.t === "tangent" ? t("Tangent") : r.t === "onPlane" ? t("On {p}", { p: r.plane ?? "XY" }) : t("Coincident");
   }
 
   /** The Modify box for a 3D sketch dimension clicked in the view: the sketch follows as you type, ✓ keeps it. */
@@ -10261,12 +10261,13 @@ export class ModelController {
     if (lines.length === 2 && !points.length) add = rb("parallel", t("Parallel")) + rb("perpendicular", t("Perpendicular")) + rb("equal", t("Equal")) + rb("dim:angle", t("Angle"));
     if (lines.length === 1 && points.length === 1) add = rb("midpoint", t("Midpoint")) + rb("onCurve:onLine", t("On line"));
     if (points.length === 2 && !lines.length) add = rb("coincident", t("Coincident")) + rb("dim:distance", t("Distance"));
+    if (points.length === 1 && !s3.sel.some(id => f.segs.some(g => g.id === id))) add = (["XY", "YZ", "ZX"] as const).map(p => rb(`onPlane:${p}`, t("On {p}", { p }))).join("") + (["XY", "YZ", "ZX"] as const).map(p => rb(`dim:plane:${p}`, t("Distance to {p}", { p }))).join("");
     if (points.length === 1 && !s3.sel.some(id => f.segs.some(g => g.id === id)) && filletCorner(f, points[0]) && !f.dims.some(d => d.t === "fillet" && d.e[0] === points[0])) add = `<button class="btn small" data-s3r="fillet" title="${esc(t("Round the corner where the two lines meet; the lines keep their sharp corner for dimensions."))}">${esc(t("Fillet"))}</button>` + add;
     if (points.length && !s3.sel.some(id => f.segs.some(g => g.id === id))) add += rb("fix", points.every(id => f.pts.find(p => p.id === id)?.fixed) ? t("Unfix") : t("Fix"));
     if (s3.sel.length) add += `<button class="btn small danger" data-s3a="del">${esc(t("Delete"))}</button>`;
     const relLabel = (r: Sk3Rel) => this.relLabel3d(r);
     const rels = f.rels.map(r => `<li><span class="rel-row">${relIcon((r.t === "onLine" ? "onCurve" : r.t) as RelIconKind)}${esc(relLabel(r))}</span> <span class="muted" translate="no">${r.e.map(entName).join(", ")}</span> <button class="icon" data-s3rdel="${r.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></li>`).join("");
-    const dims = f.dims.map((d, i) => `<li class="s3dim"><label class="pm-field"><span translate="no">D${i + 1} (${d.t === "fillet" ? `<span translate="yes">${esc(t("Fillet"))}</span> ` : ""}${esc(d.e.map(entName).join(", "))})</span><input type="text" inputmode="decimal" class="pm-n" data-s3dim="${d.id}" value="${esc(d.val.expr ?? (d.t === "angle" ? trimNum((d.val.v * 180) / Math.PI, 4) : trimNum(d.val.v * u, 4)))}" />${d.t === "angle" ? "°" : ""}</label> <button class="icon" data-s3ddel="${d.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></li>`).join("");
+    const dims = f.dims.map((d, i) => `<li class="s3dim"><label class="pm-field"><span translate="no">D${i + 1} (${d.t === "fillet" ? `<span translate="yes">${esc(t("Fillet"))}</span> ` : ""}${esc(d.e.map(entName).join(", "))}${d.t === "planeDist" ? ` – ${d.plane ?? "XY"}` : ""})</span><input type="text" inputmode="decimal" class="pm-n" data-s3dim="${d.id}" value="${esc(d.val.expr ?? (d.t === "angle" ? trimNum((d.val.v * 180) / Math.PI, 4) : trimNum(d.val.v * u, 4)))}" />${d.t === "angle" ? "°" : ""}</label> <button class="icon" data-s3ddel="${d.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></li>`).join("");
     // The status line says what a click does now (FR-SK-080).
     const ms = document.getElementById("mc-status");
     if (ms) ms.textContent = !s3.tool ? t("Select: click a point or line, Ctrl+click adds; drag a point to move it.")
@@ -10276,7 +10277,7 @@ export class ModelController {
     return { title: t("3D Sketch"), body: group(t("Tools"), tools)
       + group(t("Points"), pts)
       + group(t("Lines and splines"), segs || `<p class="pm-help muted">${esc(t("None yet."))}</p>`)
-      + group(t("Relations"), (s3.sel.length ? `<p class="pm-help" data-s3picked>${esc(t("Selected"))}: <span translate="no">${esc(s3.sel.map(entName).join(", "))}</span></p>` : "") + (add ? `<div class="pm-rels">${add}</div>` : `<p class="pm-help muted">${esc(t("Select a line, two lines, two points, a point and a line, or a spline and the segment it joins (in the view or above; Ctrl+click adds) to add relations and dimensions. Select a corner point to round it with a fillet."))}</p>`) + (rels ? `<ul class="pm-dims">${rels}</ul>` : ""))
+      + group(t("Relations"), (s3.sel.length ? `<p class="pm-help" data-s3picked>${esc(t("Selected"))}: <span translate="no">${esc(s3.sel.map(entName).join(", "))}</span></p>` : "") + (add ? `<div class="pm-rels">${add}</div>` : `<p class="pm-help muted">${esc(t("Select a line, two lines, two points, a point and a line, or a spline and the segment it joins (in the view or above; Ctrl+click adds) to add relations and dimensions. Select one point to put it on a standard plane or give its distance from one; select a corner point to round it with a fillet."))}</p>`) + (rels ? `<ul class="pm-dims">${rels}</ul>` : ""))
       + group(t("Dimensions"), dims ? `<ul class="pm-dims">${dims}</ul>` : `<p class="pm-help muted">${esc(t("None yet."))}</p>`)
       + `<p class="pm-help" role="status" data-s3status>${esc(status)}</p>` };
   }
@@ -10317,6 +10318,12 @@ export class ModelController {
           return;
         }
         if (k === "midpoint" || k === "onCurve:onLine") { f.rels.push({ id: uid("r"), t: k === "midpoint" ? "midpoint" : "onLine", e: [points[0], lines[0]] }); return; }
+        if (k.startsWith("dim:plane:")) {
+          const plane = k.slice(10) as "XY" | "YZ" | "ZX", c = Math.abs(f.pts.find(p => p.id === points[0])!.p[{ XY: 2, YZ: 0, ZX: 1 }[plane]]);
+          if (c < 1e-6) { toast(t("The point lies on {p}: use On {p} instead.", { p: plane }), true); return; }
+          f.dims.push({ id: uid("d"), t: "planeDist", e: [points[0]], plane, val: { v: Math.round(c * 1000) / 1000 } });
+          return;
+        }
         if (k.startsWith("dim:")) {
           const P = (id: string) => f.pts.find(p => p.id === id)!.p;
           const sg = f.segs.find(g => g.id === lines[0]);
@@ -10325,7 +10332,7 @@ export class ModelController {
           return;
         }
         const [tp, plane] = k.split(":");
-        const r: Sk3Rel = { id: uid("r"), t: tp as Sk3Rel["t"], e: tp === "coincident" ? points.slice(0, 2) : tp === "tangent" ? s3.sel.filter(id => f.segs.some(g => g.id === id)).slice(0, 2) : lines.slice(0, tp.startsWith("along") || tp === "parallelPlane" ? 1 : 2) };
+        const r: Sk3Rel = { id: uid("r"), t: tp as Sk3Rel["t"], e: tp === "coincident" ? points.slice(0, 2) : tp === "tangent" ? s3.sel.filter(id => f.segs.some(g => g.id === id)).slice(0, 2) : tp === "onPlane" ? points.slice(0, 1) : lines.slice(0, tp.startsWith("along") || tp === "parallelPlane" ? 1 : 2) };
         if (plane) r.plane = plane as Sk3Rel["plane"];
         f.rels.push(r);
       });
