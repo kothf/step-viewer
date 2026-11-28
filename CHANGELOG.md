@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.766.0] - 2026-11-28
+## [1.767.0] - 2026-11-28
 
 ### Fixed
 
@@ -17,6 +17,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Vault: after a check-in, check-out, state change or data card, the side panel stays on the Vault tab instead of jumping to Features.
 - Vault: Update on a drawing whose working copy already uses the latest part says so and asks for a check-in, instead of "up to date" while the drawing still shows as behind. Nothing is reopened when nothing changed.
 - Vault panel: a long vault name no longer runs under the Explorer button; it ends with … and shows whole in its tooltip.
+
+## [1.766.0] - 2026-11-28
+
+### Added
+
+- Assemblies with part files: the bar about a missing, replaced or unreadable part file has **Find file…** (point the component at a file elsewhere in the assembly's folder; a file from outside the folder is copied in, and a file holding another part is taken only after you confirm) and **Suppress** (puts those components aside; a part whose components are all suppressed is no longer asked for).
+
+### Fixed
+
+- A part still open in its own tab saves into the file the assembly wrote for it, without asking where, once the assembly has been saved into its folder; the tab shows that file's name.
 
 ## [1.765.0] - 2026-11-28
 
@@ -5084,7 +5094,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.766.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.767.0...HEAD
+[1.767.0]: https://github.com/kothf/step-viewer/compare/v1.766.0...v1.767.0
 [1.766.0]: https://github.com/kothf/step-viewer/compare/v1.765.0...v1.766.0
 [1.765.0]: https://github.com/kothf/step-viewer/compare/v1.764.0...v1.765.0
 [1.764.0]: https://github.com/kothf/step-viewer/compare/v1.763.0...v1.764.0

@@ -253,6 +253,7 @@ const modeller = new ModelController({
 const asm = new AsmController({
   viewer,
   saved: (name, bytes) => void recentAdd([{ name, data: bytes }]),
+  partFiles: files => tiePartTabs(files),
   vp: vpEl,
   show: (parts, tree, first) => showModelled(parts, tree, tree.name, first),
   partAt: (x, y) => {
@@ -1179,6 +1180,23 @@ const boardsShown = () => (asm.active && $("#app").classList.contains("asm") ? s
  * second copy, as in other CAD apps. A clean tab whose document differs from the file takes the file's version in
  * place; a tab with unsaved changes keeps them. False = not open.
  */
+/**
+ * The assembly wrote its part files: a parked tab of one of those parts that has no file of its own (or the same
+ * file name) saves to that file from now on, and is clean when it holds what was written.
+ */
+function tiePartTabs(files: { id: string; json: string; name: string; handle: FileSystemFileHandle }[]) {
+  for (const tab of docs?.tabs ?? []) {
+    if (tab.kind !== "part" || !tab.state) continue;
+    const st = tab.state as PartTab, f = files.find(x => x.id === st.store.doc.id);
+    if (!f || (st.handle && st.fileName.toLowerCase() !== f.name.toLowerCase())) continue;
+    st.handle = f.handle;
+    st.fileName = f.name;
+    tab.label = f.name;
+    if (toJson(st.store.doc) === f.json) st.store.markSavedQuiet();
+  }
+  docs?.render();
+}
+
 async function toOpenTab(f: File, kind: "part" | "asm"): Promise<boolean> {
   if (!docs) return false;
   const name = f.name.toLowerCase();
@@ -4165,4 +4183,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, sim, simResults: resultsOf, thermal, pcbThermal, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setArcMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { docs: () => docs, tutorial, surfAna, sim, simResults: resultsOf, thermal, pcbThermal, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setArcMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });
