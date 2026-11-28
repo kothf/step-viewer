@@ -388,8 +388,10 @@ export class ModelController {
       bar.setAttribute("role", "status");
       document.getElementById("tab-features")!.prepend(bar);
     }
-    bar.innerHTML = `<span>${esc(t("Read-only: check out to edit"))}</span><button class="btn small primary" data-a="co">${esc(t("Check out"))}</button>`;
-    bar.querySelector("button")!.addEventListener("click", () => { void this.vault?.checkOut(); });
+    // Check out only where it would work: not in a released state, nor on a file someone else holds.
+    const can = this.vault!.canCheckOut ?? true;
+    bar.innerHTML = `<span>${esc(this.vault!.why || t("Read-only: check out to edit"))}</span>${can ? `<button class="btn small primary" data-a="co">${esc(t("Check out"))}</button>` : ""}`;
+    bar.querySelector("button")?.addEventListener("click", () => { void this.vault?.checkOut(); });
   }
 
   /** The bytes of the open part, as saved (for the vault); `results` false leaves its simulation results out (Pack and Go puts them beside). */
