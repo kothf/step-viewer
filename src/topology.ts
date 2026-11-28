@@ -28,6 +28,8 @@ export interface FaceInfo {
   surface?: "plane" | "cylinder" | "cone" | "sphere" | "torus" | "freeform";
   /** Cone half angle (rad), from the B-rep. */
   coneAngle?: number;
+  /** Cone axis (a point on it, unit direction) and reference radius, from the B-rep (mates take its axis). */
+  cone?: { o: V3; a: V3; r: number };
   /** Torus major and minor radius, from the B-rep. */
   torus?: [number, number];
   /** Smallest and largest principal curvature (1/mm) at sampled points, from the B-rep. */

@@ -66,6 +66,7 @@ function patchFace(f: FaceInfo, fp: NonNullable<PartPatch["faces"]>[number] & ob
     f.radius = fp.radius;
   } else if (fp.type === "cone" || fp.type === "torus") {
     f.coneAngle = fp.angle;
+    if (fp.type === "cone" && fp.axis && fp.center) f.cone = { o: fp.center, a: fp.axis, r: fp.radius ?? 0 };
     f.torus = fp.type === "torus" && fp.radius && fp.minor ? [fp.radius, fp.minor] : undefined;
   }
   if (fp.kMin !== undefined && fp.kMax !== undefined) f.curvature = [fp.kMin, fp.kMax];

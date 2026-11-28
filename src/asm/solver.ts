@@ -7,8 +7,12 @@ import { compose, invert, rotation, translation, applyPoint, applyDir } from "./
 import type { AsmDoc, Mate, MateRef, MateType, Tf } from "./types";
 import type { V3 } from "../model/types";
 
-/** Mate geometry of a face in its part's coordinates: a plane (point, outward normal) or an axis (point, direction, radius). */
-export type Geo = { k: "plane"; p: V3; n: V3 } | { k: "axis"; p: V3; d: V3; r: number };
+/**
+ * Mate geometry of a reference in its part's coordinates: a plane (point, outward normal), an axis (point, direction,
+ * radius; a straight edge has radius 0, a circular edge sets `c` and its point is the centre) or a point (a vertex, or
+ * a sphere's centre with its radius).
+ */
+export type Geo = { k: "plane"; p: V3; n: V3 } | { k: "axis"; p: V3; d: V3; r: number; c?: boolean } | { k: "point"; p: V3; r: number };
 
 export interface SolveResult {
   /** Every component's transform after the solve (unchanged when it failed). */
@@ -33,16 +37,37 @@ const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
 /** The geometry moved by a transform. */
 export function placeGeo(g: Geo, t: Tf): Geo {
-  return g.k === "plane" ? { k: "plane", p: applyPoint(t, g.p), n: applyDir(t, g.n) } : { k: "axis", p: applyPoint(t, g.p), d: applyDir(t, g.d), r: g.r };
+  if (g.k === "plane") return { k: "plane", p: applyPoint(t, g.p), n: applyDir(t, g.n) };
+  if (g.k === "point") return { k: "point", p: applyPoint(t, g.p), r: g.r };
+  return { k: "axis", p: applyPoint(t, g.p), d: applyDir(t, g.d), r: g.r, ...(g.c ? { c: true } : {}) };
 }
 
-const dirOf = (g: Geo) => (g.k === "plane" ? g.n : g.d);
+const Z: V3 = [0, 0, 1];
+/** A reference's direction (a point has none: the Z axis stands in, and no mate with a point uses it). */
+export const dirOf = (g: Geo): V3 => (g.k === "plane" ? g.n : g.k === "axis" ? g.d : Z);
 
 /** The mate types that fit two references, the likely one first (quick mate, FR-MATE-006). */
-export function mateTypes(a: Geo["k"], b: Geo["k"]): MateType[] {
+export function mateTypes(a: Geo["k"], b: Geo["k"], ra = 0, rb = 0): MateType[] {
+  // A point (vertex or sphere centre) has a place but no direction.
+  if (a === "point" || b === "point") {
+    const ball = (a === "point" && ra > 0) || (b === "point" && rb > 0);
+    const other = a === "point" ? b : a;
+    return [...(ball && other !== "point" ? ["tangent" as const] : []), "coincident", ...(ball && other === "point" ? ["concentric" as const, "tangent" as const] : other === "axis" ? ["concentric" as const] : []), "distance", "limitdist", "lock"];
+  }
   if (a === "plane" && b === "plane") return ["coincident", "parallel", "perpendicular", "distance", "angle", "lock"];
   if (a === "axis" && b === "axis") return ["concentric", "coincident", "parallel", "perpendicular", "tangent", "distance", "angle", "lock"];
   return ["tangent", "coincident", "parallel", "perpendicular", "distance", "lock"];
+}
+
+/**
+ * The mate types for two references' geometry, the likely one first: as `mateTypes`, but an edge (a straight one, or
+ * a circle that lies in its plane) against a plane takes Coincident first, since it has no surface to be tangent with.
+ */
+export function typesFor(ga: Geo, gb: Geo): MateType[] {
+  const list = mateTypes(ga.k, gb.k, ga.k === "point" ? ga.r : 0, gb.k === "point" ? gb.r : 0);
+  const edge = (g: Geo) => g.k === "axis" && (g.r === 0 || !!g.c);
+  if ((ga.k === "plane" && edge(gb)) || (gb.k === "plane" && edge(ga))) return ["coincident", ...list.filter(k => k !== "coincident" && k !== "tangent")];
+  return list;
 }
 
 /** Angle (rad) by which the rotation part of `t` · `t0`⁻¹ turns about the unit direction d. */
@@ -61,6 +86,50 @@ const I3x4: Tf = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
 function relTurn(t0: [Tf, Tf], tfa: Tf, tfb: Tf, d: V3): number {
   const ia = invert(tfa), delta = compose(compose(ia, tfb), invert(compose(invert(t0[0]), t0[1])));
   return turnAbout(delta, I3x4, applyDir(ia, d));
+}
+
+/**
+ * Mates with a point (vertex, sphere centre): coincident puts the point on the other reference (a circular edge: on
+ * its centre), concentric puts a sphere's centre on an axis or another centre, tangent keeps a sphere touching, and
+ * distance measures from the point (to a plane signed along its normal).
+ */
+function pointResiduals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: Tf): number[] {
+  const out: number[] = [];
+  const offs = (v: V3) => out.push(v[0], v[1], v[2]);
+  const pt = (ga.k === "point" ? ga : gb) as Geo & { k: "point" }, o = ga.k === "point" ? gb : ga;
+  const sg = m.flip ? -1 : 1;
+  // How far the point is from the other reference: signed over a plane, else a length.
+  const gap = (): number => {
+    if (o.k === "plane") return dot(o.n, sub(pt.p, o.p));
+    if (o.k === "axis") return len(cross(sub(pt.p, o.p), o.d));
+    return len(sub(pt.p, o.p));
+  };
+  switch (m.type) {
+    case "coincident":
+    case "concentric":
+      if (o.k === "plane") out.push(dot(o.n, sub(pt.p, o.p)));
+      else if (o.k === "axis" && !(o.c && m.type === "coincident")) offs(cross(sub(pt.p, o.p), o.d));
+      else offs(sub(pt.p, o.p));
+      break;
+    case "tangent": {
+      const r = pt.r + (o.k === "plane" ? 0 : o.r);
+      out.push(o.k === "plane" ? Math.abs(gap()) - r : gap() - r);
+      break;
+    }
+    case "distance": out.push(o.k === "plane" ? sg * gap() - (m.value ?? 0) : gap() - (m.value ?? 0)); break;
+    case "limitdist": {
+      const lo = m.min ?? 0, hi = Math.max(lo, m.max ?? lo), v = o.k === "plane" ? sg * gap() : gap();
+      out.push(v < lo ? v - lo : v > hi ? v - hi : 0);
+      break;
+    }
+    case "lock": {
+      if (!tfa || !tfb || !m.rel) break;
+      const r = compose(invert(tfa), tfb);
+      for (let i = 0; i < 12; i++) out.push((r[i] - m.rel[i]) * (i % 4 === 3 ? 1 : L));
+      break;
+    }
+  }
+  return out;
 }
 
 /** The mate's residuals (lengths in mm, directions scaled by `L`), for world geometry. */
@@ -87,11 +156,14 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
   // and the solver's damping, set from the steepest row, then swamped gentle motions such as a screw's turn (exam #75).
   const offs = (v: V3) => out.push(v[0], v[1], v[2]);
   const axisOff = (a: Geo & { k: "axis" }, p: V3) => len(cross(sub(p, a.p), a.d));
+  if (ga.k === "point" || gb.k === "point") return pointResiduals(m, ga, gb, L, tfa, tfb);
+  // A circular edge against a plane: the circle lies in the plane (its axis along the normal, its centre on it).
+  const circ = (pl: Geo & { k: "plane" }, ax: Geo & { k: "axis" }) => { const c = cross(pl.n, ax.d); out.push(c[0] * L, c[1] * L, c[2] * L); };
   switch (m.type) {
     case "coincident":
       if (ga.k === "plane" && gb.k === "plane") { dirs(sub(da, scale(db0, s))); out.push(dot(da, sub(gb.p, ga.p))); }
       else if (ga.k === "axis" && gb.k === "axis") { parallel(); offs(cross(sub(gb.p, ga.p), ga.d)); }
-      else { const pl = ga.k === "plane" ? ga : gb as Geo & { k: "plane" }, ax = (ga.k === "axis" ? ga : gb) as Geo & { k: "axis" }; out.push(dot(pl.n, ax.d) * L, dot(pl.n, sub(ax.p, pl.p))); }
+      else { const pl = ga.k === "plane" ? ga : gb as Geo & { k: "plane" }, ax = (ga.k === "axis" ? ga : gb) as Geo & { k: "axis" }; if (ax.c) circ(pl, ax); else out.push(dot(pl.n, ax.d) * L); out.push(dot(pl.n, sub(ax.p, pl.p))); }
       break;
     case "concentric":
       parallel(); offs(cross(sub(gb.p, ga.p), da));
@@ -559,6 +631,14 @@ function rank(vs: number[][]): number {
 export function mateDefaults(type: MateType, ga: Geo, gb: Geo): Partial<Mate> {
   const da = dirOf(ga), db = dirOf(gb);
   const out: Partial<Mate> = {};
+  if (ga.k === "point" || gb.k === "point") {
+    const pt = (ga.k === "point" ? ga : gb) as Geo & { k: "point" }, o = ga.k === "point" ? gb : ga;
+    if (type === "distance") {
+      if (o.k === "plane") { const d = dot(o.n, sub(pt.p, o.p)); out.value = Math.abs(d); out.flip = d < 0; }
+      else out.value = o.k === "axis" ? len(cross(sub(pt.p, o.p), o.d)) : len(sub(pt.p, o.p));
+    }
+    return out;
+  }
   if (type === "coincident" || type === "parallel" || type === "distance") out.align = dot(da, db) >= 0 ? "aligned" : "anti";
   if (type === "distance") {
     if (ga.k === "plane" && gb.k === "plane") { const d = dot(da, sub(gb.p, ga.p)); out.value = Math.abs(d); out.flip = d < 0; }

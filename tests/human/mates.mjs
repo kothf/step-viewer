@@ -42,7 +42,12 @@ export const faceSpot = (pg, i, test) => pg.evaluate(([i, test]) => {
       const h = v.pickMeshes({ x, y });
       if (!h || h.object.userData.partIdx !== i) continue;
       const part = v.parts[i], f = part.data.faces[part.triFace[h.faceIndex]];
-      if (f && fn(f)) return [r.left + ((x + 1) / 2) * r.width, r.top + ((1 - y) / 2) * r.height];
+      if (!f || !fn(f)) continue;
+      // Well inside the face, as a person clicks it: no edge within 8 px (edges are mate references too).
+      const sx = ((x + 1) / 2) * r.width, sy = ((1 - y) / 2) * r.height;
+      const s = window.__sv.snapper.pick(sx, sy, true);
+      if (s?.edge && !s.section && s.px <= 8) continue;
+      return [r.left + sx, r.top + sy];
     }
   return null;
 }, [i, test]);

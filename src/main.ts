@@ -263,6 +263,21 @@ const asm = new AsmController({
     const f = faceUnder(x - r.left, y - r.top);
     return f ? { idx: viewer.parts.indexOf(f.part), face: f.part.data.faces.indexOf(f.face), point: f.point.toArray() as [number, number, number] } : null;
   },
+  edgeAt: (x, y) => {
+    // Mate references on edges and vertices (FR-MATE-001): a snap close to an edge, its end or its centre.
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    const s = snapper.pick(x - r.left, y - r.top, true);
+    // On the curve itself (not its centre: a click in the middle of a disc means the disc), within 4 pixels (an edge pick should not steal a click meant for a small face).
+    if (!s?.edge || s.section || s.px > 4 || !s.part || s.kind === "circleCenter") return null;
+    const idx = viewer.parts.indexOf(s.part), edge = s.part.data.edges.indexOf(s.edge);
+    if (idx < 0 || edge < 0) return null;
+    // A vertex: the snap says so, or the pointer is within a few pixels of an end of the edge it found.
+    const e = s.edge, part = s.part;
+    const px = (p: [number, number, number]) => { const w = viewer.toWorld(part, p).project(viewer.camera); return Math.hypot(r.left + ((w.x + 1) / 2) * r.width - x, r.top + ((1 - w.y) / 2) * r.height - y); };
+    const d0 = px(e.start), d1 = e.closed ? Infinity : px(e.end);
+    if (s.kind === "vertex" || Math.min(d0, d1) <= 7) return { idx, edge, end: d0 <= d1 ? 0 : 1 };
+    return { idx, edge };
+  },
   facesAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();
     return snapper.facesUnder(x - r.left, y - r.top).map(s => ({ idx: viewer.parts.indexOf(s.part!), face: s.part!.data.faces.indexOf(s.face!) }));

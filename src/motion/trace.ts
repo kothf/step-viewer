@@ -3,7 +3,7 @@
 // speed, acceleration and the component's angle and angular speed are plotted under the timeline and saved as CSV. Pure functions: the manager supplies the frames.
 import { applyPoint, compose, invert } from "../asm/math";
 import type { Tf } from "../asm/types";
-import { placeGeo, type Geo } from "../asm/solver";
+import { dirOf, placeGeo, type Geo } from "../asm/solver";
 import type { V3 } from "../model/types";
 
 /** What a trace plots against time. */
@@ -127,9 +127,13 @@ export function mateMeasures(frames: Record<string, Tf>[], a: string, b: string,
     const ta = f[a], tb = f[b];
     if (!ta || !tb) { if (raw.length) raw.push(raw[raw.length - 1]); continue; }
     const A = placeGeo(ga, ta), B = placeGeo(gb, tb);
-    const u = A.k === "plane" ? A.n : A.d, v = B.k === "plane" ? B.n : B.d;
+    const u = dirOf(A), v = dirOf(B);
     let d: number;
-    if (A.k === "plane" && B.k === "plane") d = vdot(A.n, vsub(B.p, A.p));
+    if (A.k === "point" || B.k === "point") {
+      // From a point: signed over a plane, else the length to the line or the other point.
+      const P = (A.k === "point" ? A : B), O = A.k === "point" ? B : A;
+      d = O.k === "plane" ? vdot(O.n, vsub(P.p, O.p)) : O.k === "axis" ? vlen(vcross(vsub(P.p, O.p), O.d)) : vlen(vsub(P.p, O.p));
+    } else if (A.k === "plane" && B.k === "plane") d = vdot(A.n, vsub(B.p, A.p));
     else if (A.k === "axis" && B.k === "axis") {
       const c = vcross(A.d, B.d), w = vsub(B.p, A.p);
       d = vlen(c) < 1e-9 ? vlen(vcross(w, A.d)) : Math.abs(vdot(w, c)) / vlen(c);

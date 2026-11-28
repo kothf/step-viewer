@@ -3,7 +3,7 @@
 // the seeds and the direction reference; they are driven (fixed) and are not mate targets.
 import { compose, invert, rotation, translation } from "./math";
 import type { AsmDoc, CompPattern, Component, ExplodeView, Mate, Tf } from "./types";
-import type { Geo } from "./solver";
+import { dirOf, type Geo } from "./solver";
 import type { V3 } from "../model/types";
 
 /** The transforms of instances 1…count−1 of a pattern, applied after the seed's own transform. */
@@ -11,7 +11,7 @@ export function patternSteps(p: CompPattern, g: Geo): Tf[] {
   const out: Tf[] = [];
   const n = Math.max(1, Math.floor(p.count));
   const s = p.flip ? -1 : 1;
-  const d = g.k === "plane" ? g.n : g.d;
+  const d = dirOf(g);
   if (p.kind === "linear") {
     for (let k = 1; k < n; k++) out.push(translation([d[0] * p.spacing * k * s, d[1] * p.spacing * k * s, d[2] * p.spacing * k * s]));
   } else {

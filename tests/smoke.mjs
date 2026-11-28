@@ -8887,6 +8887,9 @@ try {
     await mp.click('#asm-tree [data-a="vmclear"]');
     const vmBack = await mp.evaluate(() => document.querySelectorAll("#asm-tree .ft-mate").length);
     check(/^Mates of /.test(vmates.head ?? "") && vmates.rows === vmates.all && vmBack === vmates.all, `asm 1.771: View mates lists the component's mates; ✕ shows all (${JSON.stringify({ vmates, vmBack })})`);
+    // 1.775: mate references beside faces: the learnt references of a part hold its edges, vertices and origin.
+    const refs = await mp.evaluate(() => { const a = window.__sv.asm, c = a.doc.components[1], m = a.geo.get(c.part), keys = [...m.keys()]; return { edges: keys.filter(k => k.startsWith("@e:")).length, verts: keys.filter(k => k.startsWith("@v:")).length, xy: a.localGeo({ comp: c.id, face: "@o:XY" })?.k, o: a.localGeo({ comp: c.id, face: "@o:O" })?.k }; });
+    check(refs.edges > 0 && refs.xy === "plane" && refs.o === "point", `asm 1.775: a component's edges and origin are mate references (${JSON.stringify(refs)})`);
     // Delete the coincident mate from the tree: the pin can slide along the axis again.
     await mp.hover("#asm-tree .ft-mate >> nth=1");
     await mp.click('#asm-tree .ft-mate >> nth=1 >> [data-a="del"]');

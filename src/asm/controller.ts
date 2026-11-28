@@ -26,7 +26,8 @@ import { activateConfig, addConfig, deleteConfig, partUsed } from "./configs";
 import { activate as activatePartConfig } from "../model/configs";
 import { refreshExprs } from "../model/params";
 import { ctxEdgeRefs, ctxRefs, findCtxEdge, moveEdgeGeo, syncCtx, type CtxComp, type CtxEdgeSeen, type PartContext } from "../model/context";
-import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
+import { partRefs, refKind, edgeRef, vertexRef, originOf, ORIGIN_REFS, type OriginRef } from "./refGeo";
+import { dirOf, mateDefaults, typesFor, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { fileIn, fsaDir, hasRefs, resolveRefs, findMoved, writeRefs, type RefBase, type ResolveResult } from "./refs";
 import { asmFolder, folderAccess, foldersOk, pickFolder, rememberAsmFolder } from "./folders";
@@ -58,6 +59,8 @@ export interface AsmHost {
   show(parts: PartData[], tree: TreeNode, first: boolean): void;
   /** The component part index under a screen point, if any. */
   partAt(x: number, y: number): { idx: number; face: number; point: V3 } | null;
+  /** The edge (or, with `end`, the vertex at its start 0 / end 1) close to a screen point, for mate references. */
+  edgeAt?(x: number, y: number): { idx: number; edge: number; end?: 0 | 1 } | null;
   /** Every component face along the ray under a screen point, front to back (Select Other). */
   facesAt?(x: number, y: number): { idx: number; face: number }[];
   setDoc(label: string): void;
@@ -86,10 +89,12 @@ const ADV_TYPES: MateType[] = ["symmetric", "width", "limitdist", "limitangle"];
 const MECH_TYPES: MateType[] = ["hinge", "slot", "gear", "screw"];
 const MATE_ICON: Record<MateType, string> = { coincident: "⊼", parallel: "∥", perpendicular: "⊥", tangent: "◠", concentric: "◎", lock: "🔒", distance: "↔", angle: "∠", symmetric: "⧓", width: "⇹", limitdist: "⟷", limitangle: "⦣", hinge: "⌒", slot: "⊂", gear: "⚙", screw: "⫰" };
 /** The advanced mate types that fit two references (FR-MATE-004). */
-const mechFits = (a: Geo["k"], b: Geo["k"]): MateType[] => (a === "axis" && b === "axis" ? ["hinge", "gear", "screw"] : a === "plane" && b === "axis" ? ["slot"] : []);
+const mechFits = (a: Geo["k"], b: Geo["k"]): MateType[] => (a === "point" || b === "point" ? [] : a === "axis" && b === "axis" ? ["hinge", "gear", "screw"] : a === "plane" && b === "axis" ? ["slot"] : []);
 /** Mates that take a third (and fourth) reference after the first two. */
+/** Names of a component's origin references in the mate panel. */
+const ORIGIN_LABEL: Record<OriginRef, string> = { XY: "Origin plane XY", YZ: "Origin plane YZ", ZX: "Origin plane ZX", X: "Origin axis X", Y: "Origin axis Y", Z: "Origin axis Z", O: "Origin point" };
 const MORE_REFS: ReadonlySet<MateType> = new Set(["symmetric", "width", "hinge", "slot"]);
-const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => [...(a === b ? ["symmetric" as const] : []), ...(a === "plane" ? ["width" as const] : []), "limitdist", ...(a === b ? ["limitangle" as const] : [])];
+const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => a === "point" || b === "point" ? [] : [...(a === b ? ["symmetric" as const] : []), ...(a === "plane" ? ["width" as const] : []), "limitdist", ...(a === b ? ["limitangle" as const] : [])];
 /** The mate being made or edited in the Mate panel. */
 interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; alignSet?: boolean; typeSet?: boolean; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; lockRot?: boolean; problem?: string; added?: string; same?: string }
 
@@ -1050,7 +1055,7 @@ export class AsmController {
     const notHole = { err: t("Click the cylindrical face of a hole.") };
     if (!c || !face) return notHole;
     const g = this.worldGeo({ comp: id, face });
-    if (g?.k !== "axis") return notHole;
+    if (g?.k !== "axis" || this.host.viewer.parts[idx]?.data.faces[faceIdx]?.type !== "cylinder") return notHole;
     // How far the cylinder runs along its axis, from its triangles.
     const data = this.host.viewer.parts[idx]?.data, fi = data?.faces[faceIdx];
     if (!data || !fi) return notHole;
@@ -1073,7 +1078,7 @@ export class AsmController {
       // countersink or chamfer (up to the hole's diameter), the nearest one.
       let seat: string | null = null, ahead = Infinity;
       for (const [name, pg] of this.geo.get(c.part) ?? []) {
-        if (pg.k !== "plane") continue;
+        if (pg.k !== "plane" || refKind(name) !== "face") continue;
         const w = placeGeo(pg, c.tf) as Geo & { k: "plane" };
         if (w.n[0] * out[0] + w.n[1] * out[1] + w.n[2] * out[2] < 0.999) continue;
         const off = (w.p[0] - at[0]) * out[0] + (w.p[1] - at[1]) * out[1] + (w.p[2] - at[2]) * out[2];
@@ -1571,7 +1576,7 @@ export class AsmController {
       if (p.seeds.length && !p.dir) p.focus = "dir";
     } else {
       const g = face && this.geo.get(c.part)?.get(face);
-      if (!g || (p.kind === "circular" && g.k !== "axis")) { toast(p.kind === "circular" ? t("Pick a cylindrical face for the axis.") : t("Pick a flat or cylindrical face."), true); return; }
+      if (!g || g.k === "point" || (p.kind === "circular" && g.k !== "axis")) { toast(p.kind === "circular" ? t("Pick a cylindrical face for the axis.") : t("Pick a flat or cylindrical face."), true); return; }
       p.dir = { comp: id, face: face! };
       if (!p.seeds.length) p.focus = "seeds";
     }
@@ -1829,12 +1834,8 @@ export class AsmController {
       const again = seen.has(c.part);
       seen.add(c.part);
       const inv = invert(c.tf), m = again ? this.geo.get(c.part) ?? new Map<string, Geo>() : new Map<string, Geo>();
-      p.data.faces.forEach((f, j) => {
-        const name = p.faces[j];
-        if (!name || (again && m.has(name))) return;
-        if (f.type === "plane" && f.normal) m.set(name, { k: "plane", p: applyPoint(inv, f.centroid), n: unit(applyDir(inv, f.normal)) });
-        else if (f.type === "cylinder" && f.axis) m.set(name, { k: "axis", p: applyPoint(inv, f.center), d: unit(applyDir(inv, f.axis)), r: f.radius ?? 0 });
-      });
+      // Faces, edges, vertices and the part's origin (FR-MATE-001), in part coordinates.
+      for (const [name, g] of partRefs(p.data, p.faces, q => applyPoint(inv, q), q => applyDir(inv, q))) if (!(again && m.has(name))) m.set(name, g);
       if (!again && edgeParts.has(c.part)) {
         const list: CtxEdgeSeen[] = [];
         for (const e of p.data.edges) {
@@ -1876,7 +1877,16 @@ export class AsmController {
     }
     if (!moved.size) return;
     const comps = new Set(doc.components.filter(x => x.part === part).map(x => x.id));
-    for (const mt of doc.mates ?? []) for (const r of [mt.a, mt.b, mt.c, mt.d]) if (r && comps.has(r.comp) && moved.has(r.face)) r.face = moved.get(r.face)!;
+    for (const mt of doc.mates ?? []) for (const r of [mt.a, mt.b, mt.c, mt.d]) {
+      if (!r || !comps.has(r.comp)) continue;
+      if (moved.has(r.face)) r.face = moved.get(r.face)!;
+      // Edges and vertices are named by their faces: follow those too.
+      const kind = refKind(r.face);
+      if (kind === "edge" || kind === "vertex") {
+        const names = r.face.slice(3).split("|").map(n => moved.get(n) ?? n);
+        r.face = kind === "edge" && names.length === 2 ? edgeRef(names[0], names[1]) : vertexRef(names);
+      }
+    }
   }
 
   private size() { return Math.max(10, this.host.viewer.parts.length ? this.host.viewer.modelSize : 100); }
@@ -1892,7 +1902,7 @@ export class AsmController {
         for (const x of doc.components) if (x.id.startsWith(`${c.id}/`) && !start[x.id]) start[x.id] = compose(move, x.tf);
       }
     }
-    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, faces: part => this.geo.get(part)?.values() ?? [], centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size(), dof });
+    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, faces: part => [...(this.geo.get(part) ?? [])].filter(([k]) => refKind(k) === "face").map(([, g]) => g), centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size(), dof });
   }
 
   /** Solves a changed document's mates into its transforms; when they conflict nothing moves. */
@@ -2102,7 +2112,7 @@ export class AsmController {
       else {
         const ga = this.worldGeo(m.a), gb = this.worldGeo(m.b), ca = this.anyComp(m.a.comp);
         if (ga && gb && ca) {
-          const da = ga.k === "plane" ? ga.n : ga.d, db0 = gb.k === "plane" ? gb.n : gb.d, sg = m.flip ? -1 : 1;
+          const da = dirOf(ga), db0 = dirOf(gb), sg = m.flip ? -1 : 1;
           const c = new THREE.Vector3(...da).cross(new THREE.Vector3(...db0).multiplyScalar(sg));
           if (c.length() > 1e-6) { c.normalize(); mate.about = applyDir(invert(ca.tf), [c.x, c.y, c.z]); }
         }
@@ -2214,15 +2224,19 @@ export class AsmController {
       hit = faces[i];
       toast(t("Face {i} of {n} under the cursor (Alt+click for the next)", { i: i + 1, n: faces.length }));
     } else this.mateOther = null;
-    if (!hit) return;
+    // An edge or a vertex close to the pointer comes before the face under it (FR-MATE-001).
+    const eh = other ? null : this.host.edgeAt?.(x, y) ?? null;
+    const edgeName = eh ? this.edgeRefName(eh) : null;
+    if (!hit && !edgeName) return;
     m.added = undefined;
     this.mateAt = [x, y];
-    const id = this.shownIds[hit.idx], face = this.faceNames[hit.idx]?.[hit.face];
+    const idx = edgeName ? eh!.idx : hit!.idx;
+    const id = this.shownIds[idx], face = edgeName ?? this.faceNames[idx]?.[hit!.face];
     // A flexible sub-assembly's own components can be mated (FR-ASM-006); a rigid one cannot.
     const c = this.comp(id) ?? (this.flexChild(id) ? this.anyComp(id) : null);
     if (!c && this.comp(topOf(id))) { toast(t("Mate to faces of part components, or make the sub-assembly flexible."), true); return; }
     if (!c || !face) return;
-    if (!this.geo.get(c.part)?.get(face)) { toast(t("Pick a flat or cylindrical face."), true); return; }
+    if (!this.geo.get(c.part)?.get(face)) { toast(t("Pick a flat, cylindrical, conical or spherical face, a straight or round edge, or a vertex."), true); return; }
     const ref = { comp: id, face };
     // Symmetric and width take more references after the first two.
     if (m.a && m.b && m.type && MORE_REFS.has(m.type)) {
@@ -2247,12 +2261,60 @@ export class AsmController {
     m.type = undefined;
     if (m.a && m.b) {
       const ga = this.worldGeo(m.a)!, gb = this.worldGeo(m.b)!;
-      m.type = mateTypes(ga.k, gb.k)[0];
+      m.type = typesFor(ga, gb)[0];
       Object.assign(m, { align: undefined, alignSet: undefined, typeSet: undefined, value: undefined, flip: undefined }, mateDefaults(m.type, ga, gb));
       if (m.type === "coincident" && ga.k === "plane" && gb.k === "plane") m.align = "anti";
     }
     this.drawPicks();
     this.previewMate();
+  }
+
+  /** Replaces the last mate pick with its component's origin plane, axis or point (FR-MATE-001). */
+  private pickOrigin(k: OriginRef) {
+    const m = this.mating;
+    const last = m?.b ? "b" : m?.a ? "a" : null;
+    if (!m || !last) return;
+    m[last] = { comp: m[last]!.comp, face: `@o:${k}` };
+    m.c = m.d = undefined;
+    m.type = undefined;
+    if (m.a && m.b) {
+      const ga = this.worldGeo(m.a), gb = this.worldGeo(m.b);
+      if (ga && gb) {
+        m.type = typesFor(ga, gb)[0];
+        Object.assign(m, { align: undefined, alignSet: undefined, typeSet: undefined, value: undefined, flip: undefined }, mateDefaults(m.type, ga, gb));
+        if (m.type === "coincident" && ga.k === "plane" && gb.k === "plane") m.align = "anti";
+      }
+    }
+    this.drawPicks();
+    this.previewMate();
+  }
+
+  /** Whether a part's named face is a cone (its mate geometry is an axis, as a cylinder's). */
+  private isCone(part: string, face: string): boolean {
+    const i = this.shownIds.findIndex(id => this.anyComp(id)?.part === part), j = this.faceNames[i]?.indexOf(face) ?? -1;
+    return !!this.host.viewer.parts[i]?.data.faces[j]?.cone;
+  }
+
+  /** The mate reference name of a picked edge (`@e:`) or vertex (`@v:`), or null when the part has none there. */
+  private edgeRefName(h: { idx: number; edge: number; end?: 0 | 1 }): string | null {
+    const id = this.shownIds[h.idx], names = this.faceNames[h.idx], e = this.host.viewer.parts[h.idx]?.data.edges[h.edge];
+    const c = id ? this.comp(id) ?? this.anyComp(id) : null;
+    if (!c || !names || !e) return null;
+    const geo = this.geo.get(c.part);
+    if (h.end === undefined) {
+      const a = names[e.faces[0]], b = names[e.faces[1]];
+      const key = a && b && a !== b ? edgeRef(a, b) : null;
+      return key && geo?.has(key) ? key : null;
+    }
+    // A vertex: the learnt vertex nearest the edge's end, as the shown mesh is placed.
+    const p = h.end ? e.end : e.start, tf = this.shownTf[id] ?? c.tf;
+    let best: string | null = null, far = Infinity;
+    for (const [k, g] of geo ?? []) {
+      if (refKind(k) !== "vertex") continue;
+      const q = applyPoint(tf, g.p), dd = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+      if (dd < far) { far = dd; best = k; }
+    }
+    return best && far <= 1e-3 * this.size() ? best : null;
   }
 
   private setMateType(type: MateType) {
@@ -2296,6 +2358,7 @@ export class AsmController {
     ([[m.a, 0x1f78ff], [m.b, 0xa23cff], ...more] as [MateRef | undefined, number][]).forEach(([ref, color]) => {
       if (!ref) return;
       const i = this.shownIds.indexOf(ref.comp), part = this.host.viewer.parts[i];
+      if (part && refKind(ref.face) !== "face") { this.drawRefMark(part, ref, color); return; }
       const j = this.faceNames[i]?.indexOf(ref.face) ?? -1;
       const f = part?.data.faces[j];
       if (!part || !f) return;
@@ -2309,6 +2372,33 @@ export class AsmController {
       part.group.add(mesh);
     });
     this.host.viewer.invalidate();
+  }
+
+  /** A picked edge, vertex or origin reference drawn on the part's group (shown mesh coordinates). */
+  private drawRefMark(part: { data: PartData; group: THREE.Group }, ref: MateRef, color: number) {
+    const i = this.shownIds.indexOf(ref.comp), c = this.anyComp(ref.comp), g = c && this.geo.get(c.part)?.get(ref.face);
+    if (!c || !g) return;
+    const tf = this.shownTf[ref.comp] ?? c.tf, at = (q: V3) => applyPoint(tf, q), along = (q: V3) => applyDir(tf, q);
+    const mat = { color, depthTest: false, transparent: true };
+    const add = (o: THREE.Object3D) => { o.userData.matePick = true; o.renderOrder = 6; part.group.add(o); };
+    const line = (pts: number[], loop = false) => { const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3)); add(loop ? new THREE.LineLoop(geo, new THREE.LineBasicMaterial(mat)) : new THREE.Line(geo, new THREE.LineBasicMaterial(mat))); };
+    const dot = (q: V3) => { const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.Float32BufferAttribute(q, 3)); add(new THREE.Points(geo, new THREE.PointsMaterial({ ...mat, size: 11, sizeAttenuation: false }))); };
+    const kind = refKind(ref.face);
+    if (kind === "edge") {
+      const names = this.faceNames[i] ?? [];
+      const e = part.data.edges.find(x => names[x.faces[0]] && names[x.faces[1]] && edgeRef(names[x.faces[0]], names[x.faces[1]]) === ref.face);
+      if (e) line(e.pts);
+      return;
+    }
+    if (g.k === "point") { dot(at(g.p)); return; }
+    // Origin planes and axes: sized by the part.
+    const d = part.data, size = 0.35 * Math.max(1, Math.hypot(d.bboxMax[0] - d.bboxMin[0], d.bboxMax[1] - d.bboxMin[1], d.bboxMax[2] - d.bboxMin[2]));
+    const o = at(g.p);
+    if (g.k === "axis") { const u = along(g.d); line([o[0] - u[0] * size, o[1] - u[1] * size, o[2] - u[2] * size, o[0] + u[0] * size, o[1] + u[1] * size, o[2] + u[2] * size]); return; }
+    const n = along(g.n), a: V3 = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const u = unit([n[1] * a[2] - n[2] * a[1], n[2] * a[0] - n[0] * a[2], n[0] * a[1] - n[1] * a[0]]), v: V3 = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+    const corner = (su: number, sv: number) => [o[0] + (u[0] * su + v[0] * sv) * size, o[1] + (u[1] * su + v[1] * sv) * size, o[2] + (u[2] * su + v[2] * sv) * size];
+    line([...corner(-1, -1), ...corner(1, -1), ...corner(1, 1), ...corner(-1, 1)], true);
   }
 
   private clearPicks() {
@@ -4317,7 +4407,12 @@ export class AsmController {
   private refText(ref?: MateRef) {
     if (!ref) return t("Click a face");
     const c = this.anyComp(ref.comp), g = c && this.geo.get(c.part)?.get(ref.face);
-    return `${c?.name ?? "?"}: ${g?.k === "axis" ? t("Cylindrical face") : t("Flat face")}`;
+    const kind = refKind(ref.face), o = originOf(ref.face);
+    const what = o ? t(ORIGIN_LABEL[o])
+      : kind === "vertex" ? t("Vertex")
+        : kind === "edge" ? (g?.k === "axis" && g.c ? t("Circular edge") : t("Straight edge"))
+          : g?.k === "point" ? t("Spherical face") : g?.k === "axis" ? (g.r > 0 && this.isCone(c!.part, ref.face) ? t("Conical face") : t("Cylindrical face")) : t("Flat face");
+    return `${c?.name ?? "?"}: ${what}`;
   }
 
   /** Where the last mate face was clicked (client px), for the mate bar (gap list A4). */
@@ -4336,7 +4431,8 @@ export class AsmController {
     const keep = bar?.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.mb : undefined;
     if (!bar) { bar = document.createElement("div"); bar.id = "asm-matebar"; bar.className = "asm-matebar"; bar.setAttribute("role", "toolbar"); bar.setAttribute("aria-label", t("Mate")); vp.appendChild(bar); }
     const types = MATE_TYPES.filter(k => fits.has(k));
-    const canAlign = m.type === "coincident" || m.type === "parallel" || m.type === "distance" || m.type === "limitdist";
+    const pointy = [m.a, m.b].some(r => this.worldGeo(r!)?.k === "point");
+    const canAlign = !pointy && (m.type === "coincident" || m.type === "parallel" || m.type === "distance" || m.type === "limitdist");
     const deg = m.type === "angle";
     const val = m.type === "distance" || deg ? Math.round((deg ? ((m.value ?? 0) * 180) / Math.PI : m.value ?? 0) * 1e6) / 1e6 : null;
     bar.innerHTML = types.map(k => `<button class="mb-t${m.type === k ? " on" : ""}" data-mbt="${k}" aria-pressed="${m.type === k}" title="${esc(t(MATE_LABEL[k]))}" aria-label="${esc(t(MATE_LABEL[k]))}">${MATE_ICON[k]}</button>`).join("")
@@ -4371,7 +4467,8 @@ export class AsmController {
     pm.hidden = false;
     pm.dataset.id = "mate";
     const ga = m.a && this.worldGeo(m.a), gb = m.b && this.worldGeo(m.b);
-    const fits = ga && gb ? new Set([...mateTypes(ga.k, gb.k), ...advFits(ga.k, gb.k), ...mechFits(ga.k, gb.k)]) : new Set<MateType>();
+    const fits = ga && gb ? new Set([...typesFor(ga, gb), ...advFits(ga.k, gb.k), ...mechFits(ga.k, gb.k)]) : new Set<MateType>();
+    const pointy = ga?.k === "point" || gb?.k === "point";
     const lim = m.type === "limitdist" || m.type === "limitangle", deg = m.type === "limitangle";
     const limIn = (k: "min" | "max", label: string) => `<label class="pm-field"><span>${esc(t(label))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-lim="${k}" value="${esc(String(Math.round(((m[k] ?? 0) * (deg ? 180 / Math.PI : 1)) * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">${deg ? "°" : "mm"}</span></span></label>`;
     const tabPlane = gb?.k === "plane";
@@ -4396,12 +4493,16 @@ export class AsmController {
     const typeBtn = (k: MateType) => `<button class="btn small${m.type === k ? " on" : ""}" data-mt="${k}" aria-pressed="${m.type === k}"${fits.has(k) ? "" : " disabled"}><span aria-hidden="true">${MATE_ICON[k]}</span> ${esc(t(MATE_LABEL[k]))}</button>`;
     const val = m.type === "distance" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-mv value="${esc(String(Math.round((m.value ?? 0) * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">mm</span></span></label>`
       : m.type === "angle" ? `<label class="pm-field"><span>${esc(t("Angle"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-mv value="${esc(String(Math.round(((m.value ?? 0) * 180) / Math.PI * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">°</span></span></label>` : "";
-    const canAlign = m.type === "coincident" || m.type === "parallel" || m.type === "distance" || m.type === "limitdist";
+    const canAlign = !pointy && (m.type === "coincident" || m.type === "parallel" || m.type === "distance" || m.type === "limitdist");
+    // The picked component's own origin planes, axes and point (FR-MATE-001) replace the last pick.
+    const last = m.b ?? m.a;
+    const origin = last ? `<div class="pm-field asm-morg"><span>${esc(t("Origin"))}</span><span class="pm-mates">${ORIGIN_REFS.map(k => `<button class="btn small${last.face === `@o:${k}` ? " on" : ""}" data-morg="${k}" title="${esc(t(ORIGIN_LABEL[k]))}" aria-label="${esc(t(ORIGIN_LABEL[k]))}" translate="no">${k === "O" ? "⊙" : k}</button>`).join("")}</span></div>` : "";
     pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(m.edit ? t("Edit mate") : t("Mate"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-a="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
       + `<fieldset class="pm-group"><legend>${esc(t("Mate selections"))}</legend>`
       + `<div class="pm-field"><span>1</span><button class="pm-box${!m.a ? " focus" : ""}" data-a="sa" translate="no">${esc(this.refText(m.a))}</button></div>`
       + `<div class="pm-field"><span>2</span><button class="pm-box${m.a && !m.b ? " focus" : ""}" data-a="sb" translate="no">${esc(this.refText(m.b))}</button></div>`
-      + `<p class="pm-help muted">${esc(t("Click a flat or cylindrical face on each of two components."))} ${esc(t("Alt+click picks a face hidden behind."))}</p>`
+      + origin
+      + `<p class="pm-help muted">${esc(t("Click a face, an edge or a vertex on each of two components."))} ${esc(t("Alt+click picks a face hidden behind."))} ${esc(t("Origin uses the component's own planes, axes or origin point in place of the last pick."))}</p>`
       + `<button class="btn small" data-a="clear"${m.a || m.b ? "" : " disabled"}>${esc(t("Clear selections"))}</button></fieldset>`
       + `<fieldset class="pm-group"><legend>${esc(t("Standard mates"))}</legend><div class="pm-mates">${MATE_TYPES.map(typeBtn).join("")}</div>${val}`
       + (m.type === "distance" || m.type === "angle" ? `<label class="pm-field pm-check"><input type="checkbox" data-a="flip"${m.flip ? " checked" : ""} /> ${esc(t("Flip dimension"))}</label>` : "")
@@ -4427,6 +4528,7 @@ export class AsmController {
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); inp.dispatchEvent(new Event("change")); this.okMate(); } });
     });
     pm.querySelectorAll<HTMLButtonElement>("[data-mt]").forEach(b => b.addEventListener("click", () => this.setMateType(b.dataset.mt as MateType)));
+    pm.querySelectorAll<HTMLButtonElement>("[data-morg]").forEach(b => b.addEventListener("click", () => this.pickOrigin(b.dataset.morg as OriginRef)));
     pm.querySelectorAll<HTMLButtonElement>("[data-al]").forEach(b => b.addEventListener("click", () => { m.align = b.dataset.al as "aligned" | "anti"; m.alignSet = true; this.previewMate(); }));
     pm.querySelector<HTMLInputElement>("[data-a=flip]")?.addEventListener("change", e => { m.flip = (e.target as HTMLInputElement).checked; this.previewMate(); });
     pm.querySelector<HTMLInputElement>("[data-a=lockrot]")?.addEventListener("change", e => { m.lockRot = (e.target as HTMLInputElement).checked || undefined; this.previewMate(); });

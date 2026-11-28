@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.775.0] - 2026-11-28
+
+### Added
+
+- Assemblies: mates take more than flat and cylindrical faces. A click close to an edge picks the edge (a straight edge works as a line, a round edge as a circle with its axis and centre), close to a corner the vertex, and conical faces (their axis) and spherical faces (their centre) are taken too. The Mate panel's Origin row puts the component's own XY, YZ or ZX plane, X, Y or Z axis or origin point in place of the last pick. The mate types offered follow: a vertex or a component origin point takes Coincident, Distance and Limit distance; a sphere also Tangent and Concentric; an edge against a face starts with Coincident. A round edge coincident with a face lies in it.
+- Hands-on tests `tests/human/mates3.mjs` (a vertex with a component's origin point, an origin axis with a hole, a round edge on a face) and unit tests `tests/unit/mateRefs.test.ts`.
+
 ## [1.773.0] - 2026-11-28
 
 ### Fixed
@@ -5153,7 +5160,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.773.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.775.0...HEAD
+[1.775.0]: https://github.com/kothf/step-viewer/compare/v1.774.0...v1.775.0
 [1.773.0]: https://github.com/kothf/step-viewer/compare/v1.772.0...v1.773.0
 [1.772.0]: https://github.com/kothf/step-viewer/compare/v1.771.0...v1.772.0
 [1.771.0]: https://github.com/kothf/step-viewer/compare/v1.770.0...v1.771.0
