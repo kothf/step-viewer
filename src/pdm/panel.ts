@@ -25,6 +25,10 @@ export interface VaultTie {
   /** What the label means, one line per part (the header's tooltip). */
   readonly hint?: string;
   readonly readOnly: boolean;
+  /** Why it is read-only, for the read-only bar ("" when it is not). */
+  readonly why?: string;
+  /** Whether Check out would work now (the read-only bar offers it only then). */
+  readonly canCheckOut?: boolean;
   save(bytes: Uint8Array): Promise<void>;
   checkOut(): Promise<void>;
 }
@@ -96,10 +100,20 @@ export class VaultPanel {
   private files: FileRec[] = [];
   private state = new Map<string, Awaited<ReturnType<Vault["status"]>>>();
   private sel: string | null = null;
-  /** The ties this vault handed out: a document tied by another vault (closed since) is not ours. */
-  private ties = new WeakSet<VaultTie>();
+  /**
+   * The ties this panel handed out, by the vault they belong to (`vaultKey`). A tie outlives closing its vault, a log
+   * out and opening another vault: its document reads "vault closed" and stays read-only, and is the vault's again once
+   * that vault is open (with a user logged in).
+   */
+  private ties = new WeakMap<VaultTie, string>();
+  /** Which vault is open: where it lives and its folder name. */
+  private vaultKey(): string | null { return this.vault ? `${this.where}:${this.vault.root.name}` : null; }
+  /** Whether a tie belongs to the open vault. */
+  private ours(tie: VaultTie | null | undefined): tie is VaultTie { return !!tie && !!this.vault && this.ties.get(tie) === this.vaultKey(); }
+  /** Whether a tie is one of this panel's (from the open vault or one closed since). */
+  private panelTie(tie: VaultTie | null | undefined): tie is VaultTie { return !!tie && this.ties.has(tie); }
   /** The vault file the live document came from. */
-  get openId(): string | null { const tie = this.app.doc()?.tie; return tie && this.ties.has(tie) ? tie.id : null; }
+  get openId(): string | null { const tie = this.app.doc()?.tie; return this.ours(tie) ? tie.id : null; }
   /** The live document's vault file with its lock state, for the Vault menu. */
   get openFileState() {
     const id = this.openId, f = id ? this.files.find(x => x.id === id) : undefined;
@@ -254,7 +268,7 @@ export class VaultPanel {
    * changed, keep it checked out, or cancel the close. False = do not close.
    */
   async closeReminder(tie: VaultTie | null | undefined, unsaved = false): Promise<boolean> {
-    if (!this.vault || !tie || !this.ties.has(tie) || !this.isMine(tie.id) || !this.files.some(f => f.id === tie.id)) return true;
+    if (!this.vault || !this.ours(tie) || !this.isMine(tie.id) || !this.files.some(f => f.id === tie.id)) return true;
     const f = this.rec(tie.id), changed = unsaved || !!this.state.get(f.id)?.modified;
     const d = this.dialog(t("Still checked out"), `<p>${esc(changed ? t("{name} is checked out to you with changes that are not checked in. Check it in so others get them?", { name: f.path }) : t("{name} is still checked out to you, with no changes. Release it?", { name: f.path }))}</p>`,
       [[t("Cancel"), "cancel"], [t("Keep checked out"), "keep"], changed ? [t("Check in…"), "ci"] : [t("Undo check-out"), "undo"]]);
@@ -357,8 +371,6 @@ export class VaultPanel {
     // A vault with user accounts opens after a log in (FR-PDM-037).
     if (v.locked && !(await this.loginDlg(v))) return;
     this.where = where;
-    if (this.vault && this.openId) this.app.doc()?.setVault(null);
-    this.ties = new WeakSet();
     this.vault = v;
     this.sel = null;
     this.picked = new Set();
@@ -390,8 +402,7 @@ export class VaultPanel {
   close() {
     this.vault = null;
     this.files = [];
-    if (this.openId) this.app.doc()?.setVault(null);
-    this.ties = new WeakSet();
+    this.retie();
     void this.render();
     this.changed();
     void this.startCard();
@@ -408,8 +419,7 @@ export class VaultPanel {
       this.state = state;
       // The open part follows its file's lock and version.
       // (The tie reads the label and the lock when asked; setting it again redraws the title.)
-      const d = this.app.doc();
-      if (this.openId && d) d.setVault(d.tie);
+      this.retie();
       this.conflicts = this.sel ? [...new Set((await v.lockConflicts(this.sel)).map(c => c.user))] : [];
       this.unseen = (await v.notifications(this.seenAt)).length;
       this.behindList = await v.behind().catch(() => []);
@@ -417,6 +427,12 @@ export class VaultPanel {
     await this.render();
     this.changed();
     void this.startCard();
+  }
+
+  /** The live document's vault label and read-only bar drawn again (its tie reads the vault as it is now). */
+  private retie() {
+    const d = this.app.doc();
+    if (d && this.panelTie(d.tie)) d.setVault(d.tie);
   }
 
   // ---------- commands ----------
@@ -671,21 +687,25 @@ export class VaultPanel {
 
   /** The tie between an open document and its vault file (FR-PDM-010/081). */
   private tie(id: string): VaultTie {
-    const v = this.vault!, panel = this;
-    const cur = () => (panel.vault === v ? panel.files.find(x => x.id === id) : undefined);
+    const panel = this, key = this.vaultKey()!;
+    // The vault this file came from when it is open, also after it was closed and opened again.
+    const live = () => (panel.vaultKey() === key ? panel.vault : null);
+    const cur = () => (live() ? panel.files.find(x => x.id === id) : undefined);
     const tie: VaultTie = {
       id,
       get label() {
-        const f = cur(), st = panel.state.get(id);
-        if (!f) return t("vault closed");
+        const v = live(), f = cur(), st = panel.state.get(id);
+        if (!v || !f) return t("vault closed");
+        if (v.locked) return t("logged out");
         const mine = !!st?.mine, n = v.latest(f).n, on = panel.shown.get(id) ?? n;
         // A tab left open while the vault moved on (check-in elsewhere, roll back, release) says so.
         if (on < n) return `v${on} · ${t("newer v{n} in the vault", { n })}`;
         return `v${n}${f.revision ? ` · ${t("Rev {rev}", { rev: f.revision })}` : ""} · ${tn(f.state)}${f.checkout ? ` · ${mine ? t("checked out to you") : t("locked by {user}", { user: f.checkout.user })}` : ""}${st?.modified ? ` · ${mine ? t("modified") : t("local copy outdated")}` : ""}`;
       },
       get hint() {
-        const f = cur(), st = panel.state.get(id);
-        if (!f) return t("The vault this file came from is closed.");
+        const v = live(), f = cur(), st = panel.state.get(id);
+        if (!v || !f) return t("The vault this file came from is closed.");
+        if (v.locked) return t("Nobody is logged in to the vault {vault}: log in to work on this file.", { vault: v.info.name });
         const mine = !!st?.mine, n = v.latest(f).n, on = panel.shown.get(id) ?? n;
         const lines = [t("In the vault {vault}: version {n}", { vault: v.info.name, n: on })];
         if (on < n) lines.push(t("The vault has a newer version {n}: Get latest opens it.", { n }));
@@ -696,16 +716,31 @@ export class VaultPanel {
         if (st?.modified) lines.push(mine ? t("Modified: saved changes not checked in yet.") : t("Your local copy is older than the vault's latest version."));
         return lines.join("\n");
       },
-      get readOnly() { return !cur() || !panel.state.get(id)?.mine; },
-      save: async bytes => { await v.saveWorking(id, bytes); await this.refresh(); void this.keepThumb(id, true); },
+      get readOnly() { const v = live(); return !v || v.locked || !cur() || !panel.state.get(id)?.mine; },
+      get why() {
+        const v = live(), f = cur();
+        if (!v || !f) return t("Read-only: the vault this file came from is closed");
+        if (v.locked) return t("Read-only: log in to the vault to edit");
+        if (f.checkout) return panel.state.get(id)?.mine ? "" : t("Read-only: {user} has it checked out", { user: f.checkout.user });
+        if (!v.stateOf(f.state).checkout) return t("Read-only: {state} files cannot be checked out", { state: tn(f.state) });
+        return t("Read-only: check out to edit");
+      },
+      get canCheckOut() { const v = live(), f = cur(); return !!v && !v.locked && !!f && !f.checkout && v.stateOf(f.state).checkout; },
+      save: async bytes => {
+        const v = live();
+        if (!v) throw new VaultError("The vault this file came from is closed.");
+        await v.saveWorking(id, bytes); await this.refresh(); void this.keepThumb(id, true);
+      },
       checkOut: async () => {
+        const v = live();
+        if (!v) return;
         await this.run(() => v.checkOut(id));
         // Checked out over an older version on screen: the latest comes in first, so Save cannot undo it.
         const f = cur();
         if (f && (panel.shown.get(id) ?? 0) < v.latest(f).n && panel.openId === id) await panel.reopen(id);
       },
     };
-    this.ties.add(tie);
+    this.ties.set(tie, key);
     return tie;
   }
 
@@ -735,7 +770,7 @@ export class VaultPanel {
       // FR-PDM-011: referenced files checked out here can go in too; the changed ones are ticked.
       const refs = await v.checkInWith(id).catch(() => []);
       const refHtml = refs.length ? `<fieldset class="v-refs"><legend>${esc(t("Check in referenced files too"))}</legend>${refs.map(x => `<label class="chk" translate="no"><input type="checkbox" name="ref:${x.id}"${x.modified ? " checked" : ""} /> ${esc(x.path)}${x.modified ? "" : ` <small class="muted" translate="yes">${esc(t("(unchanged)"))}</small>`}</label>`).join("")}</fieldset>` : "";
-      const r = await this.form(t("Check in"), `<p>${esc(this.rec(id).path)}</p><label class="v-lbl">${esc(t("Comment"))}<textarea name="comment" rows="3" maxlength="500" autofocus></textarea></label><label class="chk"><input type="checkbox" name="keep" /> ${esc(t("Keep checked out"))}</label>${refHtml}`, t("Check in"));
+      const r = await this.form(t("Check in"), `<p>${esc(this.rec(id).path)}</p>${this.commentField(v)}<label class="chk"><input type="checkbox" name="keep" /> ${esc(t("Keep checked out"))}</label>${refHtml}`, t("Check in"));
       if (!r) return;
       comment = r.comment as string;
       keep = !!r.keep;
@@ -980,7 +1015,7 @@ export class VaultPanel {
       const d = this.dialog(t("{name}: {from} → {to}", { name: tn(name), from: tn(tr.from), to: tn(tr.to) }), `
         ${refs.length ? `<p>${esc(t("Referenced files in the same state:"))}</p>${refs.map(r => `<label class="chk" translate="no"><input type="checkbox" name="ref" value="${r.id}" checked /> ${esc(r.path)}</label>`).join("")}` : ""}
         <ul class="v-log v-check">${await render([...base, ...refs.map(r => r.id)])}</ul>
-        <label class="v-lbl">${esc(tr.comment ? t("Comment (required)") : t("Comment"))}<textarea name="comment" rows="2" maxlength="500"></textarea></label>
+        <label class="v-lbl">${esc(tr.comment ? t("Comment (required)") : t("Comment"))}<textarea name="comment" rows="2" maxlength="500"${tr.comment ? " required" : ""}></textarea></label>
         ${v.info.shared ? `<label class="v-lbl">${esc(t("Notify"))}<select name="to"><option value=""></option>${[...v.info.users, ...ROLES].map(u => `<option value="${esc(u)}">${esc(ROLES.includes(u as Role) ? tn(u) : u)}</option>`).join("")}</select></label>` : ""}`, [[t("Cancel"), "cancel"], [tn(name), "ok"]]);
       d.el.querySelectorAll<HTMLInputElement>('[name="ref"]').forEach(c => c.addEventListener("change", async () => {
         const ids = [...base, ...[...d.el.querySelectorAll<HTMLInputElement>('[name="ref"]:checked')].map(x => x.value)];
@@ -1278,7 +1313,7 @@ export class VaultPanel {
   /** Transitions every one of the files has (by name). */
   commonTransitions(ids: string[]) {
     const v = this.vault!;
-    const lists = ids.map(id => v.transitionsOf(this.rec(id)).map(x => x.name));
+    const lists = ids.map(id => v.allowedTransitions(this.rec(id)).map(x => x.name));
     return lists.length ? lists[0].filter(n => lists.every(l => l.includes(n))) : [];
   }
   private pathList(ids: string[]) { return `<ul class="v-log" translate="no">${ids.map(id => `<li>${esc(this.rec(id).path)}</li>`).join("")}</ul>`; }
@@ -1306,7 +1341,7 @@ export class VaultPanel {
     if (!v) return;
     const mine = ids.filter(id => this.isMine(id));
     if (!mine.length) { toast(t("None of the selected files is checked out to you."), true); return; }
-    const r = await this.form(t("Check in {n} files", { n: mine.length }), `${this.pathList(mine)}<label class="v-lbl">${esc(t("Comment"))}<textarea name="comment" rows="3" maxlength="500" autofocus></textarea></label><label class="chk"><input type="checkbox" name="keep" /> ${esc(t("Keep checked out"))}</label>`, t("Check in"));
+    const r = await this.form(t("Check in {n} files", { n: mine.length }), `${this.pathList(mine)}${this.commentField(this.vault!)}<label class="chk"><input type="checkbox" name="keep" /> ${esc(t("Keep checked out"))}</label>`, t("Check in"));
     if (!r) return;
     const order: string[] = [];
     for (const id of mine) {
@@ -1420,11 +1455,16 @@ export class VaultPanel {
           if (n && this.shown.has(id)) this.shown.set(id, n);
         } else await v.undoCheckOut(id);
       }
-      if (!quiet) toast(!changed.length ? t("{name} is up to date.", { name: this.rec(id).path })
+      await this.refresh();
+      // Checked out here, the working copy may have the latest already (a drawing follows its part while open): the
+      // vault still lists the checked-in version as behind until it is checked in.
+      const stillBehind = was && !changed.length && !!this.behindOf(id);
+      if (!quiet) toast(stillBehind ? t("{name} already uses the latest in your working copy: check it in to record it.", { name: this.rec(id).path })
+        : !changed.length ? t("{name} is up to date.", { name: this.rec(id).path })
         : was ? t("{name} now uses the latest {list}. Check it in to keep it.", { name: this.rec(id).path, list: changed.join(", ") })
         : t("{name} now uses the latest {list}: new version checked in.", { name: this.rec(id).path, list: changed.join(", ") }), "success");
-      await this.refresh();
-      if (this.openId === id || await this.app.show?.(id)) await this.reopen(id);
+      // Nothing changed: the document on screen stays as it is (and its tab stays in the background).
+      if (changed.length && (this.openId === id || await this.app.show?.(id))) await this.reopen(id);
       return changed.length > 0;
     } catch (e) {
       if (!was && this.isMine(id)) await v.undoCheckOut(id).catch(() => {});
@@ -1616,7 +1656,8 @@ export class VaultPanel {
     const v = this.vault;
     if (!v?.secured) return;
     await v.logout();
-    if (this.openId) this.app.doc()?.setVault(null);
+    // The open document stays tied: read-only until someone logs in, then it follows that user's locks.
+    this.retie();
     toast(t("Logged out"));
     if (!(await this.loginDlg(v))) { this.close(); return; }
     await this.refresh();
@@ -1918,7 +1959,7 @@ export class VaultPanel {
     d.el.querySelectorAll<HTMLElement>("[data-eco-no]").forEach(b => b.addEventListener("click", async e => {
       e.preventDefault();
       d.el.close();
-      const r = await this.form(t("Reject"), `<label class="v-lbl">${esc(t("Comment (required)"))}<textarea name="comment" rows="2" maxlength="500" autofocus></textarea></label>`, t("Reject"));
+      const r = await this.form(t("Reject"), `<label class="v-lbl">${esc(t("Comment (required)"))}<textarea name="comment" rows="2" maxlength="500" required autofocus></textarea></label>`, t("Reject"));
       if (r) await this.run(() => v.rejectChange(b.dataset.ecoNo!, r.comment as string));
       void this.changesDlg();
     }));
@@ -2027,6 +2068,12 @@ export class VaultPanel {
     return { el, done };
   }
 
+  /** The check-in comment box: required (the dialog stays open until it is filled) when the vault asks for one. */
+  private commentField(v: Vault) {
+    const need = !!v.info.commentRequired;
+    return `<label class="v-lbl">${esc(need ? t("Comment (required)") : t("Comment"))}<textarea name="comment" rows="3" maxlength="500"${need ? " required" : ""} autofocus></textarea></label>`;
+  }
+
   /** A small form; resolves to its values, or null when cancelled. */
   private async form(title: string, html: string, ok: string): Promise<Record<string, string | boolean> | null> {
     const d = this.dialog(title, html, [[t("Cancel"), "cancel"], [ok, "ok"]]);
@@ -2095,7 +2142,9 @@ export class VaultPanel {
         const of = f.outputOf ? this.files.find(x => x.id === f.outputOf!.id) : undefined;
         return `<button class="v-row${on ? " sel" : ""}${of ? " v-out" : ""}" data-id="${f.id}" aria-pressed="${on}" aria-haspopup="menu"${depth ? ` style="--d:${depth}" title="${esc(f.path)}"` : ""}><span class="v-name" translate="no">${of ? '<span aria-hidden="true">↳ </span>' : ""}${esc(depth ? f.path.split("/").pop()! : f.path)}</span>${of ? `<span class="v-meta v-outof">${esc(t("Release file of {name}", { name: of.path.split("/").pop()! }))}${f.outputOf!.rev ? ` · ${esc(t("Rev {rev}", { rev: f.outputOf!.rev }))}` : ""} · v${f.outputOf!.version}</span>` : ""}<span class="v-meta"><span class="v-state"><i style="background:${esc(color)}"></i>${esc(tn(f.state))}</span>${f.revision ? ` · ${esc(t("Rev {rev}", { rev: f.revision }))}` : ""} · ${esc(t(f.kind))} · v${v.latest(f).n}${pn ? ` · <span translate="no">${esc(pn)}</span>` : ""}${s.modified ? ` · <b>${esc(t("modified"))}</b>` : ""}${s.missing ? ` · ${esc(t("no local copy"))}` : ""} ${lock}</span></button>`;
       };
-      const trs = sel ? v.transitionsOf(sel) : [];
+      const trs = sel ? v.allowedTransitions(sel) : [];
+      // A checked-out file has states to go to once it is checked in: say so instead of offering them.
+      const trsLater = !!sel?.checkout && v.transitionsOf(sel).length > 0;
       const acts = sel ? `<div class="v-acts" aria-label="${esc(t("Selected file"))}">
         <div class="v-acts-h" translate="no">${esc(sel.path)}</div>
         <div class="row">
@@ -2106,7 +2155,7 @@ export class VaultPanel {
         <button class="btn small" data-a="hist">${esc(t("History"))}</button>
         ${sel.kind === "drawing" ? `<button class="btn small" data-a="pdf">${esc(t("PDF"))}</button>` : ""}
         </div>
-        ${trs.length ? `<div class="row v-trs"><span class="muted">${esc(t("Change state"))}:</span>${trs.map(x => `<button class="btn small" data-tr="${esc(x.name)}">${esc(tn(x.name))}</button>`).join("")}</div>` : ""}
+        ${trs.length ? `<div class="row v-trs"><span class="muted">${esc(t("Change state"))}:</span>${trs.map(x => `<button class="btn small" data-tr="${esc(x.name)}">${esc(tn(x.name))}</button>`).join("")}</div>` : trsLater ? `<p class="muted v-trs-later">${esc(t("Check it in to change its state."))}</p>` : ""}
         <div class="row">
         <button class="btn small" data-a="card">${esc(t("Data card"))}</button>
         <button class="btn small" data-a="contains">${esc(t("Contains"))}</button>
@@ -2163,7 +2212,7 @@ export class VaultPanel {
       })();
       const chipN = (c: Chip) => (this.found ? this.files.filter(f => this.found!.ids.has(f.id)) : this.files).filter(this.chipTest(c)).length;
       const chips = this.files.length ? `<div class="v-chips" role="group" aria-label="${esc(t("Show"))}">${CHIPS.filter(([c]) => c === "all" || c === this.filter || chipN(c)).map(([c, l]) => `<button class="v-chip${c === this.filter ? " on" : ""}" data-chip="${c}" aria-pressed="${c === this.filter}">${esc(t(l))}${c === "all" ? "" : ` <span class="v-chip-n">${chipN(c)}</span>`}</button>`).join("")}</div>` : "";
-      h.innerHTML = `<div class="pad v-top"><div class="v-title"><b translate="no">${esc(v.info.name)}</b><span class="v-who muted" title="${esc(t("User"))}" translate="no">${esc(this.user)}</span><button class="btn small" data-a="explorer" title="${esc(t("The vault as a file manager in a tab of its own: folders, columns, preview, history"))}">${esc(t("Explorer"))}</button><button class="btn small v-more" data-a="more" aria-haspopup="menu" title="${esc(t("More vault commands"))}" aria-label="${esc(t("More vault commands"))}">⋯${this.unseen ? ` <span class="v-badge">${this.unseen}</span>` : ""}</button><button class="btn small" data-a="close">${esc(t("Close vault"))}</button></div>
+      h.innerHTML = `<div class="pad v-top"><div class="v-title"><b translate="no" title="${esc(v.info.name)}">${esc(v.info.name)}</b><span class="v-who muted" title="${esc(t("User"))}" translate="no">${esc(this.user)}</span><button class="btn small" data-a="explorer" title="${esc(t("The vault as a file manager in a tab of its own: folders, columns, preview, history"))}">${esc(t("Explorer"))}</button><button class="btn small v-more" data-a="more" aria-haspopup="menu" title="${esc(t("More vault commands"))}" aria-label="${esc(t("More vault commands"))}">⋯${this.unseen ? ` <span class="v-badge">${this.unseen}</span>` : ""}</button><button class="btn small" data-a="close">${esc(t("Close vault"))}</button></div>
         <div class="row"><button class="btn small" data-a="add">${esc(t("Add files…"))}</button><button class="btn small" data-a="addfolder" title="${esc(t("Files already in the vault folder go in where they are, subfolders and all"))}">${esc(t("Add files in this folder…"))}</button><button class="btn small" data-a="savepart"${this.app.doc() && !this.openId ? "" : " disabled"} title="${esc(t("The open part, assembly or drawing becomes a vault file, checked out to you"))}">${esc(t("Save to vault"))}</button>${this.behindCount ? `<button class="btn small v-behind-btn" data-a="behind" title="${esc(t("Assemblies and drawings that use older versions, and local copies behind the vault"))}">${esc(t("{n} behind", { n: this.behindCount }))}</button>` : ""}</div>
         <div class="row v-search"><input id="v-q" type="search" value="${esc(this.found?.label ?? "")}" placeholder="${esc(t("Search the vault"))}" aria-label="${esc(t("Search the vault"))}" /><button class="btn small" data-a="search">${esc(t("Advanced…"))}</button>${this.found ? `<button class="btn small" data-a="clearq">${esc(t("Clear"))}</button>` : ""}</div>
         <input type="file" id="v-files" multiple hidden /></div>

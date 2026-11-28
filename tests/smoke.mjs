@@ -3936,7 +3936,7 @@ try {
       await mp.click('#mc-layer .pat-spot[data-spot="2"]');
       await idle();
       const vBack = await vol();
-      // 1.767: the direction arrow in the view: a click reverses the direction, a second click puts it back.
+      // 1.768: the direction arrow in the view: a click reverses the direction, a second click puts it back.
       const arrowPt = () => mp.evaluate(() => { const sv = window.__sv, a = sv.modeller.arrows.find(x => x.key === "spacing"); if (!a) return null; a.obj.updateMatrixWorld(true); const q = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8).project(sv.viewer.camera), r = sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; });
       const ap = await arrowPt();
       if (ap) await mp.mouse.click(ap[0], ap[1]);
@@ -3946,7 +3946,7 @@ try {
       if (ap2) await mp.mouse.click(ap2[0], ap2[1]);
       await idle();
       const flipB = await mp.evaluate(() => !!window.__sv.model.mode().draft?.flip);
-      check(!!ap && flipA && !flipB && Math.abs((await vol()) - vLp) < 1, `model 1.767: linear pattern direction arrow clicked in the view reverses the direction (${JSON.stringify({ ap, ap2, flipA, flipB })})`);
+      check(!!ap && flipA && !flipB && Math.abs((await vol()) - vLp) < 1, `model 1.768: linear pattern direction arrow clicked in the view reverses the direction (${JSON.stringify({ ap, ap2, flipA, flipB })})`);
       // Up to distance: the 20 typed becomes the reach of the last instance (3 gaps of 6.67 mm), then back.
       await mp.selectOption('#mc-pm select[data-k="total"]', "1");
       await idle();
@@ -5533,6 +5533,16 @@ try {
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
     check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · .*checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
+    // 1.767: closing the vault keeps the part tied, read-only with the reason and no Check out; opening it again ties it back.
+    const tieOf = () => mp.evaluate(() => ({ chip: document.querySelector("#doc-vault")?.textContent ?? "", bar: document.querySelector("#mc-ro")?.textContent ?? "", co: !!document.querySelector("#mc-ro [data-a=co]") }));
+    const openTie = await tieOf();
+    await mp.evaluate(() => window.__sv.vault.close());
+    const closedTie = await tieOf();
+    await mp.evaluate(() => window.__sv.vault.openInBrowser("Smoke vault"));
+    await mp.waitForFunction(() => /v3/.test(document.querySelector("#doc-vault")?.textContent ?? ""), null, { timeout: 5000 }).catch(() => {});
+    const backTie = await tieOf();
+    check(openTie.co && /v3/.test(openTie.chip) && /closed/.test(closedTie.chip) && /closed/.test(closedTie.bar) && !closedTie.co && /v3/.test(backTie.chip) && backTie.co,
+      `vault 1.767: a closed vault keeps the part tied and read-only; opening it again ties it back (${JSON.stringify([openTie, closedTie, backTie])})`);
     await ctx.close();
   }
 
@@ -20467,7 +20477,7 @@ try {
     await ctx.close();
   }
   if (inShard(4)) {
-    // model 1.766: closed and outward shells, suppress with dependants, ✓ on a failing fillet keeps the panel.
+    // model 1.768: closed and outward shells, suppress with dependants, ✓ on a failing fillet keeps the panel.
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const cp = await ctx.newPage();
     cp.on("pageerror", e => errors.push(e.message));
@@ -20492,7 +20502,7 @@ try {
     await settle();
     const out = await vol();
     check(closed.ok && Math.abs(closed.v - (120000 - 96 * 56 * 16)) < 0.5 && out.ok && Math.abs(out.v - (104 * 64 * 24 - 120000)) < 0.5,
-      `model 1.766: a shell with no face removed is a closed hollow body, outward with sharp corners (${JSON.stringify({ closed, out })})`);
+      `model 1.768: a shell with no face removed is a closed hollow body, outward with sharp corners (${JSON.stringify({ closed, out })})`);
     // Suppress a hole: its pattern goes with it, Unsuppress brings both back.
     await cp.evaluate(() => window.__sv.model.store.change("Holes", doc => {
       doc.features = doc.features.filter(f => f.id !== "sh");
@@ -20509,7 +20519,7 @@ try {
     await settle();
     const back = await vol();
     check(holes.ok && sup.suppressed && sup.supBy === "h" && sup.ok && Math.abs(sup.v - 120000) < 0.5 && Math.abs(back.v - holes.v) < 1e-6,
-      `model 1.766: suppressing a hole suppresses its pattern too, Unsuppress brings both back (${JSON.stringify({ holes: holes.v, sup: { s: sup.suppressed, by: sup.supBy, v: sup.v, ok: sup.ok }, back: back.v })})`);
+      `model 1.768: suppressing a hole suppresses its pattern too, Unsuppress brings both back (${JSON.stringify({ holes: holes.v, sup: { s: sup.suppressed, by: sup.supBy, v: sup.v, ok: sup.ok }, back: back.v })})`);
     await ctx.close();
   }
 } catch (err) {

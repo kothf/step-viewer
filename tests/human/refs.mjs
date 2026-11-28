@@ -102,6 +102,8 @@ const d1 = await disk(), s1 = await asmState();
 const img1 = await snap(pg, "saved");
 check("R1", d1["Part1.mcadprt"] && d1["Part2.mcadprt"] && Object.keys(d1).some(n => n.endsWith(".mcadasm")) && !s1.dirty && s1.parts.Part1?.link === "Part1.mcadprt",
   "Ctrl+S on a new assembly writes the assembly and both part files into its folder, references them and is clean", { d1, s1 }, img1);
+const tabsNow = async tag => console.log("TABS", tag, JSON.stringify(await pg.evaluate(() => window.__sv.docs()?.tabs.map(x => `${x.kind}:${x.label}:${x.state?.fileName ?? "live"}:${x.state?.store?.doc?.id ?? ""}:${!!x.state?.handle}`).concat(Object.values(window.__sv.asm.doc?.parts ?? {}).map(e => e.doc?.id + ":" + e.link?.path)))));
+await tabsNow("R1");
 const asmFile = Object.keys(d1).find(n => n.endsWith(".mcadasm"));
 
 // ---- R2: the same part still open in its own tab is edited and saved there: does the assembly see it?
@@ -119,7 +121,7 @@ if (want("R2")) {
   await toAsm();
   const s2 = await asmState(), d2 = await disk();
   const img2 = await snap(pg, "part-tab-saved");
-  check("R2", s2.parts.Part1.depth === 35 || d2["Part1.mcadprt"] !== d1["Part1.mcadprt"],
+  check("R2", asked === 0 && s2.parts.Part1.depth === 35 && d2["Part1.mcadprt"] !== d1["Part1.mcadprt"],
     "Part1 open in its own tab, changed and saved: the save goes to the file the assembly references, and the assembly shows it", { asked, download: got?.suggestedFilename() ?? null, depth: s2.parts.Part1.depth, size: [d1["Part1.mcadprt"], d2["Part1.mcadprt"]] }, img2);
 }
 
@@ -142,6 +144,7 @@ await pg.waitForTimeout(1500);
 
 await fetchOut("Part2.mcadprt", `${TMP}/v15.mcadprt`);
 
+await tabsNow("R3");
 // ---- R4: Part2 changed in its own file (opened with File ▸ Open, saved); back in the assembly it updates.
 await clearToasts();
 await openFiles(pg, [await fetchOut("Part2.mcadprt")]);
@@ -159,6 +162,7 @@ const img4 = await snap(pg, "changed-in-own-file");
 check("R4", s4.parts.Part2.depth === 25,
   "Part2.mcadprt opened with File ▸ Open, changed and saved: the assembly shows the change when switched back to", { handleSave, size: [d3a["Part2.mcadprt"], d4["Part2.mcadprt"]], depth: s4.parts.Part2.depth, toast: await toasts() }, img4);
 
+await tabsNow("R4");
 // ---- R5: the file renamed and moved into a subfolder: the assembly opened again finds it.
 const asmPath = await fetchOut(asmFile);
 await fs("move", "Part1.mcadprt", "bought/Base plate.mcadprt");
@@ -173,6 +177,7 @@ check("R5", s5.parts.Part1.link === "bought/Base plate.mcadprt" && !s5.bar,
 await pg.keyboard.press("Control+s");
 await pg.waitForTimeout(1500);
 
+await tabsNow("R5");
 // ---- R6: a part file deleted: the bar names it, the tree marks the component, the last copy shows.
 const asmPath6 = await fetchOut(asmFile);
 await fs("copy", "Part2.mcadprt", "_keep.bin");
@@ -186,10 +191,6 @@ const img6 = await snap(pg, "missing");
 check("R6", /not found/.test(s6.bar ?? "") && s6.marks.some(m => /not found/.test(m ?? "")) && s6.parts.Part2.feats > 0,
   "a deleted part file: the bar names it, the tree marks it, the last copy is still shown", { bar: s6.bar, marks: s6.marks }, img6);
 
-// ---- R6b: the bar's button: what can a person do about one missing file?
-const barBtns = await pg.$$eval("#asm-refs button", bs => bs.map(b => b.textContent.trim()));
-check("R6b", barBtns.some(b => /Browse|Find|Replace|Locate/i.test(b)),
-  "the missing-file bar offers to point at the file (other CAD apps: Browse for the file / Suppress)", { barBtns });
 
 // ---- R7: the file comes back with the same name but another part in it (somebody saved over it).
 await fs("copy", "bought/Base plate.mcadprt", "Part2.mcadprt");
@@ -245,7 +246,8 @@ check("R9", listing.includes("bought/Base plate.mcadprt") && listing.includes("P
 
 // ---- R12: the same assembly file opened again and again: one tab, not one per Open.
 const tabs12 = await pg.$$eval("#doc-tabs [data-dt]", ts => ts.map(t => t.textContent.trim()));
-check("R12", tabs12.filter(x => /Assembly1/.test(x)).length === 1, "opening an assembly that is already open goes to its tab, as in other CAD apps (no second copy)", { tabs12 });
+const kinds12 = await pg.evaluate(() => window.__sv.docs()?.tabs.map(x => `${x.kind}:${x.label}:${x.state?.fileName ?? "live"}:${x.state?.store?.doc?.id ?? x.state?.doc?.id ?? ""}`));
+check("R12", tabs12.filter(x => /Assembly1/.test(x)).length === 1, "opening an assembly that is already open goes to its tab, as in other CAD apps (no second copy)", { tabs12, kinds12 });
 
 // ---- R10: the packed folder opened elsewhere (a new browser, the folder not known): the parts come from it.
 await finish(browser, pg);
@@ -335,6 +337,42 @@ await pg.keyboard.press("Control+s");
 await pg.waitForTimeout(2500);
 const d14 = await disk(pg, "refs-ht2"), t14 = await toasts(), s14 = await asmState();
 check("R14", !d14["Cover (2).mcadprt"] || /Cover \(2\)/.test(t14), "a new part whose file name is taken by another part's file is saved under another name, and the person is told", { d14, t14, parts: s14.parts }, img14a);
+
+// ---- R6b/R6c: a missing file: Find file… points at it elsewhere in the folder; Suppress puts the component aside.
+const opfs2 = (op, a, b) => pg.evaluate(async ({ op, a, b }) => {
+  const root = await (await navigator.storage.getDirectory()).getDirectoryHandle("refs-ht2");
+  const at = async (p, create) => { let d = root; const parts = p.split("/"); const last = parts.pop(); for (const s of parts) d = await d.getDirectoryHandle(s, { create }); return [d, last]; };
+  if (op === "copy") { const [d, n] = await at(a, false); const data = await (await d.getFileHandle(n)).getFile(); const [d2, n2] = await at(b, true); const w = await (await d2.getFileHandle(n2, { create: true })).createWritable(); await w.write(await data.arrayBuffer()); await w.close(); }
+  else if (op === "del") { const [d, n] = await at(a, false); await d.removeEntry(n); }
+  else if (op === "pick") window.showOpenFilePicker = async () => { const [d, n] = await at(a, false); return [await d.getFileHandle(n)]; };
+}, { op, a, b });
+// the file is moved out of the assembly's folder (it is not found by its document there)
+await pg.evaluate(async () => {
+  const root = await navigator.storage.getDirectory(), d = await root.getDirectoryHandle("refs-ht2"), o = await root.getDirectoryHandle("elsewhere", { create: true });
+  const data = await (await (await d.getFileHandle("Cover (2).mcadprt")).getFile()).arrayBuffer();
+  const w = await (await o.getFileHandle("Lid.mcadprt", { create: true })).createWritable(); await w.write(data); await w.close();
+  await d.removeEntry("Cover (2).mcadprt");
+  window.showOpenFilePicker = async () => [await o.getFileHandle("Lid.mcadprt")];
+});
+await pg.evaluate(() => window.dispatchEvent(new Event("focus")));
+await pg.waitForTimeout(1500);
+const btns6 = await pg.$$eval("#asm-refs button", bs => bs.map(b => b.textContent.trim()));
+const img6b = await snap(pg, "missing-find");
+await pg.click('#asm-refs [data-refs="find"]').catch(() => {});
+await pg.waitForTimeout(1500);
+const s6b = await asmState();
+const d6b = await disk(pg, "refs-ht2"), t6b = await toasts();
+check("R6b", btns6.includes("Find file…") && s6b.parts.Cover.link === "Lid.mcadprt" && !!d6b["Lid.mcadprt"] && !s6b.bar,
+  "the missing-file bar's Find file… points the component at a file outside the folder: a copy goes in beside the assembly (other CAD apps: Browse for the file)", { btns6, link: s6b.parts.Cover.link, bar: s6b.bar, toast: t6b }, img6b);
+await opfs2("del", "Lid.mcadprt");
+await pg.evaluate(() => window.dispatchEvent(new Event("focus")));
+await pg.waitForTimeout(1500);
+await pg.click('#asm-refs [data-refs="sup"]').catch(() => {});
+await pg.waitForTimeout(1500);
+const s6c = await asmState(), sup6 = await pg.evaluate(() => window.__sv.asm.doc.components.filter(c => c.suppressed).map(c => c.name));
+const img6c = await snap(pg, "missing-suppressed");
+check("R6c", sup6.some(n => /Cover/.test(n)) && !s6c.bar, "Suppress on the missing-file bar suppresses the component and the bar goes", { sup6, bar: s6c.bar }, img6c);
+
 
 await finish(browser, pg);
 console.log(`files in ${TMP}`);

@@ -146,6 +146,8 @@ export class DocStore {
 
   get dirty() { return JSON.stringify(this.doc) !== this.savedAt; }
   markSaved() { this.savedAt = JSON.stringify(this.doc); this.emit("saved"); }
+  /** Marks a parked document saved without telling the listeners (its tab is not shown). */
+  markSavedQuiet() { this.savedAt = JSON.stringify(this.doc); }
 
   feature(id: string): Feature | undefined { return this.doc.features.find(f => f.id === id); }
 }

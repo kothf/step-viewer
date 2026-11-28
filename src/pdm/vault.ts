@@ -1137,6 +1137,8 @@ export class Vault {
 
   /** Transitions available from a file's state. */
   transitionsOf(f: FileRec): WfTransition[] { return this.workflow.transitions.filter(x => x.from === f.state); }
+  /** The transitions offered to this user now: none while the file is checked out, and only those their roles allow. */
+  allowedTransitions(f: FileRec): WfTransition[] { return f.checkout ? [] : this.transitionsOf(f).filter(x => !x.role || this.has(x.role)); }
 
   /**
    * Checks a transition on a set of files before anything is written (FR-PDM-033/082): per file, the problems that
