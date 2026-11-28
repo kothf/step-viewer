@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.772.0] - 2026-11-28
+## [1.773.0] - 2026-11-28
 
 ### Fixed
 
@@ -15,6 +15,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - Hands-on drawing tests (sections, hole callouts, geometric tolerances, updates after model edits) with a test list that says how other CAD apps behave.
+
+## [1.772.0] - 2026-11-28
+
+### Fixed
+
+- Assemblies: a part opened from its assembly (Open part) and then picked again with File ▸ Open no longer goes to the part's other tab or opens a second copy: the part shown is kept, with Return to assembly.
+
 ## [1.771.0] - 2026-11-28
 
 ### Added
@@ -5146,7 +5153,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.772.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.773.0...HEAD
+[1.773.0]: https://github.com/kothf/step-viewer/compare/v1.772.0...v1.773.0
 [1.772.0]: https://github.com/kothf/step-viewer/compare/v1.771.0...v1.772.0
 [1.771.0]: https://github.com/kothf/step-viewer/compare/v1.770.0...v1.771.0
 [1.770.0]: https://github.com/kothf/step-viewer/compare/v1.769.0...v1.770.0
