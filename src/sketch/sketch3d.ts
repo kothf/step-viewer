@@ -18,6 +18,7 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
   const vec = (id: string): V3 | null => { const s = seg(id); return s && s.t === "line" ? sub(P(s.pts[1]), P(s.pts[0])) : null; };
   for (const r of sk.rels) {
     if (r.t === "coincident") { const d = sub(P(r.e[1]), P(r.e[0])); out.push(...d); continue; }
+    if (r.t === "onPlane") { out.push(P(r.e[0])[PLANE_N[r.plane ?? "XY"]]); continue; }
     if (r.t === "midpoint" || r.t === "onLine") {
       // e = [point, line]: the point at the line's middle, or anywhere on the line (through its ends, unbounded).
       const s = seg(r.e[1]);
@@ -58,6 +59,7 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
       if (u && v) out.push(Math.atan2(len(cross(u, v)), dot(u, v)) - d.val.v);
       continue;
     }
+    if (d.t === "planeDist") { out.push(Math.abs(P(d.e[0])[PLANE_N[d.plane ?? "XY"]]) - d.val.v); continue; }
     if (d.t === "length") { const s = seg(d.e[0]); if (s) out.push(len(sub(P(s.pts[s.pts.length - 1]), P(s.pts[0]))) - d.val.v); }
     else out.push(len(sub(P(d.e[1]), P(d.e[0]))) - d.val.v);
   }
