@@ -234,6 +234,8 @@ await pg.click("#file-menu [data-f=pack]");
 await pg.waitForSelector("#pack-dlg[open]");
 const imgP = await snap(pg, "pack-dialog");
 const packOpts = await pg.$$eval("#pack-dlg label", ls => ls.map(l => l.textContent.trim()));
+await pg.waitForSelector("#pack-dlg tr[data-pf]", { timeout: 20000 });
+const rows9 = await pg.$$eval("#pack-dlg tr[data-pf]", rs => rs.map(r => { const [f, d] = [...r.cells].map(c => c.textContent.trim()); return d === "(top)" ? f : `${d}/${f}`; }));
 const [dl] = await Promise.all([pg.waitForEvent("download"), pg.click("#pack-dlg [data-a=ok]")]);
 const zipPath = `${TMP}/${dl.suggestedFilename()}`;
 await dl.saveAs(zipPath);
@@ -243,6 +245,7 @@ execFileSync("unzip", ["-o", "-q", zipPath, "-d", unz]);
 const listing = []; const walk = (d, at = "") => { for (const n of readdirSync(d)) { const p = `${d}/${n}`; if (statSync(p).isDirectory()) walk(p, `${at}${n}/`); else listing.push(`${at}${n}`); } }; walk(unz);
 check("R9", listing.includes("bought/Base plate.mcadprt") && listing.includes("Part2.mcadprt") && listing.some(n => n.endsWith(".mcadasm")),
   "Pack and Go zips the assembly with its part files at their reference paths", { listing, d9, packOpts }, imgP);
+check("F4", rows9.length === listing.length && listing.every(n => rows9.includes(n)), "the Pack and Go dialog lists every file that goes into the zip, with its folder, before saving (other CAD apps: the file list)", { rows9, listing });
 
 // ---- R12: the same assembly file opened again and again: one tab, not one per Open.
 const tabs12 = await pg.$$eval("#doc-tabs [data-dt]", ts => ts.map(t => t.textContent.trim()));
@@ -373,6 +376,47 @@ const s6c = await asmState(), sup6 = await pg.evaluate(() => window.__sv.asm.doc
 const img6c = await snap(pg, "missing-suppressed");
 check("R6c", sup6.some(n => /Cover/.test(n)) && !s6c.bar, "Suppress on the missing-file bar suppresses the component and the bar goes", { sup6, bar: s6c.bar }, img6c);
 
+// ---- F6 / F5: a drawing of the assembly goes along; one folder with a prefix, and the unpacked folder still opens.
+await pg.evaluate(() => document.getElementById("new-drawing").click());
+await pg.waitForFunction(() => document.querySelector("#app").classList.contains("drawing"), null, { timeout: 30000 });
+await pg.waitForTimeout(1500);
+await pg.click('#doc-tabs [data-dt]:has-text("mcadasm"), #doc-tabs [data-dt]:has-text("Assembly")');
+await toAsm();
+await pg.click("#file-btn");
+await pg.click("#file-menu [data-f=pack]");
+await pg.waitForSelector("#pack-dlg[open]");
+await pg.$$eval("#pack-dlg .pack-list label", ls => ls.forEach(l => { const b = l.querySelector("input"); const want = /mcadasm|Assembly/.test(l.textContent) && !/mcaddrw|Drawing/.test(l.textContent); if (b.checked !== want) b.click(); }));
+await pg.check('#pack-dlg [data-pk="flat"]');
+await pg.check('#pack-dlg [data-pk="drw"]');
+await pg.fill('#pack-dlg [data-pk="prefix"]', "X-");
+await pg.waitForTimeout(600);
+await pg.waitForSelector("#pack-dlg tr[data-pf]", { timeout: 20000 });
+const rows5 = await pg.$$eval("#pack-dlg tr[data-pf]", rs => rs.map(r => [...r.cells].map(c => c.textContent.trim())));
+const img5f = await snap(pg, "pack-flat-prefix");
+const [dl5] = await Promise.all([pg.waitForEvent("download"), pg.click("#pack-dlg [data-a=ok]")]);
+const zip5 = `${TMP}/flat.zip`;
+await dl5.saveAs(zip5);
+const l5 = execFileSync("unzip", ["-Z1", zip5]).toString().trim().split("\n");
+check("F6", l5.some(n => n.endsWith(".mcaddrw")), "Include drawings puts the assembly's drawing in the zip (other CAD apps: Include drawings)", { l5 }, img5f);
+const unz5 = `${TMP}/flat`;
+mkdirSync(unz5, { recursive: true });
+execFileSync("unzip", ["-o", "-q", zip5, "-d", unz5]);
+await finish(browser, pg);
+({ browser, pg } = await open("refs", "&asmfolder=refs-ht3"));
+pg.on("dialog", d => d.accept());
+await pg.evaluate(async files => {
+  const root = await (await navigator.storage.getDirectory()).getDirectoryHandle("refs-ht3", { create: true });
+  for (const [p, data] of files) { const w = await (await root.getFileHandle(p, { create: true })).createWritable(); await w.write(new Uint8Array(data)); await w.close(); }
+}, l5.map(n => [n, [...readFileSync(`${unz5}/${n}`)]]));
+await openFiles(pg, [`${unz5}/${l5.find(n => n.endsWith(".mcadasm"))}`]);
+await toAsm();
+if (await pg.isVisible('#asm-refs [data-refs="go"]')) await pg.click('#asm-refs [data-refs="go"]');
+await pg.waitForTimeout(2500);
+const s5f = await asmState();
+const links5 = Object.values(s5f.parts).map(x => x.link).filter(Boolean);
+const img5o = await snap(pg, "flat-opened");
+check("F5", l5.every(n => !n.includes("/") && n.startsWith("X-")) && links5.length > 0 && links5.every(n => n.startsWith("X-") && !n.includes("/")) && !s5f.bar,
+  "Pack and Go into one folder with a prefix renames every file and rewrites the assembly's references, so the unpacked folder opens with nothing missing", { l5, rows5, links5, bar: s5f.bar }, img5o);
 
 await finish(browser, pg);
 console.log(`files in ${TMP}`);

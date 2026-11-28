@@ -3623,37 +3623,40 @@ export class AsmController {
 
   async save(as = false) {
     if (!this.doc) return;
-    // Chrome and Edge save into a folder (below), with the results beside the file; else they go inside it
-    const bytes = await packAsm(this.doc, `MöbiusCAD ${this.host.appVersion}`, this.previewBytes(), (this.vault && !as) || !foldersOk() ? await resultsOf(this.doc) : null);
+    // The file or folder is asked for first and packed after: packing analysis results takes seconds, and the
+    // save dialog must open at once (and while the key press still counts as the user's action).
+    const pack = async () => packAsm(this.doc!, `MöbiusCAD ${this.host.appVersion}`, this.previewBytes(), await resultsOf(this.doc!));
     if (this.vault && !as) {
       // A vaulted assembly saves into the vault's working copy, and only while checked out here (FR-PDM-081).
       if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
-      try { await this.vault.save(bytes); }
+      try { await this.vault.save(await pack()); }
       catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
       this.savedAt = JSON.stringify(this.doc);
       this.renderAll();
       toast(t("Saved {name}", { name: this.title }), "success");
       return;
     }
-    // Chrome and Edge save into a folder: the assembly beside its part files, which it references.
+    // Chrome and Edge save into a folder: the assembly beside its part files, which it references, and the results beside it.
     if (foldersOk()) { await this.saveToFolder(as); return; }
     if (as && this.vault) this.setVault(null);
-    const blob = new Blob([bytes as BlobPart], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${ASM_EXT}`;
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
+    let bytes: Uint8Array;
     try {
       if (w.showSaveFilePicker) {
         if (!this.handle || as) this.handle = await w.showSaveFilePicker({ suggestedName: suggested, types: [{ description: "MöbiusCAD assembly", accept: { "application/zip": [ASM_EXT] } }] });
+        bytes = await pack();
         const out = await (this.handle as FileSystemFileHandle & { createWritable(): Promise<FileSystemWritableFileStream> }).createWritable();
-        await out.write(blob);
+        await out.write(new Blob([bytes as BlobPart], { type: "application/zip" }));
         await out.close();
         this.fileName = this.handle.name;
       } else {
         // No save dialog in this browser: ask for the name on the first save and on Save as (exam #9).
         const file = this.fileName && !as ? this.fileName : await askFileName(suggested, ASM_EXT);
         if (!file) return;
+        bytes = await pack();
         const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
+        a.href = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/zip" }));
         a.download = file;
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);

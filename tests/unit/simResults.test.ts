@@ -34,7 +34,7 @@ test("results keep typed arrays, NaN and infinities", () => {
 });
 
 test("a results file names its model and keeps each study", async () => {
-  const bytes = await packResults({ doc: "doc-1", model: "Bracket", saved: "2026-11-24T10:00:00.000Z", studies: [
+  const bytes = await packResults({ doc: "doc-1", model: "Bracket", saved: "2026-11-24T10:00:00.000Z", active: "st2", studies: [
     { id: "st1", name: "Static 1", kind: "static", key: keyHash("a"), at: "2026-11-24T09:00:00.000Z", data: sample() },
     { id: "st2", name: "Heat", kind: "thermal", key: keyHash("b"), at: "2026-11-24T09:30:00.000Z", data: { passes: [{ vm: Float32Array.from([25, 80]) }] } },
   ] }, "test", new Map([["st2", [{ name: "Bracket Heat-thermal.json", data: "{}" }]]]));
@@ -44,6 +44,8 @@ test("a results file names its model and keeps each study", async () => {
   assert.deepEqual(head?.studies[1].thermal, ["thermal/Bracket Heat-thermal.json"]);
   const r = await unpackResults(bytes);
   assert.equal(r.model, "Bracket");
+  // the study on screen when it was saved opens again (as in other CAD apps)
+  assert.equal(r.active, "st2");
   assert.deepEqual(r.studies.map(s => s.id), ["st1", "st2"]);
   assert.equal(r.studies[0].key, keyHash("a"));
   assert.deepEqual(Array.from((r.studies[1].data as { passes: { vm: Float32Array }[] }).passes[0].vm), [25, 80]);

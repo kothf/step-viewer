@@ -3946,7 +3946,7 @@ try {
       if (ap2) await mp.mouse.click(ap2[0], ap2[1]);
       await idle();
       const flipB = await mp.evaluate(() => !!window.__sv.model.mode().draft?.flip);
-      check(!!ap && flipA && !flipB && Math.abs((await vol()) - vLp) < 1, `model 1.769: linear pattern direction arrow clicked in the view reverses the direction (${JSON.stringify({ ap, ap2, flipA, flipB })})`);
+      check(!!ap && flipA && !flipB && Math.abs((await vol()) - vLp) < 1, `model 1.771: linear pattern direction arrow clicked in the view reverses the direction (${JSON.stringify({ ap, ap2, flipA, flipB })})`);
       // Up to distance: the 20 typed becomes the reach of the last instance (3 gaps of 6.67 mm), then back.
       await mp.selectOption('#mc-pm select[data-k="total"]', "1");
       await idle();
@@ -16176,7 +16176,7 @@ try {
     await fp.click("#file-btn");
     await fp.click("#file-menu [data-f=pack]");
     await fp.waitForSelector("#pack-dlg[open]");
-    const boxes = await fp.$$eval("#pack-dlg [data-pk]:not([data-pk=name])", b => b.length);
+    const boxes = await fp.$$eval("#pack-dlg .pack-list [data-pk]", b => b.length);
     await fp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
     const [dl] = await Promise.all([fp.waitForEvent("download"), fp.click("#pack-dlg [data-a=ok]")]);
     const zbytes = await readFile(await dl.path());
@@ -16718,7 +16718,7 @@ try {
     await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 180000 });
     const eRes = await sim();
     check(edgePick.box === "1 edge" && !edgePick.normal && edgePick.marks === 1 && ptPick.box === "1 point" && ptPick.marks === 1 && eLoads.length === 2 && eLoads[0].on === "edges" && JSON.stringify(eLoads[0].edges) === JSON.stringify([spot.faces])
-      && eLoads[1].on === "points" && eLoads[1].faces === 3 && eLoads[0].rows.includes("1 edge") && eLoads[0].rows.includes("1 point") && !eRes.error && Math.abs(eRes.applied.force[2] + 1750) < 1e-6 && Math.abs(eRes.reactions[0].force[2] - 1750) < 0.01,
+      && eLoads[1].on === "points" && eLoads[1].faces === 3 && eLoads[0].rows.some(r => r.startsWith("1 edge")) && eLoads[0].rows.some(r => r.startsWith("1 point")) && !eRes.error && Math.abs(eRes.applied.force[2] + 1750) < 1e-6 && Math.abs(eRes.reactions[0].force[2] - 1750) < 0.01,
       `sim 1.612: a force on an edge and one on a corner point are picked in the view, kept by face names and solved; the reaction balances all three loads (${JSON.stringify({ edgePick, ptPick, eLoads: eLoads.map(l => ({ on: l.on, faces: l.faces })), error: eRes.error, applied: eRes.applied?.force, reaction: eRes.reactions[0]?.force })})`);
     // 1.613.0: five passes with the stop target at 0: passes 4 and 5 raise the accuracy in some cells only.
     await mp.selectOption('#sim-tree [data-k="passes"]', "5");
@@ -20439,7 +20439,8 @@ try {
     await rp.click("#file-btn");
     await rp.click("#file-menu [data-f=pack]");
     await rp.waitForSelector("#pack-dlg[open]");
-    await rp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
+    // the documents and their parts, folders kept (not "Put every file in one folder")
+    await rp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = b.dataset.pk !== "flat" && b.dataset.pk !== "drw"; }));
     const [dl] = await Promise.all([rp.waitForEvent("download"), rp.click("#pack-dlg [data-a=ok]")]);
     const ztext = (await readFile(await dl.path())).toString("latin1");
     check(ztext.includes("hw/Block-renamed.mcadprt") && ztext.includes("Plate.mcadprt") && !ztext.includes("parts/Block"), `references: Pack and Go packs the part files beside the assembly, at their reference paths (${ztext.length} bytes)`);
@@ -20477,7 +20478,7 @@ try {
     await ctx.close();
   }
   if (inShard(4)) {
-    // model 1.769: closed and outward shells, suppress with dependants, ✓ on a failing fillet keeps the panel.
+    // model 1.771: closed and outward shells, suppress with dependants, ✓ on a failing fillet keeps the panel.
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const cp = await ctx.newPage();
     cp.on("pageerror", e => errors.push(e.message));
@@ -20502,7 +20503,7 @@ try {
     await settle();
     const out = await vol();
     check(closed.ok && Math.abs(closed.v - (120000 - 96 * 56 * 16)) < 0.5 && out.ok && Math.abs(out.v - (104 * 64 * 24 - 120000)) < 0.5,
-      `model 1.769: a shell with no face removed is a closed hollow body, outward with sharp corners (${JSON.stringify({ closed, out })})`);
+      `model 1.771: a shell with no face removed is a closed hollow body, outward with sharp corners (${JSON.stringify({ closed, out })})`);
     // Suppress a hole: its pattern goes with it, Unsuppress brings both back.
     await cp.evaluate(() => window.__sv.model.store.change("Holes", doc => {
       doc.features = doc.features.filter(f => f.id !== "sh");
@@ -20519,7 +20520,7 @@ try {
     await settle();
     const back = await vol();
     check(holes.ok && sup.suppressed && sup.supBy === "h" && sup.ok && Math.abs(sup.v - 120000) < 0.5 && Math.abs(back.v - holes.v) < 1e-6,
-      `model 1.769: suppressing a hole suppresses its pattern too, Unsuppress brings both back (${JSON.stringify({ holes: holes.v, sup: { s: sup.suppressed, by: sup.supBy, v: sup.v, ok: sup.ok }, back: back.v })})`);
+      `model 1.771: suppressing a hole suppresses its pattern too, Unsuppress brings both back (${JSON.stringify({ holes: holes.v, sup: { s: sup.suppressed, by: sup.supBy, v: sup.v, ok: sup.ok }, back: back.v })})`);
     await ctx.close();
   }
 } catch (err) {
