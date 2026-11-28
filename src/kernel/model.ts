@@ -6765,6 +6765,7 @@ export class Modeller {
    */
   private sketchPattern(f: SketchPatternFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
+    if (f.src === "curve") return this.curvePattern(f, doc, prev, frames);
     const set = this.seedSet(f, doc, prev);
     const offs: V3[] = [];
     if (f.src === "table") {
@@ -6795,6 +6796,108 @@ export class Modeller {
     });
     if (!xfs.length) throw new FeatureError("E-SPAT-NONE", f.src === "table" ? "Add table rows with offsets other than 0, 0." : "The sketch has no free points away from the seed.");
     return this.copyBy(f, prev!, set, xfs, { doc, frames });
+  }
+
+  /**
+   * Curve driven pattern (FR-FT-076): the curve sampled into a polyline with arc lengths; the seed sits at the
+   * point nearest its centre, copies go `spacing` (or the length shared out with `equal`) further along, the
+   * other way with `flip`; a closed curve wraps round, an open one stops at its end. With `align` each copy is
+   * turned by the rotation-minimising frame carried from the seed's place to its own, so it keeps its pose to
+   * the curve; else it only moves.
+   */
+  private curvePattern(f: SketchPatternFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    const set = this.seedSet(f, doc, prev);
+    if (!f.path) throw new FeatureError("E-CPAT-PATH", "Pick the curve to follow: a sketch, a helix or a curve.");
+    const wire = this.pathWire(f.path, doc, prev, frames);
+    const n = Math.max(1, Math.round(f.count ?? 0));
+    if (n < 2) throw new FeatureError("E-PAT-COUNT", "The pattern needs at least 2 instances.");
+    const ad = new oc.BRepAdaptor_CompCurve_2(wire, false);
+    const t0 = ad.FirstParameter(), t1 = ad.LastParameter();
+    const m = Math.max(256, Math.min(8000, 200 * this.sub(wire, "EDGE").length));
+    const P: V3[] = [], T: V3[] = [];
+    for (let k = 0; k <= m; k++) {
+      const p = new oc.gp_Pnt_1(), v = new oc.gp_Vec_1();
+      ad.D1(t0 + ((t1 - t0) * k) / m, p, v);
+      P.push(this.xyz(p));
+      const tv = this.xyz(v);
+      T.push(Math.hypot(...tv) > 1e-12 ? unit(tv) : k ? T[k - 1] : unit(sub3(P[1] ?? tv, P[0])));
+      p.delete(); v.delete();
+    }
+    ad.delete();
+    const len: number[] = [0];
+    for (let k = 1; k <= m; k++) len.push(len[k - 1] + d3(P[k], P[k - 1]));
+    const L = len[m];
+    if (!(L > 1e-6)) throw new FeatureError("E-CPAT-PATH", "Pick the curve to follow: a sketch, a helix or a curve.");
+    const closed = d3(P[0], P[m]) < 1e-6 * Math.max(1, L);
+    // Rotation-minimising frames along the curve (double reflection), from an arbitrary normal at the start.
+    const a: V3 = Math.abs(T[0][0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const R: V3[] = [unit(cross(cross(T[0], a), T[0]))];
+    for (let k = 1; k <= m; k++) {
+      let r = R[k - 1];
+      const v1 = sub3(P[k], P[k - 1]), c1 = dot(v1, v1);
+      if (c1 > 1e-18) {
+        const rL = sub3(r, mul(v1, (2 / c1) * dot(v1, r))), tL = sub3(T[k - 1], mul(v1, (2 / c1) * dot(v1, T[k - 1])));
+        const v2 = sub3(T[k], tL), c2 = dot(v2, v2);
+        r = unit(c2 > 1e-18 ? sub3(rL, mul(v2, (2 / c2) * dot(v2, rL))) : rL);
+      }
+      R.push(r);
+    }
+    // The place, tangent and normal at an arc length.
+    const at = (s: number): { p: V3; t: V3; r: V3 } => {
+      let lo = 0, hi = m;
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (len[mid] <= s) lo = mid; else hi = mid; }
+      const w = len[hi] > len[lo] ? (s - len[lo]) / (len[hi] - len[lo]) : 0;
+      const lerp = (A: V3, B: V3) => add(mul(A, 1 - w), mul(B, w));
+      const t = unit(lerp(T[lo], T[hi]));
+      const r0 = lerp(R[lo], R[hi]);
+      return { p: lerp(P[lo], P[hi]), t, r: unit(sub3(r0, mul(t, dot(r0, t)))) };
+    };
+    const c = this.spotCentre(set, prev);
+    if (!c) throw new FeatureError("E-PAT-NONE", "No copy touches the body.");
+    // The seed's place: the nearest point of the polyline to its centre.
+    let s0 = 0, best = Infinity;
+    for (let k = 0; k < m; k++) {
+      const A = P[k], B = P[k + 1], ab = sub3(B, A), q = dot(ab, ab);
+      const u = q > 1e-18 ? Math.min(1, Math.max(0, dot(sub3(c, A), ab) / q)) : 0;
+      const dd = d3(c, add(A, mul(ab, u)));
+      if (dd < best) { best = dd; s0 = len[k] + u * (len[k + 1] - len[k]); }
+    }
+    const step = f.equal ? L / (closed ? n : n - 1) : f.spacing?.v ?? 0;
+    if (!(step > 1e-6)) throw new FeatureError("E-FT-ZERO", "The spacing must be more than 0.");
+    const sign = f.flip ? -1 : 1;
+    const F0 = at(s0), B0 = cross(F0.t, F0.r);
+    const skip = new Set(f.skip ?? []);
+    const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
+    const spots: PatternSpot[] = [];
+    let past = 0;
+    for (let i = 1; i < n; i++) {
+      let s = s0 + sign * step * i;
+      if (closed) s = ((s % L) + L) % L;
+      else if (s < -1e-9 || s > L + 1e-9) { past++; continue; }
+      s = Math.min(L, Math.max(0, s));
+      const Fi = at(s), key = String(i);
+      let M: number[];
+      if (f.align) {
+        // R maps the seed's frame (t, r, b) onto this place's.
+        const Bi = cross(Fi.t, Fi.r);
+        M = [0, 1, 2].flatMap(row => [0, 1, 2].map(col => Fi.t[row] * F0.t[col] + Fi.r[row] * F0.r[col] + Bi[row] * B0[col]));
+      } else M = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      const Mp = (v: V3): V3 => [M[0] * v[0] + M[1] * v[1] + M[2] * v[2], M[3] * v[0] + M[4] * v[1] + M[5] * v[2], M[6] * v[0] + M[7] * v[1] + M[8] * v[2]];
+      // The seed's centre keeps its offset from the curve point, turned along.
+      const tr = sub3(Fi.p, Mp(F0.p));
+      spots.push({ key, p: add(Mp(c), tr) });
+      if (skip.has(key)) continue;
+      const trsf = new oc.gp_Trsf_1();
+      trsf.SetValues(M[0], M[1], M[2], tr[0], M[3], M[4], M[5], tr[1], M[6], M[7], M[8], tr[2]);
+      xfs.push({ trsf, tag: k => f.copy === "bodies" ? `c${i}b${k}` : `c${i}s${k}`, label: key });
+    }
+    spots.push({ key: "@1", p: F0.p, d: mul(F0.t, sign) });
+    this.spots.set(f.id, spots);
+    if (!xfs.length) throw new FeatureError("E-CPAT-PAST", past ? "Every copy runs past the end of the curve: reverse the direction or lower the spacing." : "Every instance is skipped.");
+    const out = this.copyBy(f, prev!, set, xfs, { doc, frames });
+    if (past && !this.warning) this.warning = `${past} of ${n - 1} copies run past the end of the curve and were left out.`;
+    return out;
   }
 
   private size(shape: any) {

@@ -631,6 +631,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-FT-073** (P3, M) **Sketch-driven pattern** (instances at sketch points) and **table-driven** (CSV coordinates, P5).
 - **FR-FT-074** (P2, M) Geometry pattern option: copy the resulting geometry (fast) vs. re-evaluate the features at each instance (respects end conditions such as up-to-face).
 - **FR-FT-075** (P2, M) Instances that fail (fall outside the part) are skipped with a warning listing them.
+- **FR-FT-076** (P5, M) **Curve driven pattern**: copies along a sketch curve, a helix or a 3D curve from the point nearest the seed; count with spacing along the curve or equal spacing over the whole curve (a closed curve wraps round), reverse direction, align each copy to the curve (rotation-minimising frame) or only move it, skip instances.
 
 ### 9.9 Sweep, loft and curves
 
@@ -1686,6 +1687,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-FT-070 | Direction arrows in the view (drag = spacing, click = reverse) | 1.774.0: an arrow per direction from the seed while a linear pattern is open | Done |
 | FR-FT-070 / FR-FT-071 | Linear spacing or total extent, seed only in direction 2; circular second direction (symmetric) | 1.502.0: Up to distance per direction, Pattern seed only; 1.503.0: Up to reference (plane or flat face + offset, per direction), circular Direction 2 (Symmetric or own count/angle) | Done |
 | FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | 1.100.0: sketch-driven and table-driven patterns | Done |
+| FR-FT-076 | **Curve-driven** pattern (P5) | 1.779.0: along a sketch, helix or 3D curve; spacing or equal over the curve, align to curve, skip instances by their dots | Done |
 | FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Done in 1.141.0 (Geometry pattern box on feature patterns and mirror) | Done |
 | FR-FT-080 | Sweep start/end tangency (P5) | Done: start tangency in 1.108.0, end tangency in 1.143.0 | Done |
 | FR-FT-082 | Loft start/end constraints, connectors, guide curves | Built: ruled, close, centreline, start/end normal, guide curves (1.119.0) and connectors (1.131.0) | Built |
