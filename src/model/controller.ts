@@ -360,7 +360,7 @@ export class ModelController {
   private kernel: ModelKernel;
   private last: Rebuild | null = null;
   /** Structural analysis (src/sim/ui.ts): takes view clicks and Enter/Esc while a support or load panel is open; told when the document changes. */
-  simHook: { active(): boolean; click(e: PointerEvent): boolean; key(e: KeyboardEvent): boolean; changed(): void; plotting(): boolean } | null = null;
+  simHook: { active(): boolean; click(e: PointerEvent): boolean; key(e: KeyboardEvent): boolean; changed(): void; plotting(): boolean; /** Study commands for the face under a right-click while the Simulation tab is on. */ menu?(faceId: number): [string, () => void][] } | null = null;
   private mode: Mode = { kind: "none" };
   private fileName = "";
   private handle: FileSystemFileHandle | null = null;
@@ -731,6 +731,10 @@ export class ModelController {
       bodies: () => (this.last?.bodies ?? []).map(b => ({ key: b.key, name: this.bodyName(b.key) })),
       idle: () => this.mode.kind === "none",
       redraw: () => { if (this.store) this.drawDecor(); },
+      /** Faces picked before a study command (Smart measure, Ctrl+click), as the command takes them (pre-selection). */
+      picked: () => { const f = this.mode.kind === "none" ? this.pickedFace() : null; return [...new Set([...(f != null ? [f] : []), ...(this.multi?.faces ?? [])])]; },
+      /** Lets go of that selection: the measurement label and the context bar must not sit on a face the command picks. */
+      clearPick: () => { this.multi = null; this.ctxPick = null; this.pushFace = null; this.hideShortcutBar(); this.hideCrumbs(); this.host.clearMeasure?.(); if (this.store) this.drawDecor(); },
     };
   }
   /**
@@ -2629,12 +2633,12 @@ export class ModelController {
   async save(as = false) {
     if (!this.store) return;
     if (this.mode.kind === "sketch") this.ok();
-    const preview = this.previewBytes(), results = await resultsOf(this.doc);
-    let bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, preview, results);
+    const preview = this.previewBytes();
+    const pack = async () => packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, preview, await resultsOf(this.doc));
     if (this.vault && !as) {
       // A vaulted part saves into the vault's working copy, and only while checked out here (FR-PDM-081).
       if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
-      try { await this.vault.save(bytes); }
+      try { await this.vault.save(await pack()); }
       catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
       this.store.markSaved();
       journalDrop(this.doc.id);
@@ -2642,34 +2646,35 @@ export class ModelController {
       return;
     }
     if (as && this.vault) this.setVault(null);
-    let blob = new Blob([bytes], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${PART_EXT}`;
     // The part takes the name of the file it is saved as, as in other CAD apps (exam #69): its tab, its title and
     // Insert component's list of open documents then show that name, not "Part1".
-    const named = async (file: string) => {
+    const named = (file: string) => {
       const base = file.replace(/\.[^.]+$/, "");
-      if (!base || base === this.doc.name) return;
-      this.store!.amend(d => { d.name = base; });
-      bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`, undefined, preview, results);
-      blob = new Blob([bytes], { type: "application/zip" });
+      if (base && base !== this.doc.name) this.store!.amend(d => { d.name = base; });
     };
+    // The file is asked for first and packed after: packing analysis results takes seconds, and the save
+    // dialog must open at once (and while the key press still counts as the user's action).
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
+    let bytes: Uint8Array;
     try {
       if (w.showSaveFilePicker) {
         if (!this.handle || as) {
           this.handle = await w.showSaveFilePicker({ suggestedName: suggested, types: [{ description: "MöbiusCAD part", accept: { "application/zip": [PART_EXT] } }] });
         }
-        await named(this.handle.name);
+        named(this.handle.name);
+        bytes = await pack();
         const out = await (this.handle as FileSystemFileHandle & { createWritable(): Promise<FileSystemWritableFileStream> }).createWritable();
-        await out.write(blob);
+        await out.write(new Blob([bytes], { type: "application/zip" }));
         await out.close();
         this.fileName = this.handle.name;
       } else {
         // No save dialog in this browser: ask for the name on the first save and on Save as (exam #9).
         const file = this.fileName && !as ? this.fileName : await askFileName(suggested, PART_EXT);
         if (!file) return;
-        await named(file);
-        downloadBlob(blob, file);
+        named(file);
+        bytes = await pack();
+        downloadBlob(new Blob([bytes], { type: "application/zip" }), file);
         this.fileName = file;
       }
     } catch (err) {
@@ -4186,6 +4191,9 @@ export class ModelController {
     const fRaw = names[fid]?.split(":")[0];
     const f = fRaw ? this.store.feature(fRaw) : undefined;
     const items: ([string, () => void, string?] | null)[] = [];
+    // The Simulation tab on: supports and loads for this face first, as other CAD apps offer them on the geometry.
+    const study = !hit.edge && hit.faceId != null ? this.simHook?.menu?.(hit.faceId) ?? [] : [];
+    if (study.length) items.push(...study, null);
     if (f) {
       const sk = "sketch" in f && typeof f.sketch === "string" ? this.store.feature(f.sketch) : undefined;
       items.push([t("Edit feature"), () => this.editFeature(f.id)]);
