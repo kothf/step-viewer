@@ -12,6 +12,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Assemblies: mates take more than flat and cylindrical faces. A click close to an edge picks the edge (a straight edge works as a line, a round edge as a circle with its axis and centre), close to a corner the vertex, and conical faces (their axis) and spherical faces (their centre) are taken too. The Mate panel's Origin row puts the component's own XY, YZ or ZX plane, X, Y or Z axis or origin point in place of the last pick. The mate types offered follow: a vertex or a component origin point takes Coincident, Distance and Limit distance; a sphere also Tangent and Concentric; an edge against a face starts with Coincident. A round edge coincident with a face lies in it.
 - Hands-on tests `tests/human/mates3.mjs` (a vertex with a component's origin point, an origin axis with a hole, a round edge on a face) and unit tests `tests/unit/mateRefs.test.ts`.
 
+## [1.774.0] - 2026-11-28
+
+### Fixed
+
+- Shell with no face removed makes a closed hollow body (it gave the inner block before).
+- Shell outward keeps the outer corners sharp, as other CAD apps do (they came out rounded).
+- Suppress takes the features that use the suppressed one along (a pattern of a hole, a chamfer on its edge) and Unsuppress brings them back; unsuppressing a feature also brings back the suppressed features it needs. A pattern of a suppressed hole no longer fails.
+- ✓ on a new or changed feature that the view shows failing (a fillet radius too big for its edges) keeps the panel open with the reason instead of adding a failed feature.
+- Alt+↑/↓, Enter and F2 act on a Features tree row right after it is clicked.
+
+### Added
+
+- Linear pattern direction arrows in the view, as other CAD apps show them: an orange arrow per direction from the seed while the pattern is open; drag it to change the spacing, click it to reverse that direction (before, a direction picked from an edge could run off the part with only a checkbox to turn it).
+- Hands-on test of core modelling (fillets, chamfers, patterns, mirror, shell, holes, rebuild after edits above) in `tests/human/core.mjs`.
+
 ## [1.773.0] - 2026-11-28
 
 ### Fixed
@@ -5162,6 +5177,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.775.0...HEAD
 [1.775.0]: https://github.com/kothf/step-viewer/compare/v1.774.0...v1.775.0
+[1.774.0]: https://github.com/kothf/step-viewer/compare/v1.773.0...v1.774.0
 [1.773.0]: https://github.com/kothf/step-viewer/compare/v1.772.0...v1.773.0
 [1.772.0]: https://github.com/kothf/step-viewer/compare/v1.771.0...v1.772.0
 [1.771.0]: https://github.com/kothf/step-viewer/compare/v1.770.0...v1.771.0

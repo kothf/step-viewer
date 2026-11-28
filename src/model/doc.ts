@@ -257,6 +257,44 @@ export function dependants(doc: PartDoc, id: string): Feature[] {
   return out;
 }
 
+/**
+ * Suppress or unsuppress a feature as other CAD apps do (FR-HIS-004): the features that use it are
+ * suppressed with it (marked `supBy`) and come back with it; unsuppressing a feature also brings back
+ * the suppressed features it needs. Returns the names of the other features changed.
+ */
+export function setSuppressed(d: PartDoc, id: string, on: boolean): string[] {
+  const byId = (x: string) => d.features.find(g => g.id === x);
+  const along: string[] = [];
+  const f = byId(id);
+  if (!f) return along;
+  if (on) {
+    f.suppressed = true;
+    for (const c of dependants(d, id)) {
+      if (c.suppressed) continue;
+      c.suppressed = true;
+      c.supBy = id;
+      along.push(c.name);
+    }
+    return along;
+  }
+  const back = new Set<string>();
+  const wake = (x: string) => {
+    const g = byId(x);
+    if (!g || back.has(x)) return;
+    back.add(x);
+    for (const p of parents(d, g)) if (byId(p)?.suppressed) wake(p);
+  };
+  wake(id);
+  for (const x of [...back]) for (const g of d.features) if (g.supBy === x) back.add(g.id);
+  for (const x of back) {
+    const g = byId(x)!;
+    if (x !== id && g.suppressed) along.push(g.name);
+    delete g.suppressed;
+    delete g.supBy;
+  }
+  return along;
+}
+
 /** Features this one needs (directly): earlier features whose faces or results it refers to. */
 export function parents(doc: PartDoc, f: Feature): string[] {
   const r = featureRefs(f);

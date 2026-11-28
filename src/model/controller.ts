@@ -20,7 +20,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, PartData } from "../topology";
 import { edgeLoop, sameEdges, tangentChain } from "./chain";
-import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
+import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, setSuppressed, uid } from "./doc";
 import { hasHolePoints, syncHole, syncHoleSketches } from "./holePos";
 import { canCopy, copyClip, pasteClip, type Clip } from "./paste";
 import { activate, addConfig, applyConfigTable, configTable, nextConfigName, removeConfig, renameConfig } from "./configs";
@@ -645,6 +645,8 @@ export class ModelController {
   previewShown = false;
   private shownRolled = false;
   private rebuildGen = 0;
+  /** The feature draft the last finished rebuild showed (JSON), so ✓ knows the panel's error is current. */
+  private shownDraft = "";
   private staleTimer = 0;
   private rebuildMs = 0;
   /** Undo mark taken when a sketch was opened: leaving it merges its steps (FR-UND-003). */
@@ -1021,6 +1023,7 @@ export class ModelController {
     // Face numbers change with a rebuild: the push/pull arrow waits for the next pick.
     if (!this.arrowDrag) this.pushFace = null;
     if (gen === this.rebuildGen) {
+      this.shownDraft = d ? JSON.stringify(d) : "";
       this.shownRolled = rolled;
       if (m.kind === "none" && !this.instantDoc) this.fullData = r.data;
     }
@@ -1800,6 +1803,10 @@ export class ModelController {
     const smWhy = smCheck(f);
     if (smWhy) { toast(smWhy, true); return; }
     if (f.type === "point" && !(f.mode === "face" ? f.face : f.edge)) { toast(t(f.mode === "face" ? "Pick a face." : "Pick an edge."), true); return; }
+    // A new or changed feature that the view shows failing is not made: the panel stays open with the
+    // reason, as in other CAD apps (an unchanged feature that fails because of an edit above can still be OK'd).
+    const failing = this.draftFailure(f, m.isNew ? null : this.store!.feature(f.id) ?? null);
+    if (failing) { toast(failing, true); return; }
     this.mode = { kind: "none" };
     this.store!.change(m.isNew ? `Add ${f.name}` : `Edit ${f.name}`, d => {
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
@@ -1817,6 +1824,14 @@ export class ModelController {
     if (m.isNew && isWeldFeature(f)) rememberWeld(f);
     const again = m.isNew && (repeat || this.pinned) ? this.activeCmd : null;
     void Promise.resolve(this.rebuild()).then(() => { if (again && this.mode.kind === "none") this.command(again); });
+  }
+
+  /** The error of the shown draft (the same one the panel shows), when it is current and the feature is new or changed. */
+  private draftFailure(f: Feature, was: Feature | null): string | null {
+    if (this.shownDraft !== JSON.stringify(f)) return null;
+    if (was && JSON.stringify(was) === this.shownDraft) return null;
+    const status = (f.type === "fillet" || f.type === "chamfer") ? this.last?.preview?.status as FeatureStatus | undefined : this.last?.statuses.find(s => s.id === f.id);
+    return status && !status.ok ? statusText(status) : null;
   }
 
   /**
@@ -2557,10 +2572,12 @@ export class ModelController {
     const f = this.store?.feature(id);
     if (!f) return;
     if (this.isFrozen(id)) { this.frozenToast(); return; }
-    this.store!.change(f.suppressed ? `Unsuppress ${f.name}` : `Suppress ${f.name}`, d => {
-      const g = d.features.find(x => x.id === id)!;
-      if (g.suppressed) delete g.suppressed; else g.suppressed = true;
-    });
+    // As in other CAD apps, the features that use it go with it (a pattern of a suppressed hole, a
+    // fillet on its edges), and come back with it; unsuppressing a feature brings back what it needs.
+    const was = !!f.suppressed;
+    let along: string[] = [];
+    this.store!.change(was ? `Unsuppress ${f.name}` : `Suppress ${f.name}`, d => { along = setSuppressed(d, id, !was); });
+    if (along.length) toast(t(!was ? "Also suppressed: {list}." : "Also unsuppressed: {list}.", { list: along.map(featureLabel).join(", ") }));
   }
 
   async deleteFeature(id: string) {
@@ -5552,7 +5569,7 @@ export class ModelController {
     const m = this.mode;
     if (m.kind !== "feature" || m.focus !== "skip" || (m.draft.type !== "lpattern" && m.draft.type !== "cpattern")) return;
     const f = m.draft;
-    const spots = this.last?.spots?.[f.id] ?? [];
+    const spots = (this.last?.spots?.[f.id] ?? []).filter(s => !s.key.startsWith("@"));
     const skip = new Set(f.skip ?? []);
     for (const s of spots) {
       const off = skip.has(s.key);
@@ -5777,7 +5794,7 @@ export class ModelController {
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
 
   /** The extrude or revolve being edited, or the one selected in the tree (dragging it edits it at once). */
-  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | SmHemFeature | SmBaseFeature | FlexFeature | null {
+  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | SmHemFeature | SmBaseFeature | FlexFeature | LinearPatternFeature | null {
     const m = this.mode;
     // Sheet metal flanges show their arrow while folded only (the flat pattern hides where the flange stands).
     const folded = () => !this.doc.features.some(x => x.type === "smflat" && !x.suppressed);
@@ -5785,6 +5802,8 @@ export class ModelController {
       || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || ((f?.type === "smflange" || f?.type === "smhem") && f.edges.length > 0 && folded() && !(f.type === "smflange" && f.end === "vertex"))
       || (f?.type === "smbase" && folded() && this.smOpenBase(f))
       || (f?.type === "flex" && (this.last?.frames[f.id]?.len?.length ?? 0) >= 6);
+    // A linear pattern shows its direction arrows while its panel is open (drag = spacing, click = reverse).
+    if (m.kind === "feature" && m.draft.type === "lpattern") return this.last?.spots?.[m.draft.id]?.some(x => x.key === "@1") ? m.draft : null;
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     // A part that was closed or handed back to its assembly has no store; its last selection must not draw (exam bug 40).
     if (m.kind !== "none" || !this.selected || !this.store) return null;
@@ -5812,6 +5831,7 @@ export class ModelController {
     if (f.type === "smflange" || f.type === "smhem") { this.drawFlangeArrow(f); return; }
     if (f.type === "smbase") { this.drawBaseArrow(f); return; }
     if (f.type === "flex") { this.drawFlexArrows(f); return; }
+    if (f.type === "lpattern") { this.drawPatternArrows(f); return; }
     const sk = this.store!.feature(f.sketch);
     if (sk?.type !== "sketch") return;
     const fr = this.frameOf(sk);
@@ -5936,6 +5956,28 @@ export class ModelController {
   }
 
   /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it), dragging the number `key`. */
+  /**
+   * Linear pattern direction arrows (FR-FT-070), as other CAD apps show them: one per direction from the seed's
+   * centre to the first copy (to the last one for Up to distance). Drag one to change the spacing, click it to
+   * reverse that direction; the label opens the spacing in the panel.
+   */
+  private drawPatternArrows(f: LinearPatternFeature) {
+    const spots = this.last?.spots?.[f.id] ?? [];
+    for (const k of [1, 2] as const) {
+      const s = spots.find(x => x.key === `@${k}`);
+      if (!s?.d) continue;
+      const key = k === 1 ? "spacing" : "spacing2";
+      const sp = (k === 1 ? f.spacing : f.spacing2)?.v ?? 0;
+      const upTo = k === 1 ? f.upTo : f.upTo2;
+      // Up to reference: the spacing follows the reference, so the arrow points to the first copy.
+      const first = upTo ? spots.find(x => x.key === (f.dir2 ? (k === 1 ? "1,0" : "0,1") : "1")) : null;
+      const value = first ? new THREE.Vector3(...first.p).distanceTo(new THREE.Vector3(...s.p)) : sp;
+      this.placeArrow(new THREE.Vector3(...s.p), new THREE.Vector3(...s.d).normalize(), value, false, key);
+      if (!upTo) this.handleLabel(f.id, key, t("Drag to change the spacing; click the arrow to reverse the direction."));
+    }
+    this.sizeArrow();
+  }
+
   private placeArrow(base: THREE.Vector3, dir: THREE.Vector3, value: number, mid: boolean, key: string) {
     const obj = new THREE.Group();
     const mat = new THREE.MeshBasicMaterial({ color: 0xf08c00, depthTest: false, transparent: true });
@@ -6040,7 +6082,10 @@ export class ModelController {
     const label = a.label;
     if (label && f) {
       const tip = a.ang ? a.ang.head.position.clone().add(a.ang.head.position.clone().sub(a.ang.c).setLength(a.scale * 0.9)) : a.obj.position.clone().addScaledVector(a.dir, a.scale * 1.5);
-      const s = tip.project(v.camera);
+      const s = tip.clone().project(v.camera);
+      // An arrow pointing left on screen gets its label on the left of the tip, so it never covers the shaft.
+      const b = (a.ang ? a.ang.c : a.obj.position).clone().project(v.camera);
+      label.classList.toggle("left", s.x < b.x);
       label.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
       label.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
       const val = (f as unknown as Record<string, Num | undefined>)[a.key]?.v ?? 0;
@@ -6188,7 +6233,9 @@ export class ModelController {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
     if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
     if (m.kind === "feature" && m.draft.type === "moveface" && d?.key === "push" && a) { this.movePush(e, m.draft, d); return; }
-    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange" && m.draft.type !== "smhem" && m.draft.type !== "smbase" && m.draft.type !== "flex") || !d || !a) return;
+    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange" && m.draft.type !== "smhem" && m.draft.type !== "smbase" && m.draft.type !== "flex" && m.draft.type !== "lpattern") || !d || !a) return;
+    // Up to reference: the spacing follows the plane; the arrow only reverses on a click.
+    if (m.draft.type === "lpattern" && (a.key === "spacing" ? m.draft.upTo : m.draft.upTo2)) return;
     const key = a.key;
     const k = a.mid ? 2 : 1;
     let v = d.depth + (this.axisParam(e) - d.start) * k;
@@ -6265,6 +6312,13 @@ export class ModelController {
     }
     if (m.kind === "feature" && m.instant) {
       if (d?.moved) this.ok(); else { this.exitMode(false); void this.rebuild(); }
+      return;
+    }
+    // A click on a pattern direction arrow (no drag) reverses that direction.
+    if (m.kind === "feature" && m.draft.type === "lpattern" && d && !d.moved) {
+      if (d.key === "spacing2") { if (m.draft.flip2) delete m.draft.flip2; else m.draft.flip2 = true; }
+      else if (m.draft.flip) delete m.draft.flip; else m.draft.flip = true;
+      this.draftChanged();
       return;
     }
     this.renderPanel();
@@ -7449,7 +7503,10 @@ export class ModelController {
     });
     if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
+    // A row that had the keyboard keeps it through the redraw (a rebuild redraws the tree while Alt+↑/↓ moves a feature).
+    const had = (document.activeElement as HTMLElement | null)?.closest?.("#mc-tree .ft-row") as HTMLElement | null;
     box.innerHTML = html;
+    if (had?.dataset.id) box.querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(had.dataset.id)}"]`)?.focus({ preventScroll: true });
     const flyName = document.querySelector("#mc-treefly .mc-treefly-n");
     if (flyName) flyName.textContent = d.name;
     if (this.hoverId && this.hoverFrom === "view") box.querySelector(`.ft-row[data-id="${CSS.escape(this.hoverId)}"]`)?.classList.add("hover");
@@ -7603,6 +7660,8 @@ export class ModelController {
         this.selected = id;
         this.renderTree();
         this.drawDecor();
+        // The tree was drawn again: the clicked row keeps the keyboard, so Alt+↑/↓, Enter and F2 act on it.
+        $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
       });
       r.addEventListener("dblclick", e => {
         if ((e.target as HTMLElement).matches("input")) return;
