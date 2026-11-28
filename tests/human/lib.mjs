@@ -41,7 +41,11 @@ export const screenOf = (pg, p) => pg.evaluate(p => {
 export async function clickAt(pg, [x, y], opts = {}) {
   await pg.mouse.move(x - 3, y - 2); await pg.waitForTimeout(40);
   await pg.mouse.move(x, y); await pg.waitForTimeout(60);
+  // mouse.click has no modifiers: hold them on the keyboard, as a person does
+  const mods = opts.modifiers ?? [];
+  for (const k of mods) await pg.keyboard.down(k);
   await pg.mouse.click(x, y, opts);
+  for (const k of mods) await pg.keyboard.up(k);
   await pg.waitForTimeout(120);
 }
 export async function dblAt(pg, [x, y]) {

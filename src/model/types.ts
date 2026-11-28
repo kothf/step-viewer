@@ -1152,11 +1152,19 @@ export interface IntersectFeature {
 
 /** A region an intersect found: a point inside it, its volume and whether it is left out. */
 /** Where each instance of a linear or circular pattern lands (the seed's centre moved), `key` as in `skip`. */
-export interface PatternSpot { key: string; p: V3 }
+/**
+ * An instance's place (Instances to skip dots). Keys "@1"/"@2" are not instances: they hold the seed's
+ * centre and the unit direction (`d`, reversal applied) of a linear pattern's directions, for its arrows.
+ */
+export interface PatternSpot { key: string; p: V3; d?: V3 }
 export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes of the `exclude` points inside it. */ ex?: number[] }
 
 /** A note on any feature (gap list M5): shown as a 💬 mark and in the tree row's tooltip. */
-export interface FeatureNote { comment?: string }
+export interface FeatureNote {
+  comment?: string;
+  /** Suppressed along with this feature (a parent): unsuppressing that parent brings it back too. */
+  supBy?: string;
+}
 export type Feature = (SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
