@@ -1946,11 +1946,13 @@ test("a tapped Hole Wizard hole draws its cosmetic thread; a section leaves out 
   assert.deepEqual(holeText({ t: "c", c: [-20, 0, 20], ax: [0, 0, 1], r: 2.5 } as never, ctx), ["Ø5 ↧12", "M6-6H ↧10"]);
   // Section on x = 0 from the top view: one side keeps only the M8 hole's thread, the other only the M6's.
   const parent = { id: "t", name: "Top", orient: "top", x: 100, y: 200 };
-  const kept = (look: 1 | -1) => {
-    const v = { id: "s", name: "A", kind: "section", parent: "t", line: [0, -40, 0, 40], look, x: 250, y: 200, marks: false };
+  const kept = (look: 1 | -1, style?: string) => {
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: [0, -40, 0, 40], look, x: 250, y: 200, marks: false, ...(style ? { style } : {}) };
     const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "first", views: [parent, v], annots: [] } as never;
     // The thread's lines along the axis lie at its major radius: 4 for the M8, 3 for the M6 (the view runs the axis across).
     return [...new Set(viewAnnots(sheet, v as never, pl, ctx).prims.flatMap(p => p.layer === "THREAD" && p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-9 ? [Math.abs(Math.round(p.p[1]))] : []))].join(",");
   };
-  assert.deepEqual([kept(1), kept(-1)].sort(), ["3", "4"], "each side keeps the thread of its own hole only");
+  // Neither hole is on the cut: their threads lie behind it, hidden (drawings tests A11), so only a view showing hidden lines has them.
+  assert.deepEqual([kept(1, "hlv"), kept(-1, "hlv")].sort(), ["3", "4"], "each side keeps the thread of its own hole only");
+  assert.deepEqual([kept(1), kept(-1)], ["", ""], "a section without hidden lines draws no thread behind the cut");
 });

@@ -14,6 +14,9 @@ const C = (o: P2, r: number, a0 = 0, a1 = 2 * Math.PI): Prim => ({ t: "a", o, r,
 type TPrim = Extract<Prim, { t: "t" }>;
 const T = (x: number, y: number, s: string, h = H, al: "l" | "c" | "r" = "c"): TPrim => ({ t: "t", x, y, s, h, al, layer: "ANNOT" });
 
+/** Form tolerances (ISO 1101): straightness, flatness, roundness and cylindricity are never related to a datum. */
+export const FORM_SYMS: readonly GSym[] = ["straight", "flat", "circ", "cyl"];
+export const takesDatums = (s: GSym) => !FORM_SYMS.includes(s);
 export const GSYMS: GSym[] = ["straight", "flat", "circ", "cyl", "pline", "psurf", "par", "perp", "ang", "pos", "conc", "sym", "runout", "trunout"];
 export const GSYM_NAMES: Record<GSym, string> = {
   straight: "Straightness", flat: "Flatness", circ: "Circularity", cyl: "Cylindricity", pline: "Profile of a line", psurf: "Profile of a surface",
