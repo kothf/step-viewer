@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.767.0] - 2026-11-28
+
+### Added
+
+- Pack and Go lists every file that goes into the zip, with its folder, and updates the list as you change the options.
+- Pack and Go can put every file in one folder and add a prefix or suffix to the file names. An assembly's references to its parts and sub-assemblies are written to the new names, so the packed folder opens with nothing missing.
+- Pack and Go ▸ Include drawings adds the drawings of the packed parts and assemblies (and of an assembly's parts) found in open tabs, the open vault and the recent documents.
+
 ## [1.766.0] - 2026-11-28
 
 ### Added
@@ -5081,7 +5089,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.766.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.767.0...HEAD
+[1.767.0]: https://github.com/kothf/step-viewer/compare/v1.766.0...v1.767.0
 [1.766.0]: https://github.com/kothf/step-viewer/compare/v1.765.0...v1.766.0
 [1.765.0]: https://github.com/kothf/step-viewer/compare/v1.764.0...v1.765.0
 [1.764.0]: https://github.com/kothf/step-viewer/compare/v1.763.0...v1.764.0

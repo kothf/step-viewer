@@ -87,6 +87,8 @@ import { recentAdd, recentFiles, recentItem, recentList } from "./recent";
 import { drawingOf, peekDrawing, uniqueDrawings, type FoundDrawing, type ModelKey } from "./drawing/findDrawing";
 import { packAsm, ASM_EXT, unpackAsm } from "./asm/file";
 import { memDir, writeRefs } from "./asm/refs";
+import { packedName, renameRefs, renames, type PackNames } from "./asm/packNames";
+import type { AsmDoc } from "./asm/types";
 import { bindValueDrops, dragValue } from "./valueDrop";
 import { bindLongPress } from "./longPress";
 
@@ -612,6 +614,42 @@ async function drawingsIntoVault(modelId: string): Promise<void> {
     const tie = p && await vaultPanel.addBeside(modelId, p.name, p.data);
     if (tie) { st.vault = tie; st.store.markSaved(); docs?.render(); }
   }
+}
+
+/**
+ * Pack and Go ▸ Include drawings: the drawings of these documents found in the drawing workspace, document tabs,
+ * the open vault and the recent documents, one per drawing (nearest place first), named with the pack's options.
+ */
+async function drawingsOf(keys: ModelKey[], o?: PackNames): Promise<{ id: string; name: string; data: Uint8Array }[]> {
+  const out = new Map<string, { name: string; data: Uint8Array }>();
+  const ours = (src: Parameters<typeof drawingOf>[0]) => keys.some(k => drawingOf(src, k));
+  const add = (id: string, f: { name: string; data: Uint8Array } | null) => { if (f && !out.has(id)) out.set(id, { name: packedName(f.name, o), data: f.data }); };
+  const cur = drawing.current;
+  if (cur && ours(cur.source)) add(cur.id, await drawing.packed());
+  for (const tab of docs?.tabs ?? []) {
+    const st = tab.kind === "drawing" ? tab.state as DrawingTab | null : null;
+    if (st && ours(st.store.doc.source)) add(st.store.doc.id, await drawing.packed(st));
+  }
+  const v = vaultPanel.vault;
+  if (v) {
+    try {
+      for (const f of await v.files()) {
+        if (f.deleted || !isDrawingName(f.path)) continue;
+        const bytes = await v.working(f.path) ?? await v.versionBytes(f.id, v.latest(f).n);
+        const d = await peekDrawing(bytes.slice().buffer as ArrayBuffer);
+        if (d && ours(d.source)) add(d.id, { name: f.path.split("/").at(-1)!, data: new Uint8Array(bytes) });
+      }
+    } catch { /* the vault folder went away */ }
+  }
+  const recent = await recentList();
+  for (let i = 0; i < recent.length; i++) {
+    if (!isDrawingName(recent[i].name)) continue;
+    const file = (await recentFiles(i))?.find(x => isDrawingName(x.name));
+    if (!file) continue;
+    const buf = await file.arrayBuffer(), d = await peekDrawing(buf);
+    if (d && ours(d.source)) add(d.id, { name: file.name, data: new Uint8Array(buf) });
+  }
+  return [...out].map(([id, f]) => ({ id, ...f }));
 }
 
 /** The open 3D document a drawing can belong to (File ▸ Open drawing), or null. */
@@ -4030,45 +4068,62 @@ const fileMenu = new FileMenu({
       const live = tab.state == null, label = plainLabel(tab.label);
       if (tab.kind === "part") {
         const st = tab.state as PartTab | null;
-        return { label, kind: "part", live, async files() {
-          const doc = st ? st.store.doc : modeller.store!.doc;
-          const data = st ? await packPart(doc, appGen) : (await modeller.partBytes(false))!;
-          const name = (st ? st.fileName : plainLabel(modeller.partName)) || `${doc.name}${PART_EXT}`, results = await resultsOf(doc);
+        const doc = () => (st ? st.store.doc : modeller.store!.doc);
+        return { label, kind: "part", live, id: doc().id, async files(o) {
+          const data = st ? await packPart(doc(), appGen) : (await modeller.partBytes(false))!;
+          const name = packedName((st ? st.fileName : plainLabel(modeller.partName)) || `${doc().name}${PART_EXT}`, o), results = await resultsOf(doc());
           // its simulation results beside it (src/sim/resultsFile.ts)
           return [{ name, data }, ...(results ? [{ name: resultsName(name), data: results }] : [])];
-        } };
+        }, drawings: o => drawingsOf([{ part: doc().id }], o) };
       }
       if (tab.kind === "asm") {
         const st = tab.state as AsmTab | null;
         const doc = () => (st ? st.doc : asm.doc!);
-        let made: Promise<{ name: string; files: Map<string, Uint8Array> }> | null = null;
-        const folder = () => (made ??= (async () => {
-          const name = (st ? st.fileName : asm.title) || `${doc().name}${ASM_EXT}`, dir = memDir();
-          const w = await writeRefs(doc(), dir, new Map(), appGen, "", name);
-          dir.files.set(name, await packAsm(w.doc, appGen));
-          return { name, files: dir.files };
-        })());
+        const made = new Map<string, Promise<{ name: string; files: Map<string, Uint8Array> }>>();
+        // the folder as it is saved: the assembly beside its part files, which it references; with Pack and Go's
+        // names (one folder, prefix, suffix) the references are written again to the new names (FR-IO-011)
+        const folder = (o: PackNames = {}) => {
+          const k = renames(o) ? JSON.stringify(o) : "";
+          let p = made.get(k);
+          if (!p) made.set(k, p = (async () => {
+            const name = (st ? st.fileName : asm.title) || `${doc().name}${ASM_EXT}`;
+            let dir = memDir();
+            const w = await writeRefs(doc(), dir, new Map(), appGen, "", name);
+            if (!k) { dir.files.set(name, await packAsm(w.doc, appGen)); return { name, files: dir.files }; }
+            const r = renameRefs(w.doc, name, o);
+            dir = memDir();
+            const w2 = await writeRefs(r.doc, dir, new Map(), appGen, "", r.name);
+            dir.files.set(r.name, await packAsm(w2.doc, appGen));
+            return { name: r.name, files: dir.files };
+          })());
+          return p;
+        };
+        const partIds = (d: AsmDoc, out: ModelKey[] = []): ModelKey[] => {
+          for (const e of Object.values(d.parts)) { if (e.asm) { out.push({ asm: e.asm.id }); partIds(e.asm, out); } else if (e.doc) out.push({ part: e.doc.id }); }
+          return out;
+        };
         return {
-          label, kind: "asm", live,
-          // the folder as it is saved: the assembly beside its part files, which it references
-          async files() {
-            const f = await folder(), results = await resultsOf(doc());
+          label, kind: "asm", live, id: doc().id,
+          async files(o) {
+            const f = await folder(o), results = await resultsOf(doc());
             return [{ name: f.name, data: f.files.get(f.name)! }, ...(results ? [{ name: resultsName(f.name), data: results }] : [])];
           },
-          async parts() { const f = await folder(); return [...f.files].filter(([n]) => n !== f.name).map(([name, data]) => ({ name, data })); },
+          async parts(o) { const f = await folder(o); return [...f.files].filter(([n]) => n !== f.name).map(([name, data]) => ({ name, data })); },
+          drawings: o => drawingsOf([{ asm: doc().id }, ...partIds(doc())], o),
         };
       }
       if (tab.kind === "drawing") {
         const st = tab.state as DrawingTab | null;
-        return { label, kind: "drawing", live, async files() { const r = await drawing.packed(st ?? undefined); return r ? [r] : []; } };
+        const id = st ? st.store.doc.id : drawing.current?.id;
+        return { label, kind: "drawing", live, id, async files(o) { const r = await drawing.packed(st ?? undefined); return r ? [{ name: packedName(r.name, o), data: r.data }] : []; } };
       }
       const src = (tab.state as { name: string; data: ArrayBuffer } | null) ?? modelSrc;
       // a board's thermal package goes with its STEP (FR-TPKG-006)
       const th = src ? thermalSrcs.get(`sv:m:${src.name}:${src.data.byteLength || ""}`) : undefined;
       const gb = src ? boardGerbers.get(`sv:m:${src.name}:${src.data.byteLength || ""}`) : undefined;
-      return { label, kind: "model", live, async files() {
+      return { label, kind: "model", live, async files(o) {
         if (!src) return [];
-        const out = [{ name: src.name, data: new Uint8Array(src.data.slice(0)) }];
+        const out = [{ name: packedName(src.name, o), data: new Uint8Array(src.data.slice(0)) }];
         if (th && th.name !== src.name) out.push({ name: th.name, data: th.data.slice() });
         // and its Gerber set (FR-TBRD-020): one zip as it came, else the files zipped
         if (gb?.length && !packagedGerbers.has(gb)) {
