@@ -5216,7 +5216,7 @@ export class ModelController {
    */
   private drawValueCallouts() {
     const layer = document.getElementById("mc-layer");
-    layer?.querySelectorAll(".mc-vcall").forEach(x => x.remove());
+    layer?.querySelectorAll(".mc-vcall, .mc-mtcall").forEach(x => x.remove());
     const m = this.mode, pm = document.getElementById("mc-pm");
     if (m.kind !== "feature" || !layer || !pm || !this.last) return;
     const f = m.draft;
@@ -5268,6 +5268,23 @@ export class ModelController {
       }
       layer.append(el);
     });
+    // Multi-thickness shell: each wall with its own thickness shows it on the wall; a click types it.
+    if (f.type === "shell" && f.multi?.length) {
+      const data = this.host.viewer.parts[0]?.data, names = this.last.faceNames;
+      f.multi.forEach((x, i) => {
+        const fi = names?.indexOf(x.name) ?? -1, fc = fi >= 0 ? data?.faces[fi] : undefined;
+        const inp = pm.querySelector<HTMLInputElement>(`input[data-mt="${i}"]`);
+        if (!fc || !inp) return;
+        const b = document.createElement("button");
+        b.className = "mc-handle mc-callout mc-mtcall";
+        b.dataset.at = JSON.stringify(fc.center);
+        b.dataset.mt = String(i);
+        b.title = t("Click to type the value");
+        b.textContent = `${t("Thickness")}: ${inp.value} ${units.current}`;
+        b.addEventListener("click", () => { inp.focus(); inp.select(); });
+        layer.append(b);
+      });
+    }
     this.placeCallouts();
   }
 
@@ -6529,6 +6546,28 @@ export class ModelController {
     }
     const ed = f.edges.length ? this.edgeOf(f.edges[0]) : null;
     if (!ed) return;
+    const cm = f.type === "chamfer" ? f.mode ?? "equal" : "equal";
+    if (f.type === "chamfer" && (cm === "two" || cm === "angle")) {
+      // Two distances, or distance and angle: each value on the face it is measured on, as in other CAD apps,
+      // so Flip direction visibly swaps them. Distance 1 runs on the edge's first face (its second when flipped).
+      const sides = this.chamferSides(f.edges[0], ed, f.flip);
+      const items: [string, string, string][] = cm === "two"
+        ? [[`D1: ${size(f.distance.v)}`, "distance", "d1"], [`D2: ${size(f.distance2?.v ?? f.distance.v)}`, "distance2", "d2"]]
+        : [[`D: ${size(f.distance.v)}`, "distance", "d1"], [`${trimNum(((f.angle?.v ?? 0) * 180) / Math.PI, 2)}°`, "angle", "a"]];
+      items.forEach(([text, key, tag], k) => {
+        const b = document.createElement("button");
+        b.className = "mc-handle mc-callout";
+        b.textContent = text;
+        b.title = t("Click to type the size");
+        b.dataset.at = JSON.stringify(sides?.[k] ?? ed.mid);
+        b.dataset.side = tag;
+        if (!sides) b.dataset.row = String(k);
+        b.addEventListener("click", () => { const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-num="${key}"]`); inp?.focus(); inp?.select(); });
+        $("#mc-layer").appendChild(b);
+      });
+      this.placeCallouts();
+      return;
+    }
     const label = document.createElement("button");
     label.className = "mc-handle mc-callout";
     label.textContent = f.type === "fillet" ? `${t("Radius")}: ${size(f.radius.v)}`
@@ -6540,6 +6579,36 @@ export class ModelController {
     label.addEventListener("click", () => ($("#mc-pm").querySelector<HTMLInputElement>(f.type === "fillet" ? "input[data-num=radius]" : "input[data-num=distance]"))?.focus());
     $("#mc-layer").appendChild(label);
     this.placeCallouts();
+  }
+
+  /**
+   * Where a two-sided chamfer's values sit: a point on each face of the edge, off its middle and square to it
+   * (Distance 1's face first). Null when the faces cannot be told apart.
+   */
+  private chamferSides(ref: EdgeRef, ed: EdgeInfo, flip?: boolean): [V3, V3] | null {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!data || !names) return null;
+    const first = ref.faces[flip ? 1 : 0];
+    const k = names[ed.faces[0]] === first ? 0 : names[ed.faces[1]] === first ? 1 : -1;
+    if (k < 0) return null;
+    const td = [ed.end[0] - ed.start[0], ed.end[1] - ed.start[1], ed.end[2] - ed.start[2]];
+    const tl = Math.hypot(...td) || 1;
+    const tu = td.map(x => x / tl);
+    const away = (fi: number): V3 | null => {
+      const c = data.faces[fi]?.centroid;
+      if (!c) return null;
+      const d = [c[0] - ed.mid[0], c[1] - ed.mid[1], c[2] - ed.mid[2]];
+      const a = d[0] * tu[0] + d[1] * tu[1] + d[2] * tu[2];
+      const q = [d[0] - a * tu[0], d[1] - a * tu[1], d[2] - a * tu[2]];
+      const ql = Math.hypot(...q);
+      if (ql < 1e-9) return null;
+      // Most of the way to the face's middle, at most a third of the edge, so the two labels stand apart but near the edge.
+      const s = Math.min(ql * 0.6, Math.max(tl * 0.3, 2));
+      return [ed.mid[0] + (q[0] / ql) * s, ed.mid[1] + (q[1] / ql) * s, ed.mid[2] + (q[2] / ql) * s];
+    };
+    const own = k === 0 ? 0 : 1;
+    const p1 = away(ed.faces[own]), p2 = away(ed.faces[1 - own]);
+    return p1 && p2 ? [p1, p2] : null;
   }
 
   private placeCallouts() {
@@ -6565,6 +6634,21 @@ export class ModelController {
       el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
       el.style.top = `${((1 - s.y) / 2) * v.size.y - 24 + 28 * Number(el.dataset.row ?? 0)}px`;
     });
+  }
+
+  /** The status bar line of the open command: what a click in the view does now (it follows the focused box). */
+  private syncModeStatus() {
+    const m = this.mode;
+    if (m.kind !== "sketch") {
+      $("#mc-status").textContent = m.kind === "plane" ? t(m.edit?.pickX ? "Click a straight edge for the sketch X axis." : m.edit ? "Pick the new plane or flat face for the sketch." : this.afterSketch ? "Pick a plane or a flat face for the sketch, or a sketch in the tree." : "Pick a plane or a flat face for the sketch.")
+        : m.kind === "feature" && m.draft.type === "fillet" && m.draft.kind ? t(m.focus === "fs2" ? (m.draft.kind === "full" ? "Click the faces of side face set 2; click again to remove." : "Click the faces of face set 2; click again to remove.") : m.focus === "fc" ? "Click the centre faces; click again to remove." : m.draft.kind === "full" ? "Click the faces of side face set 1; click again to remove." : "Click the faces of face set 1; click again to remove.")
+        : m.kind === "feature" && m.draft.type === "fillet" && m.focus === "sbv" ? t("Click near a corner where three or more filleted edges meet.")
+        : m.kind === "feature" && m.draft.type === "chamfer" && m.draft.mode === "vertex" ? t("Click an edge near the corner to cut off; click again to remove.")
+        : m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? t("Click edges, or a face for all its edges; click again to remove.")
+        : m.kind === "feature" && m.draft.type === "shell" ? t(m.focus === "mthick" ? "Click walls that need their own thickness; click again to remove." : "Click the faces to leave open; click again to remove.")
+        : m.kind === "feature" && m.draft.type === "sketch3d" ? $("#mc-status").textContent
+        : m.kind === "feature" ? t("Set the values in the panel; the view shows the result.") : "";
+    }
   }
 
   /** "Start a sketch on a plane" over an empty part (FR-HLP-005). */
@@ -6773,12 +6857,7 @@ export class ModelController {
     if ((m.kind !== "none") !== this.wasCmd) { this.wasCmd = m.kind !== "none"; if (this.wasCmd) this.host.selectLeftTab("features"); }
     this.syncFlyTree();
     this.syncSketchSection();
-    if (m.kind !== "sketch") {
-      $("#mc-status").textContent = m.kind === "plane" ? t(m.edit?.pickX ? "Click a straight edge for the sketch X axis." : m.edit ? "Pick the new plane or flat face for the sketch." : this.afterSketch ? "Pick a plane or a flat face for the sketch, or a sketch in the tree." : "Pick a plane or a flat face for the sketch.")
-        : m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? t("Click edges, or a face for all its edges; click again to remove.")
-        : m.kind === "feature" && m.draft.type === "sketch3d" ? $("#mc-status").textContent
-        : m.kind === "feature" ? t("Set the values in the panel; the view shows the result.") : "";
-    }
+    this.syncModeStatus();
     $("#mc-confirm").hidden = m.kind === "none";
     if (m.kind !== "none") document.getElementById("mc-crumbs")?.remove();
     if (m.kind !== this.crumbMode) { this.crumbMode = m.kind; this.crumbAt = null; this.placeCrumbs(); }
@@ -8021,6 +8100,7 @@ export class ModelController {
     this.renderPanel0();
     this.measureButton();
     this.coach();
+    if (this.mode.kind === "feature") this.syncModeStatus();
   }
 
   /** The 📏 Measure toggle in a feature panel's head (gap list M8). */
@@ -8187,7 +8267,7 @@ export class ModelController {
       const vari = f.type === "fillet" && !!f.variable;
       const rIn = (key: string, i: number, v: number, label: string) => `<span class="pm-in"><input type="text" inputmode="decimal" data-${key}="${i}" value="${esc(trimNum(v * UNITS[unit].f, 6))}" aria-label="${esc(label)} ${esc(t("Edge {n}", { n: i + 1 }))}" spellcheck="false" /><span class="muted">${unit}</span></span>`;
       const fu = UNITS[unit].f;
-      const items = `<ul class="pm-items" aria-label="${esc(t("Edges"))}">${f.edges.map((e, i) => `<li><span>${esc(t("Edge {n}", { n: i + 1 }))}</span>${vari ? rIn("er", i, (e as { r?: number }).r ?? (f as FilletFeature).radius.v, t("Start radius")) + rIn("er2", i, (e as { r2?: number; r?: number }).r2 ?? (e as { r?: number }).r ?? (f as FilletFeature).radius.v, t("End radius")) : ""}${multi ? `<span class="pm-in"><input type="text" inputmode="decimal" data-er="${i}" value="${esc(trimNum(((e as { r?: number }).r ?? (f as FilletFeature).radius.v) * fu, 6))}" aria-label="${esc(t("Radius"))} ${esc(t("Edge {n}", { n: i + 1 }))}" spellcheck="false" /><span class="muted">${unit}</span></span>` : ""}<button class="icon" data-rm="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Edge {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>`
+      const items = `<ul class="pm-items" aria-label="${esc(t("Edges"))}">${f.edges.map((e, i) => `<li${vari ? ' class="pm-vr"' : ""}><span>${esc(t("Edge {n}", { n: i + 1 }))}</span>${vari ? `<span class="pm-vr-r"><span class="pm-vr-t" aria-hidden="true" title="${esc(t("Start radius"))}">a</span>${rIn("er", i, (e as { r?: number }).r ?? (f as FilletFeature).radius.v, t("Start radius"))}<span class="pm-vr-t" aria-hidden="true" title="${esc(t("End radius"))}">b</span>${rIn("er2", i, (e as { r2?: number; r?: number }).r2 ?? (e as { r?: number }).r ?? (f as FilletFeature).radius.v, t("End radius"))}</span>` : ""}${multi ? `<span class="pm-in"><input type="text" inputmode="decimal" data-er="${i}" value="${esc(trimNum(((e as { r?: number }).r ?? (f as FilletFeature).radius.v) * fu, 6))}" aria-label="${esc(t("Radius"))} ${esc(t("Edge {n}", { n: i + 1 }))}" spellcheck="false" /><span class="muted">${unit}</span></span>` : ""}<button class="icon" data-rm="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Edge {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>`
         + (f.edges.length ? `<button class="btn small" data-k="clear">${esc(t("Clear edges"))}</button>` : `<p class="pm-help muted">${esc(t("click edges or faces in the view"))}</p>`);
       const sizes = (f.type === "chamfer" ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="equal"${cm === "equal" ? " selected" : ""}>${esc(t("Equal distance"))}</option><option value="two"${cm === "two" ? " selected" : ""}>${esc(t("Two distances"))}</option><option value="angle"${cm === "angle" ? " selected" : ""}>${esc(t("Distance and angle"))}</option><option value="offset"${cm === "offset" ? " selected" : ""}>${esc(t("Offset face"))}</option><option value="vertex"${cm === "vertex" ? " selected" : ""}>${esc(t("Vertex"))}</option></select></label>` : "")
         + (f.type === "fillet" ? numField("radius", multi ? t("Default radius") : t("Radius"), f.radius, "length") + chk("multi", f.multi, t("Multiple radius fillet")) + chk("variable", f.variable, t("Variable radius fillet")) + (multi ? `<p class="pm-help muted">${esc(t("Type each edge's radius in the list, or click its callout in the view."))}</p>` : "") + (vari ? `<p class="pm-help muted">${esc(t("Each edge goes from its start radius (a) to its end radius (b): type them in the list or click the callouts at the edge ends."))}</p>` : "") : numField("distance", t("Distance"), f.distance, "length"))

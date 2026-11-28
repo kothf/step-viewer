@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.776.0] - 2026-11-28
+
+### Fixed
+
+- Variable radius fillet: the start (a) and end (b) radius of each edge sit on their own line under the edge's name, so they fit the panel (the end field ran out of it).
+- The status line under the command bar says what a click does in every fillet, chamfer and shell mode: the face set or centre faces being picked in a face or full round fillet, the corner of a vertex chamfer, setback corners, faces to leave open or walls with their own thickness in a shell. It said "Click edges" in all of them.
+
+### Added
+
+- Chamfer with two distances, or a distance and an angle: each value shows on the face it is measured on (D1, D2), so Flip direction visibly swaps them, as in other CAD apps. A click on one types it.
+- Shell with multi-thickness: each wall with its own thickness shows it on the wall; a click types it.
+- Hands-on test of the rest of the core modelling list (a face click adds its edges, variable, face and full round fillets, chamfer modes and vertex chamfer, a pattern of a mirror, multi-thickness shell, hole position by dimensions to the edges, a hole following an upstream edit, the Russian panels) in `tests/human/core2.mjs`.
+
 ## [1.775.0] - 2026-11-28
 
 ### Fixed
@@ -5181,7 +5194,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.775.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.776.0...HEAD
+[1.776.0]: https://github.com/kothf/step-viewer/compare/v1.775.0...v1.776.0
 [1.775.0]: https://github.com/kothf/step-viewer/compare/v1.774.0...v1.775.0
 [1.774.0]: https://github.com/kothf/step-viewer/compare/v1.773.0...v1.774.0
 [1.773.0]: https://github.com/kothf/step-viewer/compare/v1.772.0...v1.773.0
