@@ -33,6 +33,7 @@ Status: **1.762.0** = before this round, **now** = after it. ✓ works, ✗ miss
 | B12 | Sketch fillet: a corner of two lines rounded with a radius (asked at once, R shown on the arc; the lines keep the sharp corner for dimensions); a sweep follows the arc | yes | ✗ | ✓ (1.764.0) |
 | B13 | Arc through 3 points: start, end, then a point it passes through (previewed through the pointer); the chain goes on from its end | yes (3 Point Arc) | ✗ | ✓ (1.774.0) |
 | B14 | Points clicked on a model face, edge or vertex are held there (On face, On edge, On model vertex) and follow the model when it changes | same | ✗ (only snapped, then left behind) | ✓ (1.774.0) |
+| B15 | Convert edges: a clicked model edge becomes a line, arc (a full circle two arcs) or spline held on it, and follows the model | yes (Convert Entities) | ✗ | ✓ (1.774.0) |
 
 ## C. Selection
 

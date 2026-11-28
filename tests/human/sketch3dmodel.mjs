@@ -48,4 +48,34 @@ const gv = G("onVertex"), ge = G("onEdge");
 check("B14c", !!a && !!b && !!c && !!gv && !!ge && Math.abs(a[2] - 35) < 1e-6 && Math.abs(b[2] - 35) < 1e-6 && Math.abs(b[0] - ge.o[0]) < 1e-6 && near(c, gv.o, 1e-6) && Math.abs(gv.o[2] - 35) < 1e-6 && !bad.length,
   "after the block grows to 35 the points stay on its top face, edge and corner", { a, b, c, bad, vertex: gv?.o, edge: ge?.o }, await snap(pg, "followed"));
 
+// B15: Convert edges in a second 3D sketch: the block's front top edge becomes a line held on its two corners.
+await cmd(pg, "3D Sketch");
+await pg.waitForTimeout(400);
+await pg.click('#mc-pm [data-s3t="convert"]');
+await pg.waitForTimeout(200);
+await pg.mouse.move(...(await W([10, -30, 35]))); await pg.waitForTimeout(150);
+await clickAt(pg, await W([10, -30, 35]));
+await pg.waitForTimeout(300);
+d = await draft();
+const conv = d ? { segs: d.segs.map(g => g.t), rels: d.rels.map(r => r.t) } : null;
+check("B15", !!conv && conv.segs.join() === "line" && conv.rels.filter(r => r === "onVertex").length === 2, "Convert edges turns the clicked model edge into a line held on its two corners", conv, await snap(pg, "converted"));
+await pg.click("#mc-ok");
+await idle(pg);
+// The block gets taller again (50): the converted line goes up with its edge.
+await pg.mouse.move(...(await W([0, -30, 10])));
+await pg.mouse.click(...(await W([0, -30, 10])), { button: "right" });
+await pg.waitForTimeout(400);
+await pg.locator("#mc-menu button", { hasText: "Edit feature" }).first().click();
+await pg.waitForTimeout(800);
+const dp2 = await pg.$('#mc-pm input[data-num="depth"]');
+if (dp2) { await dp2.fill("50"); await dp2.press("Enter"); }
+await idle(pg);
+if (await pg.isVisible("#mc-ok")) await pg.click("#mc-ok");
+await idle(pg);
+await pg.waitForTimeout(500);
+const k2 = await ev(() => JSON.parse(JSON.stringify(window.__sv.model.store.doc.features.filter(f => f.type === "sketch3d")[1] ?? null)));
+const zs = k2 ? k2.pts.map(q => q.p[2]) : [];
+const bad2 = await ev(() => window.__sv.model.last()?.statuses.filter(s => !s.ok || s.warning).map(s => s.message ?? s.warning) ?? []);
+check("B15b", zs.length === 2 && zs.every(z => Math.abs(z - 50) < 1e-6) && !bad2.length, "after the block grows to 50 the converted line is on its new top edge", { pts: k2?.pts.map(q => q.p), bad: bad2 }, await snap(pg, "converted-followed"));
+
 await finish(browser, pg);

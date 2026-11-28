@@ -1227,6 +1227,26 @@ test("3D sketch points on model faces, edges and vertices follow the model (3D s
   assert.equal(gc.rels[0].geo?.k, "cyl");
 });
 
+test("3D sketch: a converted circle edge follows the model (3D sketch test B15)", async () => {
+  const m = new Modeller(await occ());
+  // The top circle of a Ø28 cylinder converted: two half arcs from its seam vertex, the other points held on the edge.
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } };
+  const edge = { faces: ["f1:end", "f1:side:s1k"] as [string, string], hint: [14, 0, 10] as V3 };
+  const on = (id: string, p: V3) => ({ id: `r${id}`, t: "onEdge" as const, e: [id], edge: { ...edge, hint: p } });
+  const k: Feature = { id: "k", type: "sketch3d", name: "3DSketch1",
+    pts: [{ id: "S", p: [14, 0, 10] }, { id: "Q1", p: [0, 14, 10] }, { id: "H", p: [-14, 0, 10] }, { id: "Q3", p: [0, -14, 10] }],
+    segs: [{ id: "a1", t: "arc", pts: ["S", "Q1", "H"] }, { id: "a2", t: "arc", pts: ["H", "Q3", "S"] }],
+    rels: [{ id: "rS", t: "onVertex", e: ["S"], vertex: { edge, at: [14, 0, 10] } }, on("Q1", [0, 14, 10]), on("H", [-14, 0, 10]), on("Q3", [0, -14, 10])], dims: [] };
+  const r = m.evaluate(doc([circle("s1", 0, 0, 20, { std: "XY" }), ex, k]));
+  assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+  const got = r.sketches?.k as Sketch3dFeature;
+  assert.ok(got && got.type === "sketch3d");
+  for (const q of got.pts) { close(Math.hypot(q.p[0], q.p[1]), 20, 1e-6); close(q.p[2], 10, 1e-9); }
+  const P = (id: string) => got.pts.find(q => q.id === id)!.p;
+  assert.ok(Math.hypot(...([0, 1, 2].map(i => P("S")[i] - P("H")[i]) as V3)) > 10, "the arcs stay apart");
+  assert.deepEqual(got.rels.map(x => x.geo?.k), ["point", "circle", "circle", "circle"]);
+});
+
 test("3D sketch points on 2D sketch points follow the sketch (weldments exam #6)", async () => {
   const m = new Modeller(await occ());
   // A leg from the frame sketch's corner straight up: A on the corner point, B fixed 50 above it by relations.
