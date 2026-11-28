@@ -3928,7 +3928,7 @@ try {
     await mp.click("#mc-ok");
     await idle();
     const vLp = await vol(), stLp = await lastSt();
-    check(patMenu === "Linear pattern|Circular pattern|Mirror|Sketch driven pattern|Table driven pattern" && Math.abs(vLp - (120000 - 4 * hole)) < 1 && stLp === "lpattern:ok", `model 1.23: linear pattern of a hole along a picked edge, 4 × 20 mm (${patMenu}, ${Math.round(vLp)}, ${stLp})`);
+    check(patMenu === "Linear pattern|Circular pattern|Mirror|Sketch driven pattern|Table driven pattern|Curve driven pattern" && Math.abs(vLp - (120000 - 4 * hole)) < 1 && stLp === "lpattern:ok", `model 1.23: linear pattern of a hole along a picked edge, 4 × 20 mm (${patMenu}, ${Math.round(vLp)}, ${stLp})`);
     // 1.502: Instances to skip picked in the view: a dot per instance; a click skips it, another brings it back.
     {
       const pid = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
