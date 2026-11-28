@@ -318,6 +318,8 @@ export class SimController {
   private docId: string | null = null;
   /** The last results of each study, by document id: written with the model when it is saved, read back when it is opened. */
   private files = new Map<string, Map<string, SavedStudy>>();
+  /** Entries of `files` read from an opened results file and not shown yet: only these show on the model by themselves. */
+  private opened = new WeakSet<SavedStudy>();
   private fileHits = 0;
   private filesRead = 0;
   private marks = new THREE.Group();
@@ -424,7 +426,7 @@ export class SimController {
     onCmTab(tab => {
       if (tab === "simulation" && this.host.doc()) this.host.showTab();
       // results that came back with the model file: shown the first time the Simulation tab opens
-      if (tab === "simulation" && this.showKept && this.res?.fromFile && !this.res.old && !this.stale()) { this.showKept = false; this.plot.on = true; this.showPlot(); }
+      if (tab === "simulation" && this.showKept && this.res?.fromFile && !this.res.old && !this.stale()) { this.showKept = false; this.plot.on = true; this.showPlot(); const sv = this.files.get(this.host.doc()?.id ?? "")?.get(this.res.study); if (sv) this.opened.delete(sv); }
       this.renderAll(); this.drawMarks();
     });
     onLangChange(() => this.renderAll());
@@ -835,8 +837,10 @@ export class SimController {
     if (fromFile) this.fileHits++;
     if (!old) this.noteResult();
     // results kept with the model file show on the model as soon as the Simulation tab is on (now or later)
-    this.plot.on = fromFile && !old && cmTab() === "simulation";
-    this.showKept = fromFile && !old && !this.plot.on;
+    const auto = fromFile && !old && !!saved && this.opened.has(saved);
+    this.plot.on = auto && cmTab() === "simulation";
+    this.showKept = auto && !this.plot.on;
+    if (this.plot.on && saved) this.opened.delete(saved);
     if (this.plot.on) this.showPlot();
     this.syncProbes();
     this.syncPath();
@@ -918,7 +922,7 @@ export class SimController {
     if (r.doc && r.doc !== docId) return 0;
     let m = this.files.get(docId);
     if (!m) this.files.set(docId, m = new Map());
-    for (const s of r.studies) if ((s.data as Kept)?.passes?.length) m.set(s.id, s);
+    for (const s of r.studies) if ((s.data as Kept)?.passes?.length) { m.set(s.id, s); this.opened.add(s); }
     // the study that was open when it was saved opens first (FR-STU-003)
     if (r.active) {
       try { localStorage.setItem(`mc:simStudy:${docId}`, r.active); } catch { /* no storage */ }

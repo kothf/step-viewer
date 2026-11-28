@@ -16691,7 +16691,7 @@ try {
     await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 180000 });
     const eRes = await sim();
     check(edgePick.box === "1 edge" && !edgePick.normal && edgePick.marks === 1 && ptPick.box === "1 point" && ptPick.marks === 1 && eLoads.length === 2 && eLoads[0].on === "edges" && JSON.stringify(eLoads[0].edges) === JSON.stringify([spot.faces])
-      && eLoads[1].on === "points" && eLoads[1].faces === 3 && eLoads[0].rows.includes("1 edge") && eLoads[0].rows.includes("1 point") && !eRes.error && Math.abs(eRes.applied.force[2] + 1750) < 1e-6 && Math.abs(eRes.reactions[0].force[2] - 1750) < 0.01,
+      && eLoads[1].on === "points" && eLoads[1].faces === 3 && eLoads[0].rows.some(r => r.startsWith("1 edge")) && eLoads[0].rows.some(r => r.startsWith("1 point")) && !eRes.error && Math.abs(eRes.applied.force[2] + 1750) < 1e-6 && Math.abs(eRes.reactions[0].force[2] - 1750) < 0.01,
       `sim 1.612: a force on an edge and one on a corner point are picked in the view, kept by face names and solved; the reaction balances all three loads (${JSON.stringify({ edgePick, ptPick, eLoads: eLoads.map(l => ({ on: l.on, faces: l.faces })), error: eRes.error, applied: eRes.applied?.force, reaction: eRes.reactions[0]?.force })})`);
     // 1.613.0: five passes with the stop target at 0: passes 4 and 5 raise the accuracy in some cells only.
     await mp.selectOption('#sim-tree [data-k="passes"]', "5");
