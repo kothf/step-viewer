@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.771.0] - 2026-11-28
+## [1.772.0] - 2026-11-28
 
 ### Fixed
 
@@ -19,6 +19,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Linear pattern direction arrows in the view, as other CAD apps show them: an orange arrow per direction from the seed while the pattern is open; drag it to change the spacing, click it to reverse that direction (before, a direction picked from an edge could run off the part with only a checkbox to turn it).
 - Hands-on test of core modelling (fillets, chamfers, patterns, mirror, shell, holes, rebuild after edits above) in `tests/human/core.mjs`.
+
+## [1.771.0] - 2026-11-28
+
+### Added
+
+- Assemblies: **View mates** in a component's right-click menu shows only that component's mates in the Mates folder ("Mates of …"). ✕ on the folder row or Esc shows them all again.
+- Test list for mates and motion studies compared with other CAD apps, with hands-on scenarios (`tests/human/mates.mjs`, `mates2.mjs`, `motion.mjs`).
+
+### Fixed
+
+- Motion studies: with a duration that is not a whole number of frames (1.25 s at 30 fps) the end now shows the study's last moment. Before, To end stopped at 1.2417 s, so a 60 rpm motor came out 3° short and mate keys 0.13 mm short, also after saving and opening again.
+- Mate panel: picking a second face on the same component says that it replaced the first and asks for a face on another component, instead of "✓ with nothing picked closes the panel."
 
 ## [1.770.0] - 2026-11-28
 
@@ -5139,7 +5151,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.771.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.772.0...HEAD
+[1.772.0]: https://github.com/kothf/step-viewer/compare/v1.771.0...v1.772.0
 [1.771.0]: https://github.com/kothf/step-viewer/compare/v1.770.0...v1.771.0
 [1.770.0]: https://github.com/kothf/step-viewer/compare/v1.769.0...v1.770.0
 [1.769.0]: https://github.com/kothf/step-viewer/compare/v1.768.0...v1.769.0

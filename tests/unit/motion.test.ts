@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, rotation, translation, tweenTf } from "../../src/asm/math";
-import { axisLock, cameraAt, colorAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, exprValue, motorAmount, motorPlotUnit, motorSeries, orbitKeys, parsePoints, parseSegments, playTime, pointsAt, SEG_SHAPES, segmentsAt, segShape, valueAt } from "../../src/motion/evaluate";
+import { axisLock, cameraAt, colorAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, frameTime, exprValue, motorAmount, motorPlotUnit, motorSeries, orbitKeys, parsePoints, parseSegments, playTime, pointsAt, SEG_SHAPES, segmentsAt, segShape, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, gifDelays, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import { accels, alertSpans, gapCsv, plotFile, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
@@ -529,4 +529,12 @@ test("GIF frame delays add up to the true time (1.580)", () => {
   const gif = encodeGif([new Uint8Array(16), new Uint8Array(16)], 2, 2, [7, 6]);
   const gce = [...gif.keys()].filter(i => gif[i] === 0x21 && gif[i + 1] === 0xf9).map(i => gif[i + 4]);
   assert.deepEqual(gce, [7, 6]);
+});
+
+test("frameTime holds the last frame at the end of a study that is not a whole number of frames long", () => {
+  const s = { duration: 1.25, fps: 30 } as MotionStudy;
+  assert.equal(frameCount(s), 39);
+  close(frameTime(s, 37), 37 / 30);
+  close(frameTime(s, 38), 1.25);
+  close(frameTime(s, 0), 0);
 });

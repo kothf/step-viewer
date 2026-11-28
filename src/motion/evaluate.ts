@@ -349,6 +349,9 @@ export function fadeKeys(t0: number, t1: number, fadeIn = false, full = 1): Key[
 
 /** Number of frames a study is solved at, both ends included. */
 export const frameCount = (s: MotionStudy) => Math.max(1, Math.round(s.duration * s.fps)) + 1;
+/** The time frame `n` shows: one frame step each, the last one held at the end of the study (a duration that is not a
+ *  whole number of frames would otherwise put it past the end, and the end would show a blend short of it). */
+export const frameTime = (s: MotionStudy, n: number) => Math.min(s.duration, n / s.fps);
 
 /** The study time for `elapsed` seconds of playback; `done` when a play-once study has reached its end. */
 export function playTime(elapsed: number, s: Pick<MotionStudy, "duration" | "play">): { t: number; done: boolean } {
