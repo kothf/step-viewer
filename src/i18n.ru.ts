@@ -2275,6 +2275,11 @@ export const RU: Record<string, string> = {
   "Start radius": "Начальный радиус",
   "End radius": "Конечный радиус",
   "Each edge goes from its start radius (a) to its end radius (b): type them in the list or click the callouts at the edge ends.": "Радиус каждой кромки меняется от начального (a) до конечного (b): введите их в списке или щёлкните выноски на концах кромки.",
+  "Position along the edge": "Положение на кромке",
+  "Remove point": "Удалить точку",
+  "+ Point": "+ Точка",
+  "The position must be between 0 and 100 %.": "Положение должно быть от 0 до 100 %.",
+  "+ Point adds a radius between the ends; its position is a share of the edge length from end a.": "«+ Точка» добавляет радиус между концами; положение задаётся долей длины кромки от конца a.",
   // ---------- inserted body (1.58.0) ----------
   "Insert body": "Вставить тело",
   "Insert body: a STEP, IGES or BREP file into this part, with check and heal": "Вставить тело: файл STEP, IGES или BREP в эту деталь, с проверкой и исправлением",

@@ -2056,3 +2056,6 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-tag { position: absolute; display: flex; align-items: center; gap: 4px; transform: translate(-50%, -50%); padding: 1px 6px 1px 3px; border: 1.5px solid var(--tc); border-radius: 10px; background: var(--panel); color: var(--text); font: 12px var(--mono); white-space: nowrap; box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); }
 .sim-tag b { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--tc); color: #fff; font: 600 11px var(--sans, sans-serif); }
 .sim-tag.hot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tc) 35%, transparent); }
+.pm-items li.pm-vr > .pm-vr-pts { order: 4; flex: 1 0 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding-left: 8px; }
+.pm-items li.pm-vr .pm-vr-p { display: flex; align-items: center; gap: 4px; }
+.pm-items li.pm-vr .pm-vr-p input[data-vt] { width: 40px; }

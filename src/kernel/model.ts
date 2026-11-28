@@ -1340,7 +1340,7 @@ export class Modeller {
     const vari = f.type === "fillet" && !!f.variable;
     const rad2 = (i: number) => (vari ? (f as FilletFeature).edges[i].r2 ?? rad(i) : rad(i));
     const radV = (i: number) => (vari ? (f as FilletFeature).edges[i].r ?? size : rad(i));
-    if (f.edges.some((_e, i) => !(radV(i) > 1e-6) || !(rad2(i) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
+    if (f.edges.some((_e, i) => !(radV(i) > 1e-6) || !(rad2(i) > 1e-6) || (vari && (f as FilletFeature).edges[i].mid?.some(m => !(m.r > 1e-6))))) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
     const make = (list: number[]) => {
       const mk = f.type === "fillet"
         ? new oc.BRepFilletAPI_MakeFillet(prev.shape, oc.ChFi3d_FilletShape.ChFi3d_Rational)
@@ -1352,7 +1352,24 @@ export class Modeller {
           const at = (f as FilletFeature).edges[i].at;
           const p0 = this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.FirstVertex(e, true))), p1 = this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.LastVertex(e, true)));
           const swap = !!at && d3(p1, at) < d3(p0, at);
-          (mk as any).Add_3(swap ? rad2(i) : radV(i), swap ? radV(i) : rad2(i), e);
+          const mid = ((f as FilletFeature).edges[i].mid ?? []).filter(m => m.t > 1e-6 && m.t < 1 - 1e-6 && m.r > 1e-6);
+          if (mid.length) {
+            // Radii at points along the edge (FR-FT-032): (curve parameter, radius) pairs from end to end.
+            const c = new oc.BRepAdaptor_Curve_2(e);
+            const u0 = c.FirstParameter(), u1 = c.LastParameter();
+            const len = oc.GCPnts_AbscissaPoint.Length_7(c, u0, u1, 1e-7);
+            // `t` runs from the `r` end; that end is the curve's first vertex unless swapped (orientation aside).
+            const v0 = this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.FirstVertex(e, false)));
+            const fromFirst = d3(v0, swap ? p1 : p0) < d3(v0, swap ? p0 : p1);
+            const rows: [number, number][] = [[0, radV(i)], ...mid.map(m => [m.t, m.r] as [number, number]), [1, rad2(i)]]
+              .map(([t, r]) => [fromFirst ? t : 1 - t, r] as [number, number]).sort((a, b) => a[0] - b[0]);
+            const arr = new oc.TColgp_Array1OfPnt2d_2(1, rows.length);
+            rows.forEach(([t, r], k) => {
+              const u = t <= 0 ? u0 : t >= 1 ? u1 : new oc.GCPnts_AbscissaPoint_2(c, t * len, u0).Parameter();
+              arr.SetValue(k + 1, new oc.gp_Pnt2d_3(u, r));
+            });
+            (mk as any).Add_5(arr, e);
+          } else (mk as any).Add_3(swap ? rad2(i) : radV(i), swap ? radV(i) : rad2(i), e);
         } else if (f.type === "fillet" || mode === "equal") mk.Add_2(rad(i), e);
         else if (mode === "offset") mk.Add_2(this.offsetChamfer(prev, e, f.edges[i], size), e);
         else {
@@ -1387,7 +1404,7 @@ export class Modeller {
         if (j >= 0) out.names[j] = `${f.id}:${f.type}:${i}`;
       }
     });
-    if (f.type === "fillet" && f.setbacks?.length) return this.setbackCorners(f, prev, out, edges, used, (i: number) => Math.max(radV(i), rad2(i)));
+    if (f.type === "fillet" && f.setbacks?.length) return this.setbackCorners(f, prev, out, edges, used, (i: number) => Math.max(radV(i), rad2(i), ...((f.edges[i].mid ?? []).map(m => m.r))));
     return out;
   }
 
