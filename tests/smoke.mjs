@@ -10275,7 +10275,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) (shard 4 since 1.766.0: shard 5 reached the 12 minute limit) ---
+  // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) (shard 4 since 1.767.0: shard 5 reached the 12 minute limit) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();

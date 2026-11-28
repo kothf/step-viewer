@@ -50,7 +50,7 @@ Status: **1.762.0** = before this round, **now** = after it. ✓ works, ✗ miss
 | D4 | A relation is deleted from the list | same | ✓ | ✓ |
 | D5 | Midpoint and On line (a point and a line) | yes | ✗ | ✓ |
 | D6 | Tangent between a spline and a line (or two splines) at a shared end | yes | ✗ | ✓ (1.764.0) |
-| D7 | On XY / YZ / ZX: a point on a standard plane; refused with a message when it cannot hold | yes | ✗ | ✓ (1.766.0) |
+| D7 | On XY / YZ / ZX: a point on a standard plane; refused with a message when it cannot hold | yes | ✗ | ✓ (1.767.0) |
 
 ## E. Dimensions
 
@@ -61,14 +61,14 @@ Status: **1.762.0** = before this round, **now** = after it. ✓ works, ✗ miss
 | E3 | Angle between two lines | yes | ✗ | ✓ |
 | E4 | A dimension typed as an expression of global variables follows the variables | yes | ✗ (kept the old value) | ✓ |
 | E5 | The panel says how many degrees of freedom are left, or Fully defined | same | ✓ | ✓ |
-| E6 | Distance from a point to a standard plane (XY, YZ, ZX), shown in the view and typed in the Modify box | yes | ✗ | ✓ (1.766.0) |
+| E6 | Distance from a point to a standard plane (XY, YZ, ZX), shown in the view and typed in the Modify box | yes | ✗ | ✓ (1.767.0) |
 
 ## F. Use of the 3D sketch
 
 | Id | Test | Other CAD apps | 1.762.0 | now |
 |----|------|----------------|---------|-----|
 | F1 | Sweep with a circular profile follows the 3D sketch (sharp corners) | same | ✓ | ✓ |
-| F2 | Sweep with a sketch profile along it (sharp corner and sketch fillet) | same | — | ✓ (unit test, 1.766.0) |
+| F2 | Sweep with a sketch profile along it (sharp corner and sketch fillet) | same | — | ✓ (unit test, 1.767.0) |
 | F3 | Structural member on the 3D sketch's lines | same | ✓ (weldments tests) | ✓ |
 | F4 | A branch is refused as a path with a clear message | same | ✓ | ✓ |
 | F5 | Hide/Show from the tree; Hide/Show items ▸ Curves | same | ✓ | ✓ |
