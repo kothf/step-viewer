@@ -1022,6 +1022,11 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .pm-items li .pm-in { flex: 0 0 auto; }
 .pm-items li .pm-in input { width: 64px; padding: 1px 4px; font-size: 12px; }
 .pm-items li .pm-in span { flex: none; }
+/* Variable radius: the edge's name and ✕ on one line, its start (a) and end (b) radius under it, so the row fits the panel. */
+.pm-items li.pm-vr { flex-wrap: wrap; row-gap: 2px; padding: 3px 4px; }
+.pm-items li.pm-vr > .pm-vr-r { order: 3; flex: 1 0 100%; display: flex; align-items: center; gap: 4px; padding-left: 8px; }
+.pm-items li.pm-vr .pm-vr-t { flex: none; font-family: var(--mono); color: var(--muted); }
+.pm-items li.pm-vr .pm-in input { width: 56px; }
 .mc-callout { transform: translate(-50%, -50%); border-color: #e0a800; background: #fff8db; color: #5c4400; }
 :root[data-theme="dark"] .mc-callout { background: #3a3110; color: #ffe08a; }
 .mc-callout.wld-sym { border-color: #495057; background: #fff; color: #212529; font-variant-numeric: tabular-nums; }
