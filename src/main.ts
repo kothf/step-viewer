@@ -15,7 +15,7 @@ import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
 import { DocTabs, type DocTab } from "./docTabs";
-import { journalDrop, packPart, PART_EXT } from "./model/file";
+import { journalDrop, packPart, PART_EXT, toJson, unpackPart } from "./model/file";
 import type { PartTab } from "./model/controller";
 import type { AsmTab } from "./asm/controller";
 import type { DrawingTab } from "./drawing/workspace";
@@ -85,7 +85,7 @@ import { makeGrip, rememberDialogSizes } from "./resize";
 import { FileMenu, type LiveKind, type PackDoc } from "./fileMenu";
 import { recentAdd, recentFiles, recentItem, recentList } from "./recent";
 import { drawingOf, peekDrawing, uniqueDrawings, type FoundDrawing, type ModelKey } from "./drawing/findDrawing";
-import { packAsm, ASM_EXT } from "./asm/file";
+import { packAsm, ASM_EXT, unpackAsm } from "./asm/file";
 import { memDir, writeRefs } from "./asm/refs";
 import { bindValueDrops, dragValue } from "./valueDrop";
 import { bindLongPress } from "./longPress";
@@ -899,9 +899,9 @@ async function openFiles(files: File[]) {
   const drawingFile = files.find(f => isDrawingName(f.name));
   if (drawingFile) return drawing.openFile(drawingFile);
   const partFile = files.find(f => modeller.isPartName(f.name));
-  if (partFile) return modeller.openFile(partFile);
+  if (partFile) { if (!(await toOpenTab(partFile, "part"))) await modeller.openFile(partFile); return; }
   const asmFile = files.find(f => asm.isAsmName(f.name));
-  if (asmFile) return asm.openFile(asmFile);
+  if (asmFile) { if (!(await toOpenTab(asmFile, "asm"))) await asm.openFile(asmFile); return; }
   const sw = files.filter(f => isSolidWorksName(f.name));
   if (sw.length) return openSolidWorks(sw);
   const model = files.find(f => is3dName(f.name));
@@ -1174,6 +1174,42 @@ async function useBoardGerber(set: GerberSet): Promise<boolean> {
 }
 /** The circuit boards of the thermal study of the assembly on screen. */
 const boardsShown = () => (asm.active && $("#app").classList.contains("asm") ? sim.boardComps() : []);
+/**
+ * A part or assembly file that is open already (same file name, same document) goes to its tab instead of opening a
+ * second copy, as in other CAD apps. A clean tab whose document differs from the file takes the file's version in
+ * place; a tab with unsaved changes keeps them. False = not open.
+ */
+async function toOpenTab(f: File, kind: "part" | "asm"): Promise<boolean> {
+  if (!docs) return false;
+  const name = f.name.toLowerCase();
+  const tabs = docs.tabs.filter(x => x.kind === kind);
+  if (!tabs.length) return false;
+  const data = await f.arrayBuffer();
+  let doc: { id: string };
+  try { doc = kind === "part" ? await unpackPart(data.slice(0)) : await unpackAsm(data.slice(0)); } catch { return false; }
+  const docOf = (tab: DocTab): { doc: { id: string } | null; file: string } => {
+    if (kind === "part") {
+      const st = tab.state as PartTab | null, live = st ? null : modeller.openPart();
+      return st ? { doc: st.store.doc, file: st.fileName } : { doc: live?.doc ?? null, file: live?.fileName ?? "" };
+    }
+    const st = tab.state as AsmTab | null;
+    return st ? { doc: st.doc, file: st.fileName } : { doc: asm.doc, file: asm.doc ? asm.title : "" };
+  };
+  const tab = tabs.find(x => { const o = docOf(x); return o.doc?.id === doc.id && o.file.toLowerCase() === name; });
+  if (!tab) return false;
+  const same = toJson(docOf(tab).doc) === toJson(doc), dirty = docs.dirtyTabs().includes(tab);
+  if (docs.active !== tab) await docs.activate(tab.id);
+  if (!same && !dirty) {
+    await docs.replacing(async () => { if (kind === "part") await modeller.openFile({ name: f.name, data }); else await asm.openFile({ name: f.name, data }); });
+    toast(t("{name} is open already: its tab now shows the file's version.", { name: f.name }));
+  } else {
+    // its part files may have changed meanwhile: read them again, as switching to its tab does
+    if (kind === "asm") void asm.refreshRefs();
+    toast(dirty && !same ? t("{name} is open already, with unsaved changes: they are kept.", { name: f.name }) : t("{name} is open already.", { name: f.name }));
+  }
+  return true;
+}
+
 /** Gerber sets that came inside a thermal package: Pack and Go does not add them again beside it. */
 const packagedGerbers = new WeakSet<GerberSet>();
 /** The board's Gerber set inside a thermal package: the files in its `gerber/` folder (FR-TBRD-020), or null. */
