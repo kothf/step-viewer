@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.769.0] - 2026-11-28
+## [1.770.0] - 2026-11-28
 
 ### Added
 
@@ -18,6 +18,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Simulation: a part opened with saved results shows the study used last, with its plot drawn at once.
 - Simulation: Duplicate study keeps the results of the study it copies.
 - Save asks for the file name at once after a solve, instead of packing the results first (parts and assemblies).
+
+## [1.769.0] - 2026-11-28
+
+### Added
+
+- Pack and Go lists every file that goes into the zip, with its folder, and updates the list as you change the options.
+- Pack and Go can put every file in one folder and add a prefix or suffix to the file names. An assembly's references to its parts and sub-assemblies are written to the new names, so the packed folder opens with nothing missing.
+- Pack and Go ▸ Include drawings adds the drawings of the packed parts and assemblies (and of an assembly's parts) found in open tabs, the open vault and the recent documents.
 
 ## [1.768.0] - 2026-11-28
 
@@ -5116,7 +5124,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.769.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.770.0...HEAD
+[1.770.0]: https://github.com/kothf/step-viewer/compare/v1.769.0...v1.770.0
 [1.769.0]: https://github.com/kothf/step-viewer/compare/v1.768.0...v1.769.0
 [1.768.0]: https://github.com/kothf/step-viewer/compare/v1.767.0...v1.768.0
 [1.767.0]: https://github.com/kothf/step-viewer/compare/v1.766.0...v1.767.0
