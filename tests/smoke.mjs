@@ -3628,7 +3628,7 @@ try {
     // a value opens the Modify box and ✓ changes the feature as one undo step.
     {
       // A Move Face (distance) to show: the part has only sketches and extrudes so far. ✓ keeps a failing new
-      // feature's panel open (1.768.0), so the first flat face it builds on is used (a shell fails on this body).
+      // feature's panel open (1.769.0), so the first flat face it builds on is used (a shell fails on this body).
       await mp.evaluate(() => window.__sv.modeller.command("moveface"));
       await mp.waitForSelector('#mc-pm input[data-num="distance"]');
       for (let i = 0; i < 16; i++) {
@@ -3936,7 +3936,7 @@ try {
       await mp.click('#mc-layer .pat-spot[data-spot="2"]');
       await idle();
       const vBack = await vol();
-      // 1.768: the direction arrow in the view: a click reverses the direction, a second click puts it back.
+      // 1.769: the direction arrow in the view: a click reverses the direction, a second click puts it back.
       const arrowPt = () => mp.evaluate(() => { const sv = window.__sv, a = sv.modeller.arrows.find(x => x.key === "spacing"); if (!a) return null; a.obj.updateMatrixWorld(true); const q = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8).project(sv.viewer.camera), r = sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; });
       const ap = await arrowPt();
       if (ap) await mp.mouse.click(ap[0], ap[1]);
@@ -3946,7 +3946,7 @@ try {
       if (ap2) await mp.mouse.click(ap2[0], ap2[1]);
       await idle();
       const flipB = await mp.evaluate(() => !!window.__sv.model.mode().draft?.flip);
-      check(!!ap && flipA && !flipB && Math.abs((await vol()) - vLp) < 1, `model 1.768: linear pattern direction arrow clicked in the view reverses the direction (${JSON.stringify({ ap, ap2, flipA, flipB })})`);
+      check(!!ap && flipA && !flipB && Math.abs((await vol()) - vLp) < 1, `model 1.769: linear pattern direction arrow clicked in the view reverses the direction (${JSON.stringify({ ap, ap2, flipA, flipB })})`);
       // Up to distance: the 20 typed becomes the reach of the last instance (3 gaps of 6.67 mm), then back.
       await mp.selectOption('#mc-pm select[data-k="total"]', "1");
       await idle();
@@ -10302,8 +10302,8 @@ try {
     await ctx.close();
   }
 
-  // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) ---
-  if (inShard(5)) {
+  // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) (shard 4 since 1.768.0: shard 5 reached the 12 minute limit) ---
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -19833,8 +19833,8 @@ try {
   }
 
   // --- Structural analysis 1.637 (FR-CON-020/021): a toolbox screw with its nut is analysed as a bolt ---
-  // In shard 5 since 1.741.0 (shard 6 reached the limit), shard 6 since 1.734.0 (shard 4 since 1.710.0, shard 3 since 1.700.0): shards 5, 3, then 4 reached the 12 minute limit.
-  if (inShard(5)) {
+  // In shard 4 since 1.768.0 (shard 5 reached the limit), shard 5 since 1.741.0 (shard 6 reached the limit), shard 6 since 1.734.0 (shard 4 since 1.710.0, shard 3 since 1.700.0): shards 5, 3, then 4 reached the 12 minute limit.
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
@@ -20477,7 +20477,7 @@ try {
     await ctx.close();
   }
   if (inShard(4)) {
-    // model 1.768: closed and outward shells, suppress with dependants, ✓ on a failing fillet keeps the panel.
+    // model 1.769: closed and outward shells, suppress with dependants, ✓ on a failing fillet keeps the panel.
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const cp = await ctx.newPage();
     cp.on("pageerror", e => errors.push(e.message));
@@ -20502,7 +20502,7 @@ try {
     await settle();
     const out = await vol();
     check(closed.ok && Math.abs(closed.v - (120000 - 96 * 56 * 16)) < 0.5 && out.ok && Math.abs(out.v - (104 * 64 * 24 - 120000)) < 0.5,
-      `model 1.768: a shell with no face removed is a closed hollow body, outward with sharp corners (${JSON.stringify({ closed, out })})`);
+      `model 1.769: a shell with no face removed is a closed hollow body, outward with sharp corners (${JSON.stringify({ closed, out })})`);
     // Suppress a hole: its pattern goes with it, Unsuppress brings both back.
     await cp.evaluate(() => window.__sv.model.store.change("Holes", doc => {
       doc.features = doc.features.filter(f => f.id !== "sh");
@@ -20519,7 +20519,7 @@ try {
     await settle();
     const back = await vol();
     check(holes.ok && sup.suppressed && sup.supBy === "h" && sup.ok && Math.abs(sup.v - 120000) < 0.5 && Math.abs(back.v - holes.v) < 1e-6,
-      `model 1.768: suppressing a hole suppresses its pattern too, Unsuppress brings both back (${JSON.stringify({ holes: holes.v, sup: { s: sup.suppressed, by: sup.supBy, v: sup.v, ok: sup.ok }, back: back.v })})`);
+      `model 1.769: suppressing a hole suppresses its pattern too, Unsuppress brings both back (${JSON.stringify({ holes: holes.v, sup: { s: sup.suppressed, by: sup.supBy, v: sup.v, ok: sup.ok }, back: back.v })})`);
     await ctx.close();
   }
 } catch (err) {

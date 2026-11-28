@@ -1181,6 +1181,18 @@ test("3D sketch as a sweep path (FR-SK-080)", async () => {
   assert.equal(big.statuses.find(s => s.id === "k")?.code, "E-3D-FILLET");
 });
 
+test("3D sketch path with a sketch profile (3D sketch test F2)", async () => {
+  const m = new Modeller(await occ());
+  // A 10 mm square on XY swept 30 up Z, then 20 along X: area × path length both with the sharp (mitred) corner and with an R8 sketch fillet.
+  const k: Feature = { id: "k", type: "sketch3d", name: "3DSketch1", pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [0, 0, 30] }, { id: "C", p: [20, 0, 30] }],
+    segs: [{ id: "l1", t: "line", pts: ["A", "B"] }, { id: "l2", t: "line", pts: ["B", "C"] }], rels: [], dims: [] };
+  const sw: Feature = { id: "w", type: "sweep", name: "Sweep1", op: "boss", profile: "s", path: { curve: "k" } };
+  const r = run(m, doc([rect("s", 0, 0, 10, 10), k, sw]));
+  close(r.props!.volume, 100 * 50, 2e-3);
+  const rf = run(m, doc([rect("s", 0, 0, 10, 10), { ...k, dims: [{ id: "f1", t: "fillet", e: ["B"], val: { v: 8 } }] } as Feature, sw]));
+  close(rf.props!.volume, 100 * (22 + 12 + 4 * Math.PI), 2e-3);
+});
+
 test("3D sketch points on 2D sketch points follow the sketch (weldments exam #6)", async () => {
   const m = new Modeller(await occ());
   // A leg from the frame sketch's corner straight up: A on the corner point, B fixed 50 above it by relations.
