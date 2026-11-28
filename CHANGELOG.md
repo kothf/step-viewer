@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.765.0] - 2026-11-28
+## [1.768.0] - 2026-11-28
 
 ### Fixed
 
@@ -15,6 +15,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - Hands-on drawing tests (sections, hole callouts, geometric tolerances, updates after model edits) with a test list that says how other CAD apps behave.
+
+## [1.766.0] - 2026-11-28
+
+### Added
+
+- Assemblies with part files: the bar about a missing, replaced or unreadable part file has **Find file…** (point the component at a file elsewhere in the assembly's folder; a file from outside the folder is copied in, and a file holding another part is taken only after you confirm) and **Suppress** (puts those components aside; a part whose components are all suppressed is no longer asked for).
+
+### Fixed
+
+- A part still open in its own tab saves into the file the assembly wrote for it, without asking where, once the assembly has been saved into its folder; the tab shows that file's name.
+
+## [1.765.0] - 2026-11-28
+
+### Fixed
+
+- Assemblies with part files: a part file that now holds another part (somebody saved a different part under its name) is no longer taken in silently. The bar says "These files now hold another part", the assembly keeps its own copy, and Save writes it under a free name such as "Part2 (2)".
+- A part file that cannot be read is reported as unreadable, not as "not found", and Save leaves that file alone.
+- Opening an assembly or part that is already open goes to its tab instead of opening another copy; a tab with no unsaved changes takes the file's newer version.
+- A new part whose file name is taken by another part's file is saved as "Name (2)", and a message says so.
 
 ## [1.764.0] - 2026-11-28
 
@@ -5073,7 +5092,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.765.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.768.0...HEAD
+[1.768.0]: https://github.com/kothf/step-viewer/compare/v1.767.0...v1.768.0
+[1.766.0]: https://github.com/kothf/step-viewer/compare/v1.765.0...v1.766.0
 [1.765.0]: https://github.com/kothf/step-viewer/compare/v1.764.0...v1.765.0
 [1.764.0]: https://github.com/kothf/step-viewer/compare/v1.763.0...v1.764.0
 [1.763.0]: https://github.com/kothf/step-viewer/compare/v1.762.0...v1.763.0

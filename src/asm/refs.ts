@@ -46,6 +46,10 @@ export interface ResolveResult {
   missing: string[];
   /** Names of documents changed both here and in their file: this assembly's version is kept. */
   conflicts: string[];
+  /** Top-level part keys whose file holds another document (another part saved over it): their copy is kept. */
+  foreign: string[];
+  /** Top-level part keys whose file could not be read (damaged): their copy is kept. */
+  damaged: string[];
 }
 
 type Read = { doc: PartDoc; asm?: undefined } | { doc?: undefined; asm: AsmDoc };
@@ -61,7 +65,7 @@ async function readEntry(bytes: Uint8Array, asm: boolean): Promise<Read | null> 
  * The document is not changed in place.
  */
 export async function resolveRefs(doc: AsmDoc, dir: RefDir, base: RefBase, at = ""): Promise<ResolveResult> {
-  const out: ResolveResult = { doc: structuredClone(doc), updated: [], missing: [], conflicts: [] };
+  const out: ResolveResult = { doc: structuredClone(doc), updated: [], missing: [], conflicts: [], foreign: [], damaged: [] };
   await resolveInto(out.doc, dir, base, at, out, true, new Set());
   return out;
 }
@@ -79,7 +83,10 @@ async function resolveInto(doc: AsmDoc, dir: RefDir, base: RefBase, at: string, 
     const { bytes, hash } = got0;
     if (hash !== e.link.hash) {
       const got = await readEntry(bytes, !!e.asm);
-      if (!got) { if (top) out.missing.push(key); continue; }
+      if (!got) { if (top) out.damaged.push(key); continue; }
+      // another part saved over this file (other CAD apps check the document's internal id too): keep ours
+      const want = e.asm?.id ?? e.doc?.id, has = got.asm?.id ?? got.doc?.id;
+      if (want && has && want !== has) { if (top) out.foreign.push(key); continue; }
       const was = base.get(k), now = jsonOf(e), disk = toJson(got.asm ?? got.doc);
       if (disk === now) { /* the same document (saved from here): only the hash moves on */ }
       else if (was !== undefined && was !== now) { out.conflicts.push(e.name); base.set(k, disk); continue; }
@@ -162,6 +169,8 @@ export interface WriteResult {
   doc: AsmDoc;
   /** Paths written, in order (sub-assemblies' parts before them). */
   written: string[];
+  /** Documents saved under another file name than their own (the name was another part's file). */
+  renamed: { name: string; from: string; to: string }[];
 }
 
 const SAFE = /[<>:"/\\|?*\u0000-\u001f]/g;
@@ -180,7 +189,7 @@ function fileName(e: Entry): string {
  * references and hashes; the assembly file itself is the caller's to write.
  */
 export async function writeRefs(doc: AsmDoc, dir: RefDir, base: RefBase, app: string, at = "", asmName = ""): Promise<WriteResult> {
-  const out: WriteResult = { doc: structuredClone(doc), written: [] };
+  const out: WriteResult = { doc: structuredClone(doc), written: [], renamed: [] };
   await writeInto(out.doc, dir, base, app, at, out, new Set(asmName ? [keyOf(joinPath(at, asmName))] : []));
   return out;
 }
@@ -188,32 +197,42 @@ export async function writeRefs(doc: AsmDoc, dir: RefDir, base: RefBase, app: st
 async function writeInto(doc: AsmDoc, dir: RefDir, base: RefBase, app: string, at: string, out: WriteResult, taken: Set<string>) {
   // the names this assembly's references already use are kept for them
   for (const e of Object.values(doc.parts)) if (e.link) taken.add(keyOf(joinPath(at, e.link.path)));
+  /** The id of the document in a file, or null when it holds none we can read. */
+  const idIn = async (bytes: Uint8Array, asm: boolean) => { const got = await readEntry(bytes, asm); return got ? (got.asm ? got.asm.id : got.doc!.id) : null; };
   for (const e of Object.values(doc.parts)) {
     if (staysInside(e) || (!e.doc && !e.asm)) continue;
-    let path: string;
-    if (e.link) path = joinPath(at, e.link.path);
-    else {
+    const own = e.asm?.id ?? e.doc.id;
+    let path = "";
+    let disk: Uint8Array | null = null;
+    if (e.link) {
+      path = joinPath(at, e.link.path);
+      disk = await dir.read(path);
+      // another part was saved over this file: it is somebody else's now, ours goes under a free name
+      if (disk && await hashBytes(disk) !== e.link.hash) {
+        const id = await idIn(disk, !!e.asm);
+        if (id && own && id !== own) { out.renamed.push({ name: e.name, from: path.split("/").at(-1)!, to: "" }); path = ""; disk = null; delete e.link; }
+      }
+    }
+    if (!path) {
       const want = fileName(e), stem = want.slice(0, want.lastIndexOf(".")), ext = want.slice(want.lastIndexOf("."));
-      path = "";
       for (let n = 1; !path; n++) {
         const p = joinPath(at, n === 1 ? want : `${stem} (${n})${ext}`), k = keyOf(p);
         if (taken.has(k)) continue;
         // a file of this name that holds another document is somebody else's
         const old = await dir.read(p);
-        if (old) {
-          const got = await readEntry(old, !!e.asm);
-          const id = got ? (got.asm ? got.asm.id : got.doc!.id) : null;
-          if (!got || id !== (e.asm?.id ?? e.doc.id)) continue;
-        }
+        if (old && (await idIn(old, !!e.asm)) !== own) continue;
         path = p;
       }
       taken.add(keyOf(path));
+      const got = path.split("/").at(-1)!;
+      const r = out.renamed.find(x => x.name === e.name && !x.to);
+      if (r) r.to = got;
+      else if (got.toLowerCase() !== want.toLowerCase()) out.renamed.push({ name: e.name, from: want, to: got });
     }
     const k = keyOf(path);
     if (e.asm) await writeInto(e.asm, dir, base, app, dirOf(path), out, new Set([k]));
     const now = jsonOf(e);
     if (e.link) {
-      const disk = await dir.read(path);
       if (disk && !base.has(k) && await hashBytes(disk) === e.link.hash) base.set(k, now);
       if (disk && base.get(k) === now) continue;
     }
