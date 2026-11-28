@@ -4817,6 +4817,7 @@ export const RU: Record<string, string> = {
   "{file} could not be read. The last loaded copy is shown.": "{file} не читается. Показана последняя загруженная копия.",
   "{name} was saved as {file}: {taken} is another part's file.": "{name} сохранена как {file}: {taken} — файл другой детали.",
   "{name} is open already: its tab now shows the file's version.": "{name} уже открыт: его вкладка теперь показывает версию из файла.",
+  "{name} is open already, from its assembly.": "{name} уже открыт из своей сборки.",
   "{name} is open already, with unsaved changes: they are kept.": "{name} уже открыт, с несохранёнными изменениями: они остались.",
   "{name} is open already.": "{name} уже открыт.",
   "MöbiusCAD may not use that folder.": "MöbiusCAD не получил доступ к этой папке.",

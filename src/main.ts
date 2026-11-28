@@ -1251,11 +1251,15 @@ async function toOpenTab(f: File, kind: "part" | "asm"): Promise<boolean> {
     const st = tab.state as AsmTab | null;
     return st ? { doc: st.doc, file: st.fileName } : { doc: asm.doc, file: asm.doc ? asm.title : "" };
   };
-  const tab = tabs.find(x => { const o = docOf(x); return o.doc?.id === doc.id && o.file.toLowerCase() === name; });
+  // the live one first: a part opened from an assembly shares its file with the part's own (parked) tab
+  const tab = [...tabs].sort((a, b) => Number(!!a.state) - Number(!!b.state)).find(x => { const o = docOf(x); return o.doc?.id === doc.id && o.file.toLowerCase() === name; });
   if (!tab) return false;
   const same = toJson(docOf(tab).doc) === toJson(doc), dirty = docs.dirtyTabs().includes(tab);
   if (docs.active !== tab) await docs.activate(tab.id);
-  if (!same && !dirty) {
+  // a part opened from its assembly keeps that edit (and Return to assembly) rather than being read again
+  const fromAsm = kind === "part" && !tab.state && !!modeller.returnTo;
+  if (!same && !dirty && fromAsm) toast(t("{name} is open already, from its assembly.", { name: f.name }));
+  else if (!same && !dirty) {
     await docs.replacing(async () => { if (kind === "part") await modeller.openFile({ name: f.name, data }); else await asm.openFile({ name: f.name, data }); });
     toast(t("{name} is open already: its tab now shows the file's version.", { name: f.name }));
   } else {

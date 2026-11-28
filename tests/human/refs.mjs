@@ -133,6 +133,20 @@ await setDepth(15);
 await pg.keyboard.press("Control+s");
 await pg.waitForTimeout(1500);
 const d3a = await disk();
+// ---- R3b: the part open from the assembly, then the same file picked with File ▸ Open: no second tab of it.
+{
+  const before = await pg.evaluate(() => window.__sv.docs()?.tabs.length ?? 0);
+  await clearToasts();
+  await openFiles(pg, [await fetchOut("Part2.mcadprt", `${TMP}/Part2.mcadprt`)]);
+  await pg.waitForTimeout(1500);
+  await idle(pg);
+  const after = await pg.evaluate(() => window.__sv.docs()?.tabs.length ?? 0);
+  const ret = await pg.evaluate(() => !!window.__sv.modeller.returnTo);
+  const img = await snap(pg, "open-part-file-open");
+  await tabsNow("R3b");
+  check("R3b", after === before && ret,
+    "Part2 open from the assembly, then Part2.mcadprt picked with File ▸ Open: the open part is shown, no second tab", { before, after, ret, toast: await toasts() }, img);
+}
 await pg.click('#mc-ret [data-a="ret"]');
 await toAsm();
 const s3 = await asmState();
