@@ -347,9 +347,10 @@ export interface FilletFeature {
   radius: Num;
   /**
    * With `multi`, an edge's own radius `r` (mm) replaces `radius` (FR-FT-031). With `variable`, `r` is
-   * the radius at the end nearer `at` (world mm; the edge's first vertex when unset) and `r2` at the other.
+   * the radius at the end nearer `at` (world mm; the edge's first vertex when unset) and `r2` at the other;
+   * `mid` adds radii at points between them, `t` = share of the edge length from the `r` end (0..1).
    */
-  edges: (EdgeRef & { r?: number; r2?: number; at?: V3 })[];
+  edges: (EdgeRef & { r?: number; r2?: number; at?: V3; mid?: { t: number; r: number }[] })[];
   /** Variable radius fillet (FR-FT-032): each edge goes from `r` to `r2`. */
   variable?: boolean;
   /** Multiple radius fillet: each edge can have its own radius. */

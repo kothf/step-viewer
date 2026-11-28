@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.778.0] - 2026-11-28
+
+### Added
+- Variable radius fillet: radii between the ends of an edge. **+ Point** under an edge adds a point in the middle of its widest gap; type its position (% of the edge length from end a) and its radius, or remove it with ✕. Each point has its own callout on the edge, and the preview follows.
+
 ## [1.777.0] - 2026-11-28
 
 ### Fixed
@@ -5207,7 +5212,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.777.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.778.0...HEAD
+[1.778.0]: https://github.com/kothf/step-viewer/compare/v1.777.0...v1.778.0
 [1.777.0]: https://github.com/kothf/step-viewer/compare/v1.776.0...v1.777.0
 [1.776.0]: https://github.com/kothf/step-viewer/compare/v1.775.0...v1.776.0
 [1.775.0]: https://github.com/kothf/step-viewer/compare/v1.774.0...v1.775.0

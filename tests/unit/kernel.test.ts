@@ -833,6 +833,25 @@ test("variable radius fillet: an edge going from 1 to 4 mm (FR-FT-032)", async (
   assert.ok(up > (1 - Math.PI / 4) * 10 && up < (1 - Math.PI / 4) * 160);
 });
 
+test("variable radius fillet with radii between the ends (FR-FT-032)", async () => {
+  const m = new Modeller(await occ());
+  const box: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  const edge = { faces: ["x:side:sl1", "x:side:sl2"] as [string, string] };
+  const cut = (e: Partial<FilletFeature["edges"][number]>) => 8000 - run(m, doc([...box, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 1 }, variable: true, edges: [{ ...edge, r: 1, r2: 1, ...e }] } as Feature])).props!.volume;
+  const k = 1 - Math.PI / 4;
+  const bulge = cut({ at: [20, -10, 0], mid: [{ t: 0.5, r: 4 }] });
+  // 1 → 4 → 1: more than a constant 1, less than a constant 4.
+  assert.ok(bulge > k * 10 * 1.5 && bulge < k * 160, `${bulge}`);
+  // A point a quarter from the bottom equals one three quarters from the top.
+  const low = cut({ at: [20, -10, 0], mid: [{ t: 0.25, r: 3 }] });
+  const high = cut({ at: [20, -10, 10], mid: [{ t: 0.75, r: 3 }] });
+  assert.ok(Math.abs(low - high) / low < 1e-3, `${low} vs ${high}`);
+  // The point is measured from the `at` end: with the top half cut away, a point a quarter up takes more.
+  const half = (t: number) => run(m, doc([...box, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 1 }, variable: true, edges: [{ ...edge, r: 1, r2: 1, at: [20, -10, 0], mid: [{ t, r: 3 }] }] } as Feature,
+    rect("s2", 0, 0, 60, 40, { face: { name: "x:end" } }), { id: "c", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "blind", depth: { v: 5 } }])).props!.volume;
+  assert.ok(half(0.25) < half(0.75) - 1, `${half(0.25)} vs ${half(0.75)}`);
+});
+
 test("imported body with a gap: check and heal reports it and closes it (FR-FT-130/131, AT-P3-4)", async () => {
   const oc = await occ();
   const m = new Modeller(oc);

@@ -80,7 +80,7 @@ import { SEL_FILTER } from "../tools/Snapper";
 import { lassoMode, mergeSel, rectRegion, regionInside, regionProbe, regionTaken, type Rect, type Region as SelArea } from "../boxSelect";
 import { SelDrag } from "../selDrag";
 import { bodyMasses, combine } from "../tools/inertia";
-import { units, UNITS } from "../tools/units";
+import { units, UNITS, type Unit } from "../tools/units";
 import { csys } from "../tools/csys";
 import { COACH, coachFirst } from "../coach";
 import { setTips } from "../hints";
@@ -6498,6 +6498,32 @@ export class ModelController {
     this.decor.add(e);
   }
 
+  /** Radii between the ends of a variable radius fillet edge (FR-FT-032): rows of position % and radius, and + Point. */
+  private varPoints(e: FilletFeature["edges"][number], i: number, unit: Unit): string {
+    const fu = UNITS[unit].f;
+    const rows = (e.mid ?? []).map((m, k) => `<span class="pm-vr-p" data-vp="${i}:${k}"><span class="pm-vr-t" aria-hidden="true">${k + 1}</span>`
+      + `<span class="pm-in"><input type="text" inputmode="decimal" data-vt="${i}:${k}" value="${esc(trimNum(m.t * 100, 3))}" aria-label="${esc(t("Position along the edge"))} ${k + 1}, ${esc(t("Edge {n}", { n: i + 1 }))}" spellcheck="false" /><span class="muted">%</span></span>`
+      + `<span class="pm-in"><input type="text" inputmode="decimal" data-vr="${i}:${k}" value="${esc(trimNum(m.r * fu, 6))}" aria-label="${esc(t("Radius"))} ${k + 1}, ${esc(t("Edge {n}", { n: i + 1 }))}" spellcheck="false" /><span class="muted">${unit}</span></span>`
+      + `<button class="icon" data-vrm="${i}:${k}" title="${esc(t("Remove point"))}" aria-label="${esc(t("Remove point"))} ${k + 1}, ${esc(t("Edge {n}", { n: i + 1 }))}">✕</button></span>`).join("");
+    return `<span class="pm-vr-pts">${rows}<button class="btn small" data-vadd="${i}">${esc(t("+ Point"))}</button></span>`;
+  }
+
+  /** The point a share `t` of the edge's length from `from` (its start or end), on its polyline. */
+  private alongEdge(e: EdgeInfo, fromStart: boolean, t: number): V3 {
+    const p = e.pts, n = p.length / 3;
+    if (n < 2) return e.mid;
+    const idx = (k: number) => (fromStart ? k : n - 1 - k) * 3;
+    let total = 0;
+    for (let k = 1; k < n; k++) { const a = idx(k - 1), b = idx(k); total += Math.hypot(p[b] - p[a], p[b + 1] - p[a + 1], p[b + 2] - p[a + 2]); }
+    let goal = t * total;
+    for (let k = 1; k < n; k++) {
+      const a = idx(k - 1), b = idx(k), l = Math.hypot(p[b] - p[a], p[b + 1] - p[a + 1], p[b + 2] - p[a + 2]);
+      if (goal <= l || k === n - 1) { const u = l > 0 ? Math.min(1, goal / l) : 0; return [p[a] + (p[b] - p[a]) * u, p[a + 1] + (p[b + 1] - p[a + 1]) * u, p[a + 2] + (p[b + 2] - p[a + 2]) * u]; }
+      goal -= l;
+    }
+    return e.mid;
+  }
+
   private drawRoundPreview(f: FilletFeature | ChamferFeature) {
     const pv = this.last?.preview;
     if (pv?.position.length && roundReady(f)) {
@@ -6528,6 +6554,16 @@ export class ModelController {
           label.title = t("Click to type the size");
           label.dataset.at = JSON.stringify(p);
           label.addEventListener("click", () => { const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-${key}="${i}"]`); inp?.focus(); inp?.select(); });
+          $("#mc-layer").appendChild(label);
+        });
+        (r.mid ?? []).forEach((m, k) => {
+          const label = document.createElement("button");
+          label.className = "mc-handle mc-callout";
+          label.dataset.vp = `${i}:${k}`;
+          label.textContent = `R${i + 1}·${k + 1}: ${size(m.r)}`;
+          label.title = t("Click to type the size");
+          label.dataset.at = JSON.stringify(this.alongEdge(e, startAt === e.start, m.t));
+          label.addEventListener("click", () => { const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-vr="${i}:${k}"]`); inp?.focus(); inp?.select(); });
           $("#mc-layer").appendChild(label);
         });
       });
@@ -8274,10 +8310,10 @@ export class ModelController {
       const vari = f.type === "fillet" && !!f.variable;
       const rIn = (key: string, i: number, v: number, label: string) => `<span class="pm-in"><input type="text" inputmode="decimal" data-${key}="${i}" value="${esc(trimNum(v * UNITS[unit].f, 6))}" aria-label="${esc(label)} ${esc(t("Edge {n}", { n: i + 1 }))}" spellcheck="false" /><span class="muted">${unit}</span></span>`;
       const fu = UNITS[unit].f;
-      const items = `<ul class="pm-items" aria-label="${esc(t("Edges"))}">${f.edges.map((e, i) => `<li${vari ? ' class="pm-vr"' : ""}><span>${esc(t("Edge {n}", { n: i + 1 }))}</span>${vari ? `<span class="pm-vr-r"><span class="pm-vr-t" aria-hidden="true" title="${esc(t("Start radius"))}">a</span>${rIn("er", i, (e as { r?: number }).r ?? (f as FilletFeature).radius.v, t("Start radius"))}<span class="pm-vr-t" aria-hidden="true" title="${esc(t("End radius"))}">b</span>${rIn("er2", i, (e as { r2?: number; r?: number }).r2 ?? (e as { r?: number }).r ?? (f as FilletFeature).radius.v, t("End radius"))}</span>` : ""}${multi ? `<span class="pm-in"><input type="text" inputmode="decimal" data-er="${i}" value="${esc(trimNum(((e as { r?: number }).r ?? (f as FilletFeature).radius.v) * fu, 6))}" aria-label="${esc(t("Radius"))} ${esc(t("Edge {n}", { n: i + 1 }))}" spellcheck="false" /><span class="muted">${unit}</span></span>` : ""}<button class="icon" data-rm="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Edge {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>`
+      const items = `<ul class="pm-items" aria-label="${esc(t("Edges"))}">${f.edges.map((e, i) => `<li${vari ? ' class="pm-vr"' : ""}><span>${esc(t("Edge {n}", { n: i + 1 }))}</span>${vari ? `<span class="pm-vr-r"><span class="pm-vr-t" aria-hidden="true" title="${esc(t("Start radius"))}">a</span>${rIn("er", i, (e as { r?: number }).r ?? (f as FilletFeature).radius.v, t("Start radius"))}<span class="pm-vr-t" aria-hidden="true" title="${esc(t("End radius"))}">b</span>${rIn("er2", i, (e as { r2?: number; r?: number }).r2 ?? (e as { r?: number }).r ?? (f as FilletFeature).radius.v, t("End radius"))}</span>${this.varPoints(e as FilletFeature["edges"][number], i, unit)}` : ""}${multi ? `<span class="pm-in"><input type="text" inputmode="decimal" data-er="${i}" value="${esc(trimNum(((e as { r?: number }).r ?? (f as FilletFeature).radius.v) * fu, 6))}" aria-label="${esc(t("Radius"))} ${esc(t("Edge {n}", { n: i + 1 }))}" spellcheck="false" /><span class="muted">${unit}</span></span>` : ""}<button class="icon" data-rm="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Edge {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>`
         + (f.edges.length ? `<button class="btn small" data-k="clear">${esc(t("Clear edges"))}</button>` : `<p class="pm-help muted">${esc(t("click edges or faces in the view"))}</p>`);
       const sizes = (f.type === "chamfer" ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="equal"${cm === "equal" ? " selected" : ""}>${esc(t("Equal distance"))}</option><option value="two"${cm === "two" ? " selected" : ""}>${esc(t("Two distances"))}</option><option value="angle"${cm === "angle" ? " selected" : ""}>${esc(t("Distance and angle"))}</option><option value="offset"${cm === "offset" ? " selected" : ""}>${esc(t("Offset face"))}</option><option value="vertex"${cm === "vertex" ? " selected" : ""}>${esc(t("Vertex"))}</option></select></label>` : "")
-        + (f.type === "fillet" ? numField("radius", multi ? t("Default radius") : t("Radius"), f.radius, "length") + chk("multi", f.multi, t("Multiple radius fillet")) + chk("variable", f.variable, t("Variable radius fillet")) + (multi ? `<p class="pm-help muted">${esc(t("Type each edge's radius in the list, or click its callout in the view."))}</p>` : "") + (vari ? `<p class="pm-help muted">${esc(t("Each edge goes from its start radius (a) to its end radius (b): type them in the list or click the callouts at the edge ends."))}</p>` : "") : numField("distance", t("Distance"), f.distance, "length"))
+        + (f.type === "fillet" ? numField("radius", multi ? t("Default radius") : t("Radius"), f.radius, "length") + chk("multi", f.multi, t("Multiple radius fillet")) + chk("variable", f.variable, t("Variable radius fillet")) + (multi ? `<p class="pm-help muted">${esc(t("Type each edge's radius in the list, or click its callout in the view."))}</p>` : "") + (vari ? `<p class="pm-help muted">${esc(t("Each edge goes from its start radius (a) to its end radius (b): type them in the list or click the callouts at the edge ends."))} ${esc(t("+ Point adds a radius between the ends; its position is a share of the edge length from end a."))}</p>` : "") : numField("distance", t("Distance"), f.distance, "length"))
         + (f.type === "chamfer" && (cm === "two" || cm === "vertex") ? numField("distance2", t("Distance 2"), f.distance2 ?? { v: f.distance.v }, "length") : "")
         + (f.type === "chamfer" && cm === "vertex" ? numField("distance3", t("Distance 3"), f.distance3 ?? { v: f.distance.v }, "length") + `<p class="pm-help muted">${esc(t("Distance 1 runs along the edge you clicked next to the corner; 2 and 3 along the other two edges."))}</p>` : "")
         + (f.type === "chamfer" && cm === "offset" ? `<p class="pm-help muted">${esc(t("Both faces move in by the distance; the chamfer runs where they meet, so it stays even on faces that are not square."))}</p>` : "")
@@ -9075,6 +9111,48 @@ export class ModelController {
       inp.addEventListener("change", apply);
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
     });
+    // Radii between the ends of a variable radius edge: position %, radius, add and remove.
+    const vpoint = (key: string) => { const [i, k] = key.split(":").map(Number); return f.type === "fillet" ? { e: f.edges[i], i, k } : null; };
+    pm.querySelectorAll<HTMLInputElement>("input[data-vt], input[data-vr]").forEach(inp => {
+      const apply = () => {
+        const at = vpoint(inp.dataset.vt ?? inp.dataset.vr!);
+        const m = at?.e?.mid?.[at.k];
+        if (!at || !m) return;
+        let v: number;
+        try { v = inp.dataset.vt != null ? evaluate(inp.value, "number", unit, evalVars(this.doc, unit).values) / 100 : evaluate(inp.value, "length", unit, evalVars(this.doc, unit).values); }
+        catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
+        if (inp.dataset.vt != null ? !(v > 0 && v < 1) : !(v > 0)) { inp.setAttribute("aria-invalid", "true"); toast(t(inp.dataset.vt != null ? "The position must be between 0 and 100 %." : "The value must be more than 0."), true); return; }
+        inp.removeAttribute("aria-invalid");
+        if (inp.dataset.vt != null) { if (m.t === v) return; m.t = v; at.e.mid!.sort((a, b) => a.t - b.t); this.renderPanel(); }
+        else { if (m.r === v) return; m.r = v; }
+        this.drawDecor(); void this.rebuild();
+      };
+      inp.addEventListener("change", apply);
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
+    });
+    pm.querySelectorAll<HTMLElement>("[data-vadd]").forEach(b => b.addEventListener("click", () => {
+      if (f.type !== "fillet") return;
+      const e = f.edges[+b.dataset.vadd!];
+      if (!e) return;
+      // The middle of the widest gap between the ends and the points there are; radius = straight between its neighbours.
+      const r0 = e.r ?? f.radius.v, r1 = e.r2 ?? r0;
+      const stops = [{ t: 0, r: r0 }, ...(e.mid ?? []), { t: 1, r: r1 }];
+      let g = 0;
+      for (let k = 1; k < stops.length; k++) if (stops[k].t - stops[k - 1].t > stops[g + 1].t - stops[g].t) g = k - 1;
+      const a = stops[g], c = stops[g + 1];
+      (e.mid ??= []).push({ t: (a.t + c.t) / 2, r: (a.r + c.r) / 2 });
+      e.mid.sort((x, y) => x.t - y.t);
+      const k = e.mid.findIndex(x => x.t === (a.t + c.t) / 2);
+      this.renderPanel(); this.drawDecor(); void this.rebuild();
+      const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-vr="${b.dataset.vadd}:${k}"]`); inp?.focus(); inp?.select();
+    }));
+    pm.querySelectorAll<HTMLElement>("[data-vrm]").forEach(b => b.addEventListener("click", () => {
+      const at = vpoint(b.dataset.vrm!);
+      if (!at?.e?.mid) return;
+      at.e.mid.splice(at.k, 1);
+      if (!at.e.mid.length) delete at.e.mid;
+      this.renderPanel(); this.drawDecor(); void this.rebuild();
+    }));
     pm.querySelector("[data-k=clearParting]")?.addEventListener("click", () => { if (f.type === "draft") { f.parting = []; this.draftChanged(); } });
     pm.querySelector("[data-k=sbfocus]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = m.focus === "sbv" ? undefined : "sbv"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelectorAll<HTMLElement>("[data-rmsb]").forEach(b => b.addEventListener("click", () => {

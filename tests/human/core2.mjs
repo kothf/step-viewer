@@ -83,6 +83,32 @@ const lossA11 = (1 - Math.PI / 4) * 100 * (4 + 12 + 36) / 3;
 check("A11", er && er2 && a11d?.variable && !S.bad.length && near(S.v, V0 - lossA11, 15), "Variable radius 2 → 6 mm along one edge: start and end radius typed in the list, preview, ✓", { er, er2, edge: a11d?.edges?.[0] && { r: a11d.edges[0].r, r2: a11d.edges[0].r2 }, prev: prevA11, callouts: callA11, v: S.v, want: V0 - lossA11, bad: S.bad }, imgA11);
 await blank();
 
+// ---------- A11-mid: a radius between the ends ----------
+await makeBlock(pg, 100, 60, 20);
+await blank();
+await cmd(pg, "Fillet");
+await pg.waitForTimeout(400);
+await clickAt(pg, await P(10, -30, 20));
+await idle(pg);
+await pg.check('#mc-pm input[data-k="variable"]').catch(e => console.log("variable", e.message.split("\n")[0]));
+await idle(pg);
+await listIn('input[data-er="0"]', 2);
+await listIn('input[data-er2="0"]', 2);
+await pg.click('#mc-pm [data-vadd="0"]').catch(e => console.log("vadd", e.message.split("\n")[0]));
+await idle(pg);
+const midPos = await pg.$eval('#mc-pm input[data-vt="0:0"]', e => e.value).catch(() => null);
+const midR = await listIn('input[data-vr="0:0"]', 6);
+S = await st();
+const midD = S.draft?.edges?.[0]?.mid;
+const callMid = await pg.$$eval('.mc-callout[data-vp]', els => els.map(e => e.textContent.trim()));
+const imgMid = await snap(pg, "variable-fillet-mid");
+await ok();
+S = await st();
+const lossMid = V0 - S.v, k4 = 1 - Math.PI / 4;
+check("A11-mid", midPos === "50" && midR && midD?.length === 1 && callMid.length === 1 && !S.bad.length && lossMid > k4 * 100 * 4 * 1.5 && lossMid < k4 * 100 * 36,
+  "+ Point adds a radius at 50 % of the edge; typed 6 mm between the 2 mm ends makes the fillet bulge in the middle, with its own callout", { midPos, mid: midD, callouts: callMid, loss: lossMid, bad: S.bad }, imgMid);
+await blank();
+
 // ---------- A12: face fillet between two face sets ----------
 await makeBlock(pg, 100, 60, 20);
 await blank();
