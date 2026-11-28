@@ -177,6 +177,31 @@ d = await draft();
   check("B12", !!fb && box && d.dims.some(x => x.t === "fillet" && Math.abs(x.val.v - 4) < 1e-9) && lab.some(x => x.startsWith("R")), "a corner takes a fillet: the radius box opens, R4 shows on the arc", { box, dims: d.dims.map(x => [x.t, x.val.v]), lab }, img6);
   await pg.keyboard.press("Escape");
 }
+// E6 + D7: the chain's last point takes a distance from XY (typed as 12 in the Modify box), then On ZX.
+d = await draft();
+{
+  const end = d.pts.find(p => d.segs.filter(s => s.pts[0] === p.id || s.pts.at(-1) === p.id).length === 1 && !p.fixed && d.pts[0].id !== p.id);
+  await clickAt(pg, await W(end.p));
+  const db = await pg.$('#mc-pm [data-s3r="dim:plane:XY"]');
+  if (db) await db.click();
+  await pg.waitForTimeout(250);
+  d = await draft();
+  const dim = d.dims.find(x => x.t === "planeDist");
+  if (dim) { await pg.click(`.sk3-dim[data-dim="${dim.id}"]`); await pg.waitForTimeout(200); await pg.fill(".mod-box .mod-in", "12"); await pg.keyboard.press("Enter"); await pg.waitForTimeout(300); }
+  d = await draft();
+  const z = d.pts.find(p => p.id === end.id).p[2];
+  const img7 = await snap(pg, "planedist");
+  check("E6", !!db && !!dim && Math.abs(Math.abs(z) - 12) < 1e-4, "a point's distance from XY is a dimension: typing 12 moves the point to 12 above the plane", { z, dims: d.dims.map(x => [x.t, x.plane, x.val.v]) }, img7);
+  await clickAt(pg, await W(d.pts.find(p => p.id === end.id).p));
+  const ob = await pg.$('#mc-pm [data-s3r="onPlane:ZX"]');
+  if (ob) await ob.click();
+  await pg.waitForTimeout(300);
+  d = await draft();
+  const toastShown = await pg.$$eval(".toast", els => els.map(e => e.textContent).join(" | "));
+  const y = d.pts.find(p => p.id === end.id).p[1];
+  check("D7", !!ob && ((d.rels.some(r => r.t === "onPlane" && r.plane === "ZX") && Math.abs(y) < 1e-4) || /conflict|Конфликт|refused|cannot/i.test(toastShown)), "On ZX puts the point on the plane (or is refused with a message when it cannot hold)", { y, rels: d.rels.map(r => [r.t, r.plane]), toastShown }, await snap(pg, "onplane"));
+  await pg.keyboard.press("Escape");
+}
 // A2: ✓ keeps the 3D sketch; F1: a sweep with a circular profile follows it.
 await pg.click("#mc-ok");
 await idle(pg);

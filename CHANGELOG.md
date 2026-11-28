@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.768.0] - 2026-11-28
+## [1.769.0] - 2026-11-28
 
 ### Added
 
@@ -18,6 +18,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Simulation: a part opened with saved results shows the study used last, with its plot drawn at once.
 - Simulation: Duplicate study keeps the results of the study it copies.
 - Save asks for the file name at once after a solve, instead of packing the results first (parts and assemblies).
+
+## [1.768.0] - 2026-11-28
+
+### Added
+
+- 3D sketch: select one point to put it **On XY**, **On YZ** or **On ZX**, or to give its **Distance to** one of those planes. The distance shows in the view and is changed there or in Dimensions, like the other dimensions.
+- 3D sketch test list: a sweep of a sketch profile along a 3D sketch (sharp corner and sketch fillet) is now checked.
 
 ## [1.767.0] - 2026-11-28
 
@@ -5109,7 +5116,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.768.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.769.0...HEAD
+[1.769.0]: https://github.com/kothf/step-viewer/compare/v1.768.0...v1.769.0
 [1.768.0]: https://github.com/kothf/step-viewer/compare/v1.767.0...v1.768.0
 [1.767.0]: https://github.com/kothf/step-viewer/compare/v1.766.0...v1.767.0
 [1.766.0]: https://github.com/kothf/step-viewer/compare/v1.765.0...v1.766.0
