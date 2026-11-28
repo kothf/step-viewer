@@ -202,6 +202,40 @@ d = await draft();
   check("D7", !!ob && ((d.rels.some(r => r.t === "onPlane" && r.plane === "ZX") && Math.abs(y) < 1e-4) || /conflict|Конфликт|refused|cannot/i.test(toastShown)), "On ZX puts the point on the plane (or is refused with a message when it cannot hold)", { y, rels: d.rels.map(r => [r.t, r.plane]), toastShown }, await snap(pg, "onplane"));
   await pg.keyboard.press("Escape");
 }
+// E7: a line at a slant to a standard plane takes its angle to the plane (typed as 25°).
+d = await draft();
+{
+  const P = id => d.pts.find(p => p.id === id).p;
+  const ang = (s, n) => { const a = P(s.pts[0]), b = P(s.pts[1]), u = [0, 1, 2].map(j => b[j] - a[j]); return Math.atan2(Math.abs(u[n]), Math.hypot(u[(n + 1) % 3], u[(n + 2) % 3])); };
+  let pick = null;
+  if (!d.segs.some(g => g.t === "line" && [2, 0, 1].some(n => ang(g, n) > 0.02 && ang(g, n) < Math.PI / 2 - 0.02))) {
+    // Every line runs along an axis: free the last line of its axis relations and move its end in the point table.
+    const l = [...d.segs].reverse().find(g => g.t === "line");
+    for (const r of d.rels.filter(r => r.e.includes(l.id))) { await pg.click(`#mc-pm [data-s3rdel="${r.id}"]`); await pg.waitForTimeout(200); }
+    d = await draft();
+    const i = d.pts.findIndex(p => p.id === l.pts[1]), v = d.pts[i].p, j = Math.abs(v[0] - P(l.pts[0])[0]) > 1e-6 ? 2 : 0;
+    const inp = `#mc-pm input[data-s3x="${i}:${j}"]`;
+    await pg.fill(inp, String(Math.round(v[j] + 10)));
+    await pg.press(inp, "Enter");
+    await pg.waitForTimeout(300);
+    d = await draft();
+  }
+  for (const [pl, n] of [["XY", 2], ["YZ", 0], ["ZX", 1]]) { const s = d.segs.find(g => g.t === "line" && ang(g, n) > 0.02 && ang(g, n) < Math.PI / 2 - 0.02); if (s) { pick = { s, pl, n }; break; } }
+  if (pick) {
+    await pg.click(`#mc-pm [data-s3sel="${pick.s.id}"]`);
+    await pg.waitForTimeout(200);
+    const b = await pg.$(`#mc-pm [data-s3r="dim:pangle:${pick.pl}"]`);
+    if (b) await b.click();
+    await pg.waitForTimeout(250);
+    d = await draft();
+    const dim = d.dims.find(x => x.t === "planeAngle");
+    if (dim) { await pg.click(`.sk3-dim[data-dim="${dim.id}"]`); await pg.waitForTimeout(200); await pg.fill(".mod-box .mod-in", "25"); await pg.keyboard.press("Enter"); await pg.waitForTimeout(300); }
+    d = await draft();
+    const s2 = d.segs.find(g => g.id === pick.s.id), got = (ang(s2, pick.n) * 180) / Math.PI;
+    check("E7", !!b && !!dim && Math.abs(got - 25) < 1e-3, `a line's angle to ${pick.pl} is a dimension: typing 25° turns the line to 25°`, { got, plane: pick.pl }, await snap(pg, "planeangle"));
+    await pg.keyboard.press("Escape");
+  } else check("E7", false, "a slanted line to dimension", { segs: d.segs.length });
+}
 // A2: ✓ keeps the 3D sketch; F1: a sweep with a circular profile follows it.
 await pg.click("#mc-ok");
 await idle(pg);

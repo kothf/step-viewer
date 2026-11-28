@@ -1,7 +1,7 @@
 // 3D sketch solver and chaining (FR-SK-080).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chain3d, solve3d } from "../../src/sketch/sketch3d";
+import { chain3d, linePlaneAngle, solve3d } from "../../src/sketch/sketch3d";
 import type { Sketch3dFeature } from "../../src/model/types";
 
 const sk = (part: Partial<Sketch3dFeature>): Sketch3dFeature => ({ id: "k", type: "sketch3d", name: "3DSketch1", pts: [], segs: [], rels: [], dims: [], ...part });
@@ -152,4 +152,18 @@ test("3D sketch: a point on a standard plane and its distance from one (3D sketc
   // A fixed point off the plane cannot be put on it.
   const bad = solve3d(sk({ pts: [{ id: "A", p: [0, 0, 5], fixed: true }], rels: [{ id: "r", t: "onPlane", e: ["A"], plane: "XY" }] }));
   assert.equal(bad.ok, false);
+});
+
+test("3D sketch: the angle of a line to a standard plane (3D sketch test E7)", () => {
+  // A line from a fixed origin, 20 long, at 30° to XY: its end rises to z = 10.
+  const r = solve3d(sk({
+    pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [15, 3, 4] }],
+    segs: [{ id: "l", t: "line", pts: ["A", "B"] }],
+    rels: [{ id: "r", t: "onPlane", e: ["B"], plane: "ZX" }],
+    dims: [{ id: "d", t: "planeAngle", e: ["l"], plane: "XY", val: { v: Math.PI / 6 } }, { id: "e", t: "length", e: ["l"], val: { v: 20 } }],
+  }));
+  assert.ok(r.ok);
+  near(r.pts.B[2], 10, 1e-5); near(r.pts.B[1], 0); near(Math.hypot(...r.pts.B), 20, 1e-5);
+  assert.equal(r.dof, 0);
+  near(linePlaneAngle(sk({ pts: [{ id: "A", p: [0, 0, 0] }, { id: "B", p: r.pts.B }], segs: [{ id: "l", t: "line", pts: ["A", "B"] }] }), "l", "XY")!, Math.PI / 6, 1e-6);
 });

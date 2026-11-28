@@ -779,7 +779,7 @@ export interface Sk3Seg { id: string; t: "line" | "spline"; pts: string[] }
 /** 3D sketch relations: a line along an axis or parallel to a standard plane, two lines parallel/perpendicular/equal, two points coincident, a point at a line's middle or on a line (e = [point, line]). */
 export interface Sk3Rel { id: string; t: "alongX" | "alongY" | "alongZ" | "parallelPlane" | "parallel" | "perpendicular" | "equal" | "coincident" | "midpoint" | "onLine" | "tangent" | "onPlane"; /** onPlane: e = [point] on the standard plane `plane`. */ e: string[]; plane?: "XY" | "YZ" | "ZX" }
 /** 3D sketch dimensions: a line's length, the distance between two points, or the angle between two lines (radians). */
-export interface Sk3Dim { id: string; /** "fillet" = a sketch fillet: e = [corner point of two lines], val = radius; the lines keep their sharp corner (dimensions measure to it) and are rounded where drawn and built. */ t: "length" | "distance" | "angle" | "fillet" | "planeDist"; e: string[]; val: Num; /** planeDist: e = [point], its distance from the standard plane `plane`. */ plane?: "XY" | "YZ" | "ZX" }
+export interface Sk3Dim { id: string; /** "fillet" = a sketch fillet: e = [corner point of two lines], val = radius; the lines keep their sharp corner (dimensions measure to it) and are rounded where drawn and built. */ t: "length" | "distance" | "angle" | "fillet" | "planeDist" | "planeAngle"; e: string[]; val: Num; /** planeDist: e = [point], its distance from the standard plane `plane`; planeAngle: e = [line], its angle to `plane` (0..π/2). */ plane?: "XY" | "YZ" | "ZX" }
 
 /**
  * 3D sketch (FR-SK-080): points, lines and splines in space with relations and dimensions. The

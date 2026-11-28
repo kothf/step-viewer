@@ -59,6 +59,12 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
       if (u && v) out.push(Math.atan2(len(cross(u, v)), dot(u, v)) - d.val.v);
       continue;
     }
+    if (d.t === "planeAngle") {
+      // The angle between a line and a standard plane (0..90°): atan of its part along the plane's normal over the part in it.
+      const u = vec(d.e[0]);
+      if (u) { const n = PLANE_N[d.plane ?? "XY"], z = Math.abs(u[n]); out.push(Math.atan2(z, Math.hypot(u[(n + 1) % 3], u[(n + 2) % 3])) - d.val.v); }
+      continue;
+    }
     if (d.t === "planeDist") { out.push(Math.abs(P(d.e[0])[PLANE_N[d.plane ?? "XY"]]) - d.val.v); continue; }
     if (d.t === "length") { const s = seg(d.e[0]); if (s) out.push(len(sub(P(s.pts[s.pts.length - 1]), P(s.pts[0]))) - d.val.v); }
     else out.push(len(sub(P(d.e[1]), P(d.e[0]))) - d.val.v);
@@ -143,6 +149,15 @@ export function lineAngle(sk: Sketch3dFeature, l1: string, l2: string): number |
   const vec = (id: string): V3 | null => { const s = sk.segs.find(g => g.id === id); return s && s.t === "line" ? sub(P(s.pts[1]), P(s.pts[0])) : null; };
   const u = vec(l1), v = vec(l2);
   return u && v ? Math.atan2(len(cross(u, v)), dot(u, v)) : null;
+}
+
+/** The angle (0..π/2) between a line of the sketch and a standard plane; null when it is not a line. */
+export function linePlaneAngle(sk: Sketch3dFeature, l: string, plane: "XY" | "YZ" | "ZX"): number | null {
+  const P = (id: string) => sk.pts.find(p => p.id === id)?.p ?? [0, 0, 0] as V3;
+  const s = sk.segs.find(g => g.id === l);
+  if (!s || s.t !== "line") return null;
+  const u = sub(P(s.pts[1]), P(s.pts[0])), n = PLANE_N[plane];
+  return Math.atan2(Math.abs(u[n]), Math.hypot(u[(n + 1) % 3], u[(n + 2) % 3]));
 }
 
 /** Solves A x = b (A square) by Gaussian elimination; null when singular. */
