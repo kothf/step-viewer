@@ -844,7 +844,7 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 /* Assembly tree: the show/hide button stays in sight (faint until hovered), so hidden components can be found and shown (exam #57). */
 #asm-tree .ft-tools { display: inline-flex; }
 #asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > :not([data-a=hide]) { display: none; }
-#asm-tree .ft-vmates .ft-tools > [data-a=vmclear] { display: inline-flex; }
+#asm-tree .ft-row.ft-vmates .ft-tools > [data-a=vmclear] { display: inline-flex !important; }
 #asm-tree .ft-vmates { background: var(--accent-soft); }
 #asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > [data-a=hide]:not(.off) { color: var(--muted); }
 /* FR-HIS-013: hidden items have an outlined icon; parents of an absorbed sketch fold it with a twisty. */
