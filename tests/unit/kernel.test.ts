@@ -297,6 +297,16 @@ test("shell, mirror, linear and circular patterns (FR-FT-060, 070-072, 075)", as
   let r = run(m, doc([s1, ex, sh]));
   close(r.props!.volume, 120000 - 96 * 56 * 18, 1e-6);
   assert.ok(r.body!.names.some(n => n.startsWith("f2:off:")), r.body!.names.join());
+  // No face removed: a closed hollow body, inward and outward (the walls keep their names).
+  r = run(m, doc([s1, ex, { ...sh, faces: [] } as Feature]));
+  close(r.props!.volume, 120000 - 96 * 56 * 16, 1e-6);
+  assert.ok(r.body!.names.includes("f1:end") && r.body!.names.includes("f2:off:f1:end"), r.body!.names.join());
+  r = run(m, doc([s1, ex, { ...sh, faces: [], outward: true } as Feature]));
+  // Outward the corners stay sharp, as in other CAD apps: a 104 × 64 × 24 block less the body.
+  close(r.props!.volume, 104 * 64 * 24 - 120000, 1e-6);
+  // Open at the top, outward: the walls grow out and down, the top stays at z = 20.
+  r = run(m, doc([s1, ex, { ...sh, outward: true } as Feature]));
+  close(r.props!.volume, 104 * 64 * 22 - 120000, 1e-6);
 
   // A hole near a corner, patterned 4 × along X at 20 mm and 2 × along Y at 30 mm.
   const s2 = circle("s2", -40, -15, 4, { face: { name: "f1:end" } });

@@ -20449,6 +20449,52 @@ try {
       `model 1.639: a hole takes its centres from its position sketch's points (construction and line ends left out) and follows when they move (${JSON.stringify({ r0, r1 })})`);
     await ctx.close();
   }
+  if (inShard(4)) {
+    // model 1.765: closed and outward shells, suppress with dependants, ✓ on a failing fillet keeps the panel.
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const cp = await ctx.newPage();
+    cp.on("pageerror", e => errors.push(e.message));
+    cp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await cp.goto(`${origin}/index.html?debug`);
+    await cp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await cp.goto(`${origin}/index.html?debug`);
+    await cp.waitForFunction(() => window.__sv);
+    await cp.click("#new-part");
+    await cp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await cp.waitForTimeout(150); await cp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 }); };
+    const vol = () => cp.evaluate(() => ({ v: window.__sv.model.last().props.volume, ok: window.__sv.model.last().statuses.every(s => s.ok) }));
+    await cp.evaluate(() => window.__sv.model.store.change("Part", doc => {
+      const pt = (id, x, y) => ({ id, t: "point", x, y }), ln = (id, a, b) => ({ id, t: "line", a, b });
+      doc.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("a", -50, -30), pt("b", 50, -30), pt("c", 50, 30), pt("d", -50, 30), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "sh", type: "shell", name: "Shell1", thickness: { v: 2 }, faces: [] });
+    }));
+    await settle();
+    const closed = await vol();
+    await cp.evaluate(() => window.__sv.model.store.change("Out", doc => { doc.features.find(f => f.id === "sh").outward = true; }));
+    await settle();
+    const out = await vol();
+    check(closed.ok && Math.abs(closed.v - (120000 - 96 * 56 * 16)) < 0.5 && out.ok && Math.abs(out.v - (104 * 64 * 24 - 120000)) < 0.5,
+      `model 1.765: a shell with no face removed is a closed hollow body, outward with sharp corners (${JSON.stringify({ closed, out })})`);
+    // Suppress a hole: its pattern goes with it, Unsuppress brings both back.
+    await cp.evaluate(() => window.__sv.model.store.change("Holes", doc => {
+      doc.features = doc.features.filter(f => f.id !== "sh");
+      doc.features.push({ id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "x:end" } }, rels: [], dims: [], ents: [{ id: "h1", t: "point", x: -30, y: 0 }] },
+        { id: "h", type: "hole", name: "Hole1", sketch: "k", pts: [], kind: "simple", diameter: { v: 10 }, end: "through", depth: { v: 20 } },
+        { id: "p", type: "lpattern", name: "LPattern1", features: ["h"], dir: { std: "X" }, count: 3, spacing: { v: 20 } });
+    }));
+    await settle();
+    const holes = await vol();
+    await cp.evaluate(() => window.__sv.modeller.toggleSuppress("h"));
+    await settle();
+    const sup = await cp.evaluate(() => ({ ...window.__sv.model.store.doc.features.find(f => f.id === "p"), v: window.__sv.model.last().props.volume, ok: window.__sv.model.last().statuses.every(s => s.ok) }));
+    await cp.evaluate(() => window.__sv.modeller.toggleSuppress("h"));
+    await settle();
+    const back = await vol();
+    check(holes.ok && sup.suppressed && sup.supBy === "h" && sup.ok && Math.abs(sup.v - 120000) < 0.5 && Math.abs(back.v - holes.v) < 1e-6,
+      `model 1.765: suppressing a hole suppresses its pattern too, Unsuppress brings both back (${JSON.stringify({ holes: holes.v, sup: { s: sup.suppressed, by: sup.supBy, v: sup.v, ok: sup.ok }, back: back.v })})`);
+    await ctx.close();
+  }
 } catch (err) {
   console.error(err);
   failures++;

@@ -20,7 +20,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, PartData } from "../topology";
 import { edgeLoop, sameEdges, tangentChain } from "./chain";
-import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
+import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, setSuppressed, uid } from "./doc";
 import { hasHolePoints, syncHole, syncHoleSketches } from "./holePos";
 import { canCopy, copyClip, pasteClip, type Clip } from "./paste";
 import { activate, addConfig, applyConfigTable, configTable, nextConfigName, removeConfig, renameConfig } from "./configs";
@@ -643,6 +643,8 @@ export class ModelController {
   previewShown = false;
   private shownRolled = false;
   private rebuildGen = 0;
+  /** The feature draft the last finished rebuild showed (JSON), so ✓ knows the panel's error is current. */
+  private shownDraft = "";
   private staleTimer = 0;
   private rebuildMs = 0;
   /** Undo mark taken when a sketch was opened: leaving it merges its steps (FR-UND-003). */
@@ -1015,6 +1017,7 @@ export class ModelController {
     // Face numbers change with a rebuild: the push/pull arrow waits for the next pick.
     if (!this.arrowDrag) this.pushFace = null;
     if (gen === this.rebuildGen) {
+      this.shownDraft = d ? JSON.stringify(d) : "";
       this.shownRolled = rolled;
       if (m.kind === "none" && !this.instantDoc) this.fullData = r.data;
     }
@@ -1794,6 +1797,10 @@ export class ModelController {
     const smWhy = smCheck(f);
     if (smWhy) { toast(smWhy, true); return; }
     if (f.type === "point" && !(f.mode === "face" ? f.face : f.edge)) { toast(t(f.mode === "face" ? "Pick a face." : "Pick an edge."), true); return; }
+    // A new or changed feature that the view shows failing is not made: the panel stays open with the
+    // reason, as in other CAD apps (an unchanged feature that fails because of an edit above can still be OK'd).
+    const failing = this.draftFailure(f, m.isNew ? null : this.store!.feature(f.id) ?? null);
+    if (failing) { toast(failing, true); return; }
     this.mode = { kind: "none" };
     this.store!.change(m.isNew ? `Add ${f.name}` : `Edit ${f.name}`, d => {
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
@@ -1811,6 +1818,14 @@ export class ModelController {
     if (m.isNew && isWeldFeature(f)) rememberWeld(f);
     const again = m.isNew && (repeat || this.pinned) ? this.activeCmd : null;
     void Promise.resolve(this.rebuild()).then(() => { if (again && this.mode.kind === "none") this.command(again); });
+  }
+
+  /** The error of the shown draft (the same one the panel shows), when it is current and the feature is new or changed. */
+  private draftFailure(f: Feature, was: Feature | null): string | null {
+    if (this.shownDraft !== JSON.stringify(f)) return null;
+    if (was && JSON.stringify(was) === this.shownDraft) return null;
+    const status = (f.type === "fillet" || f.type === "chamfer") ? this.last?.preview?.status as FeatureStatus | undefined : this.last?.statuses.find(s => s.id === f.id);
+    return status && !status.ok ? statusText(status) : null;
   }
 
   /**
@@ -2551,10 +2566,12 @@ export class ModelController {
     const f = this.store?.feature(id);
     if (!f) return;
     if (this.isFrozen(id)) { this.frozenToast(); return; }
-    this.store!.change(f.suppressed ? `Unsuppress ${f.name}` : `Suppress ${f.name}`, d => {
-      const g = d.features.find(x => x.id === id)!;
-      if (g.suppressed) delete g.suppressed; else g.suppressed = true;
-    });
+    // As in other CAD apps, the features that use it go with it (a pattern of a suppressed hole, a
+    // fillet on its edges), and come back with it; unsuppressing a feature brings back what it needs.
+    const was = !!f.suppressed;
+    let along: string[] = [];
+    this.store!.change(was ? `Unsuppress ${f.name}` : `Suppress ${f.name}`, d => { along = setSuppressed(d, id, !was); });
+    if (along.length) toast(t(!was ? "Also suppressed: {list}." : "Also unsuppressed: {list}.", { list: along.map(featureLabel).join(", ") }));
   }
 
   async deleteFeature(id: string) {
@@ -7439,7 +7456,10 @@ export class ModelController {
     });
     if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
+    // A row that had the keyboard keeps it through the redraw (a rebuild redraws the tree while Alt+↑/↓ moves a feature).
+    const had = (document.activeElement as HTMLElement | null)?.closest?.("#mc-tree .ft-row") as HTMLElement | null;
     box.innerHTML = html;
+    if (had?.dataset.id) box.querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(had.dataset.id)}"]`)?.focus({ preventScroll: true });
     const flyName = document.querySelector("#mc-treefly .mc-treefly-n");
     if (flyName) flyName.textContent = d.name;
     if (this.hoverId && this.hoverFrom === "view") box.querySelector(`.ft-row[data-id="${CSS.escape(this.hoverId)}"]`)?.classList.add("hover");
@@ -7593,6 +7613,8 @@ export class ModelController {
         this.selected = id;
         this.renderTree();
         this.drawDecor();
+        // The tree was drawn again: the clicked row keeps the keyboard, so Alt+↑/↓, Enter and F2 act on it.
+        $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
       });
       r.addEventListener("dblclick", e => {
         if ((e.target as HTMLElement).matches("input")) return;

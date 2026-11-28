@@ -1677,6 +1677,8 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-FT-050 | Hole types counterdrilled, clearance (close/normal/loose) and slot; end conditions up to face and up to next | 1.100.0: clearance, counterdrill and slot holes; Up to next and Up to surface ends | Done |
 | FR-FT-052 | Placement by sketch points that can be dimensioned and related, or points of an existing sketch | 1.639.0: position sketch made on the face with the Point tool, live preview, existing sketches picked in the tree | Done |
 | FR-FT-060 | Shell with multi-thickness faces (P3) | 1.100.0: multi-thickness faces | Done |
+| FR-FT-060 | Shell with no face removed (closed hollow body); outward with sharp outer corners | 1.765.0: no face = body − offset solid (`fid:off:` walls); outward uses the Intersection join, Arc join when that fails | Done |
+| FR-HIS-004 | Suppress takes dependants along, Unsuppress brings them back (a CAD app's parent/child suppression) | 1.765.0: `doc.ts` `setSuppressed` (`supBy`), parents of an unsuppressed feature come back too | Done |
 | FR-FT-061 | Parting-line draft (P5) | 1.100.0: parting-line draft | Done |
 | FR-FT-062 | Rib draft | 1.100.0: rib draft (normal ribs) | Done |
 | FR-FT-070 / FR-FT-071 / FR-FT-072 | Patterns and mirror of **faces and bodies** (P3) | 1.100.0: features, faces or bodies as the pattern/mirror source | Done |

@@ -1148,6 +1148,8 @@ export const RU: Record<string, string> = {
   "A feature to copy is missing.": "Копируемый элемент отсутствует.",
   "Only extrudes, cuts, revolves, holes, mirrors and patterns can be copied for now.": "Пока можно копировать только вытягивания, вырезы, вращения, отверстия, отражения и массивы.",
   "All the features to copy are suppressed.": "Все копируемые элементы погашены.",
+  "Also suppressed: {list}.": "Также погашены: {list}.",
+  "Also unsuppressed: {list}.": "Также включены: {list}.",
   "No copy touches the body.": "Ни одна копия не касается тела.",
   "The pattern needs at least 2 instances.": "Массиву нужно не меньше 2 экземпляров.",
   "The spacing must be more than 0.": "Шаг должен быть больше 0.",

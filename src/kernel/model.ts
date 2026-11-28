@@ -1726,6 +1726,14 @@ export class Modeller {
     throw new FeatureError("E-TN-LOST", `Reference lost: face ${name}`);
   }
 
+  /** An Intersection-join shell is kept only when it is a valid shape larger than the body it grows from. */
+  private sharpOk(shape: any, from: any): boolean {
+    try {
+      if (!new this.oc.BRepCheck_Analyzer(shape, true, false).IsValid_2()) return false;
+      return Math.abs(this.volume(shape)) > Math.abs(this.volume(from)) * 1e-3;
+    } catch { return false; }
+  }
+
   /** Shell (FR-FT-060): MakeThickSolid; kept faces keep their names, the new walls are `fid:off:<face>`. */
   private shell(f: ShellFeature, prev: Named | null): Named {
     const oc = this.oc;
@@ -1734,10 +1742,17 @@ export class Modeller {
     if (!(t > 1e-6)) throw new FeatureError("E-FT-ZERO", "The thickness must be more than 0.");
     const list = new oc.TopTools_ListOfShape_1();
     for (const r of f.faces) list.Append_1(this.resolveFace(prev, r));
-    const mk = new oc.BRepOffsetAPI_MakeThickSolid();
-    try {
-      mk.MakeThickSolidByJoin(prev.shape, list, f.outward ? t : -t, 1e-3, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Arc, false, new oc.Message_ProgressRange_1());
-    } catch { /* reported below */ }
+    // Outward, other CAD apps keep the outer corners sharp: the offset faces are extended to meet
+    // (Intersection join); bodies where that fails fall back to rounded corners (Arc join).
+    const thick = (join: unknown) => {
+      const m = new oc.BRepOffsetAPI_MakeThickSolid();
+      try {
+        m.MakeThickSolidByJoin(prev.shape, list, f.outward ? t : -t, 1e-3, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, join as never, false, new oc.Message_ProgressRange_1());
+      } catch { /* reported below */ }
+      return m;
+    };
+    let mk = f.outward ? thick(oc.GeomAbs_JoinType.GeomAbs_Intersection) : thick(oc.GeomAbs_JoinType.GeomAbs_Arc);
+    if (f.outward && (!mk.IsDone() || !this.sharpOk(mk.Shape(), prev.shape))) mk = thick(oc.GeomAbs_JoinType.GeomAbs_Arc);
     if (!mk.IsDone()) throw new FeatureError("E-FT-SHELL", "The shell failed: the wall may be too thick for this body, or a fillet is smaller than the thickness.");
     const result = mk.Shape();
     const faces = this.sub(result, "FACE");
@@ -1753,6 +1768,24 @@ export class Modeller {
     // Outward: the original faces are the inside now; whatever is unnamed is new.
     let n = 0;
     let out: Named = { shape: result, faces, names: names.map(x => x ?? `${f.id}:new:${n++}`) };
+    if (!f.faces.length) {
+      // No face removed: OCCT gives only the offset solid (the cavity inward, the grown body outward), so
+      // the hollow body is the difference, as other CAD apps make it. The offset walls are `fid:off:<face>`.
+      const wall: Named = { shape: result, faces, names: faces.map(() => "") };
+      prev.faces.forEach((pf, i) => {
+        for (const m of [...this.list(mk.Modified(pf)), ...this.list(mk.Generated(pf))]) {
+          const k = faces.findIndex(x => x.IsSame(m));
+          if (k >= 0 && !wall.names[k]) wall.names[k] = `${f.id}:off:${prev.names[i]}`;
+        }
+      });
+      wall.names = wall.names.map(x => x || `${f.id}:new:${n++}`);
+      // Outward, the grown solid comes back inside out (negative volume).
+      const solid = this.volume(result) < 0 ? result.Reversed() : result;
+      wall.shape = solid;
+      const cut = f.outward ? new oc.BRepAlgoAPI_Cut_3(solid, prev.shape, new oc.Message_ProgressRange_1()) : new oc.BRepAlgoAPI_Cut_3(prev.shape, solid, new oc.Message_ProgressRange_1());
+      if (!cut.IsDone() || cut.HasErrors()) throw new FeatureError("E-FT-SHELL", "The shell failed: the wall may be too thick for this body, or a fillet is smaller than the thickness.");
+      out = this.carry(cut, f.outward ? [wall, prev] : [prev, wall], cut.Shape(), f.id);
+    }
     // Multi-thickness (FR-FT-060): each picked wall's offset face moves by its own thickness minus the
     // shell's, out of the material (thicker) or into it (thinner); the walls next to it grow to meet it.
     (f.multi ?? []).forEach((r, i) => {
@@ -6755,8 +6788,8 @@ export class Modeller {
       const hit = this.cache[i];
       const keep = i < frozen && hit && hit.status.id === f.id && next.length === i;
       const prior = chain;
-      // A feature comment (gap list M5) changes nothing built.
-      chain = keep ? hit.key : `${chain}|${JSON.stringify(f, (k, v) => (k === "comment" ? undefined : v))}`;
+      // A feature comment (gap list M5) and who suppressed it change nothing built.
+      chain = keep ? hit.key : `${chain}|${JSON.stringify(f, (k, v) => (k === "comment" || k === "supBy" ? undefined : v))}`;
       if (hit && (hit.key === chain || (hit.alt !== undefined && hit.alt === chain))) {
         // The document may already hold the references as they resolved (`alt`): the same result, the same chain on.
         chain = hit.key;
