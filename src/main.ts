@@ -2745,6 +2745,8 @@ const sim = new SimController({
   idle: () => (asm.active ? asmSim.idle() : partSim.idle()),
   building: () => asm.active && asmSim.building(),
   redraw: () => { if (!asm.active) partSim.redraw(); },
+  picked: () => (asm.active ? [] : partSim.picked()),
+  clearPick: () => { if (!asm.active) partSim.clearPick(); },
   faceAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();
     const f = faceUnder(x - r.left, y - r.top);
@@ -2793,7 +2795,7 @@ window.addEventListener("keydown", e => {
   if (tg.closest?.("dialog") || (tg.tagName === "INPUT" && !tg.closest("#sim-pm")) || tg.tagName === "TEXTAREA" || tg.tagName === "SELECT") return;
   if (sim.key(e)) { e.preventDefault(); e.stopPropagation(); }
 }, true);
-modeller.simHook = { active: () => !asm.active && sim.active, click: e => sim.click(e), key: e => sim.key(e), changed: () => sim.changed(), plotting: () => sim.plotting };
+modeller.simHook = { active: () => !asm.active && sim.active, click: e => sim.click(e), key: e => sim.key(e), changed: () => sim.changed(), plotting: () => sim.plotting, menu: f => sim.menu(f) };
 partListeners.push(() => sim.rebuilt());
 // Local vault (FRS 12.5): the Vault tab.
 const vaultPanel = new VaultPanel($("#vault-panel"), {
