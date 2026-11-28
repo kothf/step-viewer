@@ -1,7 +1,7 @@
 // Document store, undo/redo and the .mcadprt round trip (AT-P0-1).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DocStore, newPart, nextName, dependants } from "../../src/model/doc";
+import { DocStore, newPart, nextName, dependants, setSuppressed } from "../../src/model/doc";
 import { packPart, unpackPart } from "../../src/model/file";
 import { unzipLimited } from "../../src/model/zip";
 
@@ -86,4 +86,28 @@ test("named views stay through undo and redo and are saved with the part (FR-UI-
   assert.equal(s.doc.views?.length, 1);
   const back = await unpackPart((await packPart(s.doc, "test")).buffer as ArrayBuffer);
   assert.deepEqual(back.views, s.doc.views);
+});
+
+test("suppress takes the features that use it along and brings them back (FR-HIS-004)", () => {
+  const d = newPart("Sup");
+  d.features.push(
+    { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, ents: [], rels: [], dims: [] },
+    { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "h1", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[0, 0]], kind: "simple", diameter: { v: 6 }, end: "blind", depth: { v: 5 } } as never,
+    { id: "p1", type: "lpattern", name: "LPattern1", features: ["h1"], dir: { edge: { faces: ["f1:end", "f1:side:a"] } }, count: 3, spacing: { v: 10 } } as never,
+    { id: "c1", type: "chamfer", name: "Chamfer1", edges: [{ faces: ["h1:wall", "f1:end"] }], distance: { v: 1 } } as never,
+    { id: "x1", type: "fillet", name: "Fillet1", edges: [{ faces: ["f1:end", "f1:side:a"] }], radius: { v: 2 } } as never,
+  );
+  // The fillet on the block's edge does not use the hole and stays.
+  assert.deepEqual(setSuppressed(d, "h1", true), ["LPattern1", "Chamfer1"]);
+  assert.deepEqual(d.features.filter(f => f.suppressed).map(f => f.id), ["h1", "p1", "c1"]);
+  assert.equal(d.features.find(f => f.id === "p1")!.supBy, "h1");
+  // Unsuppressing the pattern alone brings back the hole it copies, and with it the chamfer.
+  assert.deepEqual(setSuppressed(d, "p1", false).sort(), ["Chamfer1", "Hole1"]);
+  assert.equal(d.features.some(f => f.suppressed || f.supBy), false);
+  // A feature suppressed on its own stays suppressed when its parent comes back.
+  setSuppressed(d, "c1", true);
+  setSuppressed(d, "h1", true);
+  assert.deepEqual(setSuppressed(d, "h1", false), ["LPattern1"]);
+  assert.equal(d.features.find(f => f.id === "c1")!.suppressed, true);
 });

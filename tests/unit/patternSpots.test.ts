@@ -16,6 +16,8 @@ const rect = (id: string, w: number, h: number): SketchFeature => {
 };
 const hole: SketchFeature = { id: "s2", type: "sketch", name: "s2", plane: { face: { name: "f1:end" } }, rels: [], dims: [],
   ents: [{ id: "c", t: "point", x: 30, y: 0 }, { id: "k", t: "circle", c: "c", r: 4 }] };
+/** Instance dots only: "@1"/"@2" are the direction arrows. */
+const inst = <T extends { key: string }>(sp: T[]) => sp.filter(s => !s.key.startsWith("@"));
 const doc = (features: Feature[]): PartDoc => ({ schema: 1, kind: "part", id: "d", name: "t", units: { length: "mm", decimals: 2 }, props: {}, features, rollback: null });
 const base: Feature[] = [rect("s1", 100, 100),
   { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
@@ -26,7 +28,11 @@ test("pattern instance dots: every instance, skipped ones too, at the material t
   const lp: Feature = { id: "p", type: "lpattern", name: "LPattern1", features: ["f2"], dir: { edge: { faces: ["f1:side:s1l2", "f1:end"] } }, spacing: { v: 15 }, count: 3, skip: ["2"] };
   let r = m.evaluate(doc([...base, lp]));
   assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
-  let sp = r.spots.p;
+  let sp = inst(r.spots.p);
+  // Direction arrow (FR-FT-070): from the seed's centre along the edge, one per direction.
+  const a1 = r.spots.p.find(s => s.key === "@1");
+  assert.ok(a1?.d && Math.abs(Math.hypot(...a1.d) - 1) < 1e-6 && Math.abs(Math.abs(a1.d[1]) - 1) < 1e-6, JSON.stringify(a1));
+  assert.ok(!r.spots.p.some(s => s.key === "@2"));
   assert.deepEqual(sp.map(s => s.key), ["1", "2"]);
   // Through all: the dot sits half way down the 20 mm plate, not in the middle of the long tool.
   for (const s of sp) assert.ok(Math.abs(s.p[2] - 10) < 1e-3, `z ${s.p[2]}`);
@@ -52,14 +58,14 @@ test("linear pattern up to distance and seed only; circular pattern direction 2 
   // Up to distance 30 with 3 instances = spacing 15.
   let { v, r } = vol([{ id: "p", type: "lpattern", name: "L", features: ["f2"], dir, spacing: { v: 30 }, count: 3, total: true }]);
   assert.ok(Math.abs(v - (plate - 3 * hole)) < 1e-3, `${v}`);
-  assert.ok(Math.abs(Math.hypot(r.spots.p[1].p[0] - r.spots.p[0].p[0], r.spots.p[1].p[1] - r.spots.p[0].p[1]) - 15) < 1e-3);
+  assert.ok(Math.abs(Math.hypot(inst(r.spots.p)[1].p[0] - inst(r.spots.p)[0].p[0], inst(r.spots.p)[1].p[1] - inst(r.spots.p)[0].p[1]) - 15) < 1e-3);
   // Two directions 3 × 2 = 6 holes; seed only in direction 2 = 3 + 1.
   const two = { id: "p", type: "lpattern", name: "L", features: ["f2"], dir, spacing: { v: 15 }, count: 3, dir2, spacing2: { v: 15 }, count2: 2 } as Feature;
   ({ v } = vol([two]));
   assert.ok(Math.abs(v - (plate - 6 * hole)) < 1e-3, `${v}`);
   ({ v, r } = vol([{ ...two, seedOnly: true } as Feature]));
   assert.ok(Math.abs(v - (plate - 4 * hole)) < 1e-3, `${v}`);
-  assert.deepEqual(r.spots.p.map(s => s.key).sort(), ["0,1", "1,0", "2,0"]);
+  assert.deepEqual(inst(r.spots.p).map(s => s.key).sort(), ["0,1", "1,0", "2,0"]);
   // Circular: 3 at 30° one way, direction 2 symmetric = 2 more the other way; 5 holes.
   const cp = { id: "q", type: "cpattern", name: "C", features: ["f2"], axis: { std: "Z" }, count: 3, angle: { v: Math.PI / 6 }, equal: false, dir2: true, sym: true } as Feature;
   ({ v, r } = vol([cp]));
@@ -79,7 +85,7 @@ test("linear pattern up to reference: the last instance stops the offset short o
   const lp = { id: "p", type: "lpattern", name: "L", features: ["f2"], dir, spacing: { v: 5 }, count: 3, upTo: { face: { name: "f1:side:s1l3" } }, upToOffset: { v: 10 } } as Feature;
   let r = m.evaluate(doc([...base, lp]));
   assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
-  const sp = r.spots.p;
+  const sp = inst(r.spots.p);
   assert.ok(Math.abs(Math.abs(sp[1].p[1]) - 40) < 1e-3 && Math.abs(Math.abs(sp[0].p[1]) - 20) < 1e-3, JSON.stringify(sp));
   // Reversed, the face is behind the seed.
   r = m.evaluate(doc([...base, { ...lp, flip: true } as Feature]));
