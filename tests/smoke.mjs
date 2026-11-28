@@ -11382,7 +11382,7 @@ try {
     await settle();
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm th")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
-    check(ru.title === "3D-эскиз" && !/[A-Za-z]{3}/.test(ru.text.replace(/Enter|Esc|Tab/g, "")), `model 1.83: 3D sketch panel in Russian (${JSON.stringify(ru)})`);
+    check(ru.title === "3D-эскиз" && !/[A-Za-z]{3}/.test(ru.text.replace(/Enter|Esc|Tab|Ctrl/g, "")), `model 1.83: 3D sketch panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 

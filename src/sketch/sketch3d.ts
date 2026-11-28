@@ -18,6 +18,16 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
   const vec = (id: string): V3 | null => { const s = seg(id); return s && s.t === "line" ? sub(P(s.pts[1]), P(s.pts[0])) : null; };
   for (const r of sk.rels) {
     if (r.t === "coincident") { const d = sub(P(r.e[1]), P(r.e[0])); out.push(...d); continue; }
+    if (r.t === "midpoint" || r.t === "onLine") {
+      // e = [point, line]: the point at the line's middle, or anywhere on the line (through its ends, unbounded).
+      const s = seg(r.e[1]);
+      if (!s || s.t !== "line") continue;
+      const a = P(s.pts[0]), b = P(s.pts[1]), q = P(r.e[0]);
+      if (r.t === "midpoint") { out.push(q[0] - (a[0] + b[0]) / 2, q[1] - (a[1] + b[1]) / 2, q[2] - (a[2] + b[2]) / 2); continue; }
+      const u = sub(b, a), lu = len(u) || 1e-9, c = cross(sub(q, a), u);
+      out.push(c[0] / lu, c[1] / lu, c[2] / lu);
+      continue;
+    }
     const u = vec(r.e[0]);
     if (!u) continue;
     if (r.t in AX) { const k = AX[r.t]; for (let j = 0; j < 3; j++) if (j !== k) out.push(u[j]); }
@@ -32,10 +42,39 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
     }
   }
   for (const d of sk.dims) {
+    if (d.t === "angle") {
+      // The angle between two lines' directions (0..π), as drawn: from the first line's start to end and the second's.
+      const u = vec(d.e[0]), v = vec(d.e[1]);
+      if (u && v) out.push(Math.atan2(len(cross(u, v)), dot(u, v)) - d.val.v);
+      continue;
+    }
     if (d.t === "length") { const s = seg(d.e[0]); if (s) out.push(len(sub(P(s.pts[s.pts.length - 1]), P(s.pts[0]))) - d.val.v); }
     else out.push(len(sub(P(d.e[1]), P(d.e[0]))) - d.val.v);
   }
   return out;
+}
+
+/** The axis a line from `a` to `b` lies within `tol` radians of (a CAD app's automatic Along X/Y/Z while drawing), else null. */
+export function inferAxis(a: V3, b: V3, tol = (4 * Math.PI) / 180): "alongX" | "alongY" | "alongZ" | null {
+  const u = sub(b, a), l = len(u);
+  if (l < 1e-6) return null;
+  let best = -1, k = -1;
+  for (let j = 0; j < 3; j++) if (Math.abs(u[j]) / l > best) { best = Math.abs(u[j]) / l; k = j; }
+  return best >= Math.cos(tol) ? (["alongX", "alongY", "alongZ"] as const)[k] : null;
+}
+
+/** `b` moved onto the axis line through `a` (its coordinates across the axis made equal to a's). */
+export function onAxis(a: V3, b: V3, ax: "alongX" | "alongY" | "alongZ"): V3 {
+  const k = AX[ax];
+  return [0, 1, 2].map(j => (j === k ? b[j] : a[j])) as V3;
+}
+
+/** The angle between two lines of the sketch (radians, 0..π), or null when one is not a line. */
+export function lineAngle(sk: Sketch3dFeature, l1: string, l2: string): number | null {
+  const P = (id: string) => sk.pts.find(p => p.id === id)?.p ?? [0, 0, 0] as V3;
+  const vec = (id: string): V3 | null => { const s = sk.segs.find(g => g.id === id); return s && s.t === "line" ? sub(P(s.pts[1]), P(s.pts[0])) : null; };
+  const u = vec(l1), v = vec(l2);
+  return u && v ? Math.atan2(len(cross(u, v)), dot(u, v)) : null;
 }
 
 /** Solves A x = b (A square) by Gaussian elimination; null when singular. */
@@ -75,6 +114,8 @@ export function solve3d(sk: Sketch3dFeature): Solve3d {
   const free = sk.pts.filter(p => !p.fixed);
   const idx = new Map(free.map((p, i) => [p.id, i]));
   const x = free.flatMap(p => [...p.p]);
+  const n = sk.pts.length, order = new Map(sk.pts.map((p, i) => [p.id, i]));
+  const wt = free.flatMap(p => { const w = Math.min(1e8, 50 ** (n - 1 - (order.get(p.id) ?? 0))); return [w, w, w]; });
   const fixed = new Map(sk.pts.filter(p => p.fixed).map(p => [p.id, p.p]));
   const at = (xs: number[]) => (id: string): V3 => { const i = idx.get(id); return i == null ? (fixed.get(id) ?? [0, 0, 0]) : [xs[3 * i], xs[3 * i + 1], xs[3 * i + 2]]; };
   const jac = (xs: number[], r0: number[]) => {
@@ -91,13 +132,14 @@ export function solve3d(sk: Sketch3dFeature): Solve3d {
   const norm = (v: number[]) => Math.sqrt(v.reduce((s, q) => s + q * q, 0));
   for (let it = 0; it < 100 && norm(r) > 1e-10 && x.length; it++) {
     const J = jac(x, r);
-    // dx = -Jᵀ (J Jᵀ + λI)⁻¹ r: the smallest move that fixes the residuals to first order.
-    const JJt = J.map(a => J.map(b => a.reduce((s, q, k) => s + q * b[k], 0)));
+    // dx = -W⁻¹Jᵀ (J W⁻¹Jᵀ + λI)⁻¹ r: the smallest weighted move that fixes the residuals to first order. Points drawn
+    // earlier weigh more, so a changed dimension moves the later end, as in other CAD apps (not the whole sketch).
+    const JJt = J.map(a => J.map(b => a.reduce((s, q, k) => s + (q * b[k]) / wt[k], 0)));
     let lam = 1e-9, step: number[] | null = null;
     for (let tries = 0; tries < 12 && !step; tries++, lam *= 100) {
       const y = gauss(JJt.map((row, i) => row.map((v, j) => v + (i === j ? lam : 0))), r.map(v => -v));
       if (!y) continue;
-      const dx = x.map((_, j) => J.reduce((s, row, i) => s + row[j] * y[i], 0));
+      const dx = x.map((_, j) => J.reduce((s, row, i) => s + row[j] * y[i], 0) / wt[j]);
       const xn = x.map((v, j) => v + dx[j]);
       const rn = residuals(sk, at(xn));
       if (norm(rn) < norm(r)) { step = xn; r = rn; }

@@ -48,3 +48,59 @@ test("3D sketch: chaining segments into a path", () => {
   const br = chain3d(sk({ pts, segs: [{ id: "1", t: "line", pts: ["A", "B"] }, { id: "2", t: "line", pts: ["B", "C"] }, { id: "3", t: "line", pts: ["B", "D"] }] }));
   assert.ok("error" in br);
 });
+
+test("3D sketch: angle dimension, midpoint and on line, inferred axes (1.763.0)", async () => {
+  const { inferAxis, onAxis, lineAngle } = await import("../../src/sketch/sketch3d");
+  // Two lines from a fixed corner; the second held at 60° to the first, the first along X.
+  const s = sk({
+    pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [20, 1, 0] }, { id: "C", p: [5, 15, 3] }],
+    segs: [{ id: "a", t: "line", pts: ["A", "B"] }, { id: "b", t: "line", pts: ["A", "C"] }],
+    rels: [{ id: "r1", t: "alongX", e: ["a"] }],
+    dims: [{ id: "d", t: "angle", e: ["a", "b"], val: { v: Math.PI / 3 } }],
+  });
+  const r = solve3d(s);
+  assert.ok(r.ok);
+  near(lineAngle({ ...s, pts: s.pts.map(p => ({ ...p, p: r.pts[p.id] })) }, "a", "b")!, Math.PI / 3);
+  // A point held at the middle of a line, another on a line (beyond its end).
+  const m = solve3d(sk({
+    pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [10, 10, 10], fixed: true }, { id: "M", p: [1, 2, 3] }, { id: "Q", p: [30, 0, 0] }],
+    segs: [{ id: "l", t: "line", pts: ["A", "B"] }],
+    rels: [{ id: "r1", t: "midpoint", e: ["M", "l"] }, { id: "r2", t: "onLine", e: ["Q", "l"] }],
+  }));
+  assert.ok(m.ok);
+  near(m.pts.M[0], 5); near(m.pts.M[1], 5); near(m.pts.M[2], 5);
+  near(m.pts.Q[0], m.pts.Q[1]); near(m.pts.Q[1], m.pts.Q[2]);
+  assert.equal(m.dof, 1); // Q still slides along the line
+  // Drawing: 3° off X snaps onto X, 10° off does not; Z is found too.
+  assert.equal(inferAxis([0, 0, 0], [40, Math.tan((3 * Math.PI) / 180) * 40, 0]), "alongX");
+  assert.equal(inferAxis([0, 0, 0], [40, Math.tan((10 * Math.PI) / 180) * 40, 0]), null);
+  assert.equal(inferAxis([1, 2, 3], [1.2, 2, 30]), "alongZ");
+  assert.deepEqual(onAxis([1, 2, 3], [40, 2.5, 3.1], "alongX"), [40, 2, 3]);
+});
+
+test("3D sketch dimensions follow global variables (1.763.0)", async () => {
+  const { refreshExprs } = await import("../../src/model/params");
+  const f = sk({
+    pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [10, 0, 0] }],
+    segs: [{ id: "l", t: "line", pts: ["A", "B"] }],
+    rels: [{ id: "r", t: "alongX", e: ["l"] }],
+    dims: [{ id: "d", t: "length", e: ["l"], val: { v: 10, expr: "L" } }],
+  });
+  const doc = { features: [f], vars: [{ name: "L", expr: "25", kind: "length" }] } as never;
+  refreshExprs(doc);
+  near(f.dims[0].val.v, 25);
+  near(f.pts[1].p[0], 25);
+});
+
+test("3D sketch: a changed dimension moves the later end, not the first point (1.763.0)", () => {
+  const s = sk({
+    pts: [{ id: "A", p: [0, 0, 0] }, { id: "B", p: [40, 0, 0] }, { id: "C", p: [40, 30, 0] }],
+    segs: [{ id: "a", t: "line", pts: ["A", "B"] }, { id: "b", t: "line", pts: ["B", "C"] }],
+    rels: [{ id: "r1", t: "alongX", e: ["a"] }, { id: "r2", t: "alongY", e: ["b"] }],
+    dims: [{ id: "d", t: "length", e: ["b"], val: { v: 50 } }],
+  });
+  const r = solve3d(s);
+  assert.ok(r.ok);
+  near(r.pts.A[1], 0, 1); near(r.pts.B[1], 0, 1);
+  assert.ok(r.pts.C[1] > 45, `C moved: ${r.pts.C}`);
+});

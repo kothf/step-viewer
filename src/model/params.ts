@@ -3,7 +3,8 @@
 // (`Num.expr`) and re-evaluated whenever a variable or a referenced dimension changes.
 import { evaluate, ExprError, type VarValue } from "./expr";
 import { solve } from "../sketch/solver";
-import type { Feature, Num, PartDoc, SketchFeature } from "./types";
+import { solve3d } from "../sketch/sketch3d";
+import type { Feature, Num, PartDoc, Sketch3dFeature, SketchFeature } from "./types";
 import { refreshStudyValues, studyTargets } from "../sim/values";
 
 /** An error as a fixed English sentence and its placeholders (translated when shown). */
@@ -66,13 +67,16 @@ export function evalVars(doc: PartDoc, unit = "mm"): VarResult {
 export function dimValues(doc: PartDoc): Record<string, number> {
   const out: Record<string, number> = {};
   for (const f of doc.features) if (f.type === "sketch") for (const d of f.dims) out[`${d.name}@${f.name}`] = d.val.v;
+  for (const f of doc.features) if (f.type === "sketch3d") f.dims.forEach((d, i) => { out[`D${i + 1}@${f.name}`] = d.val.v; });
   return out;
 }
 
 /** Every expression-driven value in the document, with where it is and what kind it is. */
-export function exprTargets(doc: PartDoc): { owner: Feature; key: string; num: Num; q: "length" | "angle"; sketch?: SketchFeature }[] {
-  const out: { owner: Feature; key: string; num: Num; q: "length" | "angle"; sketch?: SketchFeature }[] = [];
+export function exprTargets(doc: PartDoc): { owner: Feature; key: string; num: Num; q: "length" | "angle"; sketch?: SketchFeature; sketch3d?: Sketch3dFeature }[] {
+  const out: { owner: Feature; key: string; num: Num; q: "length" | "angle"; sketch?: SketchFeature; sketch3d?: Sketch3dFeature }[] = [];
   for (const f of doc.features) {
+    // 3D sketch dimensions (FR-SK-080) follow the variables too; their names are D1, D2… as the panel shows them.
+    if (f.type === "sketch3d") { f.dims.forEach((d, i) => { if (d.val.expr) out.push({ owner: f, key: `D${i + 1}@${f.name}`, num: d.val, q: d.t === "angle" ? "angle" : "length", sketch3d: f }); }); continue; }
     if (f.type === "sketch") { for (const d of f.dims) if (d.val.expr) out.push({ owner: f, key: `${d.name}@${f.name}`, num: d.val, q: d.t === "angle" ? "angle" : "length", sketch: f }); continue; }
     for (const [k, v] of Object.entries(f)) {
       if (v && typeof v === "object" && "v" in v && typeof (v as Num).v === "number" && typeof (v as Num).expr === "string") out.push({ owner: f, key: k, num: v as Num, q: /angle/i.test(k) ? "angle" : "length" });
@@ -93,14 +97,16 @@ export function refreshExprs(doc: PartDoc, unit = "mm"): { key: string; owner: s
     let changed = false;
     failed.length = 0;
     const touched = new Set<SketchFeature>();
+    const touched3 = new Set<Sketch3dFeature>();
     for (const t of exprTargets(doc)) {
       if (namesIn(t.num.expr!).includes(t.key)) { failed.push({ key: t.key, owner: t.owner.name, error: CIRC }); continue; }
       try {
         const v = evaluate(t.num.expr!, t.q, t.q === "angle" ? "deg" : unit, values);
-        if (Math.abs(v - t.num.v) > 1e-12) { t.num.v = v; changed = true; if (t.sketch) touched.add(t.sketch); }
+        if (Math.abs(v - t.num.v) > 1e-12) { t.num.v = v; changed = true; if (t.sketch) touched.add(t.sketch); if (t.sketch3d) touched3.add(t.sketch3d); }
       } catch (e) { failed.push({ key: t.key, owner: t.owner.name, error: { key: (e as ExprError).key ?? String(e), params: (e as ExprError).params } }); }
     }
     for (const sk of touched) solve(sk);
+    for (const sk of touched3) { const r = solve3d(sk); if (r.ok) for (const q of sk.pts) q.p = r.pts[q.id]; }
     if (!changed) break;
   }
   // load values of structural studies follow the variables too (FR-LOAD-021)

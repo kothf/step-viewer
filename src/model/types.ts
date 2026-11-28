@@ -776,10 +776,10 @@ export interface CurveFeature {
 export interface Sk3Point { id: string; p: V3; fixed?: boolean; /** Held on a 2D sketch's point (a CAD app's coincident to a sketch point): kept fixed and moved there on every rebuild. */ at?: { sketch: string; pt: string } }
 /** A 3D sketch line (two points) or spline (two or more points, the C2 interpolant). */
 export interface Sk3Seg { id: string; t: "line" | "spline"; pts: string[] }
-/** 3D sketch relations: a line along an axis or parallel to a standard plane, two lines parallel/perpendicular/equal, two points coincident. */
-export interface Sk3Rel { id: string; t: "alongX" | "alongY" | "alongZ" | "parallelPlane" | "parallel" | "perpendicular" | "equal" | "coincident"; e: string[]; plane?: "XY" | "YZ" | "ZX" }
-/** 3D sketch dimensions: a line's length or the distance between two points. */
-export interface Sk3Dim { id: string; t: "length" | "distance"; e: string[]; val: Num }
+/** 3D sketch relations: a line along an axis or parallel to a standard plane, two lines parallel/perpendicular/equal, two points coincident, a point at a line's middle or on a line (e = [point, line]). */
+export interface Sk3Rel { id: string; t: "alongX" | "alongY" | "alongZ" | "parallelPlane" | "parallel" | "perpendicular" | "equal" | "coincident" | "midpoint" | "onLine"; e: string[]; plane?: "XY" | "YZ" | "ZX" }
+/** 3D sketch dimensions: a line's length, the distance between two points, or the angle between two lines (radians). */
+export interface Sk3Dim { id: string; t: "length" | "distance" | "angle"; e: string[]; val: Num }
 
 /**
  * 3D sketch (FR-SK-080): points, lines and splines in space with relations and dimensions. The
