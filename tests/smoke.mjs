@@ -8019,8 +8019,8 @@ try {
     await ctx.close();
   }
 
-  // --- 1.56: rib (FR-FT-062) from the Sweep ▾ menu: an L bracket's corner gusset, previewed live, panel in Russian ---
-  if (inShard(5)) {
+  // --- 1.56: rib (FR-FT-062) from the Sweep ▾ menu: an L bracket's corner gusset, previewed live, panel in Russian (shard 4 since 1.764.0: shard 5 reached the 12 minute limit) ---
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -12430,8 +12430,8 @@ try {
     await ctx.close();
   }
 
-  // --- 1.134: Setback fillets (FR-FT-033) ---
-  if (inShard(5)) {
+  // --- 1.134: Setback fillets (FR-FT-033) (shard 6 since 1.764.0: shard 5 reached the 12 minute limit) ---
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
