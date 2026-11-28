@@ -1,6 +1,6 @@
 // Thermal stress by hand (FRS-thermal TH5, FR-LOAD-011): a steel block clamped at one end and warmed, first to one
 // temperature everywhere, then to the temperatures a thermal study found; the stress follows the thermal study.
-import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock } from "./lib.mjs";
+import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock, simCmd } from "./lib.mjs";
 const { browser, pg } = await open("thermalstress");
 await makeBlock(pg, 100, 20, 20);
 await pg.keyboard.press("Escape");
@@ -26,7 +26,7 @@ await end();
 await pg.waitForTimeout(250);
 await pg.click("#sim-pm .pm-ok");
 await idle(pg);
-await pg.click('#sim-tools [data-s="temperature"]');
+await simCmd(pg, "temperature");
 await pg.waitForSelector("#sim-pm .pm-ok");
 const panel = await pg.evaluate(() => ({ from: [...document.querySelectorAll('#sim-pm [data-k="tfrom"] option')].map(o => o.textContent), ref: document.querySelector('#sim-pm [data-q="tref"]')?.value }));
 await pg.fill('#sim-pm [data-n="value"]', "120");

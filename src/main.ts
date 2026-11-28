@@ -937,10 +937,11 @@ async function openFiles(files: File[]) {
   }
   const drawingFile = files.find(f => isDrawingName(f.name));
   if (drawingFile) return drawing.openFile(drawingFile);
-  const partFile = files.find(f => modeller.isPartName(f.name));
-  if (partFile) { if (!(await toOpenTab(partFile, "part"))) await modeller.openFile(partFile); return; }
+  // an assembly picked with its part files (its whole folder): the assembly opens, the parts are its references
   const asmFile = files.find(f => asm.isAsmName(f.name));
   if (asmFile) { if (!(await toOpenTab(asmFile, "asm"))) await asm.openFile(asmFile); return; }
+  const partFile = files.find(f => modeller.isPartName(f.name));
+  if (partFile) { if (!(await toOpenTab(partFile, "part"))) await modeller.openFile(partFile); return; }
   const sw = files.filter(f => isSolidWorksName(f.name));
   if (sw.length) return openSolidWorks(sw);
   const model = files.find(f => is3dName(f.name));

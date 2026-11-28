@@ -1,6 +1,6 @@
 // Radiation between faces by hand (FRS-thermal FR-TBC-007): two blocks that touch nowhere, the second above and
 // behind the first. Heat made in the first can only leave by radiation to the second, which is held at 20 °C.
-import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock } from "./lib.mjs";
+import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock, simCmd } from "./lib.mjs";
 const { browser, pg } = await open("thermalradx");
 await makeBlock(pg, 100, 20, 20);
 await pg.keyboard.press("Escape");
@@ -74,7 +74,7 @@ const s0 = await sim(), said = await pg.evaluate(() => [...document.querySelecto
 check("TRX-2", /E-TH-LOOSE/.test(s0.error ?? ""), "without radiation between them nothing takes the heat from the first block, and it is named", { error: s0.error, said }, await snap(pg, "loose"));
 
 // TRX-3: Radiation between faces: the first block's back face, then (side two) the second block's front face.
-await pg.click('#sim-tools [data-s="radx"]');
+await simCmd(pg, "radx");
 await pg.waitForSelector("#sim-pm .pm-ok");
 await view(2);
 await clickAt(pg, await screenOf(pg, [xm, q0[1], (p0[2] + q0[2]) / 2]));

@@ -3,7 +3,7 @@
 // components are set up in the study (one left out, one rigid, the rest given steel), the base is held from below
 // and a bearing housing's bore is loaded. The components are joined where they touch; the support must carry
 // the whole load and the housings must pass it on to the base plate. The assembly is saved with its study in HT_MODELS.
-import { open, snap, screenOf, clickAt, check, finish, openFiles, saveModel, eyeDir, boreSpot, OUT } from "./lib.mjs";
+import { open, snap, screenOf, clickAt, check, finish, openFiles, saveModel, eyeDir, boreSpot, OUT, simCmd } from "./lib.mjs";
 import { statSync } from "node:fs";
 const PARTS = process.env.HT_PARTS || "/mnt/project-files/leuenberger";
 const MODELS = process.env.HT_MODELS || `${OUT}/models`;
@@ -61,7 +61,7 @@ await pg.waitForTimeout(400);
 await view();
 const eye = await eyeDir(pg);
 const y0 = eye[1] > 0 ? 17.5 : -68, dir = eye[1] > 0 ? -1 : 1;
-await pg.click('#sim-tools [data-s="bearing"]');
+await simCmd(pg, "bearing");
 let pushed = "", bore = null;
 // (the crankshaft still stands in the bore: the click goes on the wall beside it)
 for (const [r, len, turn] of [[16, 10, 0.8], [16, 10, -0.8], [7.5, 8, 0.8], [7.5, 8, -0.8]]) {

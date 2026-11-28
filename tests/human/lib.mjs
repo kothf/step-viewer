@@ -146,3 +146,11 @@ export async function boreSpot(pg, c, axis, r, a0, a1, depth = 0.3, turn = 0) {
   const u = across.map(v => v / n), w = [axis[1] * u[2] - axis[2] * u[1], axis[2] * u[0] - axis[0] * u[2], axis[0] * u[1] - axis[1] * u[0]];
   return c.map((v, k) => v + axis[k] * t - r * (Math.cos(turn) * u[k] + Math.sin(turn) * w[k]));
 }
+
+// A Simulation bar command, through its group's ▾ menu when it sits there.
+const SIM_FLY = { dirs: "sup", elastic: "sup", disp: "sup", torque: "load", bearing: "load", remote: "load", hydro: "load", centrifugal: "load", temperature: "load", radx: "cool", chassis: "cool", insul: "cool" };
+export async function simCmd(pg, s) {
+  if (!SIM_FLY[s]) return pg.click(`#sim-tools [data-s="${s}"]`);
+  await pg.click(`#sim-tools [data-fly="${SIM_FLY[s]}"]`);
+  await pg.click(`#mc-menu [data-s="${s}"]`);
+}
