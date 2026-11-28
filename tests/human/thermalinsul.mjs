@@ -1,7 +1,7 @@
 // Insulated faces and power by an expression, by hand (FRS-thermal FR-TBC-002, FR-TLOAD-005): a steel block making
 // 10 W, cooled by convection on all open surfaces; its end insulated, so it runs hotter while all the heat still
 // leaves; then over time with the power ramped up by min(1, t/300).
-import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock } from "./lib.mjs";
+import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock, simCmd } from "./lib.mjs";
 const { browser, pg } = await open("thermalinsul");
 await makeBlock(pg, 100, 20, 20);
 await pg.keyboard.press("Escape");
@@ -39,7 +39,7 @@ await solved();
 const open0 = await sim();
 
 // TIN-1: Insulated on the block's end: the cooling leaves that face out, the block runs hotter, all 10 W still leave.
-await pg.click('#sim-tools [data-s="insul"]');
+await simCmd(pg, "insul");
 await pg.waitForSelector("#sim-pm .sim-faces");
 await view(3);
 await clickAt(pg, await screenOf(pg, [a0[0], ym, zm]));
@@ -87,7 +87,7 @@ await pg.waitForTimeout(200);
 const ru1 = await pg.evaluate(() => [...document.querySelectorAll("#sim-pm *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
 const ruShot = await snap(pg, "ru");
 await pg.click("#sim-pm .pm-cancel");
-await pg.click('#sim-tools [data-s="insul"]');
+await simCmd(pg, "insul");
 await pg.waitForSelector("#sim-pm .sim-faces");
 const ru2 = await pg.evaluate(() => [...document.querySelectorAll("#sim-pm *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
 await pg.click("#sim-pm .pm-cancel");

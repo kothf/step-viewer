@@ -1,6 +1,6 @@
 // Loads on round faces and from a fluid, by hand (FRS-structural FR-LOAD-005, FR-LOAD-006, FR-LOAD-008, FR-LOAD-009): a plate
 // with a hole gets a torque and a bearing load on the hole, a hydrostatic pressure on its top face and a remote load.
-import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock } from "./lib.mjs";
+import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock, simCmd } from "./lib.mjs";
 const { browser, pg } = await open("loads3");
 await makeBlock(pg, 100, 60, 20);
 // a hole of radius 10 through the middle: pick the top face, Cut, a circle, 20 deep
@@ -58,7 +58,7 @@ await idle(pg);
 const fits = await pg.evaluate(() => { const e = document.querySelector("#cm-body") ?? document.querySelector("#sim-tools"); return e.scrollWidth - e.clientWidth; });
 
 // L3-1: Torque. A flat face is refused with a hint; the hole's wall is taken. 20 N·m about the hole's axis.
-await pg.click('#sim-tools [data-s="torque"]');
+await simCmd(pg, "torque");
 await pg.waitForTimeout(250);
 await clickAt(pg, await screenOf(pg, [30, 15, 20]));
 await pg.waitForTimeout(250);
@@ -79,7 +79,7 @@ const img1b = await snap(pg, "torque-result");
 // L3-2: the torque left out, a Bearing load of 500 N along −Y (with 100 N along the axis, which is left out).
 await pg.locator('#sim-tree .sim-row [data-a="toggle"]').last().click();
 await idle(pg);
-await pg.click('#sim-tools [data-s="bearing"]');
+await simCmd(pg, "bearing");
 await pg.waitForTimeout(250);
 const took2 = await pickHole();
 await pg.fill('#sim-pm [data-n="c0"]', "0"); await pg.keyboard.press("Tab");
@@ -97,7 +97,7 @@ check("L3-2", took2 && !r2.error && Math.abs(r2.applied.force[1] / -500 - 1) < 0
 // L3-3: the bearing load left out, water standing 1 m above the top face: ρ g h × (6000 − π 10²) mm² = 55.8 N down.
 await pg.locator('#sim-tree .sim-row [data-a="toggle"]').last().click();
 await idle(pg);
-await pg.click('#sim-tools [data-s="hydro"]');
+await simCmd(pg, "hydro");
 await pg.waitForTimeout(250);
 await clickAt(pg, await screenOf(pg, [30, 15, 20]));
 await pg.waitForTimeout(250);
@@ -118,7 +118,7 @@ check("L3-3", !r3.error && wide <= 0 && Math.abs(r3.applied.force[2] / -55.76 - 
 // to z = 100 by typing; 100 N along X there. About the origin its moment is (50, −30, 100) × (100, 0, 0) = (0, 10000, 3000) N·mm.
 await pg.locator('#sim-tree .sim-row [data-a="toggle"]').last().click();
 await idle(pg);
-await pg.click('#sim-tools [data-s="remote"]');
+await simCmd(pg, "remote");
 await pg.waitForTimeout(250);
 await clickAt(pg, await screenOf(pg, [30, 15, 20]));
 await pg.waitForTimeout(250);

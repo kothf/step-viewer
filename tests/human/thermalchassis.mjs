@@ -1,6 +1,6 @@
 // Chassis wall by hand (FRS-thermal FR-TBC-009): a steel block making 10 W, its end bolted to a chassis wall of
 // 1.5 K/W: all the heat leaves there and the wall sits at ambient + 10 × 1.5; then the wall held at 60 °C.
-import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock } from "./lib.mjs";
+import { open, snap, idle, screenOf, clickAt, check, finish, makeBlock, simCmd } from "./lib.mjs";
 const { browser, pg } = await open("thermalchassis");
 await makeBlock(pg, 100, 20, 20);
 await pg.keyboard.press("Escape");
@@ -29,7 +29,7 @@ await pg.click("#sim-pm .pm-ok");
 await idle(pg);
 
 // TCH-1: Chassis wall on the block's end, by its resistance (1.5 K/W to begin with).
-await pg.click('#sim-tools [data-s="chassis"]');
+await simCmd(pg, "chassis");
 await pg.waitForSelector('#sim-pm select[data-k="cmode"]');
 await view(3);
 await clickAt(pg, await screenOf(pg, [a0[0], ym, zm]));
