@@ -777,9 +777,9 @@ export interface Sk3Point { id: string; p: V3; fixed?: boolean; /** Held on a 2D
 /** A 3D sketch line (two points) or spline (two or more points, the C2 interpolant). */
 export interface Sk3Seg { id: string; t: "line" | "spline"; pts: string[] }
 /** 3D sketch relations: a line along an axis or parallel to a standard plane, two lines parallel/perpendicular/equal, two points coincident, a point at a line's middle or on a line (e = [point, line]). */
-export interface Sk3Rel { id: string; t: "alongX" | "alongY" | "alongZ" | "parallelPlane" | "parallel" | "perpendicular" | "equal" | "coincident" | "midpoint" | "onLine"; e: string[]; plane?: "XY" | "YZ" | "ZX" }
+export interface Sk3Rel { id: string; t: "alongX" | "alongY" | "alongZ" | "parallelPlane" | "parallel" | "perpendicular" | "equal" | "coincident" | "midpoint" | "onLine" | "tangent"; e: string[]; plane?: "XY" | "YZ" | "ZX" }
 /** 3D sketch dimensions: a line's length, the distance between two points, or the angle between two lines (radians). */
-export interface Sk3Dim { id: string; t: "length" | "distance" | "angle"; e: string[]; val: Num }
+export interface Sk3Dim { id: string; /** "fillet" = a sketch fillet: e = [corner point of two lines], val = radius; the lines keep their sharp corner (dimensions measure to it) and are rounded where drawn and built. */ t: "length" | "distance" | "angle" | "fillet"; e: string[]; val: Num }
 
 /**
  * 3D sketch (FR-SK-080): points, lines and splines in space with relations and dimensions. The

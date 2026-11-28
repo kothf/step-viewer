@@ -11376,6 +11376,12 @@ try {
       `model 1.83: 3D Sketch drawn by clicking in space, Tab turns the plane, relations and a dimension solve it (FR-SK-080) (${JSON.stringify({ hasThree, s0, drawn, solved })})`);
     check(swPath?.curve && !after.bad && Math.abs(after.v - Math.PI * 4 * (50 + leg2)) / (Math.PI * 4 * (50 + leg2)) < 1e-3 && /3DSketch1,Sweep1$/.test(after.names),
       `model 1.83: Sweep along the 3D sketch (${JSON.stringify({ swPath, after, leg2 })})`);
+    // 1.764.0: a sketch fillet R5 at the corner rounds the path; the tube's volume = area × path length (Pappus).
+    await mp.evaluate(() => window.__sv.model.store.change("Fillet", d => { const k = d.features.find(f => f.type === "sketch3d"); k.dims.push({ id: "fr", t: "fillet", e: [k.pts[1].id], val: { v: 5 } }); }));
+    await settle();
+    const rounded = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    const roundV = Math.PI * 4 * (50 + leg2 - 10 + 2.5 * Math.PI);
+    check(!rounded.bad && Math.abs(rounded.v - roundV) / roundV < 1e-3, `model 1.764: a 3D sketch fillet rounds the sweep path (${JSON.stringify({ rounded, roundV })})`);
     // In Russian: the 3D sketch panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "sketch3d").id));

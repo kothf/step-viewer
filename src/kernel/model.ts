@@ -24,7 +24,7 @@ import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type Pr
 import { splineBezierN } from "../sketch/spline";
 import { segSpline } from "../sketch/wrap";
 import { FlexError, flexAffine, flexIdle, flexLinear, flexMap, flexPoint, type FlexMap } from "../model/flex";
-import { chain3d, solve3d } from "../sketch/sketch3d";
+import { chain3d, fillets3d, segPoints, solve3d } from "../sketch/sketch3d";
 import { applyExt, piercePoint, projectEdge, uvOf, type ModelEdge } from "../sketch/external";
 import { circleEdge, lineEdge } from "../sketch/silhouette";
 import { solve } from "../sketch/solver";
@@ -3489,13 +3489,24 @@ export class Modeller {
     const ch = chain3d(f);
     if ("error" in ch) return { wire: null, pts: [] };
     const P = (id: string): V3 => f.pts.find(p => p.id === id)?.p ?? [0, 0, 0];
+    const fl = fillets3d(f);
+    if (fl.error) throw new FeatureError("E-3D-FILLET", fl.error);
+    const round = new Map(fl.list.map(x => [x.pt, x]));
     const mk = new oc.BRepBuilderAPI_MakeWire_1();
-    for (const ids of ch.order) {
-      const q = ids.map(P);
+    ch.order.forEach((ids, k) => {
+      let q = ids.map(P);
       const seg = f.segs.find(s => s.pts.length === ids.length && (s.pts.every((x, i) => x === ids[i]) || s.pts.every((x, i) => x === ids[ids.length - 1 - i])));
+      if (seg?.t === "line") { q = segPoints(f, seg); if (seg.pts[0] !== ids[0]) q.reverse(); }
       const e = seg?.t === "spline" && q.length > 2 ? this.bezierEdge(splineBezierN(q)) : new oc.BRepBuilderAPI_MakeEdge_3(this.P(q[0]), this.P(q[q.length - 1])).Edge();
       mk.Add_1(e);
-    }
+      // A sketch fillet at the corner after this segment: its arc joins this line to the next one.
+      const r = round.get(ids[ids.length - 1]);
+      if (r && seg && (k < ch.order.length - 1 || ch.closed)) {
+        const [a, b] = r.segs[0] === seg.id ? [r.t1, r.t2] : [r.t2, r.t1];
+        const arc = new oc.GC_MakeArcOfCircle_4(this.P(a), this.P(r.m), this.P(b)).Value();
+        mk.Add_1(new oc.BRepBuilderAPI_MakeEdge_24(new oc.Handle_Geom_Curve_2(arc.get())).Edge());
+      }
+    });
     if (!mk.IsDone()) return { wire: null, pts: [] };
     return { wire: mk.Wire(), pts: [] };
   }

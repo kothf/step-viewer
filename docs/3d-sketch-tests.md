@@ -30,7 +30,7 @@ Status: **1.762.0** = before this round, **now** = after it. ✓ works, ✗ miss
 | B9 | A point on a 2D sketch point follows that sketch | same | ✓ | ✓ |
 | B10 | Coordinates typed in the point table move the point | yes (PropertyManager) | ✓ | ✓ |
 | B11 | Dragging a point in the view moves it, the relations hold | yes | ✗ | ✓ |
-| B12 | Sketch fillet: a corner rounded with a radius | yes | ✗ | planned (slice 2) |
+| B12 | Sketch fillet: a corner of two lines rounded with a radius (asked at once, R shown on the arc; the lines keep the sharp corner for dimensions); a sweep follows the arc | yes | ✗ | ✓ (1.764.0) |
 
 ## C. Selection
 
@@ -49,7 +49,7 @@ Status: **1.762.0** = before this round, **now** = after it. ✓ works, ✗ miss
 | D3 | Relation glyphs show on the lines and points; a click selects what they hold | yes | ✗ | ✓ |
 | D4 | A relation is deleted from the list | same | ✓ | ✓ |
 | D5 | Midpoint and On line (a point and a line) | yes | ✗ | ✓ |
-| D6 | Tangent between a spline and a line at a shared end | yes | ✗ | planned |
+| D6 | Tangent between a spline and a line (or two splines) at a shared end | yes | ✗ | ✓ (1.764.0) |
 
 ## E. Dimensions
 

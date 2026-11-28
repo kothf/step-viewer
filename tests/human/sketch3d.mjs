@@ -131,13 +131,29 @@ check("B11", !near(moved, tip.p, 0.5), "dragging a point in the view moves it", 
 
 // B7: the spline tool previews the curve through the pointer.
 await tb("spline");
-await clickAt(pg, await W([0, 0, 0]));
+await clickAt(pg, await W((await draft()).pts[0].p));
 await clickAt(pg, await W([-20, 15, 0]));
 await pg.mouse.move(...(await W([-40, 5, 0]))); await pg.waitForTimeout(150);
 dc = await deco();
 const img5 = await snap(pg, "spline-preview");
 check("B7", dc.preview > 0, "the spline previews through the pointer", dc, img5);
 await pg.keyboard.press("Escape"); await pg.keyboard.press("Escape");
+// D6: the spline and the first line share the start point: Tangent joins them smoothly.
+d = await draft();
+{
+  const s0 = d.segs.find(s => s.t === "spline"), l0 = d.segs.find(s => s.t === "line" && s.pts.includes(s0?.pts[0]));
+  const sp = s0 ? segMid(s0) : null;
+  if (s0 && l0) {
+    const q = d.pts.find(p => p.id === s0.pts[1]).p, a = d.pts.find(p => p.id === s0.pts[0]).p;
+    await clickAt(pg, await W(q.map((v, k) => (v + a[k]) / 2)));
+    await ctrlAt(await W(segMid(l0)));
+  }
+  const tan = await pg.$('#mc-pm [data-s3r="tangent"]');
+  if (tan) { await tan.click(); await pg.waitForTimeout(250); }
+  d = await draft();
+  check("D6", !!tan && d.rels.some(r => r.t === "tangent"), "a spline and the line it starts from take Tangent", { sel: (await s3())?.sel, rels: d.rels.map(r => r.t), sp, segs: d.segs.map(s => [s.t, ...s.pts]), pts: d.pts.map(p => [p.id, ...p.p.map(v => Math.round(v))]) });
+  await pg.keyboard.press("Escape");
+}
 // The spline was added on the start point: delete it again so the path stays one chain.
 d = await draft();
 const spl = d.segs.find(s => s.t === "spline");
@@ -145,6 +161,22 @@ if (spl) { await clickAt(pg, await W(d.pts.find(p => p.id === spl.pts.at(-1)).p)
 d = await draft();
 check("C3", !d.segs.some(s => s.t === "spline"), "Delete removes the selected point with its spline", { segs: d.segs.map(s => s.t) });
 
+// B12: a corner point of two lines takes a sketch fillet; the radius is asked at once and the arc shows.
+d = await draft();
+{
+  const corner = d.pts.find(p => d.segs.filter(s => s.t === "line" && (s.pts[0] === p.id || s.pts.at(-1) === p.id)).length === 2);
+  await clickAt(pg, await W(corner.p));
+  const fb = await pg.$('#mc-pm [data-s3r="fillet"]');
+  if (fb) await fb.click();
+  await pg.waitForTimeout(250);
+  const box = await pg.isVisible(".mod-box .mod-in");
+  if (box) { await pg.fill(".mod-box .mod-in", "4"); await pg.keyboard.press("Enter"); await pg.waitForTimeout(250); }
+  d = await draft();
+  const lab = await pg.$$eval(".sk3-dim", els => els.map(e => e.textContent));
+  const img6 = await snap(pg, "fillet");
+  check("B12", !!fb && box && d.dims.some(x => x.t === "fillet" && Math.abs(x.val.v - 4) < 1e-9) && lab.some(x => x.startsWith("R")), "a corner takes a fillet: the radius box opens, R4 shows on the arc", { box, dims: d.dims.map(x => [x.t, x.val.v]), lab }, img6);
+  await pg.keyboard.press("Escape");
+}
 // A2: ✓ keeps the 3D sketch; F1: a sweep with a circular profile follows it.
 await pg.click("#mc-ok");
 await idle(pg);

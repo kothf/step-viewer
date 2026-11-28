@@ -9,7 +9,7 @@ const len = (a: V3) => Math.hypot(a[0], a[1], a[2]);
 const AX: Record<string, number> = { alongX: 0, alongY: 1, alongZ: 2 };
 const PLANE_N: Record<string, number> = { XY: 2, YZ: 0, ZX: 1 };
 
-export interface Solve3d { ok: boolean; pts: Record<string, V3>; dof: number; residual: number }
+export interface Solve3d { ok: boolean; pts: Record<string, V3>; dof: number; residual: number; /** Why a sketch fillet does not fit the solved points (then `ok` is false). */ fillet?: string }
 
 /** The residuals of every relation and dimension, with points looked up in `P`. */
 function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
@@ -28,6 +28,15 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
       out.push(c[0] / lu, c[1] / lu, c[2] / lu);
       continue;
     }
+    if (r.t === "tangent") {
+      // e = [segment, segment] sharing an end: their directions leaving that end are opposite (one runs on from the other).
+      const a = seg(r.e[0]), b = seg(r.e[1]);
+      const c = a && b ? [a.pts[0], a.pts[a.pts.length - 1]].find(q => q === b.pts[0] || q === b.pts[b.pts.length - 1]) : undefined;
+      if (!a || !b || !c) continue;
+      const ua = leaving(a, c, P), ub = leaving(b, c, P), la = len(ua) || 1e-9, lb = len(ub) || 1e-9;
+      out.push(ua[0] / la + ub[0] / lb, ua[1] / la + ub[1] / lb, ua[2] / la + ub[2] / lb);
+      continue;
+    }
     const u = vec(r.e[0]);
     if (!u) continue;
     if (r.t in AX) { const k = AX[r.t]; for (let j = 0; j < 3; j++) if (j !== k) out.push(u[j]); }
@@ -42,6 +51,7 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
     }
   }
   for (const d of sk.dims) {
+    if (d.t === "fillet") continue;
     if (d.t === "angle") {
       // The angle between two lines' directions (0..π), as drawn: from the first line's start to end and the second's.
       const u = vec(d.e[0]), v = vec(d.e[1]);
@@ -52,6 +62,62 @@ function residuals(sk: Sketch3dFeature, P: (id: string) => V3): number[] {
     else out.push(len(sub(P(d.e[1]), P(d.e[0]))) - d.val.v);
   }
   return out;
+}
+
+/** The direction a segment leaves its end `c` (a spline's end tangent from its Bézier poles). */
+function leaving(s: Sk3Seg, c: string, P: (id: string) => V3): V3 {
+  const q = s.pts.map(P), first = s.pts[0] === c;
+  if (s.t === "line" || q.length < 3) return first ? sub(q[q.length - 1], q[0]) : sub(q[0], q[q.length - 1]);
+  const bz = splineBezierN(q);
+  return first ? sub(bz[1], bz[0]) : sub(bz[bz.length - 2], bz[bz.length - 1]);
+}
+
+/** A sketch fillet's geometry: the tangent points on its two lines, the centre and points along the arc (`m` = its middle). */
+export interface Fillet3 { id: string; pt: string; segs: [string, string]; t1: V3; t2: V3; c: V3; m: V3; r: number; arc: V3[] }
+
+/** The two lines ending at a point, when exactly two segments end there and both are lines (a corner a fillet can round). */
+export function filletCorner(sk: Sketch3dFeature, pt: string): [string, string] | null {
+  const at = sk.segs.filter(s => s.pts.length >= 2 && (s.pts[0] === pt || s.pts[s.pts.length - 1] === pt));
+  return at.length === 2 && at.every(s => s.t === "line") && at[0].pts[0] !== at[0].pts[at[0].pts.length - 1] ? [at[0].id, at[1].id] : null;
+}
+
+/**
+ * Every sketch fillet's geometry, or the first one that does not fit (a corner that is not two lines, lines in one
+ * line, or a radius too big for the lines: the arcs at both ends of a line must leave some of it).
+ */
+export function fillets3d(sk: Sketch3dFeature): { list: Fillet3[]; error?: string } {
+  const list: Fillet3[] = [];
+  const P = (id: string): V3 => sk.pts.find(p => p.id === id)?.p ?? [0, 0, 0];
+  const used = new Map<string, number>();
+  for (const d of sk.dims) {
+    if (d.t !== "fillet") continue;
+    const pt = d.e[0], corner = filletCorner(sk, pt), r = d.val.v;
+    if (!corner) return { list, error: "A sketch fillet needs a corner where two lines meet." };
+    const c0 = P(pt), far = corner.map(id => { const s = sk.segs.find(g => g.id === id)!; return P(s.pts[0] === pt ? s.pts[s.pts.length - 1] : s.pts[0]); });
+    const u1 = sub(far[0], c0), u2 = sub(far[1], c0), l1 = len(u1), l2 = len(u2);
+    if (l1 < 1e-9 || l2 < 1e-9) return { list, error: "A sketch fillet needs a corner where two lines meet." };
+    const e1 = u1.map(v => v / l1) as V3, e2 = u2.map(v => v / l2) as V3;
+    const th = Math.acos(Math.max(-1, Math.min(1, dot(e1, e2))));
+    if (th < 1e-6 || th > Math.PI - 1e-6) return { list, error: "The lines at a sketch fillet's corner are in one line: there is no corner to round." };
+    const tl = r / Math.tan(th / 2);
+    for (const [id, l] of [[corner[0], l1], [corner[1], l2]] as const) {
+      const u = (used.get(id) ?? 0) + tl;
+      if (u > l * (1 - 1e-9)) return { list, error: "The fillet radius is too big for the lines at the corner." };
+      used.set(id, u);
+    }
+    const t1 = c0.map((v, k) => v + e1[k] * tl) as V3, t2 = c0.map((v, k) => v + e2[k] * tl) as V3;
+    const bis = [e1[0] + e2[0], e1[1] + e2[1], e1[2] + e2[2]] as V3, lb = len(bis);
+    const c = c0.map((v, k) => v + (bis[k] / lb) * (r / Math.sin(th / 2))) as V3;
+    const m = c.map((v, k) => v - (bis[k] / lb) * r) as V3;
+    // Points along the arc from t1 to t2 (turning in the plane of the two lines).
+    const a = sub(t1, c), b = sub(t2, c), sw = Math.PI - th, n = 24, arc: V3[] = [];
+    for (let i = 0; i <= n; i++) {
+      const s = (sw * i) / n, w1 = Math.sin(sw - s) / Math.sin(sw), w2 = Math.sin(s) / Math.sin(sw);
+      arc.push(c.map((v, k) => v + w1 * a[k] + w2 * b[k]) as V3);
+    }
+    list.push({ id: d.id, pt, segs: corner, t1, t2, c, m, r, arc });
+  }
+  return { list };
 }
 
 /** The axis a line from `a` to `b` lies within `tol` radians of (a CAD app's automatic Along X/Y/Z while drawing), else null. */
@@ -152,7 +218,8 @@ export function solve3d(sk: Sketch3dFeature): Solve3d {
   const pts: Record<string, V3> = {};
   for (const p of sk.pts) pts[p.id] = P(p.id);
   const dof = x.length - (r.length && x.length ? rank(jac(x, r), x.length) : 0);
-  return { ok: res < 1e-6, pts, dof, residual: res };
+  const fillet = sk.dims.some(d => d.t === "fillet") ? fillets3d({ ...sk, pts: sk.pts.map(p => ({ ...p, p: pts[p.id] })) }).error : undefined;
+  return { ok: res < 1e-6 && !fillet, pts, dof, residual: res, ...(fillet ? { fillet } : {}) };
 }
 
 /** The segments in one chain, end to end (each with its point ids in path order), or why not. */
@@ -183,7 +250,17 @@ export function chain3d(sk: Sketch3dFeature): { order: string[][]; closed: boole
 /** Points along a segment for drawing (splines sampled through their Bézier poles). */
 export function segPoints(sk: Sketch3dFeature, s: Sk3Seg, k = 16): V3[] {
   const P = s.pts.map(id => sk.pts.find(p => p.id === id)?.p ?? [0, 0, 0] as V3);
-  if (s.t === "line" || P.length < 3) return P;
+  if (s.t === "line" || P.length < 3) {
+    // A line ends where a sketch fillet at its corner starts.
+    if (s.t === "line" && sk.dims.some(d => d.t === "fillet")) {
+      const fl = fillets3d(sk);
+      if (!fl.error) for (const f of fl.list) {
+        if (f.pt === s.pts[0]) P[0] = f.segs[0] === s.id ? f.t1 : f.t2;
+        if (f.pt === s.pts[s.pts.length - 1]) P[P.length - 1] = f.segs[0] === s.id ? f.t1 : f.t2;
+      }
+    }
+    return P;
+  }
   const bz = splineBezierN(P);
   const out: V3[] = [];
   for (let i = 0; i + 3 < bz.length; i += 3) for (let j = 0; j < k; j++) {
