@@ -122,3 +122,35 @@ test("a part file renamed or moved in the folder is found by its document", asyn
   assert.deepEqual(again.updated, ["Plate"]);
   assert.deepEqual(again.doc.parts.k_Plate.doc.props, { v: "3" });
 });
+
+test("a file that now holds another part keeps the copy, and Save writes ours under a free name", async () => {
+  const dir = memDir();
+  const saved = (await writeRefs(asmOf(["Plate", "Pin"]), dir, new Map(), APP)).doc;
+  // somebody saved the plate over Pin.mcadprt
+  dir.files.set("Pin.mcadprt", dir.files.get("Plate.mcadprt")!);
+  const r = await resolveRefs(saved, dir, new Map());
+  assert.deepEqual(r.foreign, ["k_Pin"]);
+  assert.deepEqual(r.updated, []);
+  assert.equal(r.doc.parts.k_Pin.doc.id, "id-Pin", "the other part is not taken in");
+  const w = await writeRefs(r.doc, dir, new Map(), APP);
+  assert.deepEqual(w.written, ["Pin (2).mcadprt"]);
+  assert.deepEqual(w.renamed, [{ name: "Pin", from: "Pin.mcadprt", to: "Pin (2).mcadprt" }]);
+  assert.equal(w.doc.parts.k_Pin.link?.path, "Pin (2).mcadprt");
+  assert.equal((await unpackPart(buf(dir.files.get("Pin.mcadprt")!))).id, "id-Plate", "the other part's file is left alone");
+});
+
+test("a damaged file keeps the copy and is reported as unreadable", async () => {
+  const dir = memDir();
+  const saved = (await writeRefs(asmOf(["Plate"]), dir, new Map(), APP)).doc;
+  dir.files.set("Plate.mcadprt", new TextEncoder().encode("not a zip"));
+  const r = await resolveRefs(saved, dir, new Map());
+  assert.deepEqual([r.damaged, r.missing], [["k_Plate"], []]);
+  assert.equal(r.doc.parts.k_Plate.doc.id, "id-Plate");
+});
+
+test("a new part whose name is another document's file is renamed and reported", async () => {
+  const dir = memDir();
+  dir.files.set("Cover.mcadprt", await packPart(part("Other"), APP));
+  const w = await writeRefs(asmOf(["Cover"]), dir, new Map(), APP);
+  assert.deepEqual(w.renamed, [{ name: "Cover", from: "Cover.mcadprt", to: "Cover (2).mcadprt" }]);
+});

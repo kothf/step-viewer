@@ -12,7 +12,7 @@ import { penetrates } from "./clash";
 import { ModelKernel, type ImportedBody } from "../model/kernelClient";
 import type { ModelSnap } from "../drawing/drawing.worker";
 import { newPart, uid } from "../model/doc";
-import { PART_EXT, unpackPart } from "../model/file";
+import { PART_EXT, toJson, unpackPart } from "../model/file";
 import { t, onLangChange } from "../i18n";
 import { featureLabel } from "../model/controller";
 import { askFileName, confirmModal, toast, untoast } from "../ui";
@@ -51,6 +51,8 @@ export interface AsmHost {
   viewer: Viewer;
   /** An assembly was saved to a file (File ▸ recent documents). */
   saved?(name: string, bytes: Uint8Array): void;
+  /** The assembly wrote these part files: open tabs of the same parts save to them from now on. */
+  partFiles?(files: { id: string; json: string; name: string; handle: FileSystemFileHandle }[]): void;
   vp: HTMLElement;
   /** Shows the placed components (one part each); `first` fits the view like a newly opened file. */
   show(parts: PartData[], tree: TreeNode, first: boolean): void;
@@ -97,6 +99,9 @@ const MATE_FAILS = "This mate cannot be solved with the others: the assembly wou
 
 /** The components Ctrl+C copied, with their part entries (a clipboard across assemblies). */
 let compClip: { comps: Component[]; parts: Record<string, AsmDoc["parts"][string]> } | null = null;
+
+/** Why a part file's copy is shown: its file holds another part, or could not be read. */
+type RefWhy = "foreign" | "damaged";
 
 export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null; vault: VaultTie | null; folder: FileSystemDirectoryHandle | null; refBase: RefBase }
 
@@ -480,6 +485,7 @@ export class AsmController {
     this.folder = folder;
     this.refBase = refBase;
     this.missingLinks.clear();
+    this.refWhy.clear();
     document.getElementById("asm-refs")?.remove();
     this.motion?.close();
     this.doc = doc;
@@ -2490,6 +2496,8 @@ export class AsmController {
 
   /** Parts whose linked file was not found the last time links were updated (view state). */
   private missingLinks = new Set<string>();
+  /** Why a reference in `missingLinks` shows its copy, when not simply missing. */
+  private refWhy = new Map<string, RefWhy>();
   private linkCount() { return Object.values(this.doc?.parts ?? {}).filter(p => p.link).length; }
   private pickFile(run: (f: File) => void) {
     const inp = document.createElement("input");
@@ -2554,6 +2562,7 @@ export class AsmController {
         else plan.missing.push(key);
       }
       this.missingLinks = new Set(plan.missing);
+      this.refWhy.clear();
       if (fresh.size) this.change(d => { for (const [key, v] of fresh) { const p = d.parts[key]; if (!p) continue; p.doc = v.pd; if (v.asm) p.asm = v.asm; p.file = v.name; p.link = v.link; } });
       else this.renderTree();
       toast(t("Links: {u} updated, {s} unchanged, {m} missing.", { u: fresh.size, s: plan.same.length, m: plan.missing.length }), plan.missing.length ? "warn" : undefined);
@@ -2566,7 +2575,11 @@ export class AsmController {
     inp.click();
   }
 
-  setSuppressed(id: string, on: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (on) c.suppressed = true; else delete c.suppressed; } }); }
+  setSuppressed(id: string, on: boolean) {
+    this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (on) c.suppressed = true; else delete c.suppressed; } });
+    // a part whose file is missing is asked for again once a component of it is back
+    if (this.folder && this.missingLinks.size) this.renderRefsBar();
+  }
   /** Transparency (FR-ASM-025): the shown parts of each component take its opacity. */
   private applyOpacity() {
     const v = this.host.viewer, comps = new Map((this.expanded?.doc.components ?? []).map(c => [c.id, c]));
@@ -2698,13 +2711,14 @@ export class AsmController {
     const c = this.comp(id), doc = this.doc, entry = c && doc?.parts[c.part];
     if (!c || !doc || !entry || !this.host.editPart) return;
     if (entry.asm) { toast(t("Open the sub-assembly's own file to edit it."), true); return; }
-    const parked = { doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, savedAt: this.savedAt, key: c.part, sel: id, folder: this.folder, refBase: this.refBase, missing: this.missingLinks };
+    const parked = { doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, savedAt: this.savedAt, key: c.part, sel: id, folder: this.folder, refBase: this.refBase, missing: this.missingLinks, why: this.refWhy };
     const file = entry.file?.toLowerCase().endsWith(PART_EXT) ? entry.file : `${entry.name}${PART_EXT}`;
     void this.partHandle(c.part).then(ph => this.host.editPart!(JSON.parse(JSON.stringify(entry.doc)) as PartDoc, file, this.label().replace(/ •$/, ""), pd => {
       // The faces as they were, so mates can follow a face the edit renamed (exam #84).
       const faces = new Map(this.geo);
       this.load(parked.doc, parked.fileName, parked.handle, parked.folder, parked.refBase);
       this.missingLinks = parked.missing;
+      this.refWhy = parked.why;
       for (const [k, g] of faces) this.geo.set(k, g);
       this.undoStack = parked.undo;
       this.savedAt = parked.savedAt;
@@ -2834,11 +2848,12 @@ export class AsmController {
     this.host.viewer.renderer.domElement.style.cursor = "";
     this.renderAll();
     const first: PlaneRef | undefined = on ? { ctx: { comp: on.comp, face: on.face, host: id, label: on.label, p: on.p, n: on.n } } : undefined;
-    const parked = { doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, savedAt: this.savedAt, sel: this.selected, folder: this.folder, refBase: this.refBase, missing: this.missingLinks };
+    const parked = { doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, savedAt: this.savedAt, sel: this.selected, folder: this.folder, refBase: this.refBase, missing: this.missingLinks, why: this.refWhy };
     this.host.editPart(pd, file, this.label().replace(/ •$/, ""), back => {
       const faces = new Map(this.geo);
       this.load(parked.doc, parked.fileName, parked.handle, parked.folder, parked.refBase);
       this.missingLinks = parked.missing;
+      this.refWhy = parked.why;
       for (const [k, g] of faces) this.geo.set(k, g);
       this.undoStack = parked.undo;
       this.savedAt = parked.savedAt;
@@ -3399,8 +3414,9 @@ export class AsmController {
       const dir = fsaDir(folder);
       r = await resolveRefs(doc, dir, this.refBase);
       // files renamed or moved within the folder take over their references
-      if (r.missing.length) {
-        const m = await findMoved(r.doc, dir, r.missing);
+      // (a file that holds another part may mean ours was moved and another took its name)
+      if (r.missing.length || r.foreign.length) {
+        const m = await findMoved(r.doc, dir, [...r.missing, ...r.foreign]);
         if (m.found.length) {
           moved = m.found;
           const again = await resolveRefs(m.doc, dir, this.refBase);
@@ -3420,7 +3436,8 @@ export class AsmController {
   private takeParts(r: ResolveResult, opening: boolean, moved = false) {
     if (!this.doc) return;
     const clean = !this.dirty;
-    this.missingLinks = new Set(r.missing);
+    this.missingLinks = new Set([...r.missing, ...r.foreign, ...r.damaged]);
+    this.refWhy = new Map([...r.foreign.map(k => [k, "foreign"] as const), ...r.damaged.map(k => [k, "damaged"] as const)]);
     // moved files: an undo step, so the assembly asks to be saved with the new places
     if ((r.updated.length && !(opening && clean)) || moved) this.change(d => { d.parts = r.doc.parts; });
     else {
@@ -3441,23 +3458,93 @@ export class AsmController {
     document.getElementById("asm-refs")?.remove();
     const doc = this.doc;
     if (!doc || !hasRefs(doc)) return;
-    const gone = [...this.missingLinks].filter(k => doc.parts[k]);
+    // a part whose components are all suppressed is not asked for (other CAD apps do the same)
+    const gone = [...this.missingLinks].filter(k => doc.parts[k] && doc.components.some(c => c.part === k && !c.suppressed));
+    const names = (why?: RefWhy) => gone.filter(k => this.refWhy.get(k) === why).map(k => doc.parts[k].file || doc.parts[k].name).join(", ");
     let text = "", act = "";
     if (!this.folder) {
       text = known ? t("This assembly reads its parts from the folder {name}.", { name: known.name }) : t("This assembly's parts are files beside it. Choose its folder to read the latest.");
       act = known ? t("Read the part files") : t("Choose folder…");
     } else if (gone.length) {
-      text = t("Part files not found: {names}. The assembly shows the last copy.", { names: gone.map(k => doc.parts[k].file || doc.parts[k].name).join(", ") });
+      const lost = names(), other = names("foreign"), bad = names("damaged");
+      text = [
+        lost && t("Part files not found: {names}.", { names: lost }),
+        other && t("These files now hold another part: {names}.", { names: other }),
+        bad && t("These part files could not be read: {names}.", { names: bad }),
+        t("The assembly shows the last copy."),
+      ].filter(Boolean).join(" ");
       act = t("Choose folder…");
     } else return;
     const bar = document.createElement("div");
     bar.id = "asm-refs";
     bar.className = "asm-iso asm-refs";
     bar.setAttribute("role", "status");
-    bar.innerHTML = `<span>${esc(text)}</span><button type="button" class="btn small primary" data-refs="go">${esc(act)}</button><button type="button" class="btn small" data-refs="x" aria-label="${esc(t("Close"))}">✕</button>`;
+    const lost = this.folder && gone.length > 0, find = lost && typeof (window as unknown as { showOpenFilePicker?: unknown }).showOpenFilePicker === "function";
+    bar.innerHTML = `<span>${esc(text)}</span>`
+      + (find ? `<button type="button" class="btn small primary" data-refs="find">${esc(t("Find file…"))}</button>` : "")
+      + (lost ? `<button type="button" class="btn small" data-refs="sup">${esc(gone.length > 1 ? t("Suppress them") : t("Suppress"))}</button>` : "")
+      + `<button type="button" class="btn small${find ? "" : " primary"}" data-refs="go">${esc(act)}</button><button type="button" class="btn small" data-refs="x" aria-label="${esc(t("Close"))}">✕</button>`;
     bar.querySelector<HTMLButtonElement>('[data-refs="x"]')!.addEventListener("click", () => bar.remove());
     bar.querySelector<HTMLButtonElement>('[data-refs="go"]')!.addEventListener("click", () => void this.chooseFolder(known && !this.folder ? known : null));
+    bar.querySelector<HTMLButtonElement>('[data-refs="find"]')?.addEventListener("click", ev => {
+      if (gone.length === 1) { void this.findPartFile(gone[0]); return; }
+      const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+      this.popup(gone.map(k => [doc.parts[k].file || doc.parts[k].name, () => void this.findPartFile(k)] as [string, () => void]), r.left, r.bottom + 2);
+    });
+    bar.querySelector<HTMLButtonElement>('[data-refs="sup"]')?.addEventListener("click", () => this.suppressMissing(gone));
     document.getElementById("viewport")?.append(bar);
+  }
+
+  /** Suppress every component of the parts whose files are missing (one undo step). */
+  private suppressMissing(keys: string[]) {
+    const set = new Set(keys);
+    this.change(d => { for (const c of d.components) if (set.has(c.part)) c.suppressed = true; });
+    this.renderRefsBar();
+    toast(t("Suppressed the components whose part files are missing. Unsuppress them once the files are back."), "success");
+  }
+
+  /**
+   * Point a missing (or unreadable, or replaced) part file at another file (other CAD apps: Browse for the file).
+   * A file inside the assembly's folder is referenced where it is; one outside is copied into the folder.
+   * A file holding another part is taken only when the person says so.
+   */
+  async findPartFile(key: string) {
+    const doc = this.doc, e = doc?.parts[key], folder = this.folder;
+    if (!doc || !e?.link || !folder) return;
+    const ext = e.asm ? ASM_EXT : PART_EXT;
+    const pick = (window as unknown as { showOpenFilePicker?: (o: unknown) => Promise<FileSystemFileHandle[]> }).showOpenFilePicker;
+    if (!pick) { this.updateLinks(); return; }
+    let h: FileSystemFileHandle;
+    try { [h] = await pick({ startIn: folder, id: "mc-asm-parts", types: [{ description: t(e.asm ? "Assembly" : "Part"), accept: { "application/octet-stream": [ext] } }] }); }
+    catch { return; }
+    if (!h || this.doc !== doc) return;
+    const f = await h.getFile();
+    if (!f.name.toLowerCase().endsWith(ext)) { toast(t("Choose a {ext} file.", { ext }), true); return; }
+    const src = await this.readSource(f);
+    if (!src) { toast(t("{file} could not be read.", { file: f.name }), true); return; }
+    const want = e.asm?.id ?? e.doc?.id, has = src.asm?.id ?? src.pd.id, other = !!want && want !== has;
+    if (other && !(await confirmModal(t("{file} holds another part ({name}). Use it in place of {old}?", { file: f.name, name: src.asm?.name ?? src.pd.name, old: e.name }), t("Use this file"), t("Another part")))) return;
+    if (this.doc !== doc) return;
+    const dir = fsaDir(folder);
+    let path = (await (folder as FileSystemDirectoryHandle & { resolve(h: FileSystemHandle): Promise<string[] | null> }).resolve(h))?.join("/") ?? "";
+    if (!path) {
+      // outside the folder: a copy goes in beside the assembly, under a free name
+      const stem = f.name.slice(0, -ext.length);
+      path = f.name;
+      for (let n = 2; await dir.read(path).catch(() => null); n++) path = `${stem} (${n})${ext}`;
+      await dir.write(path, new Uint8Array(await f.arrayBuffer()));
+      toast(t("{file} is outside the assembly's folder: a copy was put in as {path}.", { file: f.name, path }), "success");
+    }
+    this.missingLinks.delete(key);
+    this.refWhy.delete(key);
+    this.change(d => {
+      const p = d.parts[key];
+      if (!p) return;
+      p.link = { path, hash: "" };
+      p.file = path.split("/").at(-1)!;
+      if (other) { p.doc = src.pd; if (src.asm) p.asm = src.asm; else delete p.asm; }
+    });
+    await this.refreshRefs();
   }
 
   /** Read the part files from a folder: the remembered one (asked for access) or one picked now. */
@@ -3505,6 +3592,7 @@ export class AsmController {
       await dir.write(name, bytes);
       if (results && !inside) await dir.write(resultsName(name), results);
       written = w.written;
+      for (const r of w.renamed.filter(x => x.to && x.from.toLowerCase() !== x.to.toLowerCase())) toast(t("{name} was saved as {file}: {taken} is another part's file.", { name: r.name, file: r.to, taken: r.from }), "warn");
       if (this.doc !== doc) return false;
       if (pre.updated.length) this.change(d => { d.parts = w.doc.parts; });
       else this.doc.parts = w.doc.parts;
@@ -3514,13 +3602,27 @@ export class AsmController {
     this.fileName = name;
     this.handle = await fileIn(folder, name);
     this.missingLinks.clear();
+    this.refWhy.clear();
     void rememberAsmFolder(this.doc.id, folder);
     this.savedAt = JSON.stringify(this.doc);
     this.renderAll();
     this.renderRefsBar();
     this.host.saved?.(name, bytes);
+    void this.tieOpenParts(folder);
     toast(written.length ? t("Saved {name} and {n} part files in {folder}", { name, n: written.length, folder: folder.name }) : t("Saved {name}", { name }), "success");
     return true;
+  }
+
+  /** Ties open tabs of this assembly's parts to the files it references (other CAD apps hold one document per file). */
+  private async tieOpenParts(folder: FileSystemDirectoryHandle) {
+    if (!this.doc || !this.host.partFiles) return;
+    const files: { id: string; json: string; name: string; handle: FileSystemFileHandle }[] = [];
+    for (const e of Object.values(this.doc.parts)) {
+      if (!e.link || e.asm || !e.doc) continue;
+      const handle = await fileIn(folder, e.link.path).catch(() => null);
+      if (handle) files.push({ id: e.doc.id, json: toJson(e.doc), name: handle.name, handle });
+    }
+    if (files.length) this.host.partFiles(files);
   }
 
   async save(as = false) {
@@ -3926,8 +4028,11 @@ export class AsmController {
       const err = s && !s.ok ? `<span class="ft-err" title="${esc(s.message ?? "")}" role="img" aria-label="${esc(t("Error"))}: ${esc(s.message ?? "")}">⚠</span>` : "";
       const tools = `<span class="ft-tools"><button class="icon${c.hidden ? " off" : ""}" tabindex="-1" data-a="hide" title="${esc(c.hidden ? t("Show component") : t("Hide component"))}" aria-label="${esc(c.hidden ? t("Show component") : t("Hide component"))}">${c.hidden ? "◌" : "◉"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
       const sub = !!doc.parts[c.part]?.asm;
-      const lk = doc.parts[c.part]?.link, gone = this.missingLinks.has(c.part);
-      const ltxt = lk ? (gone ? t("Linked file not found: {file}. The last loaded copy is shown.", { file: lk.path }) : t("Linked to {file}", { file: lk.path })) : "";
+      const lk = doc.parts[c.part]?.link, gone = this.missingLinks.has(c.part), why = this.refWhy.get(c.part);
+      const ltxt = lk ? (!gone ? t("Linked to {file}", { file: lk.path })
+        : why === "foreign" ? t("{file} now holds another part. The last loaded copy is shown.", { file: lk.path })
+        : why === "damaged" ? t("{file} could not be read. The last loaded copy is shown.", { file: lk.path })
+        : t("Linked file not found: {file}. The last loaded copy is shown.", { file: lk.path })) : "";
       const link = lk ? `<span class="ft-link${gone ? " ft-err" : " muted"}" title="${esc(ltxt)}" role="img" aria-label="${esc(ltxt)}">${gone ? "⚠" : "⛓"}</span>` : "";
       const flex = sub && c.flexible ? `<span class="ft-flex muted" title="${esc(t("Flexible: its own mates solve in this assembly"))}">${esc(t("flexible"))}</span>` : "";
       const pcfg = !sub && (doc.parts[c.part]?.doc.configs?.length ?? 0) > 1 ? ` (${doc.parts[c.part].doc.config})` : "";
