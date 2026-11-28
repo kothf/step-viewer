@@ -5559,7 +5559,7 @@ export class ModelController {
     const m = this.mode;
     if (m.kind !== "feature" || m.focus !== "skip" || (m.draft.type !== "lpattern" && m.draft.type !== "cpattern")) return;
     const f = m.draft;
-    const spots = this.last?.spots?.[f.id] ?? [];
+    const spots = (this.last?.spots?.[f.id] ?? []).filter(s => !s.key.startsWith("@"));
     const skip = new Set(f.skip ?? []);
     for (const s of spots) {
       const off = skip.has(s.key);
@@ -5784,7 +5784,7 @@ export class ModelController {
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
 
   /** The extrude or revolve being edited, or the one selected in the tree (dragging it edits it at once). */
-  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | SmHemFeature | SmBaseFeature | FlexFeature | null {
+  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | SmHemFeature | SmBaseFeature | FlexFeature | LinearPatternFeature | null {
     const m = this.mode;
     // Sheet metal flanges show their arrow while folded only (the flat pattern hides where the flange stands).
     const folded = () => !this.doc.features.some(x => x.type === "smflat" && !x.suppressed);
@@ -5792,6 +5792,8 @@ export class ModelController {
       || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || ((f?.type === "smflange" || f?.type === "smhem") && f.edges.length > 0 && folded() && !(f.type === "smflange" && f.end === "vertex"))
       || (f?.type === "smbase" && folded() && this.smOpenBase(f))
       || (f?.type === "flex" && (this.last?.frames[f.id]?.len?.length ?? 0) >= 6);
+    // A linear pattern shows its direction arrows while its panel is open (drag = spacing, click = reverse).
+    if (m.kind === "feature" && m.draft.type === "lpattern") return this.last?.spots?.[m.draft.id]?.some(x => x.key === "@1") ? m.draft : null;
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     // A part that was closed or handed back to its assembly has no store; its last selection must not draw (exam bug 40).
     if (m.kind !== "none" || !this.selected || !this.store) return null;
@@ -5819,6 +5821,7 @@ export class ModelController {
     if (f.type === "smflange" || f.type === "smhem") { this.drawFlangeArrow(f); return; }
     if (f.type === "smbase") { this.drawBaseArrow(f); return; }
     if (f.type === "flex") { this.drawFlexArrows(f); return; }
+    if (f.type === "lpattern") { this.drawPatternArrows(f); return; }
     const sk = this.store!.feature(f.sketch);
     if (sk?.type !== "sketch") return;
     const fr = this.frameOf(sk);
@@ -5943,6 +5946,28 @@ export class ModelController {
   }
 
   /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it), dragging the number `key`. */
+  /**
+   * Linear pattern direction arrows (FR-FT-070), as other CAD apps show them: one per direction from the seed's
+   * centre to the first copy (to the last one for Up to distance). Drag one to change the spacing, click it to
+   * reverse that direction; the label opens the spacing in the panel.
+   */
+  private drawPatternArrows(f: LinearPatternFeature) {
+    const spots = this.last?.spots?.[f.id] ?? [];
+    for (const k of [1, 2] as const) {
+      const s = spots.find(x => x.key === `@${k}`);
+      if (!s?.d) continue;
+      const key = k === 1 ? "spacing" : "spacing2";
+      const sp = (k === 1 ? f.spacing : f.spacing2)?.v ?? 0;
+      const upTo = k === 1 ? f.upTo : f.upTo2;
+      // Up to reference: the spacing follows the reference, so the arrow points to the first copy.
+      const first = upTo ? spots.find(x => x.key === (f.dir2 ? (k === 1 ? "1,0" : "0,1") : "1")) : null;
+      const value = first ? new THREE.Vector3(...first.p).distanceTo(new THREE.Vector3(...s.p)) : sp;
+      this.placeArrow(new THREE.Vector3(...s.p), new THREE.Vector3(...s.d).normalize(), value, false, key);
+      if (!upTo) this.handleLabel(f.id, key, t("Drag to change the spacing; click the arrow to reverse the direction."));
+    }
+    this.sizeArrow();
+  }
+
   private placeArrow(base: THREE.Vector3, dir: THREE.Vector3, value: number, mid: boolean, key: string) {
     const obj = new THREE.Group();
     const mat = new THREE.MeshBasicMaterial({ color: 0xf08c00, depthTest: false, transparent: true });
@@ -6195,7 +6220,9 @@ export class ModelController {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
     if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
     if (m.kind === "feature" && m.draft.type === "moveface" && d?.key === "push" && a) { this.movePush(e, m.draft, d); return; }
-    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange" && m.draft.type !== "smhem" && m.draft.type !== "smbase" && m.draft.type !== "flex") || !d || !a) return;
+    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange" && m.draft.type !== "smhem" && m.draft.type !== "smbase" && m.draft.type !== "flex" && m.draft.type !== "lpattern") || !d || !a) return;
+    // Up to reference: the spacing follows the plane; the arrow only reverses on a click.
+    if (m.draft.type === "lpattern" && (a.key === "spacing" ? m.draft.upTo : m.draft.upTo2)) return;
     const key = a.key;
     const k = a.mid ? 2 : 1;
     let v = d.depth + (this.axisParam(e) - d.start) * k;
@@ -6272,6 +6299,13 @@ export class ModelController {
     }
     if (m.kind === "feature" && m.instant) {
       if (d?.moved) this.ok(); else { this.exitMode(false); void this.rebuild(); }
+      return;
+    }
+    // A click on a pattern direction arrow (no drag) reverses that direction.
+    if (m.kind === "feature" && m.draft.type === "lpattern" && d && !d.moved) {
+      if (d.key === "spacing2") { if (m.draft.flip2) delete m.draft.flip2; else m.draft.flip2 = true; }
+      else if (m.draft.flip) delete m.draft.flip; else m.draft.flip = true;
+      this.draftChanged();
       return;
     }
     this.renderPanel();

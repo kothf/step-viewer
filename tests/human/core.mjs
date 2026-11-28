@@ -236,14 +236,47 @@ await num("spacing2", 25);
 await num("count2", 2);
 S = await st();
 const warn3 = await pg.$eval("#mc-pm", e => e.textContent.includes("warning")).catch(() => false);
-// The second row went off the part (−Y) with only a warning: reverse it, as a person would after reading What's wrong.
-await pg.check('#mc-pm input[data-k="flip2"]').catch(() => {});
+// The second row went off the part (−Y) with only a warning: reverse it by clicking the direction 2 arrow in the view.
+const arrowAt = key => pg.evaluate(k => {
+  const sv = window.__sv, a = sv.modeller.arrows.find(x => x.key === k);
+  if (!a) return null;
+  a.obj.updateMatrixWorld(true);
+  const p = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8).project(sv.viewer.camera);
+  const r = sv.viewer.renderer.domElement.getBoundingClientRect();
+  return [r.left + ((p.x + 1) / 2) * r.width, r.top + ((1 - p.y) / 2) * r.height];
+}, key);
+const arrows3 = await pg.evaluate(() => window.__sv.modeller.arrows.map(a => a.key));
+const a2 = await arrowAt("spacing2");
+if (a2) await clickAt(pg, a2);
 await idle(pg);
+const flipped = (await st()).draft?.flip2;
+check("C3-arrows", arrows3.includes("spacing") && arrows3.includes("spacing2") && !!flipped, "direction arrows show in the view; a click on the direction 2 arrow reverses it", { arrows: arrows3, a2, flip2: flipped });
+if (!flipped) { await pg.check('#mc-pm input[data-k="flip2"]').catch(() => {}); await idle(pg); }
 await snap(pg, "dir2-preview");
 console.log("C3 pre-ok", JSON.stringify({ v: S.v, warn: S.warn, flip2: S.draft?.flip2 }));
 await ok();
 S = await st();
 check("C3", near(S.v, V0 - 8 * oneHole, 5) && !S.bad.length, "Direction 2: a 4 × 2 grid (after Reverse direction: the default way ran off the part)", { v: S.v, want: V0 - 8 * oneHole, bad: S.bad, warnedFirst: warn3 });
+await blank();
+
+// C3 drag: the direction 1 arrow changes the spacing; ✕ puts it back.
+await editRow(lpName);
+await idle(pg);
+const sp0 = (await st()).draft?.spacing?.v;
+const d1 = await arrowAt("spacing");
+let sp1 = sp0;
+if (d1) {
+  const tip = await pg.evaluate(() => { const sv = window.__sv, a = sv.modeller.arrows.find(x => x.key === "spacing"); const r = sv.viewer.renderer.domElement.getBoundingClientRect(); const q = a.obj.position.clone().addScaledVector(a.dir, a.scale * 3).project(sv.viewer.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; });
+  await pg.mouse.move(...d1); await pg.waitForTimeout(80);
+  await pg.mouse.down();
+  for (let i = 1; i <= 8; i++) { await pg.mouse.move(d1[0] + (tip[0] - d1[0]) * i / 8, d1[1] + (tip[1] - d1[1]) * i / 8); await pg.waitForTimeout(40); }
+  await pg.mouse.up();
+  await idle(pg);
+  sp1 = (await st()).draft?.spacing?.v;
+}
+const imgC3d = await snap(pg, "lpattern-arrow-drag");
+check("C3-drag", !!d1 && sp1 > sp0 + 0.5, "dragging the direction 1 arrow along itself makes the spacing larger", { sp0, sp1 }, imgC3d);
+await pg.click("#mc-cancel").catch(() => {}); await idle(pg);
 await blank();
 
 // C4: skip an instance by clicking its dot.

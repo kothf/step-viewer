@@ -5125,6 +5125,7 @@ export const RU: Record<string, string> = {
   "Pick an axis to turn the plane about.": "Выберите ось, вокруг которой поворачивается плоскость.",
   "{n} skipped": "пропущено: {n}",
   "Click this box, then the dots in the view: a filled dot is an instance, a hollow one is skipped.": "Щёлкните это поле, затем точки на модели: закрашенная точка — экземпляр, пустая — пропущенный.",
+  "Drag to change the spacing; click the arrow to reverse the direction.": "Перетащите, чтобы изменить шаг; щелчок по стрелке меняет направление на обратное.",
   "Instance {n}": "Экземпляр {n}",
   "skipped, click to bring it back": "пропущен, щёлкните, чтобы вернуть",
   "click to skip it": "щёлкните, чтобы пропустить",

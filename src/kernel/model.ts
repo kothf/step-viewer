@@ -6637,6 +6637,8 @@ export class Modeller {
       const tk = key.replace(",", "_");
       xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${tk}b${k}` : `i${tk}s${k}`, label: key });
     }
+    // Where each direction runs from, for its arrow in the view (a CAD app's direction callouts).
+    if (c) { spots.push({ key: "@1", p: c, d: d1 }); if (f.dir2) spots.push({ key: "@2", p: c, d: d2 }); }
     this.spots.set(f.id, spots);
     return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }

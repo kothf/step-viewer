@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- Linear pattern direction arrows in the view, as other CAD apps show them: an orange arrow per direction from the seed while the pattern is open; drag it to change the spacing, click it to reverse that direction (before, a direction picked from an edge could run off the part with only a checkbox to turn it).
+
 ## [1.766.0] - 2026-11-28
 
 ### Fixed

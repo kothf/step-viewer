@@ -3930,6 +3930,17 @@ try {
       await mp.click('#mc-layer .pat-spot[data-spot="2"]');
       await idle();
       const vBack = await vol();
+      // 1.767: the direction arrow in the view: a click reverses the direction, a second click puts it back.
+      const arrowPt = () => mp.evaluate(() => { const sv = window.__sv, a = sv.modeller.arrows.find(x => x.key === "spacing"); if (!a) return null; a.obj.updateMatrixWorld(true); const q = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8).project(sv.viewer.camera), r = sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; });
+      const ap = await arrowPt();
+      if (ap) await mp.mouse.click(ap[0], ap[1]);
+      await idle();
+      const flipA = await mp.evaluate(() => !!window.__sv.model.mode().draft?.flip);
+      const ap2 = await arrowPt();
+      if (ap2) await mp.mouse.click(ap2[0], ap2[1]);
+      await idle();
+      const flipB = await mp.evaluate(() => !!window.__sv.model.mode().draft?.flip);
+      check(!!ap && flipA && !flipB && Math.abs((await vol()) - vLp) < 1, `model 1.767: linear pattern direction arrow clicked in the view reverses the direction (${JSON.stringify({ ap, flipA, flipB })})`);
       // Up to distance: the 20 typed becomes the reach of the last instance (3 gaps of 6.67 mm), then back.
       await mp.selectOption('#mc-pm select[data-k="total"]', "1");
       await idle();
@@ -3945,7 +3956,7 @@ try {
       const refFocus = await mp.evaluate(() => !!document.querySelector('#mc-pm [data-focus="pref"]'));
       await treeClick(mp, '#mc-tree .ft-row[data-id="std:YZ"]');
       await idle();
-      const refX = await mp.evaluate(id => { const sp = window.__sv.model.last().spots?.[id] ?? []; return [document.querySelector('#mc-pm [data-focus="pref"]')?.textContent, Math.max(...sp.map(s => s.p[0]))]; }, pid);
+      const refX = await mp.evaluate(id => { const sp = window.__sv.model.last().spots?.[id] ?? []; return [document.querySelector('#mc-pm [data-focus="pref"]')?.textContent, Math.max(...sp.filter(s => !s.key.startsWith("@")).map(s => s.p[0]))]; }, pid);
       await mp.selectOption('#mc-pm select[data-k="total"]', "");
       await idle();
       const vBack3 = await vol();
