@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.765.0] - 2026-11-28
+## [1.766.0] - 2026-11-28
 
 ### Added
 
@@ -18,6 +18,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Simulation: a part opened with saved results shows the study used last, with its plot drawn at once.
 - Simulation: Duplicate study keeps the results of the study it copies.
 - Save asks for the file name at once after a solve, instead of packing the results first (parts and assemblies).
+
+## [1.765.0] - 2026-11-28
+
+### Fixed
+
+- Assemblies with part files: a part file that now holds another part (somebody saved a different part under its name) is no longer taken in silently. The bar says "These files now hold another part", the assembly keeps its own copy, and Save writes it under a free name such as "Part2 (2)".
+- A part file that cannot be read is reported as unreadable, not as "not found", and Save leaves that file alone.
+- Opening an assembly or part that is already open goes to its tab instead of opening another copy; a tab with no unsaved changes takes the file's newer version.
+- A new part whose file name is taken by another part's file is saved as "Name (2)", and a message says so.
 
 ## [1.764.0] - 2026-11-28
 
@@ -5076,7 +5085,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.765.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.766.0...HEAD
+[1.766.0]: https://github.com/kothf/step-viewer/compare/v1.765.0...v1.766.0
 [1.765.0]: https://github.com/kothf/step-viewer/compare/v1.764.0...v1.765.0
 [1.764.0]: https://github.com/kothf/step-viewer/compare/v1.763.0...v1.764.0
 [1.763.0]: https://github.com/kothf/step-viewer/compare/v1.762.0...v1.763.0
