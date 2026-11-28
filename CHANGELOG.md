@@ -5,6 +5,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.763.0] - 2026-11-28
+
+### Added
+
+- 3D sketch: a rubber band follows the pointer from the last point before the click (a spline previews through the pointer), and the point under the pointer lights before a click joins it.
+- 3D sketch: a line drawn close to X, Y or Z snaps onto that axis and gets Along X/Y/Z; a glyph by the pointer shows the axis. Hold Ctrl to draw the line as it is.
+- 3D sketch: relation glyphs show on the lines and points, and dimensions show their value in the view. A click on a glyph selects what it holds; a click on a dimension opens the Modify box, and the sketch follows while you type.
+- 3D sketch: drag a point in the view to move it; the relations hold.
+- 3D sketch: **Angle** dimension between two lines, **Midpoint** and **On line** relations between a point and a line.
+- 3D sketch: hovering a point or line lights it; the status bar says what the tool does and on which plane, and the plane square shows its name (XY, YZ, ZX).
+- Test list for the 3D sketch compared with other CAD apps (docs/3d-sketch-tests.md).
+
+### Fixed
+
+- 3D sketch: Esc in Select no longer throws a changed sketch away; it ends the chain, then leaves the tool, then clears the selection, and says that ✓ keeps the changes and ✕ discards them.
+- 3D sketch dimensions typed as an expression of global variables now follow the variables (D1@3DSketch1 can also be used in other expressions).
+- 3D sketch: a click selects one item; Ctrl/Shift+click adds to the selection (a plain click used to add).
+- 3D sketch: a changed dimension moves the later end of the line, not the first point of the sketch.
+- Editing a 3D sketch from the tree opens it with the Select tool, without a chain left from the last edit.
+- An empty part no longer shows the "Start a sketch on a plane" card over a 3D sketch.
+
 ## [1.762.0] - 2026-11-26
 
 ### Added
@@ -5034,7 +5055,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.762.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.763.0...HEAD
+[1.763.0]: https://github.com/kothf/step-viewer/compare/v1.762.0...v1.763.0
 [1.762.0]: https://github.com/kothf/step-viewer/compare/v1.761.0...v1.762.0
 [1.761.0]: https://github.com/kothf/step-viewer/compare/v1.760.0...v1.761.0
 [1.760.0]: https://github.com/kothf/step-viewer/compare/v1.759.0...v1.760.0
