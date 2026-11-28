@@ -20450,7 +20450,7 @@ try {
     await ctx.close();
   }
   if (inShard(4)) {
-    // model 1.765: closed and outward shells, suppress with dependants, ✓ on a failing fillet keeps the panel.
+    // model 1.766: closed and outward shells, suppress with dependants, ✓ on a failing fillet keeps the panel.
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const cp = await ctx.newPage();
     cp.on("pageerror", e => errors.push(e.message));
@@ -20475,7 +20475,7 @@ try {
     await settle();
     const out = await vol();
     check(closed.ok && Math.abs(closed.v - (120000 - 96 * 56 * 16)) < 0.5 && out.ok && Math.abs(out.v - (104 * 64 * 24 - 120000)) < 0.5,
-      `model 1.765: a shell with no face removed is a closed hollow body, outward with sharp corners (${JSON.stringify({ closed, out })})`);
+      `model 1.766: a shell with no face removed is a closed hollow body, outward with sharp corners (${JSON.stringify({ closed, out })})`);
     // Suppress a hole: its pattern goes with it, Unsuppress brings both back.
     await cp.evaluate(() => window.__sv.model.store.change("Holes", doc => {
       doc.features = doc.features.filter(f => f.id !== "sh");
@@ -20492,7 +20492,7 @@ try {
     await settle();
     const back = await vol();
     check(holes.ok && sup.suppressed && sup.supBy === "h" && sup.ok && Math.abs(sup.v - 120000) < 0.5 && Math.abs(back.v - holes.v) < 1e-6,
-      `model 1.765: suppressing a hole suppresses its pattern too, Unsuppress brings both back (${JSON.stringify({ holes: holes.v, sup: { s: sup.suppressed, by: sup.supBy, v: sup.v, ok: sup.ok }, back: back.v })})`);
+      `model 1.766: suppressing a hole suppresses its pattern too, Unsuppress brings both back (${JSON.stringify({ holes: holes.v, sup: { s: sup.suppressed, by: sup.supBy, v: sup.v, ok: sup.ok }, back: back.v })})`);
     await ctx.close();
   }
 } catch (err) {
