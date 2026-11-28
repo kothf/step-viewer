@@ -12,7 +12,7 @@ let fails = 0;
 // `sim-all` = the structural test set: every structural analysis scenario, on made-up and on real models
 const SIM_ALL = ["sim", "modal", "bonded", "loads2", "loads3", "refine", "section", "path", "cases", "relief", "bodymats", "thermalbodymats", "thermalinner", "thermaldiesplit", "simasm", "simbolt", "simweld", "simconn", "simasmmodal", "simextras", "simauto", "simprogress", "simspot", "simmat", "set-engine", "set-shaft"];
 const asked = process.argv.slice(2).flatMap(a => (a === "sim-all" ? SIM_ALL : [a]));
-for (const f of (asked.length ? asked : ["sketch", "model", "asm", "asm2", "inplace", "select", "drawing", "keys", "polish", "polish2", "gtol", "attach", "clip", "drwmenu", "cutflow", "convert", "filletdim", "relicons", "vaultusers", "vault", "vault2", "vault3", "sim", "holepos", "snapref", "arcmeasure", "sketch3d"])) {
+for (const f of (asked.length ? asked : ["sketch", "model", "asm", "asm2", "inplace", "select", "drawing", "keys", "polish", "polish2", "gtol", "attach", "clip", "drwmenu", "cutflow", "convert", "filletdim", "relicons", "vaultusers", "vault", "vault2", "vault3", "vault4", "sim", "holepos", "snapref", "arcmeasure", "sketch3d"])) {
   const r = spawnSync("node", [join(dir, `${f}.mjs`)], { encoding: "utf8", env: { ...process.env, HT_OUT: out } });
   const rows = (r.stdout + r.stderr).split("\n").filter(l => /^(PASS|FAIL) /.test(l));
   if (r.status) rows.push(`FAIL ${f}: the script stopped: ${(r.stderr.split("\n").find(l => /Error/.test(l)) ?? "").trim()}`);

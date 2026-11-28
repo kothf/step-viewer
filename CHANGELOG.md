@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Vault: after a check-in, check-out, state change or data card, the side panel stays on the Vault tab instead of jumping to Features.
 - Vault: Update on a drawing whose working copy already uses the latest part says so and asks for a check-in, instead of "up to date" while the drawing still shows as behind. Nothing is reopened when nothing changed.
 - Vault panel: a long vault name no longer runs under the Explorer button; it ends with … and shows whole in its tooltip.
+- Vault explorer: moving or renaming the folder of a file that is open no longer closes the explorer when the file reloads.
 
 ## [1.766.0] - 2026-11-28
 

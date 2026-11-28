@@ -2859,10 +2859,12 @@ const vaultPanel = new VaultPanel($("#vault-panel"), {
       else await openFiles([new File([buf], name)]);
     };
     // A vault file reloaded after a vault action stays in its own tab instead of opening a second one, and the Vault
-    // tab the action came from stays in front (opening a part shows its Features tab).
+    // tab or the Vault explorer the action came from stays in front (opening a part shows its Features tab).
     const onVault = !!replace && $("#tab-vault").classList.contains("on");
+    const onExplorer = !!replace && vaultExplorer.open;
     if (replace && docs) await docs.replacing(go); else await go();
     if (onVault && !drawing.open && !$("#tab-vault").classList.contains("on")) showLeftTab("vault");
+    if (onExplorer && !vaultExplorer.open) vaultExplorer.show();
   },
   // A board's thermal package found beside its STEP in the vault goes on the model just opened (FR-TPKG-006).
   pair: async (name, data) => {
