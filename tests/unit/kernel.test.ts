@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
-import type { Feature, FilletFeature, PartDoc, SketchFeature, SkEnt, V3 } from "../../src/model/types";
+import type { Feature, FilletFeature, PartDoc, Sketch3dFeature, SketchFeature, SkEnt, V3 } from "../../src/model/types";
 import { occ } from "./occ";
 
 const rect = (id: string, cx: number, cy: number, w: number, h: number, plane: SketchFeature["plane"] = { std: "XY" }): SketchFeature => {
@@ -1181,6 +1181,21 @@ test("3D sketch as a sweep path (FR-SK-080)", async () => {
   assert.equal(big.statuses.find(s => s.id === "k")?.code, "E-3D-FILLET");
 });
 
+test("3D sketch arc as part of a sweep path (3D sketch test F8)", async () => {
+  const m = new Modeller(await occ());
+  // 20 along X, then a quarter arc R10 turning to +Y in XY, then 15 along Y: a Ø4 tube, volume = area × path length.
+  const q = 10 * Math.SQRT1_2;
+  const k: Feature = { id: "k", type: "sketch3d", name: "3DSketch1", pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [20, 0, 0] }, { id: "M", p: [20 + q, 10 - q, 0] }, { id: "C", p: [30, 10, 0] }, { id: "D", p: [30, 25, 0] }],
+    segs: [{ id: "l1", t: "line", pts: ["A", "B"] }, { id: "a", t: "arc", pts: ["B", "M", "C"] }, { id: "l2", t: "line", pts: ["C", "D"] }], rels: [], dims: [] };
+  const sw: Feature = { id: "w", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 4 }, path: { curve: "k" } };
+  const r = run(m, doc([k, sw]));
+  close(r.props!.volume, Math.PI * 4 * (35 + 5 * Math.PI), 1e-3);
+  // A sharp corner between a line and an arc (not tangent) still gives a solid tube.
+  const k2: Feature = { ...k, pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [20, 0, 0] }, { id: "M", p: [30, 3, 0] }, { id: "C", p: [40, 0, 0] }], segs: [{ id: "l1", t: "line", pts: ["A", "B"] }, { id: "a", t: "arc", pts: ["B", "M", "C"] }] } as Feature;
+  const r2 = run(m, doc([k2, sw]));
+  assert.ok(r2.props!.volume > Math.PI * 4 * 40, String(r2.props!.volume));
+});
+
 test("3D sketch path with a sketch profile (3D sketch test F2)", async () => {
   const m = new Modeller(await occ());
   // A 10 mm square on XY swept 30 up Z, then 20 along X: area × path length both with the sharp (mitred) corner and with an R8 sketch fillet.
@@ -1191,6 +1206,55 @@ test("3D sketch path with a sketch profile (3D sketch test F2)", async () => {
   close(r.props!.volume, 100 * 50, 2e-3);
   const rf = run(m, doc([rect("s", 0, 0, 10, 10), { ...k, dims: [{ id: "f1", t: "fillet", e: ["B"], val: { v: 8 } }] } as Feature, sw]));
   close(rf.props!.volume, 100 * (22 + 12 + 4 * Math.PI), 2e-3);
+});
+
+test("3D sketch points on model faces, edges and vertices follow the model (3D sketch test B14)", async () => {
+  const m = new Modeller(await occ());
+  // A 100 × 60 × 20 block; A on its top face, B on the top edge at x = 50, C on that edge's corner (50, 30, 20).
+  const ex = (h: number): Feature => ({ id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: h } });
+  const edge = { faces: ["f1:end", "f1:side:s1l2"] as [string, string], hint: [50, 0, 20] as V3 };
+  const k: Feature = { id: "k", type: "sketch3d", name: "3DSketch1",
+    pts: [{ id: "A", p: [0, 0, 20] }, { id: "B", p: [50, 10, 20] }, { id: "C", p: [50, 30, 20] }],
+    segs: [{ id: "l1", t: "line", pts: ["A", "B"] }, { id: "l2", t: "line", pts: ["B", "C"] }],
+    rels: [{ id: "r1", t: "onFace", e: ["A"], face: { name: "f1:end", hint: [0, 0, 20] } }, { id: "r2", t: "onEdge", e: ["B"], edge }, { id: "r3", t: "onVertex", e: ["C"], vertex: { edge, at: [50, 30, 20] } }], dims: [] };
+  const r0 = m.evaluate(doc([rect("s1", 0, 0, 100, 60), ex(20), k]));
+  assert.ok(r0.statuses.every(s => s.ok), JSON.stringify(r0.statuses));
+  const r = m.evaluate(doc([rect("s1", 0, 0, 100, 60), ex(35), k]));
+  assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+  const got = r.sketches?.k as Sketch3dFeature | undefined;
+  assert.ok(got && got.type === "sketch3d");
+  const P = (id: string) => got!.pts.find(q => q.id === id)!.p;
+  close(P("A")[2], 35, 1e-9); close(P("B")[2], 35, 1e-9); close(P("B")[0], 50, 1e-9); close(P("B")[1], 10, 1e-6);
+  close(P("C")[0], 50, 1e-9); close(P("C")[1], 30, 1e-9); close(P("C")[2], 35, 1e-9);
+  assert.deepEqual(got!.rels.map(x => x.geo?.k), ["plane", "line", "point"]);
+  // A round face: a point on a cylinder stays on it at the new radius.
+  const kc: Feature = { id: "k", type: "sketch3d", name: "3DSketch1", pts: [{ id: "A", p: [10, 0, 5] }, { id: "B", p: [30, 0, 5], fixed: true }], segs: [{ id: "l", t: "line", pts: ["A", "B"] }],
+    rels: [{ id: "r", t: "onFace", e: ["A"], face: { name: "f1:side:s1k", hint: [10, 0, 5] } }, { id: "r2", t: "alongX", e: ["l"] }], dims: [] };
+  const rc = m.evaluate(doc([circle("s1", 0, 0, 14, { std: "XY" }), ex(10), kc]));
+  assert.ok(rc.statuses.every(s => s.ok), JSON.stringify(rc.statuses));
+  const gc = rc.sketches?.k as Sketch3dFeature;
+  close(Math.hypot(gc.pts[0].p[0], gc.pts[0].p[1]), 14, 1e-6);
+  assert.equal(gc.rels[0].geo?.k, "cyl");
+});
+
+test("3D sketch: a converted circle edge follows the model (3D sketch test B15)", async () => {
+  const m = new Modeller(await occ());
+  // The top circle of a Ø28 cylinder converted: two half arcs from its seam vertex, the other points held on the edge.
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } };
+  const edge = { faces: ["f1:end", "f1:side:s1k"] as [string, string], hint: [14, 0, 10] as V3 };
+  const on = (id: string, p: V3) => ({ id: `r${id}`, t: "onEdge" as const, e: [id], edge: { ...edge, hint: p } });
+  const k: Feature = { id: "k", type: "sketch3d", name: "3DSketch1",
+    pts: [{ id: "S", p: [14, 0, 10] }, { id: "Q1", p: [0, 14, 10] }, { id: "H", p: [-14, 0, 10] }, { id: "Q3", p: [0, -14, 10] }],
+    segs: [{ id: "a1", t: "arc", pts: ["S", "Q1", "H"] }, { id: "a2", t: "arc", pts: ["H", "Q3", "S"] }],
+    rels: [{ id: "rS", t: "onVertex", e: ["S"], vertex: { edge, at: [14, 0, 10] } }, on("Q1", [0, 14, 10]), on("H", [-14, 0, 10]), on("Q3", [0, -14, 10])], dims: [] };
+  const r = m.evaluate(doc([circle("s1", 0, 0, 20, { std: "XY" }), ex, k]));
+  assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+  const got = r.sketches?.k as Sketch3dFeature;
+  assert.ok(got && got.type === "sketch3d");
+  for (const q of got.pts) { close(Math.hypot(q.p[0], q.p[1]), 20, 1e-6); close(q.p[2], 10, 1e-9); }
+  const P = (id: string) => got.pts.find(q => q.id === id)!.p;
+  assert.ok(Math.hypot(...([0, 1, 2].map(i => P("S")[i] - P("H")[i]) as V3)) > 10, "the arcs stay apart");
+  assert.deepEqual(got.rels.map(x => x.geo?.k), ["point", "circle", "circle", "circle"]);
 });
 
 test("3D sketch points on 2D sketch points follow the sketch (weldments exam #6)", async () => {

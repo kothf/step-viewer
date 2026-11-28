@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.776.0] - 2026-11-28
+## [1.777.0] - 2026-11-28
 
 ### Fixed
 
@@ -17,6 +17,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Chamfer with two distances, or a distance and an angle: each value shows on the face it is measured on (D1, D2), so Flip direction visibly swaps them, as in other CAD apps. A click on one types it.
 - Shell with multi-thickness: each wall with its own thickness shows it on the wall; a click types it.
 - Hands-on test of the rest of the core modelling list (a face click adds its edges, variable, face and full round fillets, chamfer modes and vertex chamfer, a pattern of a mirror, multi-thickness shell, hole position by dimensions to the edges, a hole following an upstream edit, the Russian panels) in `tests/human/core2.mjs`.
+
+## [1.776.0] - 2026-11-28
+
+### Added
+
+- 3D sketch: a selected line takes Angle to XY, Angle to YZ or Angle to ZX, a dimension shown in the view and typed in the Modify box.
+- 3D sketch: the Arc tool draws a 3-point arc (start, end, then a point it passes through, previewed through the pointer); the chain goes on from its end. An arc takes a Radius dimension and Tangent to the line or arc it joins, and a Sweep follows it with an exact arc edge.
+- 3D sketch: points clicked on a model face, edge or vertex are held there (On face, On edge, On model vertex, shown as glyphs) and follow the model when it changes; Ctrl places a point without the relation.
+- 3D sketch: **Convert edges** turns each clicked model edge into a line, an arc (a full circle two arcs) or a spline held on that edge, so it follows the model.
+
+### Fixed
+
+- Sweep: a path with a sharp corner next to an arc or spline is refused with a message (make that join tangent) instead of giving a solid of volume 0.
 
 ## [1.775.0] - 2026-11-28
 
@@ -5194,7 +5207,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.776.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.777.0...HEAD
+[1.777.0]: https://github.com/kothf/step-viewer/compare/v1.776.0...v1.777.0
 [1.776.0]: https://github.com/kothf/step-viewer/compare/v1.775.0...v1.776.0
 [1.775.0]: https://github.com/kothf/step-viewer/compare/v1.774.0...v1.775.0
 [1.774.0]: https://github.com/kothf/step-viewer/compare/v1.773.0...v1.774.0

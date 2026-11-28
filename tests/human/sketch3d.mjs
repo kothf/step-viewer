@@ -202,6 +202,96 @@ d = await draft();
   check("D7", !!ob && ((d.rels.some(r => r.t === "onPlane" && r.plane === "ZX") && Math.abs(y) < 1e-4) || /conflict|Конфликт|refused|cannot/i.test(toastShown)), "On ZX puts the point on the plane (or is refused with a message when it cannot hold)", { y, rels: d.rels.map(r => [r.t, r.plane]), toastShown }, await snap(pg, "onplane"));
   await pg.keyboard.press("Escape");
 }
+// E7: a line at a slant to a standard plane takes its angle to the plane (typed as 25°).
+d = await draft();
+{
+  const P = id => d.pts.find(p => p.id === id).p;
+  const ang = (s, n) => { const a = P(s.pts[0]), b = P(s.pts[1]), u = [0, 1, 2].map(j => b[j] - a[j]); return Math.atan2(Math.abs(u[n]), Math.hypot(u[(n + 1) % 3], u[(n + 2) % 3])); };
+  let pick = null;
+  if (!d.segs.some(g => g.t === "line" && [2, 0, 1].some(n => ang(g, n) > 0.02 && ang(g, n) < Math.PI / 2 - 0.02))) {
+    // Every line runs along an axis: free the last line of its axis relations and move its end in the point table.
+    const l = [...d.segs].reverse().find(g => g.t === "line");
+    for (const r of d.rels.filter(r => r.e.includes(l.id))) { await pg.click(`#mc-pm [data-s3rdel="${r.id}"]`); await pg.waitForTimeout(200); }
+    d = await draft();
+    const i = d.pts.findIndex(p => p.id === l.pts[1]), v = d.pts[i].p, j = Math.abs(v[0] - P(l.pts[0])[0]) > 1e-6 ? 2 : 0;
+    const inp = `#mc-pm input[data-s3x="${i}:${j}"]`;
+    await pg.fill(inp, String(Math.round(v[j] + 10)));
+    await pg.press(inp, "Enter");
+    await pg.waitForTimeout(300);
+    d = await draft();
+  }
+  for (const [pl, n] of [["XY", 2], ["YZ", 0], ["ZX", 1]]) { const s = d.segs.find(g => g.t === "line" && ang(g, n) > 0.02 && ang(g, n) < Math.PI / 2 - 0.02); if (s) { pick = { s, pl, n }; break; } }
+  if (pick) {
+    await pg.click(`#mc-pm [data-s3sel="${pick.s.id}"]`);
+    await pg.waitForTimeout(200);
+    const b = await pg.$(`#mc-pm [data-s3r="dim:pangle:${pick.pl}"]`);
+    if (b) await b.click();
+    await pg.waitForTimeout(250);
+    d = await draft();
+    const dim = d.dims.find(x => x.t === "planeAngle");
+    if (dim) { await pg.click(`.sk3-dim[data-dim="${dim.id}"]`); await pg.waitForTimeout(200); await pg.fill(".mod-box .mod-in", "25"); await pg.keyboard.press("Enter"); await pg.waitForTimeout(300); }
+    d = await draft();
+    const s2 = d.segs.find(g => g.id === pick.s.id), got = (ang(s2, pick.n) * 180) / Math.PI;
+    check("E7", !!b && !!dim && Math.abs(got - 25) < 1e-3, `a line's angle to ${pick.pl} is a dimension: typing 25° turns the line to 25°`, { got, plane: pick.pl }, await snap(pg, "planeangle"));
+    await pg.keyboard.press("Escape");
+  } else check("E7", false, "a slanted line to dimension", { segs: d.segs.length });
+}
+// B13/E8: the Arc tool goes on from the chain's free end: end point, then a point it passes through; Radius dimensions it.
+d = await draft();
+{
+  const use = id => d.segs.filter(g => g.pts[0] === id || g.pts.at(-1) === id).length;
+  const free = d.pts.filter(p => use(p.id) === 1 && !p.fixed).at(-1) ?? d.pts.filter(p => use(p.id) === 1).at(-1);
+  await tb("arc");
+  await clickAt(pg, await W(free.p));
+  st = await s3();
+  const ax = { XY: [0, 1], YZ: [1, 2], ZX: [2, 0] }[st?.plane ?? "XY"];
+  const at = (a, b) => free.p.map((v, j) => v + (j === ax[0] ? a : 0) + (j === ax[1] ? b : 0));
+  await clickAt(pg, await W(at(20, 0)));
+  await pg.mouse.move(...(await W(at(10, 7)))); await pg.waitForTimeout(150);
+  const pv = (await deco()).preview;
+  await clickAt(pg, await W(at(10, 7)));
+  d = await draft();
+  const arc = d.segs.find(g => g.t === "arc");
+  const P = id => d.pts.find(p => p.id === id).p;
+  check("B13", !!arc && arc.pts[0] === free.id && pv > 0, "Arc: from the free end, a click for the end and one it passes through make a 3-point arc joined to the chain", { arc: arc?.pts, start: free.id, preview: pv, plane: st?.plane }, await snap(pg, "arc"));
+  await pg.keyboard.press("Escape"); await pg.keyboard.press("Escape"); await pg.waitForTimeout(150);
+  if (arc) {
+    // D8: the line before it and the arc take Tangent: the arc turns to leave the line smoothly.
+    const ln = d.segs.find(g => g.t === "line" && (g.pts[1] === free.id || g.pts[0] === free.id));
+    await pg.click(`#mc-pm [data-s3sel="${ln.id}"]`); await pg.waitForTimeout(150);
+    await pg.keyboard.down("Control"); await pg.click(`#mc-pm [data-s3sel="${arc.id}"]`); await pg.keyboard.up("Control"); await pg.waitForTimeout(150);
+    const tg = await pg.$('#mc-pm [data-s3r="tangent"]');
+    if (tg) await tg.click();
+    await pg.waitForTimeout(300);
+    d = await draft();
+    {
+      const [A, M, E] = d.segs.find(g => g.id === arc.id).pts.map(P), L0 = P(ln.pts[0] === free.id ? ln.pts[1] : ln.pts[0]);
+      const u = A.map((v, j) => v - L0[j]), ab = M.map((v, j) => v - A[j]), ae = E.map((v, j) => v - A[j]);
+      // Tangent at the start: the line direction lies in the arc's plane and is square to the radius at A.
+      const cr = (x, y) => [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]], dt = (x, y) => x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+      const n = cr(ab, ae), nl = Math.hypot(...n), ul = Math.hypot(...u);
+      const inPlane = Math.abs(dt(n, u)) / (nl * ul);
+      const t1 = cr(n, ab).map(v => v * dt(ae, ae)), t2 = cr(ae, n).map(v => v * dt(ab, ab));
+      const rc = t1.map((v, j) => (v + t2[j]) / (2 * nl * nl));
+      const square = Math.abs(dt(rc, u)) / (Math.hypot(...rc) * ul);
+      check("D8", !!tg && d.rels.some(r => r.t === "tangent" && r.e.includes(arc.id)) && inPlane < 1e-4 && square < 1e-4, "a line and the arc it runs into take Tangent: the arc leaves the line smoothly", { inPlane, square });
+    }
+    await pg.click(`#mc-pm [data-s3sel="${arc.id}"]`); await pg.waitForTimeout(200);
+    const b = await pg.$('#mc-pm [data-s3r="dim:radius"]');
+    if (b) await b.click();
+    await pg.waitForTimeout(250);
+    d = await draft();
+    const dim = d.dims.find(x => x.t === "radius");
+    if (dim) { await pg.click(`.sk3-dim[data-dim="${dim.id}"]`); await pg.waitForTimeout(200); await pg.fill(".mod-box .mod-in", "12"); await pg.keyboard.press("Enter"); await pg.waitForTimeout(300); }
+    d = await draft();
+    const a2 = d.segs.find(g => g.id === arc.id), [A, M, E] = a2.pts.map(P);
+    // Circumradius from the three points: abc / 4·area.
+    const L = (u, v) => Math.hypot(...u.map((x, j) => x - v[j]));
+    const ab = L(A, M), bc = L(M, E), ca = L(E, A), sp = (ab + bc + ca) / 2, area = Math.sqrt(Math.max(0, sp * (sp - ab) * (sp - bc) * (sp - ca)));
+    const r = area > 1e-9 ? (ab * bc * ca) / (4 * area) : NaN;
+    check("E8", !!b && !!dim && Math.abs(r - 12) < 1e-3, "Radius on a selected arc is a dimension: typing 12 makes the arc R12", { r, label: await pg.$eval(`.sk3-dim[data-dim="${dim?.id}"]`, e => e.textContent).catch(() => null) }, await snap(pg, "radius"));
+  } else check("E8", false, "an arc to dimension", {});
+}
 // A2: ✓ keeps the 3D sketch; F1: a sweep with a circular profile follows it.
 await pg.click("#mc-ok");
 await idle(pg);
@@ -215,6 +305,6 @@ await pg.click("#mc-ok");
 await idle(pg);
 const vol = await ev(() => window.__sv.model.last()?.props?.volume ?? window.__sv.viewer.parts[0]?.data?.volume ?? 0);
 const img4 = await snap(pg, "sweep");
-check("F1", sw?.path?.curve && sw.circular && vol > 0, "Sweep takes the 3D sketch as its path with a circular profile", { path: sw?.path, circular: sw?.circular, vol }, img4);
+check("F1", sw?.path?.curve && sw.circular && vol > 0, "Sweep takes the 3D sketch as its path with a circular profile", { path: sw?.path, circular: sw?.circular, vol, statuses: await ev(() => JSON.stringify(window.__sv.model.last()?.statuses)), k: await ev(() => JSON.stringify(window.__sv.model.store.doc.features.find(f => f.type === "sketch3d"))) }, img4);
 
 await finish(browser, pg);
