@@ -208,10 +208,29 @@ export async function rewriteRefs(path: string, bytes: Uint8Array, map: (rel: st
 }
 
 const STD = ["partNumber", "description", "title", "author", "revision"];
+/**
+ * A drawing keeps its title block fields in `drawing.json` `props` (DrawingProps): the vault's properties by their
+ * names there. Release writes revision, approver and date into the title block this way.
+ */
+const DRW_PROPS: Record<string, string> = { partNumber: "number", title: "title", author: "author", revision: "revision", "Approved by": "approved", "Approved date": "date", Material: "material" };
+const isDrawing = (path: string) => /\.mcaddrw$/i.test(path);
+
+async function drawingProps(bytes: Uint8Array) {
+  const m = await entries(bytes);
+  const doc = m && readJson(m, "drawing.json");
+  return m && doc ? { m, doc } : null;
+}
 
 /** Document properties as a flat map (standard ones by key, custom ones by name). Null when not a MöbiusCAD document. */
 export async function readProps(path: string, bytes: Uint8Array): Promise<Record<string, string> | null> {
   if (!isDoc(path)) return null;
+  if (isDrawing(path)) {
+    const d = await drawingProps(bytes);
+    if (!d) return null;
+    const p = (d.doc.props ?? {}) as Record<string, unknown>, out: Record<string, string> = {};
+    for (const [k, f] of Object.entries(DRW_PROPS)) if (typeof p[f] === "string" && p[f]) out[k] = p[f] as string;
+    return out;
+  }
   const m = await entries(bytes);
   const doc = m && readJson(m, "document.json");
   if (!doc) return null;
@@ -225,6 +244,22 @@ export async function readProps(path: string, bytes: Uint8Array): Promise<Record
 /** Writes properties into a document; empty values remove them. Null when not a document or nothing changed. */
 export async function writeProps(path: string, bytes: Uint8Array, values: Record<string, string>): Promise<Uint8Array | null> {
   if (!isDoc(path)) return null;
+  if (isDrawing(path)) {
+    const d = await drawingProps(bytes);
+    if (!d) return null;
+    const p = { ...(d.doc.props ?? {}) } as Record<string, unknown>;
+    let changed = false;
+    for (const [k, v] of Object.entries(values)) {
+      const f = DRW_PROPS[k];
+      if (!f || (p[f] ?? "") === v) continue;
+      changed = true;
+      if (v) p[f] = v; else delete p[f];
+    }
+    if (!changed) return null;
+    d.doc.props = p;
+    d.m.set("drawing.json", new TextEncoder().encode(toJson(d.doc)));
+    return rezip(d.m);
+  }
   const m = await entries(bytes);
   const doc = m && readJson(m, "document.json");
   if (!m || !doc) return null;
