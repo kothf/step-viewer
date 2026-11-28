@@ -4,6 +4,7 @@
 import { t } from "./i18n";
 import { toast, trapFocus } from "./ui";
 import { zip } from "./model/zip";
+import type { PackNames } from "./asm/packNames";
 import { recentClear, recentFiles, recentList, type RecentEntry } from "./recent";
 
 export type LiveKind = "part" | "asm" | "drawing" | "model" | "pcb" | null;
@@ -13,10 +14,14 @@ export interface PackDoc {
   label: string;
   kind: "part" | "asm" | "drawing" | "model";
   live: boolean;
-  /** The document as saved. */
-  files(): Promise<{ name: string; data: Uint8Array }[]>;
-  /** An assembly's parts (and sub-assemblies) as separate files. */
-  parts?(): Promise<{ name: string; data: Uint8Array }[]>;
+  /** The document's id (drawings found for another document are not packed twice). */
+  id?: string;
+  /** The document as saved (names with the Pack and Go prefix/suffix). */
+  files(o?: PackNames): Promise<{ name: string; data: Uint8Array }[]>;
+  /** An assembly's parts (and sub-assemblies) as separate files, at their (possibly flattened) reference paths. */
+  parts?(o?: PackNames): Promise<{ name: string; data: Uint8Array }[]>;
+  /** Drawings of the document (and of an assembly's parts) found in tabs and recent documents. */
+  drawings?(o?: PackNames): Promise<{ id: string; name: string; data: Uint8Array }[]>;
 }
 
 export interface FileHost {
@@ -230,7 +235,7 @@ export class FileMenu {
     }
   }
 
-  /** Pack and Go (a CAD app): the open documents, and an assembly's parts as separate files, in one .zip. */
+  /** Pack and Go (a CAD app): the open documents, an assembly's parts as separate files, and their drawings, in one .zip. */
   packAndGo() {
     const docs = this.host.packDocs();
     if (!docs.length) { toast(t("Open a document first.")); return; }
@@ -246,37 +251,80 @@ export class FileMenu {
     const dlg = d;
     const live = docs.find(x => x.live) ?? docs[0];
     const base = live.label.replace(/\s*•$/, "").replace(/\.[^.]+$/, "") || "documents";
-    const anyAsm = docs.some(x => x.parts);
+    const anyAsm = docs.some(x => x.parts), anyDrw = docs.some(x => x.drawings);
     dlg.innerHTML = `<h3 id="pack-title">${esc(t("Pack and Go"))}</h3>`
       + `<p class="muted">${esc(t("Saves the chosen documents into one .zip, with everything they need to open elsewhere."))}</p>`
       + `<fieldset class="pack-list"><legend>${esc(t("Documents"))}</legend>${docs.map((x, i) => `<label class="chk"><input type="checkbox" data-pk="${i}"${x.live || docs.length === 1 ? " checked" : ""} /> <span translate="no">${esc(x.label.replace(/\s*•$/, ""))}</span></label>`).join("")}</fieldset>`
-      + (anyAsm ? `<label class="chk"><input type="checkbox" data-pk="parts" checked /> ${esc(t("Also save each assembly's parts as separate files"))}</label>` : "")
+      + `<fieldset class="pack-opts"><legend>${esc(t("Options"))}</legend>`
+      + (anyAsm ? `<label class="chk"><input type="checkbox" data-pk="parts" checked /> ${esc(t("Also save each assembly's parts as separate files"))}</label>`
+        + `<label class="chk"><input type="checkbox" data-pk="flat" /> ${esc(t("Put every file in one folder"))}</label>` : "")
+      + (anyDrw ? `<label class="chk"><input type="checkbox" data-pk="drw" /> ${esc(t("Include drawings"))}</label>` : "")
+      + `<div class="pack-names"><label class="pm-field"><span>${esc(t("Prefix"))}</span><input type="text" data-pk="prefix" spellcheck="false" translate="no" /></label>`
+      + `<label class="pm-field"><span>${esc(t("Suffix"))}</span><input type="text" data-pk="suffix" spellcheck="false" translate="no" /></label></div></fieldset>`
+      + `<div class="pack-files-wrap"><table class="pack-files"><caption>${esc(t("Files in the zip"))}</caption><thead><tr><th scope="col">${esc(t("File"))}</th><th scope="col">${esc(t("Folder"))}</th></tr></thead><tbody></tbody></table></div>`
       + `<label class="pm-field"><span>${esc(t("Zip file name"))}</span><input type="text" data-pk="name" value="${esc(base)}.zip" spellcheck="false" translate="no" /></label>`
       + `<div class="row end"><button class="btn" data-a="cancel">${esc(t("Cancel"))}</button><button class="btn primary" data-a="ok">${esc(t("Save"))}</button></div>`;
+    const q = <T extends HTMLElement>(k: string) => dlg.querySelector<T>(`[data-pk="${k}"]`);
+    const optsNow = () => {
+      const picked = docs.filter((_, i) => q<HTMLInputElement>(String(i))?.checked);
+      const o: PackNames = { flatten: !!q<HTMLInputElement>("flat")?.checked, prefix: q<HTMLInputElement>("prefix")!.value, suffix: q<HTMLInputElement>("suffix")!.value };
+      return { picked, parts: !!q<HTMLInputElement>("parts")?.checked, drw: !!q<HTMLInputElement>("drw")?.checked, o };
+    };
+    // the zip's contents, as the options are now (kept per option set: the list shown is what gets saved)
+    const made = new Map<string, Promise<{ name: string; data: Uint8Array }[]>>();
+    const collect = (c: ReturnType<typeof optsNow>) => {
+      const key = JSON.stringify([docs.indexOf(c.picked[0]), c.picked.map(x => docs.indexOf(x)), c.parts, c.drw, c.o]);
+      let p = made.get(key);
+      if (!p) {
+        p = (async () => {
+          const out: { name: string; data: Uint8Array }[] = [], used = new Set<string>(), drawn = new Set(c.picked.map(x => x.id).filter(Boolean));
+          // `keep`: the name is a path whose folders stay (an assembly's part files at their reference paths)
+          const add = (f: { name: string; data: Uint8Array }, dir = "", keep = false) => {
+            let n = dir + (keep ? f.name.split("/").map(s => s.replace(/[\\:*?"<>|]/g, "_")).join("/") : f.name.replace(/[\\/:*?"<>|]/g, "_"));
+            for (let k = 2; used.has(n.toLowerCase()); k++) n = dir + f.name.replace(/(\.[^.]+)?$/, ` (${k})$1`);
+            used.add(n.toLowerCase());
+            out.push({ name: n, data: f.data });
+          };
+          for (const x of c.picked) {
+            for (const f of await x.files(c.o)) add(f);
+            // an assembly's parts go beside it, where its references point
+            // (a part file of that name already packed is the same part, open in its own tab: renaming it would break the reference)
+            if (c.parts && x.parts) for (const f of await x.parts(c.o)) { if (x.kind !== "asm") add(f, c.o.flatten ? "" : "parts/"); else if (!used.has(f.name.toLowerCase())) add(f, "", true); }
+          }
+          // drawings of the packed parts and assemblies, beside them (each once)
+          if (c.drw) for (const x of c.picked) for (const f of (await x.drawings?.(c.o)) ?? []) { if (drawn.has(f.id)) continue; drawn.add(f.id); add(f); }
+          return out;
+        })();
+        made.set(key, p);
+      }
+      return p;
+    };
+    let shown = 0;
+    const list = async () => {
+      const n = ++shown, c = optsNow(), body = dlg.querySelector("tbody")!;
+      if (!c.picked.length) { body.innerHTML = `<tr><td colspan="2" class="muted">${esc(t("Choose at least one document."))}</td></tr>`; return; }
+      body.innerHTML = `<tr><td colspan="2" class="muted">${esc(t("Listing the files…"))}</td></tr>`;
+      let files: { name: string }[];
+      try { files = await collect(c); } catch (err) { if (n === shown) body.innerHTML = `<tr><td colspan="2">${esc(t("Pack and Go failed: {err}", { err: (err as Error).message }))}</td></tr>`; return; }
+      if (n !== shown) return;
+      body.innerHTML = files.map((f, i) => {
+        const at = f.name.lastIndexOf("/");
+        return `<tr data-pf="${i}"><td translate="no">${esc(f.name.slice(at + 1))}</td><td translate="no" class="muted">${esc(at < 0 ? t("(top)") : f.name.slice(0, at))}</td></tr>`;
+      }).join("");
+    };
+    let soon = 0;
+    dlg.querySelectorAll<HTMLInputElement>("input[data-pk]").forEach(inp => { if (inp.dataset.pk !== "name") inp.addEventListener(inp.type === "text" ? "input" : "change", () => { clearTimeout(soon); soon = window.setTimeout(() => void list(), inp.type === "text" ? 250 : 0); }); });
+    void list();
     dlg.querySelector("[data-a=cancel]")!.addEventListener("click", () => dlg.close());
     dlg.querySelector<HTMLButtonElement>("[data-a=ok]")!.addEventListener("click", async e => {
       const btn = e.currentTarget as HTMLButtonElement;
-      const picked = docs.filter((_, i) => dlg.querySelector<HTMLInputElement>(`[data-pk="${i}"]`)?.checked);
-      if (!picked.length) { toast(t("Choose at least one document."), true); return; }
-      const parts = !!dlg.querySelector<HTMLInputElement>('[data-pk="parts"]')?.checked;
-      let name = dlg.querySelector<HTMLInputElement>('[data-pk="name"]')!.value.trim() || `${base}.zip`;
+      const c = optsNow();
+      if (!c.picked.length) { toast(t("Choose at least one document."), true); return; }
+      let name = q<HTMLInputElement>("name")!.value.trim() || `${base}.zip`;
       if (!/\.zip$/i.test(name)) name += ".zip";
       btn.disabled = true;
       try {
-        const out: { name: string; data: Uint8Array }[] = [], used = new Set<string>();
-        // `keep`: the name is a path whose folders stay (an assembly's part files at their reference paths)
-        const add = (f: { name: string; data: Uint8Array }, dir = "", keep = false) => {
-          let n = dir + (keep ? f.name.split("/").map(s => s.replace(/[\\:*?"<>|]/g, "_")).join("/") : f.name.replace(/[\\/:*?"<>|]/g, "_"));
-          for (let k = 2; used.has(n.toLowerCase()); k++) n = dir + f.name.replace(/(\.[^.]+)?$/, ` (${k})$1`);
-          used.add(n.toLowerCase());
-          out.push({ name: n, data: f.data });
-        };
-        for (const x of picked) {
-          for (const f of await x.files()) add(f);
-          // an assembly's parts go beside it, where its references point
-          // (a part file of that name already packed is the same part, open in its own tab: renaming it would break the reference)
-          if (parts && x.parts) for (const f of await x.parts()) { if (x.kind !== "asm") add(f, "parts/"); else if (!used.has(f.name.toLowerCase())) add(f, "", true); }
-        }
+        const out = await collect(c);
         this.host.download(new Blob([await zip(out) as BlobPart], { type: "application/zip" }), name);
         dlg.close();
         toast(t("Packed {n} file into {name}|Packed {n} files into {name}", { n: out.length, name }), "success");

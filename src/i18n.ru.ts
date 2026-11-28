@@ -4839,6 +4839,11 @@ export const RU: Record<string, string> = {
   "Could not open it from the vault {vault}: opened the copy kept with the recent documents.": "Не удалось открыть его из хранилища {vault}: открыта копия из списка последних документов.",
   "Title, part number, material and other properties of the document": "Название, обозначение, материал и другие свойства документа",
   "Zip file name": "Имя файла .zip",
+  "Put every file in one folder": "Все файлы в одну папку",
+  "Include drawings": "Добавить чертежи",
+  "Files in the zip": "Файлы в архиве",
+  "(top)": "(корень)",
+  "Listing the files…": "Составляю список файлов…",
   "Show the feature tree": "Показать дерево конструирования",
   "Fold the feature tree": "Свернуть дерево конструирования",
   // ---------- mass properties panel (FR-MAT-002) ----------
