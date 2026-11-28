@@ -89,7 +89,7 @@ const mechFits = (a: Geo["k"], b: Geo["k"]): MateType[] => (a === "axis" && b ==
 const MORE_REFS: ReadonlySet<MateType> = new Set(["symmetric", "width", "hinge", "slot"]);
 const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => [...(a === b ? ["symmetric" as const] : []), ...(a === "plane" ? ["width" as const] : []), "limitdist", ...(a === b ? ["limitangle" as const] : [])];
 /** The mate being made or edited in the Mate panel. */
-interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; alignSet?: boolean; typeSet?: boolean; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; lockRot?: boolean; problem?: string; added?: string }
+interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; alignSet?: boolean; typeSet?: boolean; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; lockRot?: boolean; problem?: string; added?: string; same?: string }
 
 /** An assembly kept in a document tab while another document is shown. */
 /** The Mate panel's message when a mate cannot be solved even from turned starts. */
@@ -121,6 +121,8 @@ export class AsmController {
   private statuses: AsmComponentStatus[] = [];
   props: BodyProps | null = null;
   private selected: string | null = null;
+  /** View mates: the Mates folder shows only this top-level component's mates (view only). */
+  private viewMates: string | null = null;
   /** The move panel's component, when open. */
   private moving: string | null = null;
   /** The rotation angles last typed in the Move panel, per component (kept while they still give its rotation). */
@@ -2231,8 +2233,10 @@ export class AsmController {
       return;
     }
     m.c = m.d = undefined;
+    m.same = undefined;
     if (m.a && !m.b && m.a.comp !== id) m.b = ref;
-    else if (m.a && m.a.comp === id && !m.b) m.a = ref;
+    // Both faces on one component (tests list A10): the new face takes the first one's place and the panel says why.
+    else if (m.a && m.a.comp === id && !m.b) { m.a = ref; m.same = c.name; }
     else { m.a = ref; m.b = undefined; }
     m.type = undefined;
     if (m.a && m.b) {
@@ -3624,6 +3628,7 @@ export class AsmController {
       if (this.doc && !this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof Element && e.target.closest("input, textarea, select, dialog[open]"))) {
         // Breadcrumbs (FR-SEL-009): Esc hides them, Shift+D brings them to the cursor.
         if (e.key === "Escape" && document.getElementById("asm-crumbs") && !document.querySelector(".mag-lens")) this.hideCrumbs();
+        if (e.key === "Escape" && this.viewMates && !document.querySelector(".mag-lens, #asm-menu")) this.showMatesOf(null);
         if (e.key === "Escape" && this.picked.length && !document.querySelector(".mag-lens, #asm-menu")) { this.boxed = false; this.setPicked([]); }
         else if (e.key === "Escape" && this.isolated && !document.querySelector(".mag-lens, #asm-menu")) this.isolate(null);
         if (e.key.toLowerCase() === "d" && e.shiftKey && this.pointer && document.getElementById("asm-crumbs")) { e.preventDefault(); e.stopImmediatePropagation(); this.crumbAt = { ...this.pointer }; this.placeCrumbs(); return; }
@@ -3932,10 +3937,15 @@ export class AsmController {
         if (kids.length) html += `<div class="ft-group" role="group">${kids.map(k => row(k.id, "▣", k.name, " ft-inst")).join("")}</div>`;
       }
     }
+    if (this.viewMates && !doc.components.some(c => c.id === this.viewMates)) this.viewMates = null;
     if (doc.mates?.length) {
-      html += row("folder:mates", "⧉", t("Mates"), " ft-mates");
+      const vm = this.viewMates, of = vm ? doc.components.find(c => c.id === vm) : null;
+      const shown = vm ? doc.mates.filter(m => topOf(m.a.comp) === vm || topOf(m.b.comp) === vm) : doc.mates;
+      const clear = of ? `<span class="ft-tools ft-vm"><button class="icon" tabindex="-1" data-a="vmclear" title="${esc(t("Show all mates"))}" aria-label="${esc(t("Show all mates"))}">✕</button></span>` : "";
+      html += row("folder:mates", "⧉", of ? t("Mates of {name}", { name: of.name }) : t("Mates"), ` ft-mates${of ? " ft-vmates" : ""}`, clear);
       html += `<div class="ft-group" role="group">`;
-      for (const m of doc.mates) {
+      if (of && !shown.length) html += `<div class="ft-row ft-empty muted" role="treeitem" aria-selected="false">${esc(t("No mates on this component."))}</div>`;
+      for (const m of shown) {
         const sv = this.solved, bad = !!sv && (sv.bad.includes(m.id) || sv.missing.includes(m.id));
         const names = `${this.anyComp(m.a.comp)?.name ?? "?"}, ${this.anyComp(m.b.comp)?.name ?? "?"}`;
         const msg = sv?.missing.includes(m.id) ? t("A face of this mate is missing.") : t("This mate cannot be solved with the others: the assembly would be over-defined.");
@@ -3985,6 +3995,7 @@ export class AsmController {
       const id = r.dataset.id!;
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
+        if (a === "vmclear") { this.showMatesOf(null); return; }
         const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id), pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
         // Ctrl+click adds a component to the selection, or takes it out (FR-SEL-007).
         if (c && !a && (e.ctrlKey || e.metaKey)) { this.togglePick(id); return; }
@@ -4058,10 +4069,19 @@ export class AsmController {
     if (r) this.setPartMaterial(id, r.material ? toRef(r.material) : null);
   }
 
+  /** View mates (FR-MATE): the Mates folder lists only the mates on component `id`; null shows them all again. */
+  showMatesOf(id: string | null) {
+    this.viewMates = id;
+    this.renderTree();
+    const r = document.querySelector<HTMLElement>('#asm-tree [data-id="folder:mates"]');
+    if (id) r?.scrollIntoView({ block: "nearest" });
+  }
+
   private menu(c: Component, x: number, y: number) {
     this.popup([
       ...(this.doc?.parts[c.part]?.asm ? [[c.flexible ? t("Make rigid") : t("Make flexible"), () => this.setFlexible(c.id, !c.flexible)] as [string, () => void]] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void], [t("Edit in context"), () => this.editPart(c.id, true)] as [string, () => void]]),
       ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Mate references…"), () => this.startMateRef(c.id)] as [string, () => void]]),
+      [t("View mates"), () => this.showMatesOf(c.id)],
       ...(this.partConfigs(c.id).names.length > 1 ? [[t("Configuration…"), () => this.popup(this.partConfigs(c.id).names.map(n => [`${n === this.partConfigs(c.id).current ? "● " : ""}${n}`, () => this.setComponentConfig(c.id, n)] as [string, () => void]), x, y)] as [string, () => void]] : []),
       [c.fixed ? t("Float") : t("Fix"), () => this.setFixed(c.id, !c.fixed)],
       ...(c.fixed ? [] : [[t("Move component"), () => this.moveComponent(c.id)] as [string, () => void]]),
@@ -4284,7 +4304,7 @@ export class AsmController {
       + `</fieldset>`
       + `<fieldset class="pm-group"><legend>${esc(t("Mechanical mates"))}</legend><div class="pm-mates">${MECH_TYPES.map(typeBtn).join("")}</div>${mech}</fieldset>`
       + (canAlign && m.type ? `<fieldset class="pm-group"><legend>${esc(t("Mate alignment"))}</legend><div class="pm-mates"><button class="btn small${m.align === "aligned" ? " on" : ""}" data-al="aligned" aria-pressed="${m.align === "aligned"}">${esc(t("Aligned"))}</button><button class="btn small${m.align !== "aligned" ? " on" : ""}" data-al="anti" aria-pressed="${m.align !== "aligned"}">${esc(t("Anti-aligned"))}</button></div></fieldset>` : "")
-      + `<p class="${m.problem ? "pm-err" : "pm-help muted"}" role="status" data-mstatus>${esc(m.problem ?? (m.type === "symmetric" && !m.c ? t("Click the symmetry plane.") : m.type === "hinge" && (!m.c || !m.d) ? t("Click a flat face on each component to touch.") : m.type === "slot" && !m.c ? t("Click the other side face of the slot.") : m.type === "width" && (!m.c || (tabPlane && !m.d)) ? t("Click the second width face, then the second tab face.") : m.a && m.b && m.type ? t("Previewed in the view. ✓ adds the mate; the panel stays open for the next one.") : m.added ? t("{name} added. Click two faces for the next mate, or ✓ to close the panel.", { name: m.added }) : t("✓ with nothing picked closes the panel.")))}</p>`;
+      + `<p class="${m.problem ? "pm-err" : "pm-help muted"}" role="status" data-mstatus>${esc(m.problem ?? (m.type === "symmetric" && !m.c ? t("Click the symmetry plane.") : m.type === "hinge" && (!m.c || !m.d) ? t("Click a flat face on each component to touch.") : m.type === "slot" && !m.c ? t("Click the other side face of the slot.") : m.type === "width" && (!m.c || (tabPlane && !m.d)) ? t("Click the second width face, then the second tab face.") : m.a && m.b && m.type ? t("Previewed in the view. ✓ adds the mate; the panel stays open for the next one.") : m.a && !m.b ? (m.same ? t("Both faces are on {name}: the new face replaces the first. Click a face on another component.", { name: m.same }) : t("Click a face on another component.")) : m.added ? t("{name} added. Click two faces for the next mate, or ✓ to close the panel.", { name: m.added }) : t("✓ with nothing picked closes the panel.")))}</p>`;
     this.renderMateBar(fits);
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.okMate());
     pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => this.cancelMate());

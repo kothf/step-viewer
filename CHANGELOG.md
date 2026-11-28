@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.765.0] - 2026-11-28
+
+### Added
+
+- Assemblies: **View mates** in a component's right-click menu shows only that component's mates in the Mates folder ("Mates of …"). ✕ on the folder row or Esc shows them all again.
+- Test list for mates and motion studies compared with other CAD apps, with hands-on scenarios (`tests/human/mates.mjs`, `mates2.mjs`, `motion.mjs`).
+
+### Fixed
+
+- Motion studies: with a duration that is not a whole number of frames (1.25 s at 30 fps) the end now shows the study's last moment. Before, To end stopped at 1.2417 s, so a 60 rpm motor came out 3° short and mate keys 0.13 mm short, also after saving and opening again.
+- Mate panel: picking a second face on the same component says that it replaced the first and asks for a face on another component, instead of "✓ with nothing picked closes the panel."
+
 ## [1.764.0] - 2026-11-28
 
 ### Added
@@ -5062,7 +5074,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.764.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.765.0...HEAD
+[1.765.0]: https://github.com/kothf/step-viewer/compare/v1.764.0...v1.765.0
 [1.764.0]: https://github.com/kothf/step-viewer/compare/v1.763.0...v1.764.0
 [1.763.0]: https://github.com/kothf/step-viewer/compare/v1.762.0...v1.763.0
 [1.762.0]: https://github.com/kothf/step-viewer/compare/v1.761.0...v1.762.0
