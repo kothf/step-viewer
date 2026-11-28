@@ -8876,13 +8876,13 @@ try {
     // ...but it turns about the axis it may still turn about, as a wheel does (exam bug 51).
     const turn = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return { ang: Math.round(Math.atan2(t[4], t[0]) * 1000) / 1000, z: t[10] }; });
     check(Math.abs(turn.ang) > 0.05 && Math.abs(turn.z - 1) < 1e-6, `asm 1.317: dragging a pin with only its turn free turns it about its axis (${JSON.stringify(turn)})`);
-    // 1.768: View mates from a component's menu filters the Mates folder; ✕ shows them all again (C7).
+    // 1.770: View mates from a component's menu filters the Mates folder; ✕ shows them all again (C7).
     await mp.click("#asm-tree .ft-comp >> nth=1", { button: "right" });
     await mp.click('#asm-menu button:text-is("View mates")');
     const vmates = await mp.evaluate(() => ({ head: document.querySelector('#asm-tree [data-id="folder:mates"] .ft-name')?.textContent, rows: document.querySelectorAll("#asm-tree .ft-mate").length, all: window.__sv.asm.doc.mates.length }));
     await mp.click('#asm-tree [data-a="vmclear"]');
     const vmBack = await mp.evaluate(() => document.querySelectorAll("#asm-tree .ft-mate").length);
-    check(/^Mates of /.test(vmates.head ?? "") && vmates.rows === vmates.all && vmBack === vmates.all, `asm 1.768: View mates lists the component's mates; ✕ shows all (${JSON.stringify({ vmates, vmBack })})`);
+    check(/^Mates of /.test(vmates.head ?? "") && vmates.rows === vmates.all && vmBack === vmates.all, `asm 1.770: View mates lists the component's mates; ✕ shows all (${JSON.stringify({ vmates, vmBack })})`);
     // Delete the coincident mate from the tree: the pin can slide along the axis again.
     await mp.hover("#asm-tree .ft-mate >> nth=1");
     await mp.click('#asm-tree .ft-mate >> nth=1 >> [data-a="del"]');
@@ -10292,8 +10292,8 @@ try {
     await ctx.close();
   }
 
-  // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) ---
-  if (inShard(5)) {
+  // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) (shard 4 since 1.768.0: shard 5 reached the 12 minute limit) ---
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -16166,7 +16166,7 @@ try {
     await fp.click("#file-btn");
     await fp.click("#file-menu [data-f=pack]");
     await fp.waitForSelector("#pack-dlg[open]");
-    const boxes = await fp.$$eval("#pack-dlg [data-pk]:not([data-pk=name])", b => b.length);
+    const boxes = await fp.$$eval("#pack-dlg .pack-list [data-pk]", b => b.length);
     await fp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
     const [dl] = await Promise.all([fp.waitForEvent("download"), fp.click("#pack-dlg [data-a=ok]")]);
     const zbytes = await readFile(await dl.path());
@@ -19823,8 +19823,8 @@ try {
   }
 
   // --- Structural analysis 1.637 (FR-CON-020/021): a toolbox screw with its nut is analysed as a bolt ---
-  // In shard 5 since 1.741.0 (shard 6 reached the limit), shard 6 since 1.734.0 (shard 4 since 1.710.0, shard 3 since 1.700.0): shards 5, 3, then 4 reached the 12 minute limit.
-  if (inShard(5)) {
+  // In shard 4 since 1.768.0 (shard 5 reached the limit), shard 5 since 1.741.0 (shard 6 reached the limit), shard 6 since 1.734.0 (shard 4 since 1.710.0, shard 3 since 1.700.0): shards 5, 3, then 4 reached the 12 minute limit.
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const bp = await ctx.newPage();
     bp.on("pageerror", e => errors.push(e.message));
@@ -20429,7 +20429,8 @@ try {
     await rp.click("#file-btn");
     await rp.click("#file-menu [data-f=pack]");
     await rp.waitForSelector("#pack-dlg[open]");
-    await rp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
+    // the documents and their parts, folders kept (not "Put every file in one folder")
+    await rp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = b.dataset.pk !== "flat" && b.dataset.pk !== "drw"; }));
     const [dl] = await Promise.all([rp.waitForEvent("download"), rp.click("#pack-dlg [data-a=ok]")]);
     const ztext = (await readFile(await dl.path())).toString("latin1");
     check(ztext.includes("hw/Block-renamed.mcadprt") && ztext.includes("Plate.mcadprt") && !ztext.includes("parts/Block"), `references: Pack and Go packs the part files beside the assembly, at their reference paths (${ztext.length} bytes)`);

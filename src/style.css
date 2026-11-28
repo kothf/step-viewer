@@ -972,6 +972,14 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .file-btn { display: inline-flex; align-items: center; gap: 6px; }
 #pack-dlg .pack-list { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 8px 0; max-height: 40vh; overflow-y: auto; }
 #pack-dlg .pm-field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+#pack-dlg .pack-opts { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 8px 0; }
+#pack-dlg .pack-names { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#pack-dlg .pack-names .pm-field { margin: 4px 0 0; }
+#pack-dlg .pack-files-wrap { max-height: 30vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; margin: 8px 0; }
+#pack-dlg .pack-files { width: 100%; border-collapse: collapse; font-size: 12px; }
+#pack-dlg .pack-files caption { text-align: left; font-weight: 600; padding: 6px 10px 2px; }
+#pack-dlg .pack-files th, #pack-dlg .pack-files td { text-align: left; padding: 3px 10px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+#pack-dlg .pack-files thead th { position: sticky; top: 0; background: var(--panel, var(--bg)); }
 #drw-pick-dlg .drw-pick-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; max-height: 50vh; overflow-y: auto; }
 #drw-pick-dlg .drw-pick-list .btn { justify-content: space-between; text-align: left; gap: 12px; }
 .mc-empty { position: absolute; left: 16px; right: 16px; margin-inline: auto; width: fit-content; max-width: calc(100% - 32px); top: 42%; transform: translateY(-50%); z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 14px 18px; text-align: center; }

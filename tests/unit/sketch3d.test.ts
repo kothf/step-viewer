@@ -136,3 +136,20 @@ test("3D sketch: fillets round a corner of two lines, tangent joins a spline to 
   const q = segPoints(st, st.segs[0], 64), a = q[q.length - 2], b = q[q.length - 1];
   assert.ok(Math.abs(b[1] - a[1]) / Math.abs(b[0] - a[0]) < 0.02, `end slope ${(b[1] - a[1]) / (b[0] - a[0])}`);
 });
+
+test("3D sketch: a point on a standard plane and its distance from one (3D sketch test D7, E6)", () => {
+  // A free point: On XY puts it at z = 0, 15 from ZX puts |y| = 15, staying on the side it was drawn.
+  const r = solve3d(sk({
+    pts: [{ id: "A", p: [4, 12, 3] }],
+    rels: [{ id: "r", t: "onPlane", e: ["A"], plane: "XY" }],
+    dims: [{ id: "d", t: "planeDist", e: ["A"], plane: "ZX", val: { v: 15 } }],
+  }));
+  assert.ok(r.ok);
+  near(r.pts.A[2], 0); near(r.pts.A[1], 15);
+  assert.equal(r.dof, 1);
+  const neg = solve3d(sk({ pts: [{ id: "A", p: [0, -12, 0] }], dims: [{ id: "d", t: "planeDist", e: ["A"], plane: "ZX", val: { v: 15 } }] }));
+  near(neg.pts.A[1], -15);
+  // A fixed point off the plane cannot be put on it.
+  const bad = solve3d(sk({ pts: [{ id: "A", p: [0, 0, 5], fixed: true }], rels: [{ id: "r", t: "onPlane", e: ["A"], plane: "XY" }] }));
+  assert.equal(bad.ok, false);
+});
